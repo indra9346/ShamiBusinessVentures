@@ -58,7 +58,7 @@ export function SiteHeader() {
               onChange={(e) => setQ(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && submit()}
               placeholder="Search S1 sugar, SKU or vendor…"
-              className="h-11 rounded-full border-white/15 bg-white pl-10 text-charcoal"
+              className="h-11 rounded-full border-white/15 bg-card pl-10 text-charcoal shadow-inner"
             />
             {suggestions.length > 0 && (
               <div className="absolute top-13 left-0 z-50 w-full overflow-hidden rounded-xl border border-border bg-card shadow-elevated">

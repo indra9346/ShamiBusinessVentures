@@ -2,6 +2,7 @@ import { Link } from "@tanstack/react-router";
 import { Facebook, Instagram, Mail, MapPin, Phone, Youtube } from "lucide-react";
 import { Logo } from "@/components/brand/Logo";
 import { storefrontCategories } from "@/lib/data";
+import webHostingBabaLogo from "@/assets/web-hosting-baba-logo.png";
 
 const socials = [
   { Icon: Instagram, href: "https://www.instagram.com/grain_bazar/", label: "Instagram" },
@@ -86,9 +87,28 @@ export function SiteFooter() {
         </div>
 
         <div className="hairline-gold mt-12" />
-        <div className="flex flex-col gap-2 pt-6 text-xs sm:flex-row sm:items-center sm:justify-between">
-          <p>© 2026 Shami Business Ventures Pvt. Ltd. All rights reserved.</p>
-          <p>GSTIN 29ABCDE1234F1Z5 · FSSAI 10023456789012</p>
+        <div className="flex flex-col gap-4 pt-6 text-xs sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p>© 2026 Shami Business Ventures Pvt. Ltd. All rights reserved.</p>
+            <p className="mt-0.5 text-white/50">GSTIN 29ABCDE1234F1Z5 · FSSAI 10023456789012</p>
+          </div>
+
+          <div className="flex items-center gap-2 text-white/70">
+            <span className="text-[11px] font-medium tracking-wide">Developed by</span>
+            <a
+              href="https://webhostingbaba.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center transition-transform hover:scale-105"
+              title="Web Hosting Baba"
+            >
+              <img
+                src={webHostingBabaLogo}
+                alt="Web Hosting Baba"
+                className="h-6 w-auto object-contain rounded shadow-sm"
+              />
+            </a>
+          </div>
         </div>
       </div>
     </footer>

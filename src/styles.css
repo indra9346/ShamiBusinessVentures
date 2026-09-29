@@ -68,28 +68,29 @@
   --midnight: oklch(0.184 0.045 258);
   --gold: oklch(0.688 0.121 82);
   --gold-light: oklch(0.79 0.12 86);
-  --ivory: oklch(0.982 0.004 90);
+  --ivory: oklch(0.938 0.024 75);
   --charcoal: oklch(0.239 0.03 262);
   --slate: oklch(0.556 0.028 262);
-  --panel: oklch(0.977 0.004 258);
+  --panel: oklch(0.945 0.02 75);
   --success: oklch(0.497 0.093 165);
   --warning: oklch(0.688 0.121 82);
   --danger: oklch(0.512 0.192 27);
 
   --gradient-hero: linear-gradient(135deg, var(--midnight) 0%, var(--navy) 60%, var(--midnight) 100%);
   --gradient-gold: linear-gradient(120deg, var(--gold) 0%, var(--gold-light) 100%);
-  --shadow-card: 0 1px 2px oklch(0.256 0.058 254 / 6%), 0 8px 24px -12px oklch(0.256 0.058 254 / 14%);
-  --shadow-elevated: 0 18px 48px -18px oklch(0.256 0.058 254 / 30%);
+  --shadow-card: 0 1px 3px oklch(0.25 0.04 60 / 6%), 0 10px 26px -12px oklch(0.25 0.04 60 / 12%);
+  --shadow-elevated: 0 18px 44px -14px oklch(0.25 0.04 60 / 22%);
   --shadow-gold: 0 0 0 1px var(--gold), 0 18px 40px -20px oklch(0.688 0.121 82 / 55%);
 
-  --background: oklch(1 0 0);
+  /* Ancient document / warm antique parchment theme */
+  --background: oklch(0.955 0.019 76);
   --foreground: var(--charcoal);
-  --card: oklch(1 0 0);
+  --card: oklch(0.985 0.009 80);
   --card-foreground: var(--charcoal);
-  --popover: oklch(1 0 0);
+  --popover: oklch(0.985 0.009 80);
   --popover-foreground: var(--charcoal);
   --primary: var(--navy);
-  --primary-foreground: oklch(1 0 0);
+  --primary-foreground: oklch(0.985 0.009 80);
   --secondary: var(--ivory);
   --secondary-foreground: var(--navy);
   --muted: var(--panel);
@@ -98,8 +99,8 @@
   --accent-foreground: var(--midnight);
   --destructive: var(--danger);
   --destructive-foreground: oklch(1 0 0);
-  --border: oklch(0.906 0.014 90);
-  --input: oklch(0.906 0.014 90);
+  --border: oklch(0.885 0.024 75);
+  --input: oklch(0.885 0.024 75);
   --ring: var(--gold);
   --chart-1: var(--navy);
   --chart-2: var(--gold);
@@ -176,6 +177,8 @@
 
   body {
     background-color: var(--color-background);
+    background-image: radial-gradient(circle at 50% 0%, oklch(0.965 0.016 78) 0%, oklch(0.952 0.021 75) 100%);
+    background-attachment: fixed;
     color: var(--color-foreground);
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
