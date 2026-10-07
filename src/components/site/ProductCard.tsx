@@ -84,12 +84,6 @@ export function ProductCard({ product }: { product: Product }) {
             search={{ productId: product.id }}
             onClick={() => {
               addToCart(product.id);
-              showCustomerNotification(
-                `${product.name} — CHECKOUT`,
-                "Redirecting to instant checkout...",
-                "success",
-                product.image
-              );
             }}
             className={cn(
               "flex flex-1 items-center justify-center rounded-md bg-gold px-3 py-2.5 text-xs font-bold text-midnight transition-colors hover:bg-gold-light",

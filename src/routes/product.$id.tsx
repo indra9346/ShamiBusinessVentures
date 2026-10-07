@@ -122,12 +122,6 @@ function ProductDetail() {
               search={{ productId: product.id }}
               onClick={() => {
                 addToCart(product.id, qty);
-                showCustomerNotification(
-                  `${product.name} — CHECKOUT`,
-                  `${qty} × ${product.name} · Instant checkout`,
-                  "success",
-                  product.image
-                );
               }}
               className={cn(
                 "flex-1 rounded-md bg-gold px-6 py-3.5 text-center text-sm font-bold text-midnight transition-colors hover:bg-gold-light sm:flex-none",

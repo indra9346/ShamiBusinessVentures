@@ -8,7 +8,10 @@ import { useEmailOtp } from "@/lib/otp";
 import { useApp } from "@/lib/store";
 
 export const Route = createFileRoute("/login")({
-  validateSearch: z.object({ next: z.enum(["/checkout"]).optional() }),
+  validateSearch: z.object({
+    next: z.enum(["/checkout"]).optional(),
+    productId: z.string().optional(),
+  }),
   head: () => ({
     meta: [
       { title: "Customer Login | Shami Business Ventures" },
@@ -35,7 +38,7 @@ const KNOWN_NAMES: Record<string, string> = {
 function LoginPage() {
   const { login } = useApp();
   const navigate = useNavigate();
-  const { next } = Route.useSearch();
+  const { next, productId } = Route.useSearch();
   const [email, setEmail] = useState("rahul.d@gmail.com");
   const [phone, setPhone] = useState("9876543210");
   const otp = useEmailOtp();
@@ -59,7 +62,7 @@ function LoginPage() {
       description: `Signed in as ${name}`,
     });
     if (next === "/checkout") {
-      navigate({ to: "/checkout", replace: true });
+      navigate({ to: "/checkout", search: { productId }, replace: true });
     } else {
       navigate({ to: "/account", replace: true });
     }

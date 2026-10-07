@@ -31,20 +31,39 @@ const steps = ["Address", "Delivery", "Payment", "Review", "Confirmation"];
 const methods = ["UPI", "Credit Card", "Debit Card", "Net Banking", "Cash on Delivery"];
 
 function Checkout() {
-  const { user, hydrated, cartItems, products, clearCart, addresses, placeOrder, coupons } =
+  const { user, hydrated, cartItems, products, clearCart, addresses, addAddress, placeOrder, coupons } =
     useApp();
   const { productId } = Route.useSearch();
   const navigate = useNavigate();
   useEffect(() => {
     if (hydrated && !user)
-      void navigate({ to: "/login", search: { next: "/checkout" }, replace: true });
-  }, [hydrated, user, navigate]);
+      void navigate({ to: "/login", search: { next: "/checkout", productId }, replace: true });
+  }, [hydrated, user, navigate, productId]);
   const [step, setStep] = useState(0);
   const [addr, setAddr] = useState(addresses[0]?.id ?? "");
+  const [addressFormOpen, setAddressFormOpen] = useState(addresses.length === 0);
+  const [addressForm, setAddressForm] = useState({
+    label: "Home",
+    name: user?.name ?? "",
+    phone: user?.phone ?? "",
+    line: "",
+    city: "",
+    state: "Karnataka",
+    pin: "",
+    landmark: "",
+  });
   const [ship, setShip] = useState("Standard");
   const [method, setMethod] = useState("UPI");
   const [couponCode, setCouponCode] = useState("");
   const [placedId, setPlacedId] = useState<string | null>(null);
+  useEffect(() => {
+    if (addresses.length > 0) setAddressFormOpen(false);
+    if (addr && !addresses.some((address) => address.id === addr)) {
+      setAddr(addresses[0]?.id ?? "");
+    } else if (!addr && addresses.length > 0) {
+      setAddr(addresses[0]!.id);
+    }
+  }, [addresses, addr]);
   const selectedProduct = productId ? products.find((p) => p.id === productId) : undefined;
   const checkoutItems = productId
     ? cartItems.filter((line) => line.product.id === productId)
@@ -71,7 +90,7 @@ function Checkout() {
           <p className="mt-2 text-sm text-slate">Your cart will be saved while you sign in.</p>
           <Link
             to="/login"
-            search={{ next: "/checkout" }}
+            search={{ next: "/checkout", productId }}
             className="mt-5 inline-flex rounded-md bg-gold px-6 py-3 text-sm font-bold text-midnight"
           >
             Continue to login
@@ -104,6 +123,36 @@ function Checkout() {
       return;
     }
     setStep(step + 1);
+  };
+
+  const saveAddress = () => {
+    const phoneDigits = addressForm.phone.replace(/\D/g, "");
+    if (
+      !addressForm.name.trim() ||
+      phoneDigits.length < 10 ||
+      !addressForm.line.trim() ||
+      !addressForm.city.trim() ||
+      !/^\d{6}$/.test(addressForm.pin.trim())
+    ) {
+      toast.error("Enter your name, valid phone, full address, city and 6-digit PIN code");
+      return;
+    }
+    const id = `A${Date.now()}`;
+    addAddress({
+      id,
+      label: addressForm.label.trim() || "Delivery",
+      name: addressForm.name.trim(),
+      phone: addressForm.phone.trim(),
+      line: addressForm.line.trim(),
+      city: addressForm.city.trim(),
+      state: addressForm.state.trim(),
+      pin: addressForm.pin.trim(),
+      landmark: addressForm.landmark.trim(),
+      default: addresses.length === 0,
+    });
+    setAddr(id);
+    setAddressFormOpen(false);
+    toast.success("Delivery address saved");
   };
 
   const selectedAddress = addresses.find((a) => a.id === addr);
@@ -148,6 +197,11 @@ function Checkout() {
               <>
                 <h2 className="text-lg font-bold text-navy">Delivery Address</h2>
                 <div className="mt-5 space-y-3">
+                  {addresses.length === 0 && !addressFormOpen && (
+                    <p className="rounded-lg border border-dashed border-border p-4 text-sm text-slate">
+                      You have no saved delivery addresses. Add your address to continue.
+                    </p>
+                  )}
                   {addresses.map((a) => (
                     <button
                       key={a.id}
@@ -168,12 +222,45 @@ function Checkout() {
                       </p>
                     </button>
                   ))}
-                  <Link
-                    to="/account/addresses"
-                    className="text-sm font-semibold text-navy hover:text-gold"
-                  >
-                    + Add new address
-                  </Link>
+                  {!addressFormOpen && (
+                    <button type="button" onClick={() => setAddressFormOpen(true)} className="text-sm font-semibold text-navy hover:text-gold">
+                      + Add new address
+                    </button>
+                  )}
+                  {addressFormOpen && (
+                    <div className="rounded-lg border border-border bg-ivory p-4">
+                      <h3 className="font-semibold text-navy">Add your delivery address</h3>
+                      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                        {([
+                          ["label", "Address label (Home, Shop, etc.)"],
+                          ["name", "Recipient name *"],
+                          ["phone", "Phone number *"],
+                          ["line", "Street / building address *"],
+                          ["city", "City *"],
+                          ["state", "State"],
+                          ["pin", "6-digit PIN code *"],
+                          ["landmark", "Landmark (optional)"],
+                        ] as const).map(([key, label]) => (
+                          <label key={key} className="text-xs font-medium text-slate">
+                            {label}
+                            <input
+                              value={addressForm[key]}
+                              onChange={(event) => setAddressForm((form) => ({ ...form, [key]: event.target.value }))}
+                              inputMode={key === "phone" || key === "pin" ? "numeric" : undefined}
+                              maxLength={key === "pin" ? 6 : undefined}
+                              className="mt-1 h-10 w-full rounded-md border border-border bg-card px-3 text-sm text-navy outline-none focus:border-gold"
+                            />
+                          </label>
+                        ))}
+                      </div>
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        <button type="button" onClick={saveAddress} className="rounded-md bg-navy px-4 py-2 text-sm font-semibold text-white">Save address</button>
+                        {addresses.length > 0 && (
+                          <button type="button" onClick={() => setAddressFormOpen(false)} className="rounded-md border border-border px-4 py-2 text-sm font-semibold text-navy">Cancel</button>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </>
             )}

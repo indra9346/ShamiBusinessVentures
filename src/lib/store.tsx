@@ -26,7 +26,7 @@ import {
 } from "./data";
 
 export type Role = "customer" | "vendor" | "admin";
-export type SessionUser = { name: string; email: string; role: Role; phone?: string; avatar?: string };
+export type SessionUser = { name: string; email: string; role: Role; phone?: string; avatar?: string; addressKey?: string };
 export type CartLine = { id: string; qty: number };
 export type Address = (typeof seedAddresses)[number];
 export type Customer = (typeof seedCustomers)[number];
@@ -138,7 +138,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [returns, setReturns] = useState<ReturnRequest[]>(seedReturns);
   const [coupons, setCoupons] = useState<Coupon[]>(seedCoupons);
   const [notifications, setNotifications] = useState<Notif[]>(seedNotifications);
-  const [addresses, setAddresses] = useState<Address[]>(seedAddresses);
+  const [addresses, setAddresses] = useState<Address[]>([]);
+  const [addressesByUser, setAddressesByUser] = useState<Record<string, Address[]>>({});
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
@@ -149,9 +150,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
           user: SessionUser | null; cart: CartLine[]; wishlist: string[];
           categories: StoreCategory[]; products: Product[]; batches: PurchaseBatch[];
           orders: Order[]; vendors: Vendor[]; customers: Customer[];
-          reviews: Review[]; returns: ReturnRequest[]; coupons: Coupon[]; notifications: Notif[]; addresses: Address[];
+          reviews: Review[]; returns: ReturnRequest[]; coupons: Coupon[]; notifications: Notif[];
+          addressesByUser: Record<string, Address[]>;
         }>;
-        setUser(s.user ?? null);
+        const restoredUser = s.user ? { ...s.user, addressKey: s.user.addressKey ?? addressOwnerKey(s.user) } : null;
+        const savedAddresses = s.addressesByUser ?? {};
+        setUser(restoredUser);
+        setAddressesByUser(savedAddresses);
+        setAddresses(restoredUser?.addressKey ? savedAddresses[restoredUser.addressKey] ?? [] : []);
         setCart(s.cart ?? []);
         setWishlist([]);
         if (s.categories?.length) {
@@ -171,13 +177,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (s.returns?.length) setReturns(s.returns);
         if (s.coupons?.length) setCoupons(s.coupons);
         if (s.notifications?.length) setNotifications(s.notifications);
-        if (s.addresses?.length) setAddresses(s.addresses);
-      } else {
-        setCart([
-          { id: seedProducts[0]!.id, qty: 2 },
-          { id: seedProducts[15]!.id, qty: 3 },
-        ]);
-        setWishlist([seedProducts[8]!.id, seedProducts[21]!.id, seedProducts[40]!.id]);
       }
     } catch {
       /* ignore */
@@ -186,16 +185,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    if (!hydrated || !user?.addressKey) return;
+    setAddressesByUser((saved) => saved[user.addressKey!] === addresses
+      ? saved
+      : { ...saved, [user.addressKey!]: addresses });
+  }, [hydrated, user, addresses]);
+
+  useEffect(() => {
     if (!hydrated) return;
     try {
       localStorage.setItem(
         KEY,
-        JSON.stringify({ user, cart, wishlist, categories, products, batches, orders, vendors, customers, reviews, returns, coupons, notifications, addresses }),
+        JSON.stringify({ user, cart, wishlist, categories, products, batches, orders, vendors, customers, reviews, returns, coupons, notifications, addressesByUser }),
       );
     } catch {
       /* quota */
     }
-  }, [hydrated, user, cart, wishlist, categories, products, batches, orders, vendors, customers, reviews, returns, coupons, notifications, addresses]);
+  }, [hydrated, user, cart, wishlist, categories, products, batches, orders, vendors, customers, reviews, returns, coupons, notifications, addressesByUser]);
 
 
   const value = useMemo<AppState>(() => {
@@ -212,8 +218,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return {
       hydrated,
       user,
-      login: (u) => setUser(u),
-      logout: () => setUser(null),
+      login: (u) => {
+        const signedInUser = { ...u, addressKey: u.addressKey ?? addressOwnerKey(u) };
+        setUser(signedInUser);
+        setAddresses(signedInUser.addressKey ? addressesByUser[signedInUser.addressKey] ?? [] : []);
+      },
+      logout: () => { setUser(null); setAddresses([]); },
       updateProfile: (p) => setUser((u) => (u ? { ...u, ...p } : u)),
 
       cart,
@@ -501,13 +511,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
       deleteAddress: (id) => setAddresses((l) => l.filter((a) => a.id !== id)),
       setDefaultAddress: (id) => setAddresses((l) => l.map((a) => ({ ...a, default: a.id === id }))),
     };
-  }, [user, cart, wishlist, categories, products, batches, orders, vendors, customers, reviews, returns, coupons, notifications, addresses]);
+  }, [user, cart, wishlist, categories, products, batches, orders, vendors, customers, reviews, returns, coupons, notifications, addresses, addressesByUser]);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 }
 
 const today = () =>
   new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }).replace(/ /g, " ");
+
+function addressOwnerKey(user: SessionUser | null) {
+  if (!user || user.role !== "customer") return "";
+  if (user.addressKey) return user.addressKey;
+  const phone = user.phone?.replace(/\D/g, "").slice(-10);
+  if (phone) return `phone:${phone}`;
+  const email = user.email.trim().toLowerCase();
+  return email ? `email:${email}` : "";
+}
 
 export function useApp() {
   const ctx = useContext(AppContext);
