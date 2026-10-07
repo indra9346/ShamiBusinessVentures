@@ -1,6 +1,5 @@
 import type { ReactNode } from "react";
-import { Link } from "@tanstack/react-router";
-import { LogoMark } from "@/components/brand/Logo";
+import { Logo } from "@/components/brand/Logo";
 import { LanguageSwitcher } from "@/components/site/LanguageSwitcher";
 
 export function AuthCard({
@@ -17,26 +16,26 @@ export function AuthCard({
   return (
     <div className="grid min-h-screen bg-hero-gradient lg:grid-cols-2">
       <div className="relative hidden flex-col justify-between p-12 lg:flex">
-        <Link to="/">
-          <LogoMark className="h-12 brightness-0 invert-[0.97]" />
-        </Link>
+        <Logo variant="light" />
         <div>
           <h2 className="max-w-md text-3xl leading-tight font-extrabold text-white">
-            A premium, trustworthy <span className="text-gold">business marketplace</span>
+            Grain Bazar for <span className="text-gold">business essentials</span>
           </h2>
           <p className="mt-4 max-w-md text-sm text-white/60">
-            Mill-direct sugar and essentials, verified vendors, and complete order visibility for customers,
-            vendors and administrators.
+            A simpler way to source grains and essentials, manage orders and work with verified
+            vendors.
           </p>
         </div>
-        <p className="text-xs text-white/40">© 2026 Shami Business Ventures Pvt. Ltd.</p>
+        <p className="text-xs text-white/40">
+          © 2026 Grain Bazar · Shami Business Ventures Pvt. Ltd.
+        </p>
       </div>
 
       <div className="flex items-center justify-center bg-background p-6 sm:p-12">
         <div className="w-full max-w-md">
           <div className="flex items-center justify-between gap-3">
             <div className="lg:hidden">
-              <LogoMark className="h-11" />
+              <Logo variant="dark" />
             </div>
             <LanguageSwitcher className="ml-auto" />
           </div>

@@ -9,10 +9,18 @@ import { useApp } from "@/lib/store";
 export const Route = createFileRoute("/vendor/login")({
   head: () => ({
     meta: [
-      { title: "Vendor Login | Shami Business Ventures" },
-      { name: "description", content: "Vendor sign-in with email or phone OTP for product, order, inventory and payout management." },
-      { property: "og:title", content: "Vendor Login | Shami" },
-      { property: "og:description", content: "Manage listings, orders, stock and earnings with OTP verification." },
+      { title: "Vendor Login | Grain Bazar" },
+      {
+        name: "description",
+        content:
+          "Vendor sign-in with email or phone OTP for product, order, inventory and payout management.",
+      },
+      { property: "og:title", content: "Vendor Login | Grain Bazar" },
+      {
+        property: "og:description",
+        content:
+          "Manage your Grain Bazar listings, orders, stock and earnings with OTP verification.",
+      },
     ],
   }),
   component: VendorLogin,

@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 export function Logo({
   to = "/",
   className,
+  variant = "light",
 }: {
   to?: string;
   className?: string;
@@ -23,7 +24,12 @@ export function Logo({
         height={512}
         className="h-10 w-10 rounded-lg bg-white object-contain p-1 shadow-sm sm:h-11 sm:w-11"
       />
-      <span className="ml-2.5 whitespace-nowrap text-sm font-extrabold tracking-wide text-white sm:text-base">
+      <span
+        className={cn(
+          "ml-2.5 whitespace-nowrap text-sm font-extrabold tracking-wide sm:text-base",
+          variant === "light" ? "text-white" : "text-navy",
+        )}
+      >
         GRAIN BAZAR
       </span>
     </Link>
