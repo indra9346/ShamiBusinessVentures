@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, Outlet, useMatch } from "@tanstack/react-router";
 import { ArrowLeft } from "lucide-react";
 import { SiteLayout, Breadcrumbs } from "@/components/site/SiteLayout";
 import { TileGrid } from "@/components/site/TileGrid";
@@ -29,6 +29,7 @@ export const Route = createFileRoute("/categories/$slug")({
 function CategoryLevel() {
   const { slug } = Route.useParams();
   const node = getCategoryNode(slug);
+  const childMatch = useMatch({ from: "/categories/$slug/$child", shouldThrow: false });
 
   if (!node) {
     return (
@@ -41,6 +42,10 @@ function CategoryLevel() {
         </div>
       </SiteLayout>
     );
+  }
+
+  if (childMatch) {
+    return <Outlet />;
   }
 
   return (
