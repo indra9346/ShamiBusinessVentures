@@ -56,9 +56,6 @@ export function SiteFooter() {
               {[
                 ["About Us", "/about"],
                 ["Contact", "/contact"],
-                ["Become a Vendor", "/vendor/register"],
-                ["Vendor Login", "/vendor/login"],
-                ["Admin Login", "/admin/login"],
               ].map(([label, to]) => (
                 <li key={to}>
                   <Link to={to!} className="transition-colors hover:text-gold">

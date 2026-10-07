@@ -1,11 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { supabase } from "@/integrations/supabase/client";
+import type { Role } from "@/lib/store";
 
-const OTP_TTL = 5 * 60; // seconds
-const RESEND_AFTER = 30; // seconds
+const OTP_TTL = 5 * 60;
+const RESEND_AFTER = 30;
 
 export type OtpStage = "request" | "verify";
 export type OtpChannel = "email" | "phone";
+type OtpOptions = { shouldCreateUser?: boolean; requiredRole?: Role };
+type OtpMetadata = Record<string, string>;
 
 export function normalisePhone(value: string) {
   return value.replace(/\D/g, "").slice(-10);
@@ -19,12 +23,8 @@ export function isValidEmail(value: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(value.trim());
 }
 
-/**
- * Email / phone OTP verification for the demo login flows.
- * A 6-digit code is generated and "sent" to the destination — in this demo the
- * code is surfaced in the toast so it can be tested without a mailbox or SIM.
- */
-export function useEmailOtp() {
+/** Sends and verifies one-time codes through the configured Supabase Auth project. */
+export function useEmailOtp({ shouldCreateUser = true, requiredRole }: OtpOptions = {}) {
   const [stage, setStage] = useState<OtpStage>("request");
   const [channel, setChannel] = useState<OtpChannel>("email");
   const [code, setCode] = useState("");
@@ -32,20 +32,22 @@ export function useEmailOtp() {
   const [verifying, setVerifying] = useState(false);
   const [expiresIn, setExpiresIn] = useState(0);
   const [resendIn, setResendIn] = useState(0);
-  const issued = useRef<string | null>(null);
+  const destinationRef = useRef("");
+  const metadataRef = useRef<OtpMetadata | undefined>(undefined);
 
   useEffect(() => {
     if (stage !== "verify") return;
-    const t = setInterval(() => {
-      setExpiresIn((v) => (v > 0 ? v - 1 : 0));
-      setResendIn((v) => (v > 0 ? v - 1 : 0));
+    const timer = setInterval(() => {
+      setExpiresIn((value) => Math.max(0, value - 1));
+      setResendIn((value) => Math.max(0, value - 1));
     }, 1000);
-    return () => clearInterval(t);
+    return () => clearInterval(timer);
   }, [stage]);
 
   const send = useCallback(
-    async (destination: string, via: OtpChannel = channel) => {
-      if (via === "email" && !isValidEmail(destination)) {
+    async (destination: string, via: OtpChannel = channel, metadata?: OtpMetadata) => {
+      const cleanEmail = destination.trim().toLowerCase();
+      if (via === "email" && !isValidEmail(cleanEmail)) {
         toast.error("Enter a valid email address");
         return false;
       }
@@ -53,46 +55,103 @@ export function useEmailOtp() {
         toast.error("Enter a valid 10-digit Indian mobile number");
         return false;
       }
+
       setSending(true);
-      await new Promise((r) => setTimeout(r, 600));
-      const generated = String(Math.floor(100000 + Math.random() * 900000));
-      issued.current = generated;
+      const requestMetadata = metadata ?? metadataRef.current;
+      let result;
+      try {
+        result = via === "email"
+          ? await supabase.auth.signInWithOtp({
+              email: cleanEmail,
+              options: {
+                shouldCreateUser,
+                ...(requestMetadata ? { data: requestMetadata } : {}),
+              },
+            })
+          : await supabase.auth.signInWithOtp({
+              phone: `+91${normalisePhone(destination)}`,
+              options: {
+                shouldCreateUser,
+                ...(requestMetadata ? { data: requestMetadata } : {}),
+              },
+            });
+      } catch {
+        toast.error("Could not connect to the verification service");
+        return false;
+      } finally {
+        setSending(false);
+      }
+
+      if (result.error) {
+        toast.error("Could not send the verification code", { description: result.error.message });
+        return false;
+      }
+
+      destinationRef.current = via === "email" ? cleanEmail : `+91${normalisePhone(destination)}`;
+      metadataRef.current = requestMetadata;
+      setChannel(via);
       setCode("");
       setStage("verify");
       setExpiresIn(OTP_TTL);
       setResendIn(RESEND_AFTER);
-      setSending(false);
-      const label = via === "phone" ? `+91 ${normalisePhone(destination)}` : destination;
-      toast.success(via === "phone" ? `OTP sent by SMS to ${label}` : `Verification code sent to ${label}`, {
-        description: `Demo code: ${generated} · valid for 5 minutes`,
-        duration: 12000,
+      toast.success(via === "phone" ? "Verification code sent by SMS" : "Verification code sent by email", {
+        description: `Check ${via === "phone" ? destinationRef.current : cleanEmail}. The code expires in 5 minutes.`,
       });
       return true;
     },
-    [channel],
+    [channel, shouldCreateUser],
   );
 
   const verify = useCallback(async () => {
-    if (code.length !== 6) {
+    if (!/^\d{6}$/.test(code)) {
       toast.error("Enter the 6-digit verification code");
       return false;
     }
-    if (expiresIn <= 0) {
+    if (expiresIn <= 0 || !destinationRef.current) {
       toast.error("This code has expired", { description: "Request a new verification code." });
       return false;
     }
+
     setVerifying(true);
-    await new Promise((r) => setTimeout(r, 500));
-    setVerifying(false);
-    if (code !== issued.current) {
-      toast.error("Incorrect verification code");
+    let result;
+    try {
+      result = channel === "email"
+        ? await supabase.auth.verifyOtp({ email: destinationRef.current, token: code, type: "email" })
+        : await supabase.auth.verifyOtp({ phone: destinationRef.current, token: code, type: "sms" });
+    } catch {
+      toast.error("Could not connect to the verification service");
+      return false;
+    } finally {
+      setVerifying(false);
+    }
+
+    if (result.error || !result.data.user) {
+      toast.error("The verification code could not be confirmed", {
+        description: result.error?.message ?? "Request a new code and try again.",
+      });
       return false;
     }
+
+    if (requiredRole) {
+      const { data: roleRecord, error: roleError } = await supabase
+        .from("user_roles")
+        .select("role")
+        .eq("user_id", result.data.user.id)
+        .eq("role", requiredRole)
+        .maybeSingle();
+      if (roleError || !roleRecord) {
+        await supabase.auth.signOut();
+        toast.error(`This account is not authorized for ${requiredRole} access`);
+        return false;
+      }
+    }
+
     return true;
-  }, [code, expiresIn]);
+  }, [channel, code, expiresIn, requiredRole]);
 
   const reset = useCallback(() => {
-    issued.current = null;
+    destinationRef.current = "";
+    metadataRef.current = undefined;
     setCode("");
     setStage("request");
     setExpiresIn(0);
@@ -117,7 +176,7 @@ export function useEmailOtp() {
 }
 
 export function formatCountdown(seconds: number) {
-  const m = Math.floor(seconds / 60);
-  const s = seconds % 60;
-  return `${m}:${String(s).padStart(2, "0")}`;
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  return `${minutes}:${String(remainder).padStart(2, "0")}`;
 }

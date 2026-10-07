@@ -171,12 +171,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
         // safely attributed to the current customer, so only restore owner-scoped lists.
         setWishlist(restoredOwner ? savedWishlists[restoredOwner] ?? [] : []);
         if (s.categories?.length) {
-          setCategories(
-            s.categories.map((category) => {
-              const currentVisual = storeCategorySeed.find((seedCategory) => seedCategory.name === category.name);
-              return currentVisual ? { ...category, image: currentVisual.image } : category;
-            }),
-          );
+          const savedByName = new Map(s.categories.map((category) => [category.name.toLowerCase(), category]));
+          const seededNames = new Set(storeCategorySeed.map((category) => category.name.toLowerCase()));
+          const mergedSeed = storeCategorySeed.map((seedCategory) => {
+            const saved = savedByName.get(seedCategory.name.toLowerCase());
+            if (!saved) return seedCategory;
+            const merged = { ...seedCategory, ...saved, image: saved.image || seedCategory.image };
+            if (merged.name === "Rice" && merged.grades.some((grade) => ["Grade A", "Grade B"].includes(grade))) {
+              merged.grades = ["Raw Rice", "Steam Rice", "Premium Rice"];
+            }
+            return merged;
+          });
+          setCategories([...mergedSeed, ...s.categories.filter((category) => !seededNames.has(category.name.toLowerCase()))]);
         }
         if (s.products?.length) setProducts(s.products);
         if (s.batches?.length) setBatches(s.batches);

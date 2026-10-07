@@ -29,15 +29,15 @@ export const Route = createFileRoute("/vendor/login")({
 function VendorLogin() {
   const { login } = useApp();
   const navigate = useNavigate();
-  const [email, setEmail] = useState("imran@shamisugar.in");
-  const [phone, setPhone] = useState("9845012345");
-  const otp = useEmailOtp();
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
+  const otp = useEmailOtp({ shouldCreateUser: false, requiredRole: "vendor" });
   const destination = otp.channel === "phone" ? phone : email.trim();
 
   const finish = async () => {
     const ok = await otp.verify();
     if (!ok) return;
-    login({ name: "Imran Shami", email: email.trim().toLowerCase(), role: "vendor" });
+    login({ name: email.trim().split("@")[0] || "Vendor", email: otp.channel === "email" ? email.trim().toLowerCase() : "", role: "vendor", ...(otp.channel === "phone" ? { phone } : {}) });
     toast.success(otp.channel === "phone" ? "Business mobile verified" : "Business email verified");
     navigate({ to: "/vendor/dashboard" });
   };

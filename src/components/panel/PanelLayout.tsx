@@ -1,6 +1,6 @@
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { Bell, LogOut, Menu, Search, X } from "lucide-react";
-import { useState, useMemo, type ReactNode } from "react";
+import { useState, useMemo, useEffect, type ReactNode } from "react";
 import { LogoMark } from "@/components/brand/Logo";
 import { useApp } from "@/lib/store";
 import { cn } from "@/lib/utils";
@@ -8,6 +8,7 @@ import { notificationTarget } from "@/lib/notification-target";
 import { notificationBelongsToUser } from "@/lib/account-identity";
 import { Input } from "@/components/ui/input";
 import { LanguageSwitcher } from "@/components/site/LanguageSwitcher";
+import { supabase } from "@/integrations/supabase/client";
 
 export type NavItem = {
   label: string;
@@ -33,6 +34,7 @@ export function PanelLayout({
   const [globalQuery, setGlobalQuery] = useState("");
   const {
     user,
+    hydrated,
     logout,
     notifications,
     markRead,
@@ -45,6 +47,42 @@ export function PanelLayout({
   } = useApp();
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const [verifiedRole, setVerifiedRole] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    setVerifiedRole(false);
+    if (!hydrated) return () => { active = false; };
+    void (async () => {
+      const { data: { user: authUser } } = await supabase.auth.getUser();
+      if (!authUser || user?.role !== tone) {
+        if (active) {
+          logout();
+          navigate({ to: tone === "admin" ? "/admin/login" : tone === "vendor" ? "/vendor/login" : "/login", replace: true });
+        }
+        return;
+      }
+      const { data: roleRecord, error } = await supabase.from("user_roles").select("role").eq("user_id", authUser.id).eq("role", tone).maybeSingle();
+      if (!active) return;
+      if (error || !roleRecord) {
+        await supabase.auth.signOut();
+        logout();
+        navigate({ to: tone === "admin" ? "/admin/login" : tone === "vendor" ? "/vendor/login" : "/login", replace: true });
+        return;
+      }
+      setVerifiedRole(true);
+    })().catch(() => {
+      if (active) {
+        logout();
+        navigate({ to: tone === "admin" ? "/admin/login" : tone === "vendor" ? "/vendor/login" : "/login", replace: true });
+      }
+    });
+    return () => { active = false; };
+  }, [hydrated, user?.role, tone, logout, navigate]);
+
+  if (!hydrated || user?.role !== tone || !verifiedRole) {
+    return <div className="grid min-h-screen place-items-center bg-panel text-sm text-slate">Redirecting to secure sign in…</div>;
+  }
 
   const relevantNotifs = useMemo(() => {
     return notifications.filter((n) => {

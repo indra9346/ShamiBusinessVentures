@@ -6,7 +6,7 @@ import { PanelLayout } from "@/components/panel/PanelLayout";
 import { DataTable, Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { Pager } from "@/components/panel/pager";
 import { adminNav } from "@/lib/panel-nav";
-import { categories, inr, vendors, type Product } from "@/lib/data";
+import { inr, vendors, type Product } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -58,10 +58,11 @@ export const Route = createFileRoute("/admin/products")({
 
 const PAGE_SIZE = 10;
 
-function emptyForm() {
+function emptyForm(defaultCategory = "Rice", defaultSubcategory = "Raw Rice") {
   return {
     name: "",
-    category: categories[0]!.name,
+    category: defaultCategory,
+    subcategory: defaultSubcategory,
     vendorId: vendors[0]!.id,
     mrp: "",
     price: "",
@@ -84,8 +85,9 @@ function AdminProducts() {
 }
 
 function AdminProductsPanel() {
-  const { products, addProduct, updateProduct, deleteProduct, duplicateProduct, getFIFOCost } =
+  const { products, categories, addProduct, updateProduct, deleteProduct, duplicateProduct, getFIFOCost } =
     useApp();
+  const categoryChoices = categories.map((c) => ({ name: c.name, subs: c.grades }));
   const [q, setQ] = useState("");
   const [category, setCategory] = useState("all");
   const [vendorId, setVendorId] = useState("all");
@@ -94,7 +96,7 @@ function AdminProductsPanel() {
   const [page, setPage] = useState(1);
 
   const [addOpen, setAddOpen] = useState(false);
-  const [form, setForm] = useState(emptyForm());
+  const [form, setForm] = useState(emptyForm(categoryChoices[0]?.name, categoryChoices[0]?.subs[0]));
 
   const [quickOpen, setQuickOpen] = useState(false);
   const [quickForm, setQuickForm] = useState({ name: "", qty: "", price: "" });
@@ -208,7 +210,7 @@ function AdminProductsPanel() {
       vendor: vendor.business,
       vendorId: vendor.id,
       category: form.category,
-      subcategory: categories.find((c) => c.name === form.category)?.subs[0] ?? form.category,
+      subcategory: form.subcategory || form.category,
       image: form.image.trim() || products[0]!.image,
       mrp: Number(form.mrp),
       price: Number(form.price),
@@ -241,7 +243,7 @@ function AdminProductsPanel() {
     addProduct(product);
     toast.success(`${product.name} added to catalogue`);
     setAddOpen(false);
-    setForm(emptyForm());
+    setForm(emptyForm(categoryChoices[0]?.name, categoryChoices[0]?.subs[0]));
   };
 
   const handleExportProducts = () => {
@@ -328,7 +330,7 @@ function AdminProductsPanel() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Categories</SelectItem>
-                {categories.map((c) => (
+                {categoryChoices.map((c) => (
                   <SelectItem key={c.name} value={c.name}>
                     {c.name}
                   </SelectItem>
@@ -451,13 +453,13 @@ function AdminProductsPanel() {
                       <Label>Category</Label>
                       <Select
                         value={form.category}
-                        onValueChange={(v) => setForm({ ...form, category: v })}
+                        onValueChange={(v) => setForm({ ...form, category: v, subcategory: categoryChoices.find((c) => c.name === v)?.subs[0] ?? v })}
                       >
                         <SelectTrigger>
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          {categories.map((c) => (
+                          {categoryChoices.map((c) => (
                             <SelectItem key={c.name} value={c.name}>
                               {c.name}
                             </SelectItem>
@@ -483,6 +485,20 @@ function AdminProductsPanel() {
                         </SelectContent>
                       </Select>
                     </div>
+                  </div>
+                  <div>
+                    <Label>Subcategory</Label>
+                    <Select
+                      value={form.subcategory}
+                      onValueChange={(v) => setForm({ ...form, subcategory: v })}
+                    >
+                      <SelectTrigger><SelectValue placeholder="Choose subcategory" /></SelectTrigger>
+                      <SelectContent>
+                        {(categoryChoices.find((c) => c.name === form.category)?.subs ?? []).map((subcategory) => (
+                          <SelectItem key={subcategory} value={subcategory}>{subcategory}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
                   <div className="grid grid-cols-3 gap-3">
                     <div>

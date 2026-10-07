@@ -91,9 +91,16 @@ export type StoreCategory = {
 };
 
 export const storeCategorySeed: StoreCategory[] = [
-  { id: "C1", name: "Rice", tagline: "Raw, steam & premium grades", image: premiumRiceCategoryImg, grades: ["Grade A", "Grade B", "Premium Rice"], enabled: true, order: 1 },
+  { id: "C1", name: "Rice", tagline: "Raw, steam & premium grades", image: premiumRiceCategoryImg, grades: ["Raw Rice", "Steam Rice", "Premium Rice"], enabled: true, order: 1 },
   { id: "C2", name: "Sugar", tagline: "Mill-fresh refined sugar", image: premiumSugarCategoryImg, grades: ["Grade S1"], enabled: true, order: 2 },
   { id: "C3", name: "Oil", tagline: "Edible oils in every pack size", image: premiumOilCategoryImg, grades: ["Sunflower Oil", "Groundnut Oil", "Palm Oil"], enabled: true, order: 3 },
+  { id: "C4", name: "Pulses", tagline: "Everyday dals and pulses", image: dalImg, grades: ["Toor Dal", "Urad Dal", "Chana Dal", "Moong Dal"], enabled: false, order: 4 },
+  { id: "C5", name: "Flours", tagline: "Fresh staples for every kitchen", image: riceImg, grades: ["Chakki Atta", "Maida", "Besan"], enabled: false, order: 5 },
+  { id: "C6", name: "Spices", tagline: "Quality spices and seasonings", image: dalImg, grades: ["Turmeric", "Chilli Powder", "Coriander"], enabled: false, order: 6 },
+  { id: "C7", name: "Dry Fruits", tagline: "Carefully sourced dry fruits", image: dalImg, grades: ["Cashew", "Almond", "Raisins"], enabled: false, order: 7 },
+  { id: "C8", name: "Tea & Coffee", tagline: "Tea and coffee for every day", image: dalImg, grades: ["CTC Tea", "Filter Coffee"], enabled: false, order: 8 },
+  { id: "C9", name: "Jaggery", tagline: "Traditional jaggery products", image: sugarImg, grades: ["Organic Jaggery", "Jaggery Powder"], enabled: false, order: 9 },
+  { id: "C10", name: "Salt & Sweeteners", tagline: "Salt and natural sweeteners", image: sugarImg, grades: ["Iodised Salt", "Rock Salt"], enabled: false, order: 10 },
 ];
 
 /* Storefront visibility: Rice, Sugar (S1 only) and Oil. */

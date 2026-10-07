@@ -22,15 +22,15 @@ export const Route = createFileRoute("/admin/login")({
 function AdminLogin() {
   const { login } = useApp();
   const navigate = useNavigate();
-  const [email, setEmail] = useState("admin@shamiventures.in");
-  const [phone, setPhone] = useState("9900112233");
-  const otp = useEmailOtp();
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
+  const otp = useEmailOtp({ shouldCreateUser: false, requiredRole: "admin" });
   const destination = otp.channel === "phone" ? phone : email.trim();
 
   const finish = async () => {
     const ok = await otp.verify();
     if (!ok) return;
-    login({ name: "Platform Admin", email: email.trim().toLowerCase(), role: "admin" });
+    login({ name: "Platform Admin", email: otp.channel === "email" ? email.trim().toLowerCase() : "", role: "admin", ...(otp.channel === "phone" ? { phone } : {}) });
     toast.success(otp.channel === "phone" ? "Admin mobile verified" : "Admin email verified");
     navigate({ to: "/admin/dashboard" });
   };

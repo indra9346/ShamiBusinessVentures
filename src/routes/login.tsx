@@ -30,18 +30,13 @@ export const Route = createFileRoute("/login")({
   component: LoginPage,
 });
 
-const KNOWN_NAMES: Record<string, string> = {
-  "rahul.d@gmail.com": "Rahul Deshpande",
-  "customer@example.com": "Customer Demo",
-};
-
 function LoginPage() {
   const { login } = useApp();
   const navigate = useNavigate();
   const { next, productId } = Route.useSearch();
-  const [email, setEmail] = useState("rahul.d@gmail.com");
-  const [phone, setPhone] = useState("9876543210");
-  const otp = useEmailOtp();
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
+  const otp = useEmailOtp({ requiredRole: "customer" });
   const destination = otp.channel === "phone" ? phone : email.trim();
 
   const finish = async () => {
@@ -51,7 +46,7 @@ function LoginPage() {
     const name =
       otp.channel === "phone"
         ? "Customer"
-        : (KNOWN_NAMES[clean] ?? clean.split("@")[0]!.replace(/[._]/g, " "));
+        : clean.split("@")[0]!.replace(/[._]/g, " ");
     login({
       name,
       email: otp.channel === "email" ? clean : "",
@@ -78,16 +73,6 @@ function LoginPage() {
           <Link to="/register" className="font-semibold text-gold hover:underline">
             Create an account
           </Link>
-          <div className="mt-2 text-xs">
-            Vendor?{" "}
-            <Link to="/vendor/login" className="font-semibold text-navy hover:text-gold">
-              Vendor login
-            </Link>{" "}
-            · Admin?{" "}
-            <Link to="/admin/login" className="font-semibold text-navy hover:text-gold">
-              Admin login
-            </Link>
-          </div>
         </>
       }
     >

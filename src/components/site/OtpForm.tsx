@@ -12,6 +12,7 @@ export function OtpRequestStep({
   setPhone,
   emailLabel = "Email",
   submitLabel = "Send OTP",
+  metadata,
 }: {
   otp: ReturnType<typeof useEmailOtp>;
   email: string;
@@ -20,6 +21,7 @@ export function OtpRequestStep({
   setPhone: (v: string) => void;
   emailLabel?: string;
   submitLabel?: string;
+  metadata?: Record<string, string>;
 }) {
   const tabs: { key: OtpChannel; label: string }[] = [
     { key: "email", label: "Email OTP" },
@@ -30,7 +32,7 @@ export function OtpRequestStep({
     <form
       onSubmit={(e) => {
         e.preventDefault();
-        void otp.send(otp.channel === "phone" ? phone : email.trim(), otp.channel);
+        void otp.send(otp.channel === "phone" ? phone : email.trim(), otp.channel, metadata);
       }}
       className="space-y-4"
     >
