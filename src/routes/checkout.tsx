@@ -56,6 +56,13 @@ function Checkout() {
   const [method, setMethod] = useState("UPI");
   const [couponCode, setCouponCode] = useState("");
   const [placedId, setPlacedId] = useState<string | null>(null);
+  const [confirmationSummary, setConfirmationSummary] = useState<{
+    subtotal: number;
+    shipCost: number;
+    tax: number;
+    discount: number;
+    total: number;
+  } | null>(null);
   useEffect(() => {
     if (addresses.length > 0) setAddressFormOpen(false);
     if (addr && !addresses.some((address) => address.id === addr)) {
@@ -81,6 +88,7 @@ function Checkout() {
       )
     : 0;
   const total = subtotal + shipCost + tax - discount;
+  const summary = confirmationSummary ?? { subtotal, shipCost, tax, discount, total };
 
   if (!hydrated || !user) {
     return (
@@ -101,20 +109,27 @@ function Checkout() {
   }
 
   const goNext = () => {
+    if (checkoutItems.length === 0) {
+      toast.error("Your cart is empty");
+      void navigate({ to: "/cart" });
+      return;
+    }
     if (step === 0 && !addr) {
       toast.error("Please select or add a delivery address");
       return;
     }
     if (step === 3) {
-      if (checkoutItems.length === 0) {
-        toast.error("Your cart is empty");
-        return;
-      }
+      setConfirmationSummary({ subtotal, shipCost, tax, discount, total });
       const order = placeOrder({
         lines: checkoutItems,
         method,
         payment: method === "Cash on Delivery" ? "COD" : "Paid",
         ...(appliedCoupon ? { coupon: appliedCoupon.code } : {}),
+        subtotal,
+        discount,
+        tax,
+        shipping: shipCost,
+        delivery: ship === "Express" ? "Express Freight — next business day" : "Standard Freight — 2 to 4 days",
       });
       clearCart();
       setPlacedId(order.id);
@@ -329,7 +344,7 @@ function Checkout() {
               <>
                 <h2 className="text-lg font-bold text-navy">Order Review</h2>
                 <div className="mt-5 space-y-3">
-                  {cartItems.map(({ product, qty }) => (
+                  {checkoutItems.map(({ product, qty }) => (
                     <div
                       key={product.id}
                       className="flex items-center gap-3 border-b border-border pb-3 last:border-0"
@@ -414,10 +429,10 @@ function Checkout() {
             <h2 className="text-sm font-bold tracking-wide text-navy uppercase">Summary</h2>
             <div className="mt-4 space-y-2.5 text-sm">
               {[
-                ["Subtotal", inr(subtotal)],
-                ["Delivery", shipCost === 0 ? "Free" : inr(shipCost)],
-                ["GST (5%)", inr(tax)],
-                ...(discount > 0 ? [["Coupon discount", `- ${inr(discount)}`]] : []),
+                ["Subtotal", inr(summary.subtotal)],
+                ["Delivery", summary.shipCost === 0 ? "Free" : inr(summary.shipCost)],
+                ["GST (5%)", inr(summary.tax)],
+                ...(summary.discount > 0 ? [["Coupon discount", `- ${inr(summary.discount)}`]] : []),
               ].map(([k, v]) => (
                 <div key={k} className="flex justify-between">
                   <span className="text-slate">{k}</span>
@@ -427,7 +442,7 @@ function Checkout() {
               <div className="hairline-gold my-2" />
               <div className="flex justify-between text-base font-bold text-navy">
                 <span>Total</span>
-                <span>{inr(total)}</span>
+                <span>{inr(summary.total)}</span>
               </div>
             </div>
           </aside>

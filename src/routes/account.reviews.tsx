@@ -22,9 +22,9 @@ export const Route = createFileRoute("/account/reviews")({
 
 function AccountReviews() {
   const { user, reviews } = useApp();
-  const mine = (user ? reviews.filter((r) => r.customer === user.name) : []).length
-    ? reviews.filter((r) => r.customer === user!.name)
-    : reviews.slice(0, 6);
+  const mine = user
+    ? reviews.filter((r) => r.customerId === user.email || r.customerId === user.phone)
+    : [];
   const avg = mine.length ? Math.round((mine.reduce((s, r) => s + r.rating, 0) / mine.length) * 10) / 10 : 0;
 
   return (
@@ -36,35 +36,39 @@ function AccountReviews() {
       </div>
 
       <Panel title="My Reviews" className="mt-6">
-        <div className="space-y-3">
-          {mine.map((r) => (
-            <div key={r.id} className="rounded-lg border border-border p-4">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <Link
-                  to="/product/$id"
-                  params={{ id: r.productId }}
-                  className="font-semibold text-navy hover:text-gold"
-                >
-                  {r.product}
-                </Link>
-                <div className="flex items-center gap-3">
-                  <span className="text-sm font-bold text-gold">{r.rating} ★</span>
-                  <StatusBadge status={r.status} />
+        {mine.length === 0 ? (
+          <p className="py-8 text-center text-sm text-slate">You haven’t written any reviews yet.</p>
+        ) : (
+          <div className="space-y-3">
+            {mine.map((r) => (
+              <div key={r.id} className="rounded-lg border border-border p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <Link
+                    to="/product/$id"
+                    params={{ id: r.productId }}
+                    className="font-semibold text-navy hover:text-gold"
+                  >
+                    {r.product}
+                  </Link>
+                  <div className="flex items-center gap-3">
+                    <span className="text-sm font-bold text-gold">{r.rating} ★</span>
+                    <StatusBadge status={r.status} />
+                  </div>
+                </div>
+                <p className="mt-2 text-sm font-medium text-charcoal">{r.title}</p>
+                <p className="mt-1 text-sm text-slate">{r.body}</p>
+                <div className="mt-3 flex gap-2">
+                  <Button variant="outline" size="sm" onClick={() => toast.success("Review editing opens after moderation")}>
+                    Edit
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => toast.success(`Review ${r.id} deletion requested`)}>
+                    Delete
+                  </Button>
                 </div>
               </div>
-              <p className="mt-2 text-sm font-medium text-charcoal">{r.title}</p>
-              <p className="mt-1 text-sm text-slate">{r.body}</p>
-              <div className="mt-3 flex gap-2">
-                <Button variant="outline" size="sm" onClick={() => toast.success("Review editing opens after moderation")}>
-                  Edit
-                </Button>
-                <Button variant="outline" size="sm" onClick={() => toast.success(`Review ${r.id} deletion requested`)}>
-                  Delete
-                </Button>
-              </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
       </Panel>
     </PanelLayout>
   );

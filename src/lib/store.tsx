@@ -84,6 +84,10 @@ type AppState = {
     customerIndex?: number;
     customerOverride?: Customer;
     delivery?: string;
+    subtotal?: number;
+    discount?: number;
+    tax?: number;
+    shipping?: number;
     source?: string;
     paymentDueDate?: string;
   }) => Order;
@@ -128,6 +132,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<SessionUser | null>(null);
   const [cart, setCart] = useState<CartLine[]>([]);
   const [wishlist, setWishlist] = useState<string[]>([]);
+  const [wishlistsByUser, setWishlistsByUser] = useState<Record<string, string[]>>({});
   const [products, setProducts] = useState<Product[]>(seedProducts);
   const [categories, setCategories] = useState<StoreCategory[]>(storeCategorySeed);
   const [batches, setBatches] = useState<PurchaseBatch[]>(seedBatches);
@@ -151,15 +156,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
           categories: StoreCategory[]; products: Product[]; batches: PurchaseBatch[];
           orders: Order[]; vendors: Vendor[]; customers: Customer[];
           reviews: Review[]; returns: ReturnRequest[]; coupons: Coupon[]; notifications: Notif[];
-          addressesByUser: Record<string, Address[]>;
+          addressesByUser: Record<string, Address[]>; wishlistsByUser: Record<string, string[]>;
         }>;
         const restoredUser = s.user ? { ...s.user, addressKey: s.user.addressKey ?? addressOwnerKey(s.user) } : null;
         const savedAddresses = s.addressesByUser ?? {};
+        const savedWishlists = s.wishlistsByUser ?? {};
+        const restoredOwner = restoredUser?.addressKey ?? "";
         setUser(restoredUser);
         setAddressesByUser(savedAddresses);
         setAddresses(restoredUser?.addressKey ? savedAddresses[restoredUser.addressKey] ?? [] : []);
+        setWishlistsByUser(savedWishlists);
         setCart(s.cart ?? []);
-        setWishlist([]);
+        // Old releases stored one shared wishlist without an account owner. It cannot be
+        // safely attributed to the current customer, so only restore owner-scoped lists.
+        setWishlist(restoredOwner ? savedWishlists[restoredOwner] ?? [] : []);
         if (s.categories?.length) {
           setCategories(
             s.categories.map((category) => {
@@ -192,16 +202,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [hydrated, user, addresses]);
 
   useEffect(() => {
+    if (!hydrated || !user?.addressKey) return;
+    setWishlistsByUser((saved) => saved[user.addressKey!] === wishlist
+      ? saved
+      : { ...saved, [user.addressKey!]: wishlist });
+  }, [hydrated, user, wishlist]);
+
+  useEffect(() => {
     if (!hydrated) return;
     try {
       localStorage.setItem(
         KEY,
-        JSON.stringify({ user, cart, wishlist, categories, products, batches, orders, vendors, customers, reviews, returns, coupons, notifications, addressesByUser }),
+        JSON.stringify({ user, cart, wishlist, wishlistsByUser, categories, products, batches, orders, vendors, customers, reviews, returns, coupons, notifications, addressesByUser }),
       );
     } catch {
       /* quota */
     }
-  }, [hydrated, user, cart, wishlist, categories, products, batches, orders, vendors, customers, reviews, returns, coupons, notifications, addressesByUser]);
+  }, [hydrated, user, cart, wishlist, wishlistsByUser, categories, products, batches, orders, vendors, customers, reviews, returns, coupons, notifications, addressesByUser]);
 
 
   const value = useMemo<AppState>(() => {
@@ -222,8 +239,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const signedInUser = { ...u, addressKey: u.addressKey ?? addressOwnerKey(u) };
         setUser(signedInUser);
         setAddresses(signedInUser.addressKey ? addressesByUser[signedInUser.addressKey] ?? [] : []);
+        setWishlist(signedInUser.addressKey ? wishlistsByUser[signedInUser.addressKey] ?? [] : []);
       },
-      logout: () => { setUser(null); setAddresses([]); },
+      logout: () => { setUser(null); setAddresses([]); setWishlist([]); setCart([]); },
       updateProfile: (p) => setUser((u) => (u ? { ...u, ...p } : u)),
 
       cart,
@@ -340,7 +358,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       getAverageSellingPrice: (product) => getProductAverageSellingPrice(product, orders),
 
       orders,
-      placeOrder: ({ lines, method, payment, coupon, customerIndex = 0, customerOverride, delivery, source, paymentDueDate }) => {
+      placeOrder: ({ lines, method, payment, coupon, customerIndex = 0, customerOverride, delivery, subtotal, discount, tax, shipping, source, paymentDueDate }) => {
         const id = `ORD-${20000 + Math.floor(Math.random() * 9000)}`;
         const order = buildOrder(
           id,
@@ -368,6 +386,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
           if (user.phone) order.phone = user.phone;
         }
         if (delivery) order.delivery = delivery;
+        if (subtotal !== undefined) order.subtotal = subtotal;
+        if (discount !== undefined) order.discount = discount;
+        if (tax !== undefined) order.tax = tax;
+        if (shipping !== undefined) order.shipping = shipping;
+        if (subtotal !== undefined || discount !== undefined || tax !== undefined || shipping !== undefined) {
+          order.amount = (order.subtotal ?? 0) - (order.discount ?? 0) + (order.tax ?? 0) + (order.shipping ?? 0);
+        }
         if (source) order.source = source;
         if (paymentDueDate) order.paymentDueDate = paymentDueDate;
         setOrders((o) => [order, ...o]);
@@ -511,7 +536,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       deleteAddress: (id) => setAddresses((l) => l.filter((a) => a.id !== id)),
       setDefaultAddress: (id) => setAddresses((l) => l.map((a) => ({ ...a, default: a.id === id }))),
     };
-  }, [user, cart, wishlist, categories, products, batches, orders, vendors, customers, reviews, returns, coupons, notifications, addresses, addressesByUser]);
+  }, [user, cart, wishlist, wishlistsByUser, categories, products, batches, orders, vendors, customers, reviews, returns, coupons, notifications, addresses, addressesByUser]);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 }

@@ -64,8 +64,8 @@ function Account() {
     (o) => o.status !== "Delivered" && o.status !== "Cancelled",
   ).length;
   const myReviews = user
-    ? reviews.filter((r) => r.customerId === user.email || r.customer === user.name)
-    : reviews.slice(0, 3);
+    ? reviews.filter((r) => r.customerId === user.email || r.customerId === user.phone)
+    : [];
   const wishItems = products
     .filter((p) => wishlist.includes(p.id) && isStorefrontProduct(p))
     .slice(0, 4);
