@@ -50,13 +50,6 @@ export function SiteHeader() {
         <div className="mx-auto flex max-w-7xl items-center justify-end px-6 py-2">
           <div className="flex items-center gap-5">
             <LanguageSwitcher light />
-            <Link to="/vendor/login" className="transition-colors hover:text-gold">
-              Vendor Panel
-            </Link>
-            <span className="text-white/20">|</span>
-            <Link to="/admin/login" className="transition-colors hover:text-gold">
-              Admin Panel
-            </Link>
           </div>
         </div>
       </div>
@@ -210,21 +203,6 @@ export function SiteHeader() {
                 {n.label}
               </Link>
             ))}
-            <div className="hairline-gold my-2" />
-            <Link
-              to="/vendor/login"
-              onClick={() => setOpen(false)}
-              className="rounded-lg px-3 py-2.5 text-sm text-white/70 hover:text-gold"
-            >
-              Vendor Panel
-            </Link>
-            <Link
-              to="/admin/login"
-              onClick={() => setOpen(false)}
-              className="rounded-lg px-3 py-2.5 text-sm text-white/70 hover:text-gold"
-            >
-              Admin Panel
-            </Link>
           </div>
         </div>
       )}

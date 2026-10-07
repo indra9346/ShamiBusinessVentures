@@ -1,6 +1,14 @@
 import { createFileRoute, Link, Outlet, useRouterState } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
-import { Download, IndianRupee, PackageCheck, PackageX, ShoppingCart } from "lucide-react";
+import {
+  Download,
+  IndianRupee,
+  Minus,
+  PackageCheck,
+  PackageX,
+  Plus,
+  ShoppingCart,
+} from "lucide-react";
 import { toast } from "sonner";
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { DataTable, Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
@@ -496,18 +504,60 @@ function AdminOrders() {
                     </div>
                     <div className="grid gap-1">
                       <Label>Bags</Label>
-                      <Input
-                        type="number"
-                        min={1}
-                        value={line.qty}
-                        onChange={(event) =>
-                          setDraftItems((items) =>
-                            items.map((item, i) =>
-                              i === index ? { ...item, qty: event.target.value } : item,
-                            ),
-                          )
-                        }
-                      />
+                      <div className="flex items-center gap-1">
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          aria-label="Decrease bag quantity"
+                          disabled={(Number(line.qty) || 0) <= 1}
+                          onClick={() =>
+                            setDraftItems((items) =>
+                              items.map((item, i) =>
+                                i === index
+                                  ? {
+                                      ...item,
+                                      qty: String(Math.max(1, (Number(item.qty) || 1) - 1)),
+                                    }
+                                  : item,
+                              ),
+                            )
+                          }
+                        >
+                          <Minus className="h-4 w-4" />
+                        </Button>
+                        <Input
+                          type="number"
+                          min={1}
+                          value={line.qty}
+                          aria-label="Number of bags"
+                          className="min-w-0 text-center"
+                          onChange={(event) =>
+                            setDraftItems((items) =>
+                              items.map((item, i) =>
+                                i === index ? { ...item, qty: event.target.value } : item,
+                              ),
+                            )
+                          }
+                        />
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          aria-label="Increase bag quantity"
+                          onClick={() =>
+                            setDraftItems((items) =>
+                              items.map((item, i) =>
+                                i === index
+                                  ? { ...item, qty: String((Number(item.qty) || 0) + 1) }
+                                  : item,
+                              ),
+                            )
+                          }
+                        >
+                          <Plus className="h-4 w-4" />
+                        </Button>
+                      </div>
                     </div>
                     <div className="grid gap-1">
                       <Label>Capacity / bag</Label>

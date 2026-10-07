@@ -11,9 +11,15 @@ export const Route = createFileRoute("/categories/$slug/$child")({
     return {
       meta: [
         { title: `${name} brands | Shami Business Ventures` },
-        { name: "description", content: `Choose a ${name} brand and see live pricing, pack sizes and stock.` },
+        {
+          name: "description",
+          content: `Choose a ${name} brand and see live pricing, pack sizes and stock.`,
+        },
         { property: "og:title", content: `${name} brands | Shami Business Ventures` },
-        { property: "og:description", content: `Verified ${name} brands with GST invoicing and pan-India delivery.` },
+        {
+          property: "og:description",
+          content: `Verified ${name} brands with GST invoicing and pan-India delivery.`,
+        },
       ],
     };
   },
@@ -49,7 +55,7 @@ function ChildLevel() {
               { label: sub.name },
             ]}
           />
-          <div className="mt-3 flex items-center gap-3">
+          <div className="mt-3 flex flex-wrap items-center gap-3">
             <Link
               to="/categories/$slug"
               params={{ slug: node.slug }}
@@ -59,6 +65,15 @@ function ChildLevel() {
               <ArrowLeft className="h-4 w-4" />
             </Link>
             <h1 className="text-2xl font-bold text-navy sm:text-3xl">{sub.name}</h1>
+            {node.slug === "oil" && (
+              <Link
+                to="/shop"
+                search={{ category: "Oil" }}
+                className="ml-auto rounded-md bg-navy px-4 py-2 text-sm font-semibold text-white hover:bg-navy/90"
+              >
+                Shop all oils
+              </Link>
+            )}
           </div>
           <p className="mt-2 text-sm text-slate">{sub.tagline}</p>
         </div>

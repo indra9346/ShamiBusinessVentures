@@ -38,18 +38,24 @@ export const categoryTree: Record<string, CategoryNode> = {
   rice: {
     slug: "rice",
     name: "Rice",
-    tagline: "Raw and steam varieties in 25 kg bags",
+    tagline: "Choose Raw Rice or Steam Rice",
     image: riceImg,
     tiles: [
-      riceVariety("R-111", "Raw"),
-      riceVariety("R-222", "Raw"),
-      riceVariety("R-333", "Raw"),
-      riceVariety("R-444", "Raw"),
-      riceVariety("S-111", "Steam"),
-      riceVariety("S-222", "Steam"),
-      riceVariety("S-333", "Steam"),
-      riceVariety("S-444", "Steam"),
+      { label: "Raw Rice", caption: "Raw rice varieties and bag sizes", image: riceImg, slug: "raw-rice" },
+      { label: "Steam Rice", caption: "Steam rice varieties and bag sizes", image: riceImg, slug: "steam-rice" },
     ],
+    children: {
+      "raw-rice": {
+        name: "Raw Rice",
+        tagline: "Choose a raw rice product",
+        tiles: [riceVariety("R-111", "Raw"), riceVariety("R-222", "Raw"), riceVariety("R-333", "Raw"), riceVariety("R-444", "Raw")],
+      },
+      "steam-rice": {
+        name: "Steam Rice",
+        tagline: "Choose a steam rice product",
+        tiles: [riceVariety("S-111", "Steam"), riceVariety("S-222", "Steam"), riceVariety("S-333", "Steam"), riceVariety("S-444", "Steam")],
+      },
+    },
   },
   sugar: {
     slug: "sugar",

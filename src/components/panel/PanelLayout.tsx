@@ -4,6 +4,8 @@ import { useState, useMemo, type ReactNode } from "react";
 import { LogoMark } from "@/components/brand/Logo";
 import { useApp } from "@/lib/store";
 import { cn } from "@/lib/utils";
+import { notificationTarget } from "@/lib/notification-target";
+import { notificationBelongsToUser } from "@/lib/account-identity";
 import { Input } from "@/components/ui/input";
 import { LanguageSwitcher } from "@/components/site/LanguageSwitcher";
 
@@ -48,9 +50,9 @@ export function PanelLayout({
     return notifications.filter((n) => {
       if (tone === "admin") return n.role === "admin" || !n.role;
       if (tone === "vendor") return n.role === "vendor" || !n.role;
-      return n.role === "customer" || !n.role;
+      return (n.role === "customer" || !n.role) && notificationBelongsToUser(n, user, orders);
     });
-  }, [notifications, tone]);
+  }, [notifications, tone, user, orders]);
 
   const unreadCount = useMemo(() => {
     return relevantNotifs.filter((n) => !n.read).length;
@@ -278,25 +280,17 @@ export function PanelLayout({
                           </div>
                         ) : (
                           relevantNotifs.slice(0, 6).map((n) => (
-                            <div
+                            <button
                               key={n.id}
+                              type="button"
                               onClick={() => {
                                 markRead(n.id);
-                                if (tone === "admin") {
-                                  if (n.body.includes("ORD-")) {
-                                    setNotifOpen(false);
-                                    navigate({ to: "/admin/orders" });
-                                  } else if (n.title.toLowerCase().includes("vendor")) {
-                                    setNotifOpen(false);
-                                    navigate({ to: "/admin/vendors" });
-                                  } else if (n.title.toLowerCase().includes("stock")) {
-                                    setNotifOpen(false);
-                                    navigate({ to: "/admin/inventory" });
-                                  }
-                                }
+                                setNotifOpen(false);
+                                const target = notificationTarget(n, tone, user, orders);
+                                navigate({ to: target as never });
                               }}
                               className={cn(
-                                "flex items-start gap-3 p-3.5 transition-colors cursor-pointer hover:bg-ivory/80",
+                                "flex w-full items-start gap-3 p-3.5 text-left transition-colors hover:bg-ivory/80",
                                 !n.read && "bg-amber-50/40",
                               )}
                             >
@@ -329,7 +323,7 @@ export function PanelLayout({
                               {!n.read && (
                                 <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-gold" />
                               )}
-                            </div>
+                            </button>
                           ))
                         )}
                       </div>

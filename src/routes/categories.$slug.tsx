@@ -11,9 +11,15 @@ export const Route = createFileRoute("/categories/$slug")({
     return {
       meta: [
         { title: `${name} varieties | Shami Business Ventures` },
-        { name: "description", content: `Browse ${name} varieties and pack sizes from verified mills with GST invoicing.` },
+        {
+          name: "description",
+          content: `Browse ${name} varieties and pack sizes from verified mills with GST invoicing.`,
+        },
         { property: "og:title", content: `${name} varieties | Shami Business Ventures` },
-        { property: "og:description", content: `Pick a ${name} variety to see live pricing and stock.` },
+        {
+          property: "og:description",
+          content: `Pick a ${name} variety to see live pricing and stock.`,
+        },
       ],
     };
   },
@@ -42,7 +48,7 @@ function CategoryLevel() {
       <div className="border-b border-border bg-ivory">
         <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8">
           <Breadcrumbs items={[{ label: "Categories", to: "/categories" }, { label: node.name }]} />
-          <div className="mt-3 flex items-center gap-3">
+          <div className="mt-3 flex flex-wrap items-center gap-3">
             <Link
               to="/categories"
               aria-label="Back to categories"
@@ -51,6 +57,15 @@ function CategoryLevel() {
               <ArrowLeft className="h-4 w-4" />
             </Link>
             <h1 className="text-2xl font-bold text-navy sm:text-3xl">{node.name}</h1>
+            {node.slug === "oil" && (
+              <Link
+                to="/shop"
+                search={{ category: "Oil" }}
+                className="ml-auto rounded-md bg-navy px-4 py-2 text-sm font-semibold text-white hover:bg-navy/90"
+              >
+                Shop all oils
+              </Link>
+            )}
           </div>
           <p className="mt-2 text-sm text-slate">{node.tagline}</p>
         </div>

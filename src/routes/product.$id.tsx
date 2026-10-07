@@ -8,7 +8,8 @@ import { inr, isStorefrontProduct, products, reviews, vendors } from "@/lib/data
 import { useApp } from "@/lib/store";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
-import { showCartNotification, showCustomerNotification } from "@/components/site/CartFloatingNotification";
+import { showCustomerNotification } from "@/components/site/CartFloatingNotification";
+import { AddToCartPicker } from "@/components/site/AddToCartPicker";
 
 export const Route = createFileRoute("/product/$id")({
   loader: ({ params }) => {
@@ -115,16 +116,7 @@ function ProductDetail() {
                 <Plus className="h-4 w-4" />
               </button>
             </div>
-            <button
-              disabled={product.stock === 0}
-              onClick={() => {
-                addToCart(product.id, qty);
-                showCartNotification("Added to cart", `${qty} × ${product.name}`, "add", product.image);
-              }}
-              className="flex-1 rounded-md bg-navy px-6 py-3.5 text-sm font-semibold text-white transition-colors hover:bg-midnight disabled:opacity-40 sm:flex-none"
-            >
-              Add to Cart
-            </button>
+            <div className="min-w-52 flex-1 sm:flex-none"><AddToCartPicker product={product} initialQty={qty} /></div>
             <Link
               to="/checkout"
               search={{ productId: product.id }}

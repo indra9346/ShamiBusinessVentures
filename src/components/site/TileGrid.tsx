@@ -24,9 +24,12 @@ export function TileGrid({ tiles, basePath }: { tiles: Tile[]; basePath: string 
               <h3 className="truncate text-base font-bold text-navy transition-colors group-hover:text-gold sm:text-lg">
                 {t.label}
               </h3>
-              {t.caption && <p className="mt-1 line-clamp-2 text-[11px] text-slate sm:text-xs">{t.caption}</p>}
+              {t.caption && (
+                <p className="mt-1 line-clamp-2 text-[11px] text-slate sm:text-xs">{t.caption}</p>
+              )}
               <span className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-gold sm:mt-4 sm:text-sm">
-                View <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-1" />
+                View{" "}
+                <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-1" />
               </span>
             </div>
           </>
@@ -49,7 +52,7 @@ export function TileGrid({ tiles, basePath }: { tiles: Tile[]; basePath: string 
           <Link
             key={t.label}
             to="/shop"
-            search={{ category: t.filter ?? t.label }}
+            search={{ q: t.filter ?? t.label }}
             style={{ animationDelay: `${i * 60}ms` }}
             className={cls}
           >

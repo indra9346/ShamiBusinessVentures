@@ -33,10 +33,11 @@ export type Customer = (typeof seedCustomers)[number];
 export type Vendor = (typeof seedVendors)[number];
 export type Review = (typeof seedReviews)[number];
 export type Coupon = (typeof seedCoupons)[number];
-export type Notif = (typeof seedNotifications)[number];
+export type Notif = (typeof seedNotifications)[number] & { source?: "seed" | "live" };
 
 
 type AppState = {
+  hydrated: boolean;
   user: SessionUser | null;
   login: (u: SessionUser) => void;
   logout: () => void;
@@ -204,11 +205,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     const pushNotif = (title: string, body: string, type: string, role: Notif["role"] = "admin") =>
       setNotifications((n) => [
-        { id: Date.now() + Math.floor(Math.random() * 999), role, title, body, type, time: "just now", read: false },
+        { id: Date.now() + Math.floor(Math.random() * 999), role, title, body, type, time: "just now", read: false, source: "live" },
         ...n,
       ]);
 
     return {
+      hydrated,
       user,
       login: (u) => setUser(u),
       logout: () => setUser(null),
@@ -393,7 +395,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           return nextBatches;
         });
 
-        pushNotif("New order received", `${id} was placed worth ₹${order.amount.toLocaleString("en-IN")}.`, "info");
+        pushNotif("New order received", `${id} was placed worth â‚¹${order.amount.toLocaleString("en-IN")}.`, "info");
         return order;
       },
       updateOrderStatus: (id, status) =>
@@ -459,7 +461,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           payment: paidAmount >= candidate.amount ? "Paid" : "Partially Paid",
           status: paidAmount > 0 && candidate.status === "Placed" ? "Payment Confirmed" : candidate.status,
         } : candidate));
-        pushNotif("Payment confirmed", `${inr(amount)} confirmed for ${id}${utr.trim() ? ` · UTR ${utr.trim()}` : ""}.`, "success", "admin");
+        pushNotif("Payment confirmed", `${inr(amount)} confirmed for ${id}${utr.trim() ? ` Â· UTR ${utr.trim()}` : ""}.`, "success", "admin");
         pushNotif("Payment confirmed", `We have confirmed your payment of ${inr(amount)} for order ${id}.`, "success", "customer");
       },
       refundOrder: (id) =>
@@ -473,7 +475,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setCustomerStatus: (id, status) => {
         const previous = customers.find((customer) => customer.id === id);
         setCustomers((list) => list.map((customer) => customer.id === id ? { ...customer, status } : customer));
-        if (previous && previous.status !== status) pushNotif("Customer status updated", `${previous.name}: ${previous.status} → ${status}.`, "info", "admin");
+        if (previous && previous.status !== status) pushNotif("Customer status updated", `${previous.name}: ${previous.status} â†’ ${status}.`, "info", "admin");
       },
 
       reviews,

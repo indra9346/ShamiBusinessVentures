@@ -7,12 +7,16 @@ import { inr } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { downloadCSV, downloadInvoice } from "@/lib/export-utils";
+import { orderBelongsToUser } from "@/lib/account-identity";
 
 export const Route = createFileRoute("/account/invoices")({
   head: () => ({
     meta: [
       { title: "Invoices | Shami Business Ventures" },
-      { name: "description", content: "Download GST invoices for every order placed on Shami Business Ventures." },
+      {
+        name: "description",
+        content: "Download GST invoices for every order placed on Shami Business Ventures.",
+      },
       { property: "og:title", content: "My Invoices | Shami" },
       { property: "og:description", content: "GST-compliant invoices for all your orders." },
       { name: "robots", content: "noindex" },
@@ -23,15 +27,22 @@ export const Route = createFileRoute("/account/invoices")({
 
 function AccountInvoices() {
   const { user, orders } = useApp();
-  const mine = user ? orders.filter((o) => o.email === user.email) : [];
-  const list = mine.length ? mine : orders.slice(0, 12);
+  const list = orders.filter((order) => orderBelongsToUser(order, user));
   const total = list.reduce((s, o) => s + o.amount, 0);
   const gst = list.reduce((s, o) => s + o.tax, 0);
 
   const handleExportAll = () => {
     downloadCSV(
       "Invoices_Summary",
-      ["Invoice No", "Order ID", "Date", "Total Amount (INR)", "GST Paid (INR)", "Payment Status", "Payment Method"],
+      [
+        "Invoice No",
+        "Order ID",
+        "Date",
+        "Total Amount (INR)",
+        "GST Paid (INR)",
+        "Payment Status",
+        "Payment Method",
+      ],
       list.map((o) => [
         `INV-${o.id.replace(/[^0-9]/g, "")}`,
         o.id,
@@ -40,12 +51,17 @@ function AccountInvoices() {
         o.tax,
         o.payment,
         o.method,
-      ])
+      ]),
     );
   };
 
   return (
-    <PanelLayout items={accountNav} tone="customer" title="Invoices" subtitle="GST invoices for your orders">
+    <PanelLayout
+      items={accountNav}
+      tone="customer"
+      title="Invoices"
+      subtitle="GST invoices for your orders"
+    >
       <div className="grid gap-4 sm:grid-cols-3">
         <StatCard label="Total Invoices" value={String(list.length)} icon={FileText} highlight />
         <StatCard label="Invoiced Value" value={inr(total)} icon={IndianRupee} />
@@ -65,7 +81,11 @@ function AccountInvoices() {
           columns={["Invoice No", "Order", "Date", "Amount", "GST", "Payment", "Actions"]}
           rows={list.map((o) => [
             <span className="font-semibold text-navy">INV-{o.id.replace(/[^0-9]/g, "")}</span>,
-            <Link to="/account/orders/$id" params={{ id: o.id }} className="font-semibold text-navy hover:text-gold">
+            <Link
+              to="/account/orders/$id"
+              params={{ id: o.id }}
+              className="font-semibold text-navy hover:text-gold"
+            >
               {o.id}
             </Link>,
             o.date,

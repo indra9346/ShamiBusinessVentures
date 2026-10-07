@@ -1,10 +1,11 @@
 import { Link } from "@tanstack/react-router";
-import { Heart, ShoppingCart, Star } from "lucide-react";
+import { Heart, Star } from "lucide-react";
 import { toast } from "sonner";
 import { inr, type Product } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { cn } from "@/lib/utils";
-import { showCartNotification, showCustomerNotification } from "@/components/site/CartFloatingNotification";
+import { showCustomerNotification } from "@/components/site/CartFloatingNotification";
+import { AddToCartPicker } from "@/components/site/AddToCartPicker";
 
 export function ProductCard({ product }: { product: Product }) {
   const { addToCart, toggleWishlist, wishlist } = useApp();
@@ -77,16 +78,7 @@ export function ProductCard({ product }: { product: Product }) {
         {product.stock === 0 && <p className="mt-1 text-xs font-medium text-danger">Currently unavailable</p>}
 
         <div className="mt-4 flex gap-2 pt-1">
-          <button
-            disabled={product.stock === 0}
-            onClick={() => {
-              addToCart(product.id);
-              showCartNotification("Added to cart", product.name, "add", product.image);
-            }}
-            className="flex flex-1 items-center justify-center gap-1.5 rounded-md bg-navy px-3 py-2.5 text-xs font-semibold text-white transition-colors hover:bg-midnight disabled:opacity-40"
-          >
-            <ShoppingCart className="h-3.5 w-3.5" /> Add
-          </button>
+          <AddToCartPicker product={product} />
           <Link
             to="/checkout"
             search={{ productId: product.id }}

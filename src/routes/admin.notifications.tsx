@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Bell, BellRing, CheckCheck, Mail, Send, Trash2 } from "lucide-react";
@@ -11,14 +11,24 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { notificationTarget } from "@/lib/notification-target";
 
 export const Route = createFileRoute("/admin/notifications")({
   head: () => ({
     meta: [
       { title: "Notifications | Shami Business Ventures Admin" },
-      { name: "description", content: "Platform alerts, broadcast messages and notification channel settings." },
+      {
+        name: "description",
+        content: "Platform alerts, broadcast messages and notification channel settings.",
+      },
       { property: "og:title", content: "Notifications | Shami Admin" },
       { property: "og:description", content: "Alert centre for the marketplace control panel." },
       { name: "robots", content: "noindex" },
@@ -28,7 +38,8 @@ export const Route = createFileRoute("/admin/notifications")({
 });
 
 function AdminNotifications() {
-  const { notifications, markRead, markAllRead, deleteNotification } = useApp();
+  const { notifications, markRead, markAllRead, deleteNotification, user, orders } = useApp();
+  const navigate = useNavigate();
   const [role, setRole] = useState("All");
   const [type, setType] = useState("All");
   const [broadcast, setBroadcast] = useState({ audience: "All Vendors", subject: "", message: "" });
@@ -37,7 +48,8 @@ function AdminNotifications() {
   const list = useMemo(
     () =>
       notifications.filter(
-        (n) => (role === "All" || n.role === role.toLowerCase()) && (type === "All" || n.type === type),
+        (n) =>
+          (role === "All" || n.role === role.toLowerCase()) && (type === "All" || n.type === type),
       ),
     [notifications, role, type],
   );
@@ -52,7 +64,10 @@ function AdminNotifications() {
     [notifications],
   );
 
-  const types = useMemo(() => ["All", ...new Set(notifications.map((n) => n.type))], [notifications]);
+  const types = useMemo(
+    () => ["All", ...new Set(notifications.map((n) => n.type))],
+    [notifications],
+  );
 
   const send = () => {
     if (!broadcast.subject.trim() || broadcast.message.trim().length < 5) {
@@ -64,7 +79,12 @@ function AdminNotifications() {
   };
 
   return (
-    <PanelLayout items={adminNav} tone="admin" title="Notifications" subtitle="Platform alerts and broadcasts">
+    <PanelLayout
+      items={adminNav}
+      tone="admin"
+      title="Notifications"
+      subtitle="Platform alerts and broadcasts"
+    >
       <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard label="Total Alerts" value={String(stats.total)} icon={Bell} />
         <StatCard label="Unread" value={String(stats.unread)} icon={BellRing} highlight />
@@ -97,18 +117,26 @@ function AdminNotifications() {
           >
             <div className="mb-4 flex flex-wrap gap-3">
               <Select value={role} onValueChange={setRole}>
-                <SelectTrigger className="w-[160px]"><SelectValue /></SelectTrigger>
+                <SelectTrigger className="w-[160px]">
+                  <SelectValue />
+                </SelectTrigger>
                 <SelectContent>
                   {["All", "Admin", "Vendor", "Customer"].map((r) => (
-                    <SelectItem key={r} value={r}>{r}</SelectItem>
+                    <SelectItem key={r} value={r}>
+                      {r}
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
               <Select value={type} onValueChange={setType}>
-                <SelectTrigger className="w-[180px]"><SelectValue /></SelectTrigger>
+                <SelectTrigger className="w-[180px]">
+                  <SelectValue />
+                </SelectTrigger>
                 <SelectContent>
                   {types.map((t) => (
-                    <SelectItem key={t} value={t}>{t}</SelectItem>
+                    <SelectItem key={t} value={t}>
+                      {t}
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -116,7 +144,9 @@ function AdminNotifications() {
 
             {list.length === 0 ? (
               <div className="grid place-items-center gap-2 py-14 text-center">
-                <p className="text-sm font-semibold text-navy">No notifications match these filters</p>
+                <p className="text-sm font-semibold text-navy">
+                  No notifications match these filters
+                </p>
                 <p className="text-xs text-slate">Try a different role or alert type.</p>
               </div>
             ) : (
@@ -124,6 +154,19 @@ function AdminNotifications() {
                 {list.map((n) => (
                   <li
                     key={n.id}
+                    onClick={() => {
+                      markRead(n.id);
+                      navigate({ to: notificationTarget(n, "admin", user, orders) as never });
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        markRead(n.id);
+                        navigate({ to: notificationTarget(n, "admin", user, orders) as never });
+                      }
+                    }}
+                    role="button"
+                    tabIndex={0}
                     className={`grid gap-2 rounded-lg border p-4 transition-colors sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center ${
                       n.read ? "border-border bg-card" : "border-gold/40 bg-ivory"
                     }`}
@@ -132,7 +175,9 @@ function AdminNotifications() {
                       <div className="flex flex-wrap items-center gap-2">
                         <p className="text-sm font-bold text-navy">{n.title}</p>
                         <StatusBadge status={n.type} />
-                        <span className="text-[11px] font-semibold text-slate uppercase">{n.role}</span>
+                        <span className="text-[11px] font-semibold text-slate uppercase">
+                          {n.role}
+                        </span>
                       </div>
                       <p className="mt-1 text-sm text-charcoal">{n.body}</p>
                       <p className="mt-1 text-xs text-slate">{n.time}</p>
@@ -142,7 +187,8 @@ function AdminNotifications() {
                         <Button
                           variant="outline"
                           size="sm"
-                          onClick={() => {
+                          onClick={(event) => {
+                            event.stopPropagation();
                             markRead(n.id);
                             toast.success("Marked as read");
                           }}
@@ -153,7 +199,8 @@ function AdminNotifications() {
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => {
+                        onClick={(event) => {
+                          event.stopPropagation();
                           deleteNotification(n.id);
                           toast.success("Notification deleted");
                         }}
@@ -173,22 +220,40 @@ function AdminNotifications() {
             <div className="grid gap-4 xl:max-w-2xl">
               <div className="grid gap-1.5">
                 <Label>Audience</Label>
-                <Select value={broadcast.audience} onValueChange={(v) => setBroadcast((b) => ({ ...b, audience: v }))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                <Select
+                  value={broadcast.audience}
+                  onValueChange={(v) => setBroadcast((b) => ({ ...b, audience: v }))}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
                   <SelectContent>
-                    {["All Vendors", "All Customers", "All Users", "Pending KYC Vendors"].map((a) => (
-                      <SelectItem key={a} value={a}>{a}</SelectItem>
-                    ))}
+                    {["All Vendors", "All Customers", "All Users", "Pending KYC Vendors"].map(
+                      (a) => (
+                        <SelectItem key={a} value={a}>
+                          {a}
+                        </SelectItem>
+                      ),
+                    )}
                   </SelectContent>
                 </Select>
               </div>
               <div className="grid gap-1.5">
                 <Label>Subject</Label>
-                <Input value={broadcast.subject} onChange={(e) => setBroadcast((b) => ({ ...b, subject: e.target.value }))} placeholder="Festive dispatch schedule" />
+                <Input
+                  value={broadcast.subject}
+                  onChange={(e) => setBroadcast((b) => ({ ...b, subject: e.target.value }))}
+                  placeholder="Festive dispatch schedule"
+                />
               </div>
               <div className="grid gap-1.5">
                 <Label>Message</Label>
-                <Textarea rows={5} value={broadcast.message} onChange={(e) => setBroadcast((b) => ({ ...b, message: e.target.value }))} placeholder="Dispatch cut-off for the festive week is 6 PM IST…" />
+                <Textarea
+                  rows={5}
+                  value={broadcast.message}
+                  onChange={(e) => setBroadcast((b) => ({ ...b, message: e.target.value }))}
+                  placeholder="Dispatch cut-off for the festive week is 6 PM IST…"
+                />
               </div>
               <Button className="bg-navy text-white hover:bg-navy/90 sm:w-fit" onClick={send}>
                 <Send className="mr-1 h-4 w-4" /> Send Broadcast
@@ -202,13 +267,20 @@ function AdminNotifications() {
             <div className="grid gap-3 xl:max-w-2xl">
               {(
                 [
-                  ["email", "Email notifications", "Order confirmations, invoices and payout advices"],
+                  [
+                    "email",
+                    "Email notifications",
+                    "Order confirmations, invoices and payout advices",
+                  ],
                   ["sms", "SMS alerts", "Dispatch and delivery updates to Indian mobile numbers"],
                   ["whatsapp", "WhatsApp Business", "Order tracking messages via WhatsApp API"],
                   ["push", "Web push", "Real-time alerts inside vendor and admin panels"],
                 ] as const
               ).map(([key, label, desc]) => (
-                <div key={key} className="flex items-center justify-between gap-4 rounded-md border border-border p-4">
+                <div
+                  key={key}
+                  className="flex items-center justify-between gap-4 rounded-md border border-border p-4"
+                >
                   <div>
                     <p className="text-sm font-bold text-navy">{label}</p>
                     <p className="text-xs text-slate">{desc}</p>

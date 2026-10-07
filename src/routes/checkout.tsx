@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { z } from "zod";
 import { Check, CreditCard } from "lucide-react";
 import { toast } from "sonner";
@@ -13,9 +13,15 @@ export const Route = createFileRoute("/checkout")({
   head: () => ({
     meta: [
       { title: "Secure Checkout | Shami Business Ventures" },
-      { name: "description", content: "Complete your order with UPI, cards, net banking or cash on delivery." },
+      {
+        name: "description",
+        content: "Complete your order with UPI, cards, net banking or cash on delivery.",
+      },
       { property: "og:title", content: "Secure Checkout | Shami" },
-      { property: "og:description", content: "Address, delivery, payment and order review in one flow." },
+      {
+        property: "og:description",
+        content: "Address, delivery, payment and order review in one flow.",
+      },
     ],
   }),
   component: Checkout,
@@ -25,9 +31,14 @@ const steps = ["Address", "Delivery", "Payment", "Review", "Confirmation"];
 const methods = ["UPI", "Credit Card", "Debit Card", "Net Banking", "Cash on Delivery"];
 
 function Checkout() {
-  const { cartItems, products, clearCart, addresses, placeOrder, coupons } = useApp();
+  const { user, hydrated, cartItems, products, clearCart, addresses, placeOrder, coupons } =
+    useApp();
   const { productId } = Route.useSearch();
   const navigate = useNavigate();
+  useEffect(() => {
+    if (hydrated && !user)
+      void navigate({ to: "/login", search: { next: "/checkout" }, replace: true });
+  }, [hydrated, user, navigate]);
   const [step, setStep] = useState(0);
   const [addr, setAddr] = useState(addresses[0]?.id ?? "");
   const [ship, setShip] = useState("Standard");
@@ -35,15 +46,40 @@ function Checkout() {
   const [couponCode, setCouponCode] = useState("");
   const [placedId, setPlacedId] = useState<string | null>(null);
   const selectedProduct = productId ? products.find((p) => p.id === productId) : undefined;
-  const checkoutItems = productId ? cartItems.filter((line) => line.product.id === productId) : cartItems;
+  const checkoutItems = productId
+    ? cartItems.filter((line) => line.product.id === productId)
+    : cartItems;
   const subtotal = checkoutItems.reduce((sum, line) => sum + line.product.price * line.qty, 0);
   const shipCost = ship === "Express" ? 650 : subtotal > 10000 ? 0 : 250;
   const tax = Math.round(subtotal * 0.05);
   const appliedCoupon = coupons.find((c) => c.code === couponCode);
   const discount = appliedCoupon
-    ? Math.min(appliedCoupon.max, appliedCoupon.type === "Percentage" ? Math.round((subtotal * parseFloat(appliedCoupon.value)) / 100) : parseFloat(appliedCoupon.value.replace(/[^0-9.]/g, "")))
+    ? Math.min(
+        appliedCoupon.max,
+        appliedCoupon.type === "Percentage"
+          ? Math.round((subtotal * parseFloat(appliedCoupon.value)) / 100)
+          : parseFloat(appliedCoupon.value.replace(/[^0-9.]/g, "")),
+      )
     : 0;
   const total = subtotal + shipCost + tax - discount;
+
+  if (!hydrated || !user) {
+    return (
+      <SiteLayout>
+        <div className="mx-auto max-w-xl px-6 py-20 text-center">
+          <h1 className="text-2xl font-bold text-navy">Sign in to continue</h1>
+          <p className="mt-2 text-sm text-slate">Your cart will be saved while you sign in.</p>
+          <Link
+            to="/login"
+            search={{ next: "/checkout" }}
+            className="mt-5 inline-flex rounded-md bg-gold px-6 py-3 text-sm font-bold text-midnight"
+          >
+            Continue to login
+          </Link>
+        </div>
+      </SiteLayout>
+    );
+  }
 
   const goNext = () => {
     if (step === 0 && !addr) {
@@ -90,12 +126,18 @@ function Checkout() {
               <span
                 className={cn(
                   "grid h-7 w-7 place-items-center rounded-full text-xs font-bold",
-                  i < step ? "bg-gold text-midnight" : i === step ? "bg-navy text-white" : "bg-muted text-slate",
+                  i < step
+                    ? "bg-gold text-midnight"
+                    : i === step
+                      ? "bg-navy text-white"
+                      : "bg-muted text-slate",
                 )}
               >
                 {i < step ? <Check className="h-3.5 w-3.5" /> : i + 1}
               </span>
-              <span className={cn("font-semibold", i === step ? "text-navy" : "text-slate")}>{s}</span>
+              <span className={cn("font-semibold", i === step ? "text-navy" : "text-slate")}>
+                {s}
+              </span>
             </li>
           ))}
         </ol>
@@ -115,7 +157,9 @@ function Checkout() {
                         addr === a.id ? "border-gold bg-ivory" : "border-border hover:border-gold",
                       )}
                     >
-                      <p className="text-xs font-bold tracking-wider text-gold uppercase">{a.label}</p>
+                      <p className="text-xs font-bold tracking-wider text-gold uppercase">
+                        {a.label}
+                      </p>
                       <p className="mt-1 font-semibold text-navy">
                         {a.name} · {a.phone}
                       </p>
@@ -124,7 +168,10 @@ function Checkout() {
                       </p>
                     </button>
                   ))}
-                  <Link to="/account/addresses" className="text-sm font-semibold text-navy hover:text-gold">
+                  <Link
+                    to="/account/addresses"
+                    className="text-sm font-semibold text-navy hover:text-gold"
+                  >
                     + Add new address
                   </Link>
                 </div>
@@ -168,7 +215,9 @@ function Checkout() {
                       onClick={() => setMethod(m)}
                       className={cn(
                         "flex items-center gap-3 rounded-lg border p-4 text-sm font-semibold",
-                        method === m ? "border-gold bg-ivory text-navy" : "border-border text-slate hover:border-gold",
+                        method === m
+                          ? "border-gold bg-ivory text-navy"
+                          : "border-border text-slate hover:border-gold",
                       )}
                     >
                       <CreditCard className="h-4 w-4 text-gold" /> {m}
@@ -176,7 +225,9 @@ function Checkout() {
                   ))}
                 </div>
                 <div className="mt-5">
-                  <label className="mb-1.5 block text-xs font-semibold text-charcoal">Have a coupon?</label>
+                  <label className="mb-1.5 block text-xs font-semibold text-charcoal">
+                    Have a coupon?
+                  </label>
                   <input
                     value={couponCode}
                     onChange={(e) => setCouponCode(e.target.value.toUpperCase())}
@@ -192,8 +243,18 @@ function Checkout() {
                 <h2 className="text-lg font-bold text-navy">Order Review</h2>
                 <div className="mt-5 space-y-3">
                   {cartItems.map(({ product, qty }) => (
-                    <div key={product.id} className="flex items-center gap-3 border-b border-border pb-3 last:border-0">
-                      <img src={product.image} alt={product.name} loading="lazy" width={800} height={800} className="h-14 w-14 rounded-md object-cover" />
+                    <div
+                      key={product.id}
+                      className="flex items-center gap-3 border-b border-border pb-3 last:border-0"
+                    >
+                      <img
+                        src={product.image}
+                        alt={product.name}
+                        loading="lazy"
+                        width={800}
+                        height={800}
+                        className="h-14 w-14 rounded-md object-cover"
+                      />
                       <div className="min-w-0 flex-1">
                         <p className="truncate font-medium text-navy">{product.name}</p>
                         <p className="text-xs text-slate">
@@ -221,8 +282,8 @@ function Checkout() {
                 <h2 className="mt-5 text-xl font-bold text-navy">Order Confirmed</h2>
                 <p className="mt-2 text-sm text-slate">
                   Order ID <span className="font-bold text-gold">{placedId}</span> · Payment{" "}
-                  {method === "Cash on Delivery" ? "pending (COD)" : "successful"} · Estimated delivery in{" "}
-                  {ship === "Express" ? "1 day" : "2–4 days"}
+                  {method === "Cash on Delivery" ? "pending (COD)" : "successful"} · Estimated
+                  delivery in {ship === "Express" ? "1 day" : "2–4 days"}
                 </p>
                 <div className="mt-6 flex flex-wrap justify-center gap-3">
                   {placedId && (
@@ -234,7 +295,10 @@ function Checkout() {
                       View Order
                     </Link>
                   )}
-                  <Link to="/shop" className="rounded-md border border-navy px-6 py-3 text-sm font-semibold text-navy hover:bg-navy hover:text-white">
+                  <Link
+                    to="/shop"
+                    className="rounded-md border border-navy px-6 py-3 text-sm font-semibold text-navy hover:bg-navy hover:text-white"
+                  >
                     Continue Shopping
                   </Link>
                 </div>
