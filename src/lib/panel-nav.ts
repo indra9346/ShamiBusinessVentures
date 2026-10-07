@@ -39,7 +39,7 @@ export const adminNav = [
   { label: "Categories", to: "/admin/categories", icon: Tags },
   { label: "Inventory", to: "/admin/inventory", icon: Boxes },
   { label: "Orders", to: "/admin/orders", icon: ClipboardList },
-  { label: "Payments", to: "/admin/payments", icon: CreditCard },
+  { label: "Payments & Matching", to: "/admin/payments", icon: CreditCard },
   { label: "Commissions", to: "/admin/commissions", icon: Percent },
   { label: "Payouts", to: "/admin/payouts", icon: Wallet },
   { label: "Coupons", to: "/admin/coupons", icon: BadgePercent },

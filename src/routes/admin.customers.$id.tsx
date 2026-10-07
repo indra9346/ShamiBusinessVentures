@@ -12,7 +12,10 @@ export const Route = createFileRoute("/admin/customers/$id")({
   head: ({ params }) => ({
     meta: [
       { title: `Customer ${params.id} | Shami Business Ventures Admin` },
-      { name: "description", content: `Profile, orders, addresses and activity for customer ${params.id}.` },
+      {
+        name: "description",
+        content: `Profile, orders, addresses and activity for customer ${params.id}.`,
+      },
       { property: "og:title", content: "Customer Profile | Shami Admin" },
       { property: "og:description", content: "Full customer profile and activity history." },
       { name: "robots", content: "noindex" },
@@ -20,10 +23,17 @@ export const Route = createFileRoute("/admin/customers/$id")({
   }),
   component: AdminCustomerDetail,
   notFoundComponent: () => (
-    <PanelLayout items={adminNav} tone="admin" title="Customer Not Found" subtitle="We could not find this customer">
+    <PanelLayout
+      items={adminNav}
+      tone="admin"
+      title="Customer Not Found"
+      subtitle="We could not find this customer"
+    >
       <Panel title="404">
         <p className="text-sm text-slate">The customer you are looking for does not exist.</p>
-        <Link to="/admin/customers" className="mt-3 inline-block text-sm font-semibold text-gold">Back to Customers</Link>
+        <Link to="/admin/customers" className="mt-3 inline-block text-sm font-semibold text-gold">
+          Back to Customers
+        </Link>
       </Panel>
     </PanelLayout>
   ),
@@ -36,10 +46,17 @@ function AdminCustomerDetail() {
 
   if (!customer) {
     return (
-      <PanelLayout items={adminNav} tone="admin" title="Customer Not Found" subtitle="We could not find this customer">
+      <PanelLayout
+        items={adminNav}
+        tone="admin"
+        title="Customer Not Found"
+        subtitle="We could not find this customer"
+      >
         <Panel title="404">
           <p className="text-sm text-slate">Customer id "{id}" was not found.</p>
-          <Link to="/admin/customers" className="mt-3 inline-block text-sm font-semibold text-gold">Back to Customers</Link>
+          <Link to="/admin/customers" className="mt-3 inline-block text-sm font-semibold text-gold">
+            Back to Customers
+          </Link>
         </Panel>
       </PanelLayout>
     );
@@ -48,10 +65,65 @@ function AdminCustomerDetail() {
   const custOrders = orders.filter((o) => o.customerId === customer.id);
   const custReviews = reviews.filter((r) => r.customerId === customer.id);
   const wishlist = products.slice(0, 4);
+  const completedOrders = custOrders.filter((o) => o.status !== "Cancelled");
+  const totalPurchase = completedOrders.reduce((sum, order) => sum + order.amount, 0);
+  const totalPaid = completedOrders.reduce(
+    (sum, order) =>
+      sum +
+      (order.paidAmount ??
+        (order.payment === "Paid" || order.payment === "COD" ? order.amount : 0)),
+    0,
+  );
+  const totalPending = Math.max(0, totalPurchase - totalPaid);
+  const productFrequency = new Map<string, number>();
+  for (const order of completedOrders)
+    for (const item of order.items)
+      productFrequency.set(
+        item.product.name,
+        (productFrequency.get(item.product.name) ?? 0) + item.qty,
+      );
+  const topProducts = [...productFrequency.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
+  const sortedOrders = [...completedOrders].sort(
+    (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
+  );
+  const lastOrder = sortedOrders[0];
+  const daysSinceOrder = lastOrder
+    ? Math.floor((Date.now() - new Date(lastOrder.date).getTime()) / 86_400_000)
+    : null;
+  const customerType = !custOrders.length
+    ? "NEW CUSTOMER"
+    : custOrders.length >= 5
+      ? "REGULAR CUSTOMER"
+      : custOrders.length >= 2 && daysSinceOrder !== null && daysSinceOrder > 60
+        ? "RETURNING CUSTOMER"
+        : "EXISTING CUSTOMER";
+  const monthTotals = new Map<string, { amount: number; orders: number; timestamp: number }>();
+  for (const order of completedOrders) {
+    const date = new Date(order.date);
+    if (Number.isNaN(date.getTime())) continue;
+    const key = date.toLocaleDateString("en-IN", { month: "short", year: "2-digit" });
+    const current = monthTotals.get(key) ?? {
+      amount: 0,
+      orders: 0,
+      timestamp: new Date(date.getFullYear(), date.getMonth(), 1).getTime(),
+    };
+    current.amount += order.amount;
+    current.orders += 1;
+    monthTotals.set(key, current);
+  }
+  const monthlyPerformance = [...monthTotals.entries()]
+    .sort((a, b) => a[1].timestamp - b[1].timestamp)
+    .slice(-6);
+  const maxMonthlyAmount = Math.max(1, ...monthlyPerformance.map(([, value]) => value.amount));
 
   return (
     <PanelLayout items={adminNav} tone="admin" title={customer.name} subtitle={customer.email}>
-      <Link to="/admin/customers" className="mb-4 inline-block text-sm font-semibold text-navy hover:text-gold">← Back to Customers</Link>
+      <Link
+        to="/admin/customers"
+        className="mb-4 inline-block text-sm font-semibold text-navy hover:text-gold"
+      >
+        ← Back to Customers
+      </Link>
 
       <Panel
         title="Profile"
@@ -70,17 +142,104 @@ function AdminCustomerDetail() {
         }
       >
         <div className="flex flex-wrap items-center gap-4">
-          <span className="grid h-14 w-14 shrink-0 place-items-center rounded-full bg-navy/10 text-lg font-bold text-navy">{customer.avatar}</span>
+          <span className="grid h-14 w-14 shrink-0 place-items-center rounded-full bg-navy/10 text-lg font-bold text-navy">
+            {customer.avatar}
+          </span>
           <div className="grid flex-1 gap-1 text-sm sm:grid-cols-3">
-            <p><span className="text-slate">Phone:</span> <span className="font-medium text-navy">{customer.phone}</span></p>
-            <p><span className="text-slate">Location:</span> <span className="font-medium text-navy">{customer.city}, {customer.state}</span></p>
-            <p><span className="text-slate">Joined:</span> <span className="font-medium text-navy">{customer.joined}</span></p>
-            <p><span className="text-slate">Orders:</span> <span className="font-medium text-navy">{customer.orders}</span></p>
-            <p><span className="text-slate">Spend:</span> <span className="font-medium text-navy">{inr(customer.spend)}</span></p>
-            <p><span className="text-slate">Status:</span> <StatusBadge status={customer.status} /></p>
+            <p>
+              <span className="text-slate">Phone:</span>{" "}
+              <span className="font-medium text-navy">{customer.phone}</span>
+            </p>
+            <p>
+              <span className="text-slate">Location:</span>{" "}
+              <span className="font-medium text-navy">
+                {customer.city}, {customer.state}
+              </span>
+            </p>
+            <p>
+              <span className="text-slate">Joined:</span>{" "}
+              <span className="font-medium text-navy">{customer.joined}</span>
+            </p>
+            <p>
+              <span className="text-slate">Business:</span>{" "}
+              <span className="font-medium text-navy">{customer.name}</span>
+            </p>
+            <p>
+              <span className="text-slate">Address:</span>{" "}
+              <span className="font-medium text-navy">{customer.address}</span>
+            </p>
+            <p>
+              <span className="text-slate">GST:</span>{" "}
+              <span className="font-medium text-navy">{customer.gst || "—"}</span>
+            </p>
+            <p>
+              <span className="text-slate">Customer Type:</span>{" "}
+              <span className="font-semibold text-gold">{customerType}</span>
+            </p>
+            <p>
+              <span className="text-slate">Status:</span> <StatusBadge status={customer.status} />
+            </p>
           </div>
         </div>
       </Panel>
+
+      <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <Panel title="Total Orders">
+          <p className="text-2xl font-bold text-navy">{completedOrders.length}</p>
+        </Panel>
+        <Panel title="Purchase Value">
+          <p className="text-2xl font-bold text-navy">{inr(totalPurchase)}</p>
+        </Panel>
+        <Panel title="Paid">
+          <p className="text-2xl font-bold text-emerald-700">{inr(totalPaid)}</p>
+        </Panel>
+        <Panel title="Outstanding">
+          <p className="text-2xl font-bold text-amber-700">{inr(totalPending)}</p>
+        </Panel>
+      </div>
+
+      <div className="mt-5 grid gap-5 xl:grid-cols-2">
+        <Panel title="Monthly Purchase Activity">
+          {monthlyPerformance.length ? (
+            <div className="space-y-3">
+              {monthlyPerformance.map(([month, value]) => (
+                <div
+                  key={month}
+                  className="grid grid-cols-[4rem_1fr_auto] items-center gap-3 text-xs"
+                >
+                  <span className="text-slate">{month}</span>
+                  <div className="h-3 overflow-hidden rounded-full bg-muted">
+                    <div
+                      className="h-full rounded-full bg-gold"
+                      style={{ width: `${Math.max(4, (value.amount / maxMonthlyAmount) * 100)}%` }}
+                    />
+                  </div>
+                  <span className="font-semibold text-navy">
+                    {inr(value.amount)} · {value.orders} orders
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-slate">No order history is available yet.</p>
+          )}
+        </Panel>
+        <Panel title="Frequently Purchased Products">
+          {topProducts.length ? (
+            <DataTable
+              columns={["Product", "Units / Bags"]}
+              rows={topProducts.map(([name, qty]) => [name, qty])}
+            />
+          ) : (
+            <p className="text-sm text-slate">No product purchases are recorded yet.</p>
+          )}
+          <p className="mt-3 text-xs text-slate">
+            Average order value:{" "}
+            {inr(completedOrders.length ? totalPurchase / completedOrders.length : 0)} · Last order:{" "}
+            {lastOrder?.date ?? "—"}
+          </p>
+        </Panel>
+      </div>
 
       <div className="mt-6">
         <Tabs defaultValue="orders">
@@ -96,10 +255,28 @@ function AdminCustomerDetail() {
           <TabsContent value="orders">
             <Panel>
               <DataTable
-                columns={["Order", "Date", "Items", "Amount", "Status"]}
+                columns={["Order", "Date", "Items", "Total", "Paid", "Pending", "Status"]}
                 rows={custOrders.map((o) => [
-                  <Link to="/admin/orders/$id" params={{ id: o.id }} className="font-semibold text-navy hover:text-gold">{o.id}</Link>,
-                  o.date, o.items.length, inr(o.amount), <StatusBadge status={o.status} />,
+                  <Link
+                    to="/admin/orders/$id"
+                    params={{ id: o.id }}
+                    className="font-semibold text-navy hover:text-gold"
+                  >
+                    {o.id}
+                  </Link>,
+                  o.date,
+                  o.items.length,
+                  inr(o.amount),
+                  inr(o.paidAmount ?? (o.payment === "Paid" || o.payment === "COD" ? o.amount : 0)),
+                  inr(
+                    Math.max(
+                      0,
+                      o.amount -
+                        (o.paidAmount ??
+                          (o.payment === "Paid" || o.payment === "COD" ? o.amount : 0)),
+                    ),
+                  ),
+                  <StatusBadge status={o.status} />,
                 ])}
               />
             </Panel>
@@ -109,7 +286,13 @@ function AdminCustomerDetail() {
             <Panel>
               <DataTable
                 columns={["Order", "Txn", "Method", "Amount", "Status"]}
-                rows={custOrders.map((o) => [o.id, o.txn, o.method, inr(o.amount), <StatusBadge status={o.payment} />])}
+                rows={custOrders.map((o) => [
+                  o.id,
+                  o.txn,
+                  o.method,
+                  inr(o.amount),
+                  <StatusBadge status={o.payment} />,
+                ])}
               />
             </Panel>
           </TabsContent>
@@ -156,8 +339,13 @@ function AdminCustomerDetail() {
             <Panel>
               <div className="space-y-3">
                 {custOrders.slice(0, 8).map((o) => (
-                  <div key={o.id} className="flex items-center justify-between border-b border-border/70 pb-2 text-sm last:border-0">
-                    <p className="text-charcoal">Placed order {o.id} worth {inr(o.amount)}</p>
+                  <div
+                    key={o.id}
+                    className="flex items-center justify-between border-b border-border/70 pb-2 text-sm last:border-0"
+                  >
+                    <p className="text-charcoal">
+                      Placed order {o.id} worth {inr(o.amount)}
+                    </p>
                     <span className="text-xs text-slate">{o.date}</span>
                   </div>
                 ))}

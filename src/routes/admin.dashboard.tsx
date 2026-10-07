@@ -1,6 +1,15 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
-import { Building2, Calendar, IndianRupee, Landmark, Package, ShoppingCart, Users, Wallet } from "lucide-react";
+import {
+  Building2,
+  Calendar,
+  IndianRupee,
+  Landmark,
+  Package,
+  ShoppingCart,
+  Users,
+  Wallet,
+} from "lucide-react";
 import {
   Area,
   AreaChart,
@@ -18,14 +27,17 @@ import {
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { DataTable, Filters, Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { adminNav } from "@/lib/panel-nav";
-import { categorySales, inr, payouts } from "@/lib/data";
+import { inr, payouts } from "@/lib/data";
 import { useApp } from "@/lib/store";
 
 export const Route = createFileRoute("/admin/dashboard")({
   head: () => ({
     meta: [
       { title: "Admin Control Centre | Shami Business Ventures" },
-      { name: "description", content: "Platform-wide revenue, vendors, customers, products and payouts." },
+      {
+        name: "description",
+        content: "Platform-wide revenue, vendors, customers, products and payouts.",
+      },
       { property: "og:title", content: "Admin Control Centre | Shami" },
       { property: "og:description", content: "Marketplace analytics and management." },
       { name: "robots", content: "noindex" },
@@ -36,7 +48,7 @@ export const Route = createFileRoute("/admin/dashboard")({
 
 const pieColors = ["var(--navy)", "var(--gold)", "var(--gold-light)", "var(--slate)"];
 
-type TimeFilterOption = "Today" | "Week" | "Month" | "Year" | "Custom Range";
+type TimeFilterOption = "Today" | "Yesterday" | "Week" | "Month" | "Year" | "Custom Range";
 
 function parseDate(dateStr: string): Date {
   const d = new Date(dateStr);
@@ -44,8 +56,18 @@ function parseDate(dateStr: string): Date {
   const m = dateStr.match(/^(\d{1,2})\s+([A-Za-z]{3})\s+(\d{4})/);
   if (m) {
     const months: Record<string, number> = {
-      jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
-      jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11,
+      jan: 0,
+      feb: 1,
+      mar: 2,
+      apr: 3,
+      may: 4,
+      jun: 5,
+      jul: 6,
+      aug: 7,
+      sep: 8,
+      oct: 9,
+      nov: 10,
+      dec: 11,
     };
     const day = parseInt(m[1]!, 10);
     const mon = months[m[2]!.toLowerCase()];
@@ -54,43 +76,67 @@ function parseDate(dateStr: string): Date {
       return new Date(year, mon, day);
     }
   }
-  return new Date();
+  return new Date(Number.NaN);
 }
 
 function AdminDashboard() {
   const { orders, products, customers, vendors } = useApp();
   const [timeFilter, setTimeFilter] = useState<TimeFilterOption>("Month");
-  const [customStart, setCustomStart] = useState("2026-09-01");
-  const [customEnd, setCustomEnd] = useState("2026-09-29");
+  const todayISO = new Date().toISOString().slice(0, 10);
+  const [customStart, setCustomStart] = useState(todayISO);
+  const [customEnd, setCustomEnd] = useState(todayISO);
 
   // Determine active date boundaries based on business logic
   const dateRange = useMemo(() => {
+    const now = new Date();
     if (timeFilter === "Today") {
-      const start = new Date(2026, 8, 29, 0, 0, 0, 0);
-      const end = new Date(2026, 8, 29, 23, 59, 59, 999);
-      return { start, end, label: "Today (29 Sep 2026)" };
+      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+      return { start, end, label: `Today (${start.toLocaleDateString("en-IN")})` };
+    }
+    if (timeFilter === "Yesterday") {
+      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+      const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, -1);
+      return { start, end, label: `Yesterday (${start.toLocaleDateString("en-IN")})` };
     }
     if (timeFilter === "Week") {
-      const start = new Date(2026, 8, 23, 0, 0, 0, 0);
-      const end = new Date(2026, 8, 29, 23, 59, 59, 999);
-      return { start, end, label: "This Week (23 Sep – 29 Sep 2026)" };
+      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      start.setDate(start.getDate() - ((start.getDay() + 6) % 7));
+      const end = new Date(start);
+      end.setDate(end.getDate() + 7);
+      end.setMilliseconds(-1);
+      return {
+        start,
+        end,
+        label: `This Week (${start.toLocaleDateString("en-IN")} – ${end.toLocaleDateString("en-IN")})`,
+      };
     }
     if (timeFilter === "Month") {
-      const start = new Date(2026, 8, 1, 0, 0, 0, 0);
-      const end = new Date(2026, 8, 30, 23, 59, 59, 999);
-      return { start, end, label: "This Month (September 2026)" };
+      const start = new Date(now.getFullYear(), now.getMonth(), 1);
+      const end = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+      end.setMilliseconds(-1);
+      return {
+        start,
+        end,
+        label: `This Month (${start.toLocaleDateString("en-IN", { month: "long", year: "numeric" })})`,
+      };
     }
     if (timeFilter === "Year") {
-      const start = new Date(2026, 0, 1, 0, 0, 0, 0);
-      const end = new Date(2026, 11, 31, 23, 59, 59, 999);
-      return { start, end, label: "This Year (2026)" };
+      const start = new Date(now.getFullYear(), 0, 1);
+      const end = new Date(now.getFullYear() + 1, 0, 1);
+      end.setMilliseconds(-1);
+      return { start, end, label: `This Year (${now.getFullYear()})` };
     }
     // Custom Range
     const start = new Date(`${customStart}T00:00:00`);
     const end = new Date(`${customEnd}T23:59:59`);
     return {
-      start: isNaN(start.getTime()) ? new Date(2026, 0, 1) : start,
-      end: isNaN(end.getTime()) ? new Date(2026, 11, 31) : end,
+      start: isNaN(start.getTime())
+        ? new Date(now.getFullYear(), now.getMonth(), now.getDate())
+        : start,
+      end: isNaN(end.getTime())
+        ? new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999)
+        : end,
       label: `Custom Range: ${customStart} to ${customEnd}`,
     };
   }, [timeFilter, customStart, customEnd]);
@@ -113,8 +159,12 @@ function AdminDashboard() {
   // Financial statistics with 100% precision
   const financialStats = useMemo(() => {
     const periodInflow = filteredOrders
-      .filter((o) => (o.payment === "Paid" || o.payment === "COD") && o.status !== "Cancelled")
-      .reduce((s, o) => s + o.amount, 0);
+      .filter((o) => o.status !== "Cancelled")
+      .reduce(
+        (s, o) =>
+          s + (o.paidAmount ?? (o.payment === "Paid" || o.payment === "COD" ? o.amount : 0)),
+        0,
+      );
 
     const periodRefunds = filteredOrders
       .filter((o) => o.payment === "Refunded")
@@ -125,19 +175,36 @@ function AdminDashboard() {
       .reduce((s, p) => s + p.amount, 0);
 
     // Today's actual paid revenue
-    const todayStart = new Date(2026, 8, 29, 0, 0, 0, 0);
-    const todayEnd = new Date(2026, 8, 29, 23, 59, 59, 999);
+    const today = new Date();
+    const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const todayEnd = new Date(
+      today.getFullYear(),
+      today.getMonth(),
+      today.getDate(),
+      23,
+      59,
+      59,
+      999,
+    );
     const todayRevenue = orders
       .filter((o) => {
         const od = parseDate(o.date);
-        return od >= todayStart && od <= todayEnd && (o.payment === "Paid" || o.payment === "COD") && o.status !== "Cancelled";
+        return od >= todayStart && od <= todayEnd && o.status !== "Cancelled";
       })
-      .reduce((s, o) => s + o.amount, 0);
+      .reduce(
+        (s, o) =>
+          s + (o.paidAmount ?? (o.payment === "Paid" || o.payment === "COD" ? o.amount : 0)),
+        0,
+      );
 
     // Cumulative platform bank balance
     const totalInflow = orders
-      .filter((o) => (o.payment === "Paid" || o.payment === "COD") && o.status !== "Cancelled")
-      .reduce((s, o) => s + o.amount, 0);
+      .filter((o) => o.status !== "Cancelled")
+      .reduce(
+        (s, o) =>
+          s + (o.paidAmount ?? (o.payment === "Paid" || o.payment === "COD" ? o.amount : 0)),
+        0,
+      );
     const totalRefunds = orders
       .filter((o) => o.payment === "Refunded")
       .reduce((s, o) => s + o.amount, 0);
@@ -150,79 +217,69 @@ function AdminDashboard() {
       periodInflow,
       periodRefunds,
       periodPaidPayouts,
-      todayRevenue: todayRevenue > 0 ? todayRevenue : 184200,
+      todayRevenue,
       bankBalance,
     };
   }, [filteredOrders, filteredPayouts, orders]);
 
   // Derived counts for the period
-  const pendingOrders = filteredOrders.filter((o) => o.status !== "Delivered" && o.status !== "Cancelled").length;
-  const lowStockCount = products.filter((p) => p.stock < 30).length;
+  const pendingOrders = filteredOrders.filter(
+    (o) => o.status !== "Delivered" && o.status !== "Cancelled",
+  ).length;
+  const lowStockCount = products.filter((p) => p.stock < (p.minimumStock ?? 30)).length;
 
   const activeCustomerCount = useMemo(() => {
     const set = new Set(filteredOrders.map((o) => o.customer));
-    return set.size > 0 ? set.size : customers.length;
-  }, [filteredOrders, customers]);
+    return set.size;
+  }, [filteredOrders]);
 
   const activeVendorCount = useMemo(() => {
     const set = new Set(filteredOrders.flatMap((o) => o.items.map((i) => i.vendorId)));
-    return set.size > 0 ? set.size : vendors.length;
-  }, [filteredOrders, vendors]);
+    return set.size;
+  }, [filteredOrders]);
 
   // Dynamic Revenue Analytics Chart Data
   const dynamicSalesSeries = useMemo(() => {
-    if (timeFilter === "Today") {
-      const slots = ["06:00", "09:00", "12:00", "15:00", "18:00", "21:00"];
-      return slots.map((time, idx) => ({
-        month: time,
-        revenue: Math.round((financialStats.todayRevenue * (idx + 1)) / (slots.length * 1.5)),
-        customers: Math.max(1, Math.round(activeCustomerCount * ((idx + 1) / slots.length))),
-      }));
-    }
-
-    if (timeFilter === "Week") {
-      const days = ["Wed 23", "Thu 24", "Fri 25", "Sat 26", "Sun 27", "Mon 28", "Tue 29"];
-      return days.map((day) => {
-        const dayOrders = filteredOrders.filter((o) => o.date.includes(day.split(" ")[1]!));
-        const rev = dayOrders
-          .filter((o) => o.payment === "Paid" || o.payment === "COD")
-          .reduce((s, o) => s + o.amount, 0);
-        return {
-          month: day,
-          revenue: rev > 0 ? rev : Math.round(financialStats.periodInflow / 7),
-          customers: Math.max(1, dayOrders.length),
-        };
-      });
-    }
-
-    if (timeFilter === "Month") {
-      const weeks = ["1-7 Sep", "8-14 Sep", "15-21 Sep", "22-29 Sep"];
-      return weeks.map((w, idx) => {
-        const rev = filteredOrders
-          .filter((o, oIdx) => oIdx % weeks.length === idx && (o.payment === "Paid" || o.payment === "COD"))
-          .reduce((s, o) => s + o.amount, 0);
-        return {
-          month: w,
-          revenue: rev > 0 ? rev : Math.round(financialStats.periodInflow / 4),
-          customers: Math.max(2, Math.round(activeCustomerCount / 4)),
-        };
-      });
-    }
-
-    // Year or Custom: Group by Month
-    const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-    return monthNames.map((m) => {
-      const monthOrders = filteredOrders.filter((o) => o.date.includes(m));
-      const rev = monthOrders
-        .filter((o) => o.payment === "Paid" || o.payment === "COD")
-        .reduce((s, o) => s + o.amount, 0);
-      return {
-        month: m,
-        revenue: rev,
-        customers: monthOrders.length,
+    const groups = new Map<string, { revenue: number; customers: Set<string>; sortKey: number }>();
+    for (const order of filteredOrders) {
+      const date = parseDate(order.date);
+      if (Number.isNaN(date.getTime())) continue;
+      const key =
+        timeFilter === "Month"
+          ? `${Math.floor((date.getDate() - 1) / 7) * 7 + 1}–${Math.min(Math.floor((date.getDate() - 1) / 7) * 7 + 7, new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate())} ${date.toLocaleDateString("en-IN", { month: "short" })}`
+          : timeFilter === "Year" || timeFilter === "Custom Range"
+            ? date.toLocaleDateString("en-IN", { month: "short", year: "2-digit" })
+            : date.toLocaleDateString("en-IN", { weekday: "short", day: "numeric" });
+      const keyDate =
+        timeFilter === "Month"
+          ? new Date(
+              date.getFullYear(),
+              date.getMonth(),
+              Math.floor((date.getDate() - 1) / 7) * 7 + 1,
+            )
+          : timeFilter === "Year" || timeFilter === "Custom Range"
+            ? new Date(date.getFullYear(), date.getMonth(), 1)
+            : new Date(date.getFullYear(), date.getMonth(), date.getDate());
+      const group = groups.get(key) ?? {
+        revenue: 0,
+        customers: new Set<string>(),
+        sortKey: keyDate.getTime(),
       };
-    });
-  }, [timeFilter, filteredOrders, financialStats, activeCustomerCount]);
+      if (order.status !== "Cancelled")
+        group.revenue +=
+          order.paidAmount ??
+          (order.payment === "Paid" || order.payment === "COD" ? order.amount : 0);
+      group.customers.add(order.customerId);
+      groups.set(key, group);
+    }
+    return Array.from(groups.entries())
+      .sort((a, b) => a[1].sortKey - b[1].sortKey)
+      .map(([month, value]) => ({
+        month,
+        revenue: value.revenue,
+        customers: value.customers.size,
+      }));
+  }, [timeFilter, filteredOrders]);
 
   // Dynamic Category Sales
   const dynamicCategorySales = useMemo(() => {
@@ -234,7 +291,7 @@ function AdminDashboard() {
       }
     }
     const total = Object.values(map).reduce((s, v) => s + v, 0);
-    if (total === 0) return categorySales;
+    if (total === 0) return [];
     return Object.entries(map)
       .map(([name, val]) => ({ name, value: Math.round((val / total) * 100) }))
       .sort((a, b) => b.value - a.value);
@@ -263,11 +320,16 @@ function AdminDashboard() {
   }, [vendors, filteredOrders]);
 
   return (
-    <PanelLayout items={adminNav} tone="admin" title="Control Centre" subtitle="Platform overview · All vendors">
+    <PanelLayout
+      items={adminNav}
+      tone="admin"
+      title="Control Centre"
+      subtitle="Platform overview · All vendors"
+    >
       {/* Time Filter Selector (Today, Week, Month, Year, Custom Range) */}
       <div className="flex flex-col gap-3">
         <Filters<TimeFilterOption>
-          options={["Today", "Week", "Month", "Year", "Custom Range"]}
+          options={["Today", "Yesterday", "Week", "Month", "Year", "Custom Range"]}
           value={timeFilter}
           onChange={(val) => setTimeFilter(val)}
         />
@@ -323,30 +385,29 @@ function AdminDashboard() {
                     : "Range Revenue"
           }
           value={inr(financialStats.periodInflow)}
-          delta={`+11% vs last ${timeFilter.toLowerCase()}`}
           icon={IndianRupee}
         />
-        <StatCard label="Today's Revenue" value={inr(financialStats.todayRevenue)} delta="+6%" icon={Wallet} />
-        <StatCard
-          label="Total Orders"
-          value={String(filteredOrders.length)}
-          delta={`in ${timeFilter.toLowerCase()}`}
-          icon={ShoppingCart}
-        />
+        <StatCard label="Today's Payments" value={inr(financialStats.todayRevenue)} icon={Wallet} />
+        <StatCard label="Total Orders" value={String(filteredOrders.length)} icon={ShoppingCart} />
         <StatCard label="Pending Orders" value={String(pendingOrders)} icon={ShoppingCart} />
         <StatCard
           label="Total Customers"
-          value={String(activeCustomerCount * 268)}
-          delta={`+13% active`}
+          value={String(activeCustomerCount)}
+          delta="Customers with orders in range"
           icon={Users}
         />
         <StatCard
           label="Total Vendors"
-          value={String(activeVendorCount * 24)}
-          delta={`${activeVendorCount} active this period`}
+          value={String(activeVendorCount)}
+          delta="Vendors with orders in range"
           icon={Building2}
         />
-        <StatCard label="Low Stock Products" value={String(lowStockCount)} icon={Package} highlight={lowStockCount > 0} />
+        <StatCard
+          label="Low Stock Products"
+          value={String(lowStockCount)}
+          icon={Package}
+          highlight={lowStockCount > 0}
+        />
       </div>
 
       <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">
@@ -362,9 +423,21 @@ function AdminDashboard() {
                 </defs>
                 <CartesianGrid stroke="var(--border)" vertical={false} />
                 <XAxis dataKey="month" stroke="var(--slate)" fontSize={12} />
-                <YAxis stroke="var(--slate)" fontSize={12} tickFormatter={(v: number) => (v >= 100000 ? `${(v / 100000).toFixed(1)}L` : inr(v))} />
+                <YAxis
+                  stroke="var(--slate)"
+                  fontSize={12}
+                  tickFormatter={(v: number) =>
+                    v >= 100000 ? `${(v / 100000).toFixed(1)}L` : inr(v)
+                  }
+                />
                 <Tooltip formatter={(v: number) => inr(v)} />
-                <Area type="monotone" dataKey="revenue" stroke="var(--gold)" strokeWidth={3} fill="url(#rev)" />
+                <Area
+                  type="monotone"
+                  dataKey="revenue"
+                  stroke="var(--gold)"
+                  strokeWidth={3}
+                  fill="url(#rev)"
+                />
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -373,7 +446,14 @@ function AdminDashboard() {
           <div className="h-72">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
-                <Pie data={dynamicCategorySales} dataKey="value" nameKey="name" innerRadius={60} outerRadius={95} paddingAngle={3}>
+                <Pie
+                  data={dynamicCategorySales}
+                  dataKey="value"
+                  nameKey="name"
+                  innerRadius={60}
+                  outerRadius={95}
+                  paddingAngle={3}
+                >
                   {dynamicCategorySales.map((_, i) => (
                     <Cell key={i} fill={pieColors[i % pieColors.length]} />
                   ))}
@@ -417,16 +497,47 @@ function AdminDashboard() {
         <Panel title={`Latest Orders (${dateRange.label})`}>
           <DataTable
             columns={["Order", "Date", "Customer", "Vendor", "Amount", "Payment", "Status"]}
-            rows={filteredOrders.slice(0, 10).map((o) => [
-              <span className="font-semibold text-navy">{o.id}</span>,
-              o.date,
-              o.customer,
-              o.items[0]?.vendor || "—",
-              inr(o.amount),
-              <StatusBadge status={o.payment} />,
-              <StatusBadge status={o.status} />,
-            ])}
+            rows={filteredOrders
+              .slice(0, 10)
+              .map((o) => [
+                <span className="font-semibold text-navy">{o.id}</span>,
+                o.date,
+                o.customer,
+                o.items[0]?.vendor || "—",
+                inr(o.amount),
+                <StatusBadge status={o.payment} />,
+                <StatusBadge status={o.status} />,
+              ])}
           />
+        </Panel>
+      </div>
+
+      <div className="mt-6">
+        <Panel title="LOW STOCK ALERTS">
+          <DataTable
+            columns={["Product", "Current Stock", "Minimum Stock", "Required Stock", "Shortage"]}
+            rows={products
+              .filter((product) => product.stock < (product.minimumStock ?? 30))
+              .slice(0, 10)
+              .map((product) => {
+                const minimum = product.minimumStock ?? 30;
+                const required = Math.max(product.requiredStock ?? 0, minimum);
+                return [
+                  product.name,
+                  product.stock,
+                  minimum,
+                  required,
+                  <span className="font-bold text-amber-700">
+                    {Math.max(0, required - product.stock)}
+                  </span>,
+                ];
+              })}
+          />
+          {lowStockCount === 0 && (
+            <p className="mt-3 text-sm text-slate">
+              No products are below their minimum stock level.
+            </p>
+          )}
         </Panel>
       </div>
     </PanelLayout>

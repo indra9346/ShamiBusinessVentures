@@ -7,8 +7,10 @@ import {
   CreditCard,
   FileText,
   MapPin,
+  Minus,
   Package,
   Printer,
+  Plus,
   ShieldCheck,
   Truck,
   User,
@@ -19,7 +21,14 @@ import { adminNav } from "@/lib/panel-nav";
 import { inr, orderStages, type OrderStatus } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -39,13 +48,21 @@ export const Route = createFileRoute("/admin/orders/$id")({
       { title: `Order ${params.id} | Shami Business Ventures Admin` },
       { name: "description", content: `Full detail and status timeline for order ${params.id}.` },
       { property: "og:title", content: `Order ${params.id} | Shami Admin` },
-      { property: "og:description", content: "Order detail, customer GST, items, payment and vendor information." },
+      {
+        property: "og:description",
+        content: "Order detail, customer GST, items, payment and vendor information.",
+      },
       { name: "robots", content: "noindex" },
     ],
   }),
   component: AdminOrderDetail,
   notFoundComponent: () => (
-    <PanelLayout items={adminNav} tone="admin" title="Order Not Found" subtitle="We could not find this order">
+    <PanelLayout
+      items={adminNav}
+      tone="admin"
+      title="Order Not Found"
+      subtitle="We could not find this order"
+    >
       <Panel title="404">
         <p className="text-sm text-slate">The order you are looking for does not exist.</p>
         <Link to="/admin/orders" className="mt-3 inline-block text-sm font-semibold text-gold">
@@ -58,12 +75,27 @@ export const Route = createFileRoute("/admin/orders/$id")({
 
 function AdminOrderDetail() {
   const { id } = Route.useParams();
-  const { orders, customers, vendors, batches, getFIFOCost, updateOrderStatus, refundOrder } = useApp();
+  const {
+    orders,
+    customers,
+    vendors,
+    batches,
+    getFIFOCost,
+    updateOrderStatus,
+    updateOrderItem,
+    updateOrderDelivery,
+    refundOrder,
+  } = useApp();
   const order = orders.find((o) => o.id === id);
 
   if (!order) {
     return (
-      <PanelLayout items={adminNav} tone="admin" title="Order Not Found" subtitle="We could not find this order">
+      <PanelLayout
+        items={adminNav}
+        tone="admin"
+        title="Order Not Found"
+        subtitle="We could not find this order"
+      >
         <Panel title="404">
           <p className="text-sm text-slate">Order id "{id}" was not found.</p>
           <Link to="/admin/orders" className="mt-3 inline-block text-sm font-semibold text-gold">
@@ -89,7 +121,12 @@ function AdminOrderDetail() {
   );
 
   return (
-    <PanelLayout items={adminNav} tone="admin" title={order.id} subtitle={`Placed on ${order.date}`}>
+    <PanelLayout
+      items={adminNav}
+      tone="admin"
+      title={order.id}
+      subtitle={`Placed on ${order.date}`}
+    >
       {/* Top Header Actions */}
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
@@ -116,17 +153,26 @@ function AdminOrderDetail() {
               toast.success(`Order ${order.id} updated to ${v}`);
             }}
           >
-            <SelectTrigger className="h-9 w-44 font-medium"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="h-9 w-44 font-medium">
+              <SelectValue />
+            </SelectTrigger>
             <SelectContent>
               {[...orderStages, "Cancelled"].map((s) => (
-                <SelectItem key={s} value={s}>{s}</SelectItem>
+                <SelectItem key={s} value={s}>
+                  {s}
+                </SelectItem>
               ))}
             </SelectContent>
           </Select>
 
           <AlertDialog>
             <AlertDialogTrigger asChild>
-              <Button variant="outline" size="sm" disabled={isCancelled} className="text-danger hover:border-danger">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={isCancelled}
+                className="text-danger hover:border-danger"
+              >
                 Cancel Order
               </Button>
             </AlertDialogTrigger>
@@ -171,7 +217,9 @@ function AdminOrderDetail() {
         {isCancelled ? (
           <div className="flex items-center gap-2 text-danger">
             <StatusBadge status="Cancelled" />
-            <p className="text-sm">This order was cancelled and is no longer progressing through fulfilment stages.</p>
+            <p className="text-sm">
+              This order was cancelled and is no longer progressing through fulfilment stages.
+            </p>
           </div>
         ) : (
           <div className="flex flex-wrap items-center gap-2">
@@ -180,10 +228,16 @@ function AdminOrderDetail() {
                 <div
                   className={cn(
                     "flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold",
-                    i <= currentIdx ? "border-gold bg-gold/10 text-navy" : "border-border text-slate",
+                    i <= currentIdx
+                      ? "border-gold bg-gold/10 text-navy"
+                      : "border-border text-slate",
                   )}
                 >
-                  {i <= currentIdx ? <CheckCircle2 className="h-3.5 w-3.5 text-gold" /> : <Circle className="h-3.5 w-3.5" />}
+                  {i <= currentIdx ? (
+                    <CheckCircle2 className="h-3.5 w-3.5 text-gold" />
+                  ) : (
+                    <Circle className="h-3.5 w-3.5" />
+                  )}
                   {stage}
                 </div>
                 {i < orderStages.length - 1 && (
@@ -213,7 +267,9 @@ function AdminOrderDetail() {
             </div>
             <div className="flex justify-between">
               <dt className="text-slate">Email</dt>
-              <dd className="font-medium text-navy truncate max-w-[150px]" title={order.email}>{order.email}</dd>
+              <dd className="font-medium text-navy truncate max-w-[150px]" title={order.email}>
+                {order.email}
+              </dd>
             </div>
             <div className="flex justify-between border-t border-border pt-1.5">
               <dt className="text-slate">GSTIN</dt>
@@ -254,7 +310,15 @@ function AdminOrderDetail() {
             </div>
             <div className="flex justify-between">
               <dt className="text-slate">Method</dt>
-              <dd className="text-xs font-semibold text-gold">{order.delivery}</dd>
+              <dd className="w-40 text-xs font-semibold text-gold">
+                <Input
+                  aria-label="Delivery requirement"
+                  defaultValue={order.delivery}
+                  disabled={isCancelled}
+                  className="h-8 text-xs"
+                  onBlur={(event) => updateOrderDelivery(order.id, event.target.value)}
+                />
+              </dd>
             </div>
           </dl>
         </Panel>
@@ -275,11 +339,15 @@ function AdminOrderDetail() {
             </div>
             <div className="flex justify-between items-center">
               <dt className="text-slate">Payment Status</dt>
-              <dd><StatusBadge status={order.payment} /></dd>
+              <dd>
+                <StatusBadge status={order.payment} />
+              </dd>
             </div>
             <div className="flex justify-between">
               <dt className="text-slate">Order Status</dt>
-              <dd><StatusBadge status={order.status} /></dd>
+              <dd>
+                <StatusBadge status={order.status} />
+              </dd>
             </div>
             <div className="flex justify-between border-t border-border pt-1.5">
               <dt className="text-slate">Payment Date</dt>
@@ -312,7 +380,9 @@ function AdminOrderDetail() {
             </div>
             <div className="flex justify-between">
               <dt className="text-slate">Freight / Delivery</dt>
-              <dd className="font-medium text-charcoal">{order.shipping === 0 ? "Free Shipping" : inr(order.shipping)}</dd>
+              <dd className="font-medium text-charcoal">
+                {order.shipping === 0 ? "Free Shipping" : inr(order.shipping)}
+              </dd>
             </div>
             <div className="mt-2 flex justify-between border-t-2 border-border pt-2 text-base font-bold">
               <dt className="text-navy">Grand Total</dt>
@@ -335,7 +405,7 @@ function AdminOrderDetail() {
                   <th className="px-3 py-3">Product</th>
                   <th className="px-3 py-3">SKU</th>
                   <th className="px-3 py-3">Vendor</th>
-                  <th className="px-3 py-3 text-center">Qty</th>
+                  <th className="px-3 py-3 text-center">Bags / Capacity</th>
                   <th className="px-3 py-3 text-right">Selling Price</th>
                   <th className="px-3 py-3 text-right">FIFO Unit Cost</th>
                   <th className="px-3 py-3 text-right">Gross Margin</th>
@@ -345,12 +415,15 @@ function AdminOrderDetail() {
               <tbody>
                 {order.items.map((it, i) => {
                   const fifoCost = getFIFOCost(it.product.id);
-                  const margin = it.product.price > 0
-                    ? Math.round(((it.product.price - fifoCost) / it.product.price) * 100)
-                    : 0;
+                  const unitPrice = it.unitPrice ?? it.product.price;
+                  const margin =
+                    unitPrice > 0 ? Math.round(((unitPrice - fifoCost) / unitPrice) * 100) : 0;
 
                   return (
-                    <tr key={i} className="border-b border-border/70 last:border-0 hover:bg-muted/10">
+                    <tr
+                      key={i}
+                      className="border-b border-border/70 last:border-0 hover:bg-muted/10"
+                    >
                       <td className="px-3 py-3">
                         <div className="flex items-center gap-3">
                           <img
@@ -360,24 +433,102 @@ function AdminOrderDetail() {
                           />
                           <div>
                             <p className="font-semibold text-navy">{it.product.name}</p>
-                            <span className="text-xs text-slate">{it.product.category} · {it.product.weight}</span>
+                            <span className="text-xs text-slate">{it.product.category}</span>
+                            <Input
+                              aria-label={`${it.product.name} bag capacity`}
+                              defaultValue={it.capacity ?? it.product.weight}
+                              disabled={isCancelled}
+                              className="mt-1 h-8 w-32 text-xs"
+                              onBlur={(event) =>
+                                updateOrderItem(order.id, i, { capacity: event.target.value })
+                              }
+                            />
                           </div>
                         </div>
                       </td>
-                      <td className="px-3 py-3 font-mono text-xs text-charcoal">{it.product.sku}</td>
+                      <td className="px-3 py-3 font-mono text-xs text-charcoal">
+                        {it.product.sku}
+                      </td>
                       <td className="px-3 py-3 font-medium text-navy">{it.vendor}</td>
-                      <td className="px-3 py-3 text-center font-bold text-navy">{it.qty}</td>
-                      <td className="px-3 py-3 text-right font-medium text-charcoal">{inr(it.product.price)}</td>
+                      <td className="px-3 py-3 text-center">
+                        <div className="flex items-center justify-center gap-1">
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="outline"
+                            className="h-8 w-8"
+                            aria-label={`Remove one ${it.product.name} bag`}
+                            disabled={isCancelled || it.qty <= 1}
+                            onClick={() => {
+                              if (!updateOrderItem(order.id, i, { qty: it.qty - 1 }))
+                                toast.error("Could not update this order quantity");
+                            }}
+                          >
+                            <Minus className="h-3.5 w-3.5" />
+                          </Button>
+                          <Input
+                            type="number"
+                            min={1}
+                            value={it.qty}
+                            disabled={isCancelled}
+                            aria-label={`${it.product.name} bag quantity`}
+                            className="h-8 w-16 text-center"
+                            onChange={(event) => {
+                              const quantity = Number(event.target.value);
+                              if (
+                                Number.isInteger(quantity) &&
+                                quantity > 0 &&
+                                !updateOrderItem(order.id, i, { qty: quantity })
+                              )
+                                toast.error("Not enough stock available for that quantity");
+                            }}
+                          />
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="outline"
+                            className="h-8 w-8"
+                            aria-label={`Add one ${it.product.name} bag`}
+                            disabled={isCancelled}
+                            onClick={() => {
+                              if (!updateOrderItem(order.id, i, { qty: it.qty + 1 }))
+                                toast.error("Not enough stock available for another bag");
+                            }}
+                          >
+                            <Plus className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                        <span className="mt-1 block text-[11px] text-slate">
+                          {it.qty} × {it.capacity ?? it.product.weight}
+                        </span>
+                      </td>
+                      <td className="px-3 py-3 text-right font-medium text-charcoal">
+                        <Input
+                          type="number"
+                          min={0}
+                          value={unitPrice}
+                          disabled={isCancelled}
+                          aria-label={`${it.product.name} unit price`}
+                          className="h-8 w-24 text-right"
+                          onChange={(event) => {
+                            const price = Number(event.target.value);
+                            if (Number.isFinite(price) && price >= 0)
+                              updateOrderItem(order.id, i, { unitPrice: price });
+                          }}
+                        />
+                      </td>
                       <td className="px-3 py-3 text-right font-mono text-xs text-slate">
                         {inr(fifoCost)}
                       </td>
                       <td className="px-3 py-3 text-right">
-                        <span className={`text-xs font-semibold ${margin >= 15 ? "text-emerald-700" : "text-amber-700"}`}>
+                        <span
+                          className={`text-xs font-semibold ${margin >= 15 ? "text-emerald-700" : "text-amber-700"}`}
+                        >
                           {margin}%
                         </span>
                       </td>
                       <td className="px-3 py-3 text-right font-bold text-navy">
-                        {inr(it.product.price * it.qty)}
+                        {inr(unitPrice * it.qty)}
                       </td>
                     </tr>
                   );
@@ -437,4 +588,3 @@ function AdminOrderDetail() {
     </PanelLayout>
   );
 }
-

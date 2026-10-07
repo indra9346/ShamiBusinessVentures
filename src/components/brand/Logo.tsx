@@ -1,5 +1,4 @@
 import { Link } from "@tanstack/react-router";
-import shamiLogo from "@/assets/shami-logo.png";
 import grainbazarLogo from "@/assets/grainbazar-logo.png";
 import { cn } from "@/lib/utils";
 
@@ -15,15 +14,18 @@ export function Logo({
     <Link
       to={to}
       className={cn("inline-flex shrink-0 items-center", className)}
-      aria-label="Shami Business Ventures home"
+      aria-label="Grain Bazar home"
     >
       <img
-        src={shamiLogo}
-        alt="Shami Business Ventures Pvt. Ltd."
+        src={grainbazarLogo}
+        alt="Grain Bazar"
         width={512}
         height={512}
-        className="h-11 w-auto rounded-lg bg-white object-contain p-1 shadow-sm sm:h-12"
+        className="h-10 w-10 rounded-lg bg-white object-contain p-1 shadow-sm sm:h-11 sm:w-11"
       />
+      <span className="ml-2.5 whitespace-nowrap text-sm font-extrabold tracking-wide text-white sm:text-base">
+        GRAIN BAZAR
+      </span>
     </Link>
   );
 }
@@ -31,12 +33,11 @@ export function Logo({
 export function LogoMark({ className }: { className?: string }) {
   return (
     <img
-      src={shamiLogo}
-      alt="Shami Business Ventures"
+      src={grainbazarLogo}
+      alt="Grain Bazar"
       width={512}
       height={512}
       className={cn("h-10 w-auto rounded-lg bg-white object-contain p-1 shadow-sm", className)}
     />
   );
 }
-

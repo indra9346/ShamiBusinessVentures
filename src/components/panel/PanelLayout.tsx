@@ -7,7 +7,11 @@ import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import { LanguageSwitcher } from "@/components/site/LanguageSwitcher";
 
-export type NavItem = { label: string; to: string; icon: React.ComponentType<{ className?: string }> };
+export type NavItem = {
+  label: string;
+  to: string;
+  icon: React.ComponentType<{ className?: string }>;
+};
 
 export function PanelLayout({
   items,
@@ -24,7 +28,19 @@ export function PanelLayout({
 }) {
   const [open, setOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
-  const { user, logout, notifications, markRead, markAllRead } = useApp();
+  const [globalQuery, setGlobalQuery] = useState("");
+  const {
+    user,
+    logout,
+    notifications,
+    markRead,
+    markAllRead,
+    products,
+    categories,
+    customers,
+    vendors,
+    orders,
+  } = useApp();
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
 
@@ -40,16 +56,68 @@ export function PanelLayout({
     return relevantNotifs.filter((n) => !n.read).length;
   }, [relevantNotifs]);
 
-  const sidebarBg = tone === "customer" ? "bg-navy" : tone === "vendor" ? "bg-midnight" : "bg-midnight";
+  const searchResults = useMemo(() => {
+    const query = globalQuery.trim().toLowerCase();
+    if (!query) return [];
+    return [
+      ...products
+        .filter((item) => `${item.name} ${item.sku} ${item.category}`.toLowerCase().includes(query))
+        .map((item) => ({
+          label: item.name,
+          detail: `${item.sku} · Product`,
+          to: `/admin/products/${item.id}`,
+        })),
+      ...categories
+        .filter((item) => item.name.toLowerCase().includes(query))
+        .map((item) => ({ label: item.name, detail: "Category", to: "/admin/categories" })),
+      ...customers
+        .filter((item) => `${item.name} ${item.email} ${item.phone}`.toLowerCase().includes(query))
+        .map((item) => ({
+          label: item.name,
+          detail: `${item.phone} · Customer`,
+          to: `/admin/customers/${item.id}`,
+        })),
+      ...vendors
+        .filter((item) =>
+          `${item.business} ${item.owner} ${item.email} ${item.phone}`
+            .toLowerCase()
+            .includes(query),
+        )
+        .map((item) => ({
+          label: item.business,
+          detail: `${item.phone} · Vendor`,
+          to: `/admin/vendors/${item.id}`,
+        })),
+      ...orders
+        .filter((item) =>
+          `${item.id} ${item.customer} ${item.phone} ${item.txn} ${item.utr ?? ""}`
+            .toLowerCase()
+            .includes(query),
+        )
+        .map((item) => ({
+          label: item.id,
+          detail: `${item.customer} · Order`,
+          to: `/admin/orders/${item.id}`,
+        })),
+    ].slice(0, 8);
+  }, [globalQuery, products, categories, customers, vendors, orders]);
+
+  const sidebarBg =
+    tone === "customer" ? "bg-navy" : tone === "vendor" ? "bg-midnight" : "bg-midnight";
   const pageBg = tone === "admin" ? "bg-[oklch(0.972_0.004_258)]" : "bg-panel";
 
   const sidebar = (
     <div className={cn("flex h-full w-64 flex-col", sidebarBg)}>
       <div className="flex items-center justify-between border-b border-white/10 px-5 py-4">
         <Link to="/" className="flex items-center">
-          <LogoMark className="h-10 w-auto max-w-[190px] rounded-lg bg-white p-1.5 object-contain shadow-sm" />
+          <LogoMark className="h-9 w-9 rounded-lg bg-white p-1.5 object-contain shadow-sm" />
+          <span className="ml-2 text-sm font-extrabold tracking-wide text-white">GRAIN BAZAR</span>
         </Link>
-        <button onClick={() => setOpen(false)} className="text-white/60 lg:hidden" aria-label="Close menu">
+        <button
+          onClick={() => setOpen(false)}
+          className="text-white/60 lg:hidden"
+          aria-label="Close menu"
+        >
           <X className="h-5 w-5" />
         </button>
       </div>
@@ -95,7 +163,11 @@ export function PanelLayout({
       {open && (
         <div className="fixed inset-0 z-50 flex lg:hidden">
           <div className="animate-rise">{sidebar}</div>
-          <button className="flex-1 bg-midnight/60" onClick={() => setOpen(false)} aria-label="Close" />
+          <button
+            className="flex-1 bg-midnight/60"
+            onClick={() => setOpen(false)}
+            aria-label="Close"
+          />
         </div>
       )}
 
@@ -103,7 +175,11 @@ export function PanelLayout({
         <header className="sticky top-0 z-40 border-b border-border bg-card/90 backdrop-blur">
           <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-4 py-3 sm:px-6">
             <div className="flex min-w-0 items-center gap-3">
-              <button onClick={() => setOpen(true)} className="text-navy lg:hidden" aria-label="Open menu">
+              <button
+                onClick={() => setOpen(true)}
+                className="text-navy lg:hidden"
+                aria-label="Open menu"
+              >
                 <Menu className="h-5 w-5" />
               </button>
               <div className="min-w-0">
@@ -115,7 +191,39 @@ export function PanelLayout({
               <LanguageSwitcher />
               <div className="relative hidden md:block">
                 <Search className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-slate" />
-                <Input placeholder="Search…" className="h-9 w-56 pl-9" />
+                <Input
+                  placeholder="Search products, people, orders…"
+                  value={globalQuery}
+                  onChange={(event) => setGlobalQuery(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && searchResults[0]) {
+                      navigate({ to: searchResults[0].to as never });
+                      setGlobalQuery("");
+                    }
+                    if (event.key === "Escape") setGlobalQuery("");
+                  }}
+                  className="h-9 w-56 pl-9"
+                />
+                {searchResults.length > 0 && (
+                  <div className="absolute right-0 top-full z-50 mt-1 max-h-80 w-72 overflow-auto rounded-lg border border-border bg-card shadow-xl">
+                    {searchResults.map((result) => (
+                      <button
+                        key={`${result.to}-${result.label}`}
+                        type="button"
+                        onClick={() => {
+                          navigate({ to: result.to as never });
+                          setGlobalQuery("");
+                        }}
+                        className="flex w-full items-center justify-between gap-3 border-b border-border/60 px-3 py-2 text-left last:border-0 hover:bg-ivory"
+                      >
+                        <span className="truncate text-sm font-medium text-navy">
+                          {result.label}
+                        </span>
+                        <span className="shrink-0 text-[10px] text-slate">{result.detail}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
               <div className="relative">
                 <button
@@ -123,7 +231,7 @@ export function PanelLayout({
                   onClick={() => setNotifOpen((v) => !v)}
                   className={cn(
                     "relative rounded-full border border-border p-2 text-navy transition-colors hover:border-gold hover:text-gold",
-                    notifOpen && "border-gold text-gold bg-gold/10"
+                    notifOpen && "border-gold text-gold bg-gold/10",
                   )}
                   aria-label="Notifications"
                 >
@@ -189,7 +297,7 @@ export function PanelLayout({
                               }}
                               className={cn(
                                 "flex items-start gap-3 p-3.5 transition-colors cursor-pointer hover:bg-ivory/80",
-                                !n.read && "bg-amber-50/40"
+                                !n.read && "bg-amber-50/40",
                               )}
                             >
                               <div
@@ -197,14 +305,19 @@ export function PanelLayout({
                                   "mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full text-xs font-bold",
                                   n.type === "success" && "bg-emerald-100 text-emerald-700",
                                   n.type === "warning" && "bg-amber-100 text-amber-700",
-                                  n.type === "info" && "bg-blue-100 text-blue-700"
+                                  n.type === "info" && "bg-blue-100 text-blue-700",
                                 )}
                               >
                                 {n.type === "success" ? "✓" : n.type === "warning" ? "!" : "i"}
                               </div>
                               <div className="min-w-0 flex-1">
                                 <div className="flex items-center justify-between gap-1">
-                                  <p className={cn("text-xs leading-tight text-navy", !n.read ? "font-bold" : "font-semibold")}>
+                                  <p
+                                    className={cn(
+                                      "text-xs leading-tight text-navy",
+                                      !n.read ? "font-bold" : "font-semibold",
+                                    )}
+                                  >
                                     {n.title}
                                   </p>
                                   <span className="text-[10px] text-slate shrink-0">{n.time}</span>
@@ -223,11 +336,19 @@ export function PanelLayout({
 
                       <div className="border-t border-border bg-ivory/40 p-2.5 text-center">
                         <Link
-                          to={tone === "admin" ? "/admin/notifications" : tone === "vendor" ? "/vendor/dashboard" : "/account/notifications"}
+                          to={
+                            tone === "admin"
+                              ? "/admin/notifications"
+                              : tone === "vendor"
+                                ? "/vendor/dashboard"
+                                : "/account/notifications"
+                          }
                           onClick={() => setNotifOpen(false)}
                           className="block text-xs font-bold text-navy hover:text-gold transition-colors py-1"
                         >
-                          {tone === "admin" ? "View All Notifications →" : "View Notification Centre →"}
+                          {tone === "admin"
+                            ? "View All Notifications →"
+                            : "View Notification Centre →"}
                         </Link>
                       </div>
                     </div>

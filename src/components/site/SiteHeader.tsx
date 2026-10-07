@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Logo } from "@/components/brand/Logo";
 import { useApp } from "@/lib/store";
 import { Input } from "@/components/ui/input";
-import { inr, isStorefrontProduct, products } from "@/lib/data";
+import { inr, isStorefrontProduct } from "@/lib/data";
 import { LanguageSwitcher } from "@/components/site/LanguageSwitcher";
 
 const nav = [
@@ -16,13 +16,27 @@ const nav = [
 ];
 
 export function SiteHeader() {
-  const { cartCount, subtotal, wishlist, user } = useApp();
+  const { cartCount, subtotal, wishlist, user, products: appProducts, categories } = useApp();
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
   const navigate = useNavigate();
-  const suggestions = q.length > 1
-    ? products.filter((p) => isStorefrontProduct(p) && p.name.toLowerCase().includes(q.toLowerCase())).slice(0, 5)
-    : [];
+  const suggestions =
+    q.trim().length > 1
+      ? [
+          ...appProducts
+            .filter(
+              (p) =>
+                isStorefrontProduct(p) &&
+                `${p.name} ${p.sku} ${p.category}`.toLowerCase().includes(q.trim().toLowerCase()),
+            )
+            .slice(0, 4)
+            .map((product) => ({ kind: "product" as const, product })),
+          ...categories
+            .filter((category) => category.name.toLowerCase().includes(q.trim().toLowerCase()))
+            .slice(0, 2)
+            .map((category) => ({ kind: "category" as const, category })),
+        ]
+      : [];
 
   const submit = () => {
     navigate({ to: "/shop", search: { q } });
@@ -58,22 +72,37 @@ export function SiteHeader() {
               onChange={(e) => setQ(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && submit()}
               placeholder="Search S1 sugar, SKU or vendor…"
-              className="h-11 rounded-full border-white/15 bg-card pl-10 text-charcoal shadow-inner"
+              className="h-9 rounded-full border-white/15 bg-card pl-10 text-sm text-charcoal shadow-inner"
             />
             {suggestions.length > 0 && (
               <div className="absolute top-13 left-0 z-50 w-full overflow-hidden rounded-xl border border-border bg-card shadow-elevated">
-                {suggestions.map((s) => (
-                  <Link
-                    key={s.id}
-                    to="/product/$id"
-                    params={{ id: s.id }}
-                    onClick={() => setQ("")}
-                    className="flex items-center justify-between px-4 py-2.5 text-sm text-charcoal transition-colors hover:bg-ivory"
-                  >
-                    <span className="truncate">{s.name}</span>
-                    <span className="ml-3 shrink-0 text-xs text-slate">{s.sku}</span>
-                  </Link>
-                ))}
+                {suggestions.map((suggestion) =>
+                  suggestion.kind === "product" ? (
+                    <Link
+                      key={suggestion.product.id}
+                      to="/product/$id"
+                      params={{ id: suggestion.product.id }}
+                      onClick={() => setQ("")}
+                      className="flex items-center justify-between px-4 py-2.5 text-sm text-charcoal transition-colors hover:bg-ivory"
+                    >
+                      <span className="truncate">{suggestion.product.name}</span>
+                      <span className="ml-3 shrink-0 text-xs text-slate">
+                        {suggestion.product.sku}
+                      </span>
+                    </Link>
+                  ) : (
+                    <Link
+                      key={suggestion.category.id}
+                      to="/categories/$slug"
+                      params={{ slug: suggestion.category.name.toLowerCase() }}
+                      onClick={() => setQ("")}
+                      className="flex items-center justify-between px-4 py-2.5 text-sm text-charcoal transition-colors hover:bg-ivory"
+                    >
+                      <span className="truncate">{suggestion.category.name}</span>
+                      <span className="ml-3 shrink-0 text-xs text-slate">Category</span>
+                    </Link>
+                  ),
+                )}
               </div>
             )}
           </div>
@@ -166,7 +195,7 @@ export function SiteHeader() {
               onChange={(e) => setQ(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && submit()}
               placeholder="Search products…"
-              className="h-11 rounded-full bg-white pl-10 text-charcoal"
+              className="h-9 rounded-full bg-white pl-10 text-sm text-charcoal"
             />
           </div>
           <div className="grid gap-1">
@@ -182,10 +211,18 @@ export function SiteHeader() {
               </Link>
             ))}
             <div className="hairline-gold my-2" />
-            <Link to="/vendor/login" onClick={() => setOpen(false)} className="rounded-lg px-3 py-2.5 text-sm text-white/70 hover:text-gold">
+            <Link
+              to="/vendor/login"
+              onClick={() => setOpen(false)}
+              className="rounded-lg px-3 py-2.5 text-sm text-white/70 hover:text-gold"
+            >
               Vendor Panel
             </Link>
-            <Link to="/admin/login" onClick={() => setOpen(false)} className="rounded-lg px-3 py-2.5 text-sm text-white/70 hover:text-gold">
+            <Link
+              to="/admin/login"
+              onClick={() => setOpen(false)}
+              className="rounded-lg px-3 py-2.5 text-sm text-white/70 hover:text-gold"
+            >
               Admin Panel
             </Link>
           </div>

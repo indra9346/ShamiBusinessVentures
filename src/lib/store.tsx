@@ -7,6 +7,7 @@ import {
   calculateInventoryValuation,
   coupons as seedCoupons,
   customers as seedCustomers,
+  inr,
   getCurrentFIFOCost,
   getProductAverageSellingPrice,
   notifications as seedNotifications,
@@ -75,13 +76,20 @@ type AppState = {
 
   orders: Order[];
   placeOrder: (input: {
-    lines: { product: Product; qty: number }[];
+    lines: { product: Product; qty: number; capacity?: string; unitPrice?: number }[];
     method: string;
     payment: Order["payment"];
     coupon?: string;
     customerIndex?: number;
+    customerOverride?: Customer;
+    delivery?: string;
+    source?: string;
+    paymentDueDate?: string;
   }) => Order;
   updateOrderStatus: (id: string, status: OrderStatus) => void;
+  updateOrderItem: (orderId: string, index: number, patch: { qty?: number; capacity?: string; unitPrice?: number }) => boolean;
+  updateOrderDelivery: (orderId: string, delivery: string) => void;
+  confirmPayment: (id: string, amount: number, utr: string, advancePercent?: number) => void;
   refundOrder: (id: string) => void;
 
   vendors: Vendor[];
@@ -320,23 +328,36 @@ export function AppProvider({ children }: { children: ReactNode }) {
       getAverageSellingPrice: (product) => getProductAverageSellingPrice(product, orders),
 
       orders,
-      placeOrder: ({ lines, method, payment, coupon, customerIndex = 0 }) => {
+      placeOrder: ({ lines, method, payment, coupon, customerIndex = 0, customerOverride, delivery, source, paymentDueDate }) => {
         const id = `ORD-${20000 + Math.floor(Math.random() * 9000)}`;
         const order = buildOrder(
           id,
           today(),
           customerIndex,
-          lines.map((l) => ({ product: l.product, qty: l.qty, vendor: l.product.vendor, vendorId: l.product.vendorId })),
+          lines.map((l) => ({ product: l.product, qty: l.qty, vendor: l.product.vendor, vendorId: l.product.vendorId, capacity: l.capacity ?? l.product.weight, unitPrice: l.unitPrice ?? l.product.price })),
           payment,
           method,
           payment === "Paid" ? "Payment Confirmed" : "Placed",
           coupon,
         );
-        if (user) {
+        if (customerOverride) {
+          order.customer = customerOverride.name;
+          order.customerId = customerOverride.id;
+          order.email = customerOverride.email;
+          order.phone = customerOverride.phone;
+          order.gstin = customerOverride.gst;
+          order.address = customerOverride.address;
+          order.city = customerOverride.city;
+          order.state = customerOverride.state;
+          order.pin = customerOverride.pin;
+        } else if (user) {
           order.customer = user.name;
           order.email = user.email;
           if (user.phone) order.phone = user.phone;
         }
+        if (delivery) order.delivery = delivery;
+        if (source) order.source = source;
+        if (paymentDueDate) order.paymentDueDate = paymentDueDate;
         setOrders((o) => [order, ...o]);
 
         // Consume inventory stock
@@ -377,6 +398,70 @@ export function AppProvider({ children }: { children: ReactNode }) {
       },
       updateOrderStatus: (id, status) =>
         setOrders((list) => list.map((o) => (o.id === id ? { ...o, status } : o))),
+      updateOrderDelivery: (orderId, delivery) =>
+        setOrders((list) => list.map((order) => order.id === orderId ? { ...order, delivery } : order)),
+      updateOrderItem: (orderId, index, patch) => {
+        const order = orders.find((candidate) => candidate.id === orderId);
+        const item = order?.items[index];
+        if (!order || !item || order.status === "Cancelled") return false;
+        const nextQty = patch.qty ?? item.qty;
+        if (!Number.isInteger(nextQty) || nextQty < 1) return false;
+        const delta = nextQty - item.qty;
+        const product = products.find((candidate) => candidate.id === item.product.id);
+        if (delta > 0 && product && product.stock < delta) return false;
+        if (delta !== 0 && product) {
+          setProducts((list) => list.map((candidate) => candidate.id === product.id
+            ? { ...candidate, stock: Math.max(0, candidate.stock - delta), sold: Math.max(0, candidate.sold + delta) }
+            : candidate));
+          setBatches((current) => {
+            const next = [...current];
+            if (delta > 0) {
+              let needed = delta;
+              const fifo = next.map((batch, batchIndex) => ({ batch, batchIndex }))
+                .filter(({ batch }) => batch.productId === product.id && batch.remainingQty > 0)
+                .sort((a, b) => a.batch.purchaseDate.localeCompare(b.batch.purchaseDate));
+              for (const { batch, batchIndex } of fifo) {
+                if (!needed) break;
+                const taken = Math.min(needed, batch.remainingQty);
+                next[batchIndex] = { ...batch, remainingQty: batch.remainingQty - taken, status: batch.remainingQty === taken ? "Depleted" : "Active" };
+                needed -= taken;
+              }
+            } else {
+              const latest = next.map((batch, batchIndex) => ({ batch, batchIndex }))
+                .filter(({ batch }) => batch.productId === product.id)
+                .sort((a, b) => b.batch.purchaseDate.localeCompare(a.batch.purchaseDate))[0];
+              if (latest) next[latest.batchIndex] = { ...latest.batch, remainingQty: latest.batch.remainingQty + Math.abs(delta), status: "Active" };
+            }
+            return next;
+          });
+        }
+        const items = order.items.map((line, lineIndex) => lineIndex === index ? { ...line, ...patch, qty: nextQty } : line);
+        const subtotal = items.reduce((sum, line) => sum + (line.unitPrice ?? line.product.price) * line.qty, 0);
+        const tax = Math.round(Math.max(0, subtotal - order.discount) * 0.05);
+        const amount = subtotal - order.discount + tax + order.shipping;
+        const paidAmount = order.paidAmount ?? (order.payment === "Paid" ? order.amount : 0);
+        const payment = paidAmount >= amount ? "Paid" : paidAmount > 0 ? "Partially Paid" : order.payment === "COD" ? "COD" : "Pending";
+        setOrders((list) => list.map((candidate) => candidate.id === orderId
+          ? { ...candidate, items, subtotal, tax, amount, payment, paidAmount }
+          : candidate));
+        pushNotif("Order updated", `${orderId} item details were updated.`, "info", "admin");
+        return true;
+      },
+      confirmPayment: (id, amount, utr, advancePercent = 30) => {
+        const order = orders.find((candidate) => candidate.id === id);
+        if (!order || !Number.isFinite(amount) || amount <= 0) return;
+        const paidAmount = Math.min(order.amount, (order.paidAmount ?? (order.payment === "Paid" ? order.amount : 0)) + amount);
+        setOrders((list) => list.map((candidate) => candidate.id === id ? {
+          ...candidate,
+          paidAmount,
+          ...(utr.trim() ? { utr: utr.trim() } : candidate.utr ? { utr: candidate.utr } : {}),
+          advancePercent,
+          payment: paidAmount >= candidate.amount ? "Paid" : "Partially Paid",
+          status: paidAmount > 0 && candidate.status === "Placed" ? "Payment Confirmed" : candidate.status,
+        } : candidate));
+        pushNotif("Payment confirmed", `${inr(amount)} confirmed for ${id}${utr.trim() ? ` · UTR ${utr.trim()}` : ""}.`, "success", "admin");
+        pushNotif("Payment confirmed", `We have confirmed your payment of ${inr(amount)} for order ${id}.`, "success", "customer");
+      },
       refundOrder: (id) =>
         setOrders((list) =>
           list.map((o) => (o.id === id ? { ...o, payment: "Refunded", status: "Cancelled" } : o)),
@@ -385,7 +470,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
       vendors,
       setVendorStatus: (id, status) => setVendors((l) => l.map((v) => (v.id === id ? { ...v, status } : v))),
       customers,
-      setCustomerStatus: (id, status) => setCustomers((l) => l.map((c) => (c.id === id ? { ...c, status } : c))),
+      setCustomerStatus: (id, status) => {
+        const previous = customers.find((customer) => customer.id === id);
+        setCustomers((list) => list.map((customer) => customer.id === id ? { ...customer, status } : customer));
+        if (previous && previous.status !== status) pushNotif("Customer status updated", `${previous.name}: ${previous.status} → ${status}.`, "info", "admin");
+      },
 
       reviews,
       setReviewStatus: (id, status) => setReviews((l) => l.map((r) => (r.id === id ? { ...r, status } : r))),

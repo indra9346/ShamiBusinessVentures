@@ -35,6 +35,9 @@ export type Product = {
   rating: number;
   reviews: number;
   stock: number;
+  minimumStock?: number;
+  warehouseStock?: number;
+  requiredStock?: number;
   reserved: number;
   sold: number;
   weight: string;
@@ -515,7 +518,7 @@ export const orderStages: OrderStatus[] = [
   "Placed", "Payment Confirmed", "Accepted", "Packed", "Dispatched", "Out for Delivery", "Delivered",
 ];
 
-export type OrderItem = { product: Product; qty: number; vendor: string; vendorId: string };
+export type OrderItem = { product: Product; qty: number; vendor: string; vendorId: string; capacity?: string; unitPrice?: number };
 export type Order = {
   id: string;
   date: string;
@@ -530,7 +533,12 @@ export type Order = {
   tax: number;
   shipping: number;
   amount: number;
-  payment: "Paid" | "Pending" | "Failed" | "Refunded" | "COD";
+  payment: "Paid" | "Pending" | "Partially Paid" | "Failed" | "Refunded" | "COD";
+  advancePercent?: number;
+  paidAmount?: number;
+  paymentDueDate?: string;
+  utr?: string;
+  source?: string;
   method: string;
   txn: string;
   status: OrderStatus;
@@ -556,7 +564,7 @@ export const buildOrder = (
   coupon?: string,
 ): Order => {
   const c = customers[customerIndex % customers.length]!;
-  const subtotal = items.reduce((s, it) => s + it.product.price * it.qty, 0);
+  const subtotal = items.reduce((s, it) => s + (it.unitPrice ?? it.product.price) * it.qty, 0);
   const discount = coupon ? Math.round(subtotal * 0.05) : 0;
   const tax = Math.round((subtotal - discount) * 0.05);
   const shipping = subtotal > 5000 ? 0 : 149;
