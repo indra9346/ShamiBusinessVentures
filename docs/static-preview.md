@@ -10,7 +10,7 @@ The Vite development server uses static preview data by default:
 npm run dev
 ```
 
-Use OTP `123456` on the customer, vendor, and admin sign-in screens. Demo changes are saved only in that browser's local storage. To exercise Supabase locally, set `VITE_STATIC_DATA_MODE=false` in `.env` and configure the Supabase URL and publishable key for the intended project.
+Use email OTP `12345678` and phone OTP `123456` on the customer, vendor, and admin sign-in screens. Demo changes are saved only in that browser's local storage. To exercise Supabase locally, set `VITE_STATIC_DATA_MODE=false` in `.env` and configure the Supabase URL and publishable key for the intended project.
 
 ## Vercel Preview
 

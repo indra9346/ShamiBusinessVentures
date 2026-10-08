@@ -1,5 +1,5 @@
 import { Input } from "@/components/ui/input";
-import { formatCountdown, normalisePhone, useEmailOtp, type OtpChannel } from "@/lib/otp";
+import { formatCountdown, normalisePhone, otpLengthForChannel, useEmailOtp, type OtpChannel } from "@/lib/otp";
 
 /**
  * Step 1: choose email or phone and request a code.
@@ -83,7 +83,7 @@ export function OtpRequestStep({
       <p className="text-xs text-slate">
         {otp.channel === "phone"
           ? "A 6-digit code will be sent by SMS to this mobile number."
-          : "A 6-digit verification code will be emailed to this address."}
+          : "An 8-digit verification code will be emailed to this address."}
       </p>
     </form>
   );
@@ -104,6 +104,7 @@ export function OtpVerifyStep({
   onSubmit: () => void;
 }) {
   const shown = otp.channel === "phone" ? `+91 ${normalisePhone(destination)}` : destination;
+  const otpLength = otpLengthForChannel(otp.channel);
 
   return (
     <form
@@ -114,16 +115,19 @@ export function OtpVerifyStep({
       className="space-y-4"
     >
       <div className="rounded-md border border-dashed border-gold/50 bg-ivory p-3 text-xs text-slate">
-        We sent a 6-digit verification code to <span className="font-semibold text-navy">{shown}</span>.
+        We sent an {otpLength}-digit verification code to <span className="font-semibold text-navy">{shown}</span>.
       </div>
       <label className="block">
         <span className="mb-1.5 block text-xs font-semibold text-charcoal">Verification code (OTP)</span>
         <Input
+          type="text"
           value={otp.code}
-          onChange={(e) => otp.setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+          onChange={(e) => otp.setCode(e.target.value.replace(/\D/g, "").slice(0, otpLength))}
+          maxLength={otpLength}
           inputMode="numeric"
           autoComplete="one-time-code"
-          placeholder="••••••"
+          aria-label={`${otpLength}-digit verification code`}
+          placeholder={"•".repeat(otpLength)}
           className="h-12 text-center text-lg font-bold tracking-[0.5em] text-navy"
         />
       </label>

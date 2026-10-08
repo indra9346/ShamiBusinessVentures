@@ -9,4 +9,7 @@ export const STATIC_DATA_MODE = !isProductionDeployment && (
   (import.meta.env.DEV && import.meta.env["VITE_STATIC_DATA_MODE"] !== "false")
 );
 
-export const STATIC_DEMO_OTP = "123456";
+export const STATIC_DEMO_OTP = {
+  email: "12345678",
+  phone: "123456",
+} as const;

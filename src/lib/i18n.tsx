@@ -88,7 +88,7 @@ const exact: Record<string, string> = {
   "Send OTP": "OTP ಕಳುಹಿಸಿ",
   "Sending code…": "ಕೋಡ್ ಕಳುಹಿಸಲಾಗುತ್ತಿದೆ…",
   "A 6-digit code will be sent by SMS to this mobile number.": "ಈ ಮೊಬೈಲ್ ಸಂಖ್ಯೆಗೆ SMS ಮೂಲಕ 6 ಅಂಕಿಯ ಕೋಡ್ ಕಳುಹಿಸಲಾಗುತ್ತದೆ.",
-  "A 6-digit verification code will be emailed to this address.": "ಈ ವಿಳಾಸಕ್ಕೆ ಇಮೇಲ್ ಮೂಲಕ 6 ಅಂಕಿಯ ಪರಿಶೀಲನಾ ಕೋಡ್ ಕಳುಹಿಸಲಾಗುತ್ತದೆ.",
+  "An 8-digit verification code will be emailed to this address.": "ಈ ವಿಳಾಸಕ್ಕೆ ಇಮೇಲ್ ಮೂಲಕ 8 ಅಂಕಿಯ ಪರಿಶೀಲನಾ ಕೋಡ್ ಕಳುಹಿಸಲಾಗುತ್ತದೆ.",
   "Verification code (OTP)": "ಪರಿಶೀಲನಾ ಕೋಡ್ (OTP)",
   "Code expired — request a new one.": "ಕೋಡ್ ಅವಧಿ ಮುಗಿದಿದೆ — ಹೊಸ ಕೋಡ್ ಕೇಳಿ.",
   "Change number": "ಸಂಖ್ಯೆ ಬದಲಿಸಿ",

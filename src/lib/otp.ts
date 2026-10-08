@@ -12,6 +12,11 @@ export type OtpChannel = "email" | "phone";
 type OtpOptions = { shouldCreateUser?: boolean; requiredRole?: Role };
 type OtpMetadata = Record<string, string>;
 
+/** The current Supabase project sends 8-digit email OTPs and 6-digit SMS OTPs. */
+export function otpLengthForChannel(channel: OtpChannel) {
+  return channel === "email" ? 8 : 6;
+}
+
 export function normalisePhone(value: string) {
   return value.replace(/\D/g, "").slice(-10);
 }
@@ -68,7 +73,9 @@ export function useEmailOtp({ shouldCreateUser = true, requiredRole }: OtpOption
         setExpiresIn(OTP_TTL);
         setResendIn(RESEND_AFTER);
         setSending(false);
-        toast.success("Static preview code ready", { description: `Use ${STATIC_DEMO_OTP}. No email or SMS was sent.` });
+        toast.success("Static preview code ready", {
+          description: `Use ${STATIC_DEMO_OTP[via]}. No email or SMS was sent.`,
+        });
         return true;
       }
       let result;
@@ -116,8 +123,9 @@ export function useEmailOtp({ shouldCreateUser = true, requiredRole }: OtpOption
   );
 
   const verify = useCallback(async () => {
-    if (!/^\d{6}$/.test(code)) {
-      toast.error("Enter the 6-digit verification code");
+    const expectedLength = otpLengthForChannel(channel);
+    if (!new RegExp(`^\\d{${expectedLength}}$`).test(code)) {
+      toast.error(`Enter the ${expectedLength}-digit verification code`);
       return false;
     }
     if (expiresIn <= 0 || !destinationRef.current) {
@@ -128,8 +136,8 @@ export function useEmailOtp({ shouldCreateUser = true, requiredRole }: OtpOption
     setVerifying(true);
     if (STATIC_DATA_MODE) {
       setVerifying(false);
-      if (code !== STATIC_DEMO_OTP) {
-        toast.error(`For static preview, enter ${STATIC_DEMO_OTP}`);
+      if (code !== STATIC_DEMO_OTP[channel]) {
+        toast.error(`For static preview, enter ${STATIC_DEMO_OTP[channel]}`);
         return false;
       }
       return true;
