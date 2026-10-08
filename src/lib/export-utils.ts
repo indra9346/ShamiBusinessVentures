@@ -100,8 +100,9 @@ export function downloadCSV(filename: string, headers: string[], rows: (string |
 /**
  * Generates an official, print-ready, government GST Tax Invoice HTML document
  */
-export function generateInvoiceHTML(order: Order, customerInfo?: CustomerInvoiceInfo): string {
-  const invoiceNumber = `INV-${order.id.replace(/[^0-9]/g, "") || order.id}`;
+export function generateInvoiceHTML(order: Order, customerInfo?: CustomerInvoiceInfo, invoicePrefix = "INV-"): string {
+  const safePrefix = invoicePrefix.slice(0, 40).replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]!);
+  const invoiceNumber = `${safePrefix}${order.id.replace(/[^0-9]/g, "") || order.id}`;
   const cgst = Math.round((order.tax / 2) * 100) / 100;
   const sgst = Math.round((order.tax / 2) * 100) / 100;
   const words = numberToIndianWords(order.amount);
@@ -129,9 +130,9 @@ export function generateInvoiceHTML(order: Order, customerInfo?: CustomerInvoice
   const itemRows = order.items
     .map((it, idx) => {
       const lineTotal = it.product.price * it.qty;
-      const gstRate = it.product.gst || 5;
-      const taxable = Math.round((lineTotal / (1 + gstRate / 100)) * 100) / 100;
-      const taxAmt = Math.round((lineTotal - taxable) * 100) / 100;
+      const gstRate = it.product.gst;
+      const taxable = Math.round(lineTotal * 100) / 100;
+      const taxAmt = Math.round(taxable * gstRate) / 100;
       const cgstAmt = Math.round((taxAmt / 2) * 100) / 100;
       const sgstAmt = Math.round((taxAmt / 2) * 100) / 100;
 
@@ -472,10 +473,10 @@ export function generateInvoiceHTML(order: Order, customerInfo?: CustomerInvoice
 /**
  * Directly downloads the GST Tax Invoice file to the user's computer (.html format ready to view or print)
  */
-export function downloadInvoice(order: Order, customerInfo?: CustomerInvoiceInfo): void {
+export function downloadInvoice(order: Order, customerInfo?: CustomerInvoiceInfo, invoicePrefix = "INV-"): void {
   try {
-    const htmlContent = generateInvoiceHTML(order, customerInfo);
-    const invoiceNumber = `Invoice-${order.id}`;
+    const htmlContent = generateInvoiceHTML(order, customerInfo, invoicePrefix);
+    const invoiceNumber = `Invoice-${invoicePrefix}${order.id.replace(/[^0-9]/g, "") || order.id}`.replace(/[^A-Za-z0-9._-]+/g, "-");
     const blob = new Blob([htmlContent], { type: "text/html;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");

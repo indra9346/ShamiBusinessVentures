@@ -7,6 +7,7 @@ import { SiteLayout, Breadcrumbs } from "@/components/site/SiteLayout";
 import { inr } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { cn } from "@/lib/utils";
+import { supabase } from "@/integrations/supabase/client";
 
 export const Route = createFileRoute("/checkout")({
   validateSearch: z.object({ productId: z.string().optional() }),
@@ -15,7 +16,7 @@ export const Route = createFileRoute("/checkout")({
       { title: "Secure Checkout | Shami Business Ventures" },
       {
         name: "description",
-        content: "Complete your order with UPI, cards, net banking or cash on delivery.",
+        content: "Choose your delivery address, shipping option and available payment method.",
       },
       { property: "og:title", content: "Secure Checkout | Shami" },
       {
@@ -29,6 +30,7 @@ export const Route = createFileRoute("/checkout")({
 
 const steps = ["Address", "Delivery", "Payment", "Review", "Confirmation"];
 const methods = ["UPI", "Credit Card", "Debit Card", "Net Banking"];
+const defaultShipping = { freeAbove: 10000, standard: 250, express: 650 };
 
 function Checkout() {
   const { user, hydrated, cart, cartItems, products, productCatalogStatus, clearCart, removeFromCart, addresses, addAddress, placeOrder, coupons } =
@@ -60,6 +62,8 @@ function Checkout() {
   const [method, setMethod] = useState("UPI");
   const [couponCode, setCouponCode] = useState("");
   const [placedId, setPlacedId] = useState<string | null>(null);
+  const [savingAddress, setSavingAddress] = useState(false);
+  const [placingOrder, setPlacingOrder] = useState(false);
   const [confirmationSummary, setConfirmationSummary] = useState<{
     subtotal: number;
     shipCost: number;
@@ -67,6 +71,33 @@ function Checkout() {
     discount: number;
     total: number;
   } | null>(null);
+  const [shippingRates, setShippingRates] = useState(defaultShipping);
+  const [shippingRatesReady, setShippingRatesReady] = useState(false);
+  useEffect(() => {
+    let active = true;
+    void supabase.from("settings").select("value").eq("key", "shipping").eq("is_public", true).maybeSingle().then(({ data, error }) => {
+      if (!active) return;
+      if (error) {
+        setShippingRatesReady(false);
+        console.error("Could not load checkout shipping rules", error.message);
+        return;
+      }
+      const value = data?.value && typeof data.value === "object" && !Array.isArray(data.value)
+        ? data.value as Record<string, unknown>
+        : {};
+      const numberOrDefault = (candidate: unknown, fallback: number) => {
+        const parsed = Number(candidate);
+        return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+      };
+      setShippingRates({
+        freeAbove: numberOrDefault(value["free_above"], defaultShipping.freeAbove),
+        standard: numberOrDefault(value["standard"], defaultShipping.standard),
+        express: numberOrDefault(value["express"], defaultShipping.express),
+      });
+      setShippingRatesReady(true);
+    });
+    return () => { active = false; };
+  }, []);
   useEffect(() => {
     if (addresses.length > 0) setAddressFormOpen(false);
     if (addr && !addresses.some((address) => address.id === addr)) {
@@ -81,8 +112,10 @@ function Checkout() {
     : cartItems;
   const unresolvedCartLines = cartItems.length < cart.length;
   const subtotal = checkoutItems.reduce((sum, line) => sum + line.product.price * line.qty, 0);
-  const shipCost = ship === "Express" ? 650 : subtotal > 10000 ? 0 : 250;
-  const tax = Math.round(subtotal * 0.05);
+  const shipCost = subtotal < shippingRates.freeAbove
+    ? ship === "Express" ? shippingRates.express : shippingRates.standard
+    : 0;
+  const tax = checkoutItems.reduce((sum, line) => sum + Math.round(line.product.price * line.qty * line.product.gst / 100), 0);
   const appliedCoupon = coupons.find((c) => c.code === couponCode);
   const discount = appliedCoupon
     ? Math.min(
@@ -128,7 +161,12 @@ function Checkout() {
       return;
     }
     if (step === 3) {
-      setConfirmationSummary({ subtotal, shipCost, tax, discount, total });
+      if (!shippingRatesReady) {
+        toast.error("Checkout is waiting for the current shipping rules. Refresh and try again.");
+        return;
+      }
+      if (placingOrder) return;
+      setPlacingOrder(true);
       let order: Awaited<ReturnType<typeof placeOrder>>;
       try {
         order = await placeOrder({
@@ -145,7 +183,18 @@ function Checkout() {
         });
       } catch {
         return;
+      } finally {
+        setPlacingOrder(false);
       }
+      // The database reprices and revalidates stock atomically. Show the
+      // authoritative values returned by that transaction on confirmation.
+      setConfirmationSummary({
+        subtotal: order.subtotal,
+        shipCost: order.shipping,
+        tax: order.tax,
+        discount: order.discount,
+        total: order.amount,
+      });
       if (productId) removeFromCart(productId);
       else clearCart();
       setPlacedId(order.id);
@@ -156,7 +205,8 @@ function Checkout() {
     setStep(step + 1);
   };
 
-  const saveAddress = () => {
+  const saveAddress = async () => {
+    if (savingAddress) return;
     const phoneDigits = addressForm.phone.replace(/\D/g, "");
     if (
       !addressForm.name.trim() ||
@@ -168,19 +218,28 @@ function Checkout() {
       toast.error("Enter your name, valid phone, full address, city and 6-digit PIN code");
       return;
     }
+    setSavingAddress(true);
     const id = crypto.randomUUID();
-    addAddress({
-      id,
-      label: addressForm.label.trim() || "Delivery",
-      name: addressForm.name.trim(),
-      phone: addressForm.phone.trim(),
-      line: addressForm.line.trim(),
-      city: addressForm.city.trim(),
-      state: addressForm.state.trim(),
-      pin: addressForm.pin.trim(),
-      landmark: addressForm.landmark.trim(),
-      default: addresses.length === 0,
-    });
+    let saved = false;
+    try {
+      saved = await addAddress({
+        id,
+        label: addressForm.label.trim() || "Delivery",
+        name: addressForm.name.trim(),
+        phone: addressForm.phone.trim(),
+        line: addressForm.line.trim(),
+        city: addressForm.city.trim(),
+        state: addressForm.state.trim(),
+        pin: addressForm.pin.trim(),
+        landmark: addressForm.landmark.trim(),
+        default: addresses.length === 0,
+      });
+    } catch (error) {
+      toast.error("Could not save this address", { description: error instanceof Error ? error.message : "Please retry." });
+    } finally {
+      setSavingAddress(false);
+    }
+    if (!saved) return;
     setAddr(id);
     setAddressFormOpen(false);
     toast.success("Delivery address saved");
@@ -308,7 +367,7 @@ function Checkout() {
                         ))}
                       </div>
                       <div className="mt-4 flex flex-wrap gap-2">
-                        <button type="button" onClick={saveAddress} className="rounded-md bg-navy px-4 py-2 text-sm font-semibold text-white">Save address</button>
+                        <button type="button" disabled={savingAddress} onClick={() => void saveAddress()} className="rounded-md bg-navy px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">{savingAddress ? "Saving…" : "Save address"}</button>
                         {addresses.length > 0 && (
                           <button type="button" onClick={() => setAddressFormOpen(false)} className="rounded-md border border-border px-4 py-2 text-sm font-semibold text-navy">Cancel</button>
                         )}
@@ -348,7 +407,10 @@ function Checkout() {
 
             {step === 2 && (
               <>
-                <h2 className="text-lg font-bold text-navy">Payment Method</h2>
+                <h2 className="text-lg font-bold text-navy">Preferred Payment Method</h2>
+                <p className="mt-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
+                  Online payment is not enabled yet. Your selection is a preference only; the order will stay pending until payment is arranged and verified.
+                </p>
                 <div className="mt-5 grid gap-3 sm:grid-cols-2">
                   {methods.map((m) => (
                     <button
@@ -422,9 +484,8 @@ function Checkout() {
                 </span>
                 <h2 className="mt-5 text-xl font-bold text-navy">Order Confirmed</h2>
                 <p className="mt-2 text-sm text-slate">
-                  Order ID <span className="font-bold text-gold">{placedId}</span> · Payment{" "}
-                  pending payment · Amount confirmed after the payment provider is connected
-                  delivery in {ship === "Express" ? "1 day" : "2–4 days"}
+                  Order ID <span className="font-bold text-gold">{placedId}</span> · Total {inr(summary.total)} · Payment pending.
+                  Online payment is not enabled yet; payment must be arranged and verified separately. Delivery estimate: {ship === "Express" ? "1 day" : "2–4 days"}.
                 </p>
                 <div className="mt-6 flex flex-wrap justify-center gap-3">
                   {placedId && (
@@ -449,16 +510,18 @@ function Checkout() {
             {step < 4 && (
               <div className="mt-8 flex justify-between">
                 <button
+                  disabled={placingOrder}
                   onClick={() => setStep(Math.max(0, step - 1))}
                   className="rounded-md border border-navy px-5 py-2.5 text-sm font-semibold text-navy transition-colors hover:bg-navy hover:text-white"
                 >
                   Back
                 </button>
                 <button
+                  disabled={placingOrder}
                   onClick={goNext}
-                  className="rounded-md bg-gold px-6 py-2.5 text-sm font-bold text-midnight transition-colors hover:bg-gold-light"
+                  className="rounded-md bg-gold px-6 py-2.5 text-sm font-bold text-midnight transition-colors hover:bg-gold-light disabled:cursor-wait disabled:opacity-60"
                 >
-                  {step === 3 ? "Place Order" : "Continue"}
+                  {placingOrder ? "Placing order…" : step === 3 ? "Place Order" : "Continue"}
                 </button>
               </div>
             )}
@@ -470,7 +533,7 @@ function Checkout() {
               {[
                 ["Subtotal", inr(summary.subtotal)],
                 ["Delivery", summary.shipCost === 0 ? "Free" : inr(summary.shipCost)],
-                ["GST (5%)", inr(summary.tax)],
+                ["GST", inr(summary.tax)],
                 ...(summary.discount > 0 ? [["Coupon discount", `- ${inr(summary.discount)}`]] : []),
               ].map(([k, v]) => (
                 <div key={k} className="flex justify-between">

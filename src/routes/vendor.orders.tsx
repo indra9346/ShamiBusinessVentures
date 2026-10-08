@@ -31,7 +31,10 @@ function VendorOrders() {
   if (pathname !== "/vendor/orders" && pathname !== "/vendor/orders/") {
     return <Outlet />;
   }
+  return <VendorOrdersPanel />;
+}
 
+function VendorOrdersPanel() {
   const { updateOrderStatus } = useApp();
   const { vendorOrders, vendorId } = useVendorScope();
   const [q, setQ] = useState("");
@@ -130,9 +133,8 @@ function VendorOrders() {
             <StatusBadge status={o.status} />,
             <Select
               value={o.status}
-              onValueChange={(v) => {
-                updateOrderStatus(o.id, v as OrderStatus);
-                toast.success(`Order ${o.id} updated to ${v}`);
+              onValueChange={async (v) => {
+                if (await updateOrderStatus(o.id, v as OrderStatus)) toast.success(`Order ${o.id} updated to ${v}`);
               }}
             >
               <SelectTrigger className="h-8 w-36 text-xs"><SelectValue /></SelectTrigger>

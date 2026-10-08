@@ -16,6 +16,7 @@ export function AddToCartPicker({
   const [open, setOpen] = useState(false);
   const [qty, setQty] = useState(Math.max(1, initialQty));
   const inCart = cart.find((line) => line.id === product.id)?.qty ?? 0;
+  const availableStock = Math.max(0, Math.floor((Number(product.stock) || 0) - (Number(product.reserved) || 0)));
   const bagWeight = Number.parseFloat(product.weight.replace(/[^\d.]/g, "")) || 0;
   const unit = product.weight.toLowerCase().includes("kg") ? "kg" : "bags";
   const selectedWeight = bagWeight * qty;
@@ -24,7 +25,7 @@ export function AddToCartPicker({
     return (
       <button
         type="button"
-        disabled={product.stock === 0}
+        disabled={availableStock === 0}
         onClick={() => {
           setQty(Math.max(1, initialQty));
           setOpen(true);
@@ -79,11 +80,11 @@ export function AddToCartPicker({
           aria-label="Number of bags"
           type="number"
           min={1}
-          max={product.stock || undefined}
+          max={availableStock}
           value={qty}
           onChange={(event) =>
             setQty(
-              Math.max(1, Math.min(product.stock || Infinity, Number(event.target.value) || 1)),
+              Math.max(1, Math.min(availableStock, Number(event.target.value) || 1)),
             )
           }
           className="h-10 min-w-0 flex-1 rounded-md border border-border bg-background text-center font-bold text-navy"
@@ -91,7 +92,7 @@ export function AddToCartPicker({
         <button
           type="button"
           aria-label="Increase quantity"
-          onClick={() => setQty((value) => Math.min(product.stock || Infinity, value + 1))}
+          onClick={() => setQty((value) => Math.min(availableStock, value + 1))}
           className="grid h-10 w-10 shrink-0 place-items-center rounded-md bg-success text-white hover:bg-success/90"
         >
           <Plus className="h-4 w-4" />
@@ -102,6 +103,7 @@ export function AddToCartPicker({
       </p>
       <button
         type="button"
+        disabled={availableStock === 0}
         onClick={() => {
           addToCart(product.id, qty);
           showCartNotification(
@@ -112,7 +114,7 @@ export function AddToCartPicker({
           );
           setOpen(false);
         }}
-        className="mt-2 w-full rounded-md bg-gold py-2.5 text-sm font-bold text-midnight hover:bg-gold-light"
+        className="mt-2 w-full rounded-md bg-gold py-2.5 text-sm font-bold text-midnight hover:bg-gold-light disabled:cursor-not-allowed disabled:opacity-50"
       >
         Add {qty} {qty === 1 ? "bag" : "bags"} to cart
       </button>

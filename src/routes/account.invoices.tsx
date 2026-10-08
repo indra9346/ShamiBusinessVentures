@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { useEffect, useState } from "react";
 import { Download, FileText, IndianRupee, Receipt } from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { DataTable, Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
@@ -8,6 +9,7 @@ import { useApp } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { downloadCSV, downloadInvoice } from "@/lib/export-utils";
 import { orderBelongsToUser } from "@/lib/account-identity";
+import { supabase } from "@/integrations/supabase/client";
 
 export const Route = createFileRoute("/account/invoices")({
   head: () => ({
@@ -27,6 +29,19 @@ export const Route = createFileRoute("/account/invoices")({
 
 function AccountInvoices() {
   const { user, orders } = useApp();
+  const [invoicePrefix, setInvoicePrefix] = useState("INV-");
+  useEffect(() => {
+    let active = true;
+    void supabase.from("settings").select("value").eq("key", "tax").eq("is_public", true).maybeSingle().then(({ data, error }) => {
+      if (!active || error) return;
+      const value = data?.value && typeof data.value === "object" && !Array.isArray(data.value)
+        ? data.value as Record<string, unknown>
+        : {};
+      const prefix = value["invoice_prefix"];
+      if (typeof prefix === "string" && prefix.trim()) setInvoicePrefix(prefix.trim());
+    });
+    return () => { active = false; };
+  }, []);
   const list = orders.filter((order) => orderBelongsToUser(order, user));
   const total = list.reduce((s, o) => s + o.amount, 0);
   const gst = list.reduce((s, o) => s + o.tax, 0);
@@ -44,7 +59,7 @@ function AccountInvoices() {
         "Payment Method",
       ],
       list.map((o) => [
-        `INV-${o.id.replace(/[^0-9]/g, "")}`,
+        `${invoicePrefix}${o.id.replace(/[^0-9]/g, "") || o.id}`,
         o.id,
         o.date,
         o.amount,
@@ -80,7 +95,7 @@ function AccountInvoices() {
         <DataTable
           columns={["Invoice No", "Order", "Date", "Amount", "GST", "Payment", "Actions"]}
           rows={list.map((o) => [
-            <span className="font-semibold text-navy">INV-{o.id.replace(/[^0-9]/g, "")}</span>,
+            <span className="font-semibold text-navy">{invoicePrefix}{o.id.replace(/[^0-9]/g, "") || o.id}</span>,
             <Link
               to="/account/orders/$id"
               params={{ id: o.id }}
@@ -95,7 +110,7 @@ function AccountInvoices() {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => downloadInvoice(o)}
+              onClick={() => downloadInvoice(o, undefined, invoicePrefix)}
               className="hover:border-gold hover:text-gold transition-colors"
             >
               <Download className="mr-1.5 h-3.5 w-3.5" /> Download

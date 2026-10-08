@@ -54,10 +54,8 @@ function AdminReturns() {
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const pageItems = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
-  const approve = (id: string) => { setReturnStatus(id, "Approved", "Processing"); toast.success(`Return ${id} approved`); };
-  const reject = (id: string) => { setReturnStatus(id, "Rejected", "Not Applicable"); toast.success(`Return ${id} rejected`); };
-  const markRefunded = (id: string) => { setReturnStatus(id, "Completed", "Refunded"); toast.success(`Return ${id} marked as refunded`); };
-
+  const approve = (id: string) => { void setReturnStatus(id, "Approved", "Processing").then((ok) => { if (ok) toast.success(`Return ${id} approved`); }); };
+  const reject = (id: string) => { void setReturnStatus(id, "Rejected", "Not Applicable").then((ok) => { if (ok) toast.success(`Return ${id} rejected`); }); };
   return (
     <PanelLayout items={adminNav} tone="admin" title="Returns" subtitle="Return requests and refund workflow">
       <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
@@ -102,7 +100,7 @@ function AdminReturns() {
               <Button size="sm" variant="outline" onClick={() => setView(r)}>View</Button>
               {r.status === "Requested" && <Button size="sm" variant="outline" onClick={() => approve(r.id)}>Approve</Button>}
               {r.status === "Requested" && <Button size="sm" variant="outline" className="text-danger" onClick={() => reject(r.id)}>Reject</Button>}
-              {r.status === "Approved" && <Button size="sm" className="bg-navy text-white hover:bg-navy/90" onClick={() => markRefunded(r.id)}>Mark Refunded</Button>}
+              {r.status === "Approved" && <Button size="sm" variant="outline" disabled title="Return refunds require a configured payment gateway or verified bank refund reference">Refund provider required</Button>}
             </div>,
           ])}
         />

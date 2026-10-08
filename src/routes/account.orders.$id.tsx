@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { useState } from "react";
 import { toast } from "sonner";
 import { CheckCircle2, Circle, Download } from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
@@ -21,6 +22,9 @@ import {
 import { cn } from "@/lib/utils";
 import { downloadInvoice } from "@/lib/export-utils";
 import { orderBelongsToUser } from "@/lib/account-identity";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 
 export const Route = createFileRoute("/account/orders/$id")({
   head: ({ params }) => ({
@@ -52,7 +56,12 @@ export const Route = createFileRoute("/account/orders/$id")({
 
 function AccountOrderDetail() {
   const { id } = Route.useParams();
-  const { user, orders, updateOrderStatus } = useApp();
+  const { user, orders, updateOrderStatus, requestReturn } = useApp();
+  const [returnOpen, setReturnOpen] = useState(false);
+  const [returnItemIndex, setReturnItemIndex] = useState("0");
+  const [returnQuantity, setReturnQuantity] = useState("1");
+  const [returnReason, setReturnReason] = useState("");
+  const [returnBusy, setReturnBusy] = useState(false);
   const order = orders.find(
     (candidate) => candidate.id === id && orderBelongsToUser(candidate, user),
   );
@@ -109,9 +118,8 @@ function AccountOrderDetail() {
               <AlertDialogFooter>
                 <AlertDialogCancel>Back</AlertDialogCancel>
                 <AlertDialogAction
-                  onClick={() => {
-                    updateOrderStatus(order.id, "Cancelled");
-                    toast.success(`Order ${order.id} cancelled`);
+                  onClick={async () => {
+                    if (await updateOrderStatus(order.id, "Cancelled")) toast.success(`Order ${order.id} cancelled`);
                   }}
                 >
                   Confirm
@@ -221,6 +229,7 @@ function AccountOrderDetail() {
 
       <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
         <Panel title="Items">
+          {order.items.some((item) => item.dbItemId) && order.status !== "Cancelled" && <div className="mb-4 flex justify-end"><Button variant="outline" onClick={() => setReturnOpen(true)}>Request a return</Button></div>}
           <div className="overflow-x-auto">
             <table className="w-full min-w-[560px] text-sm">
               <thead>
@@ -287,6 +296,7 @@ function AccountOrderDetail() {
           </dl>
         </Panel>
       </div>
+      <Dialog open={returnOpen} onOpenChange={setReturnOpen}><DialogContent><DialogHeader><DialogTitle>Request a return for {order.id}</DialogTitle></DialogHeader><div className="grid gap-3"><label htmlFor="return-line">Order item</label><select id="return-line" className="h-10 rounded-md border border-border bg-background px-3" value={returnItemIndex} onChange={(e)=>{setReturnItemIndex(e.target.value);setReturnQuantity("1");}}>{order.items.map((item,index)=><option key={index} value={index} disabled={!item.dbItemId}>{item.product.name} (qty {item.qty})</option>)}</select><label htmlFor="return-qty">Quantity</label><Input id="return-qty" type="number" min="1" max={order.items[Number(returnItemIndex)]?.qty ?? 1} value={returnQuantity} onChange={(e)=>setReturnQuantity(e.target.value)}/><label htmlFor="return-reason">Reason</label><Textarea id="return-reason" value={returnReason} onChange={(e)=>setReturnReason(e.target.value)} placeholder="Describe the issue"/></div><DialogFooter><Button variant="outline" onClick={()=>setReturnOpen(false)}>Cancel</Button><Button disabled={returnBusy} className="bg-navy text-white" onClick={async()=>{const item=order.items[Number(returnItemIndex)];if(!item?.dbItemId){toast.error("This order line cannot be returned online");return;}setReturnBusy(true);const ok=await requestReturn(item.dbItemId,Number(returnQuantity),returnReason);setReturnBusy(false);if(ok){toast.success("Return request submitted");setReturnOpen(false);setReturnReason("");}}}>Submit request</Button></DialogFooter></DialogContent></Dialog>
     </PanelLayout>
   );
 }

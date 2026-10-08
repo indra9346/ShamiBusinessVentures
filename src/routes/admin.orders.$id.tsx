@@ -84,7 +84,6 @@ function AdminOrderDetail() {
     updateOrderStatus,
     updateOrderItem,
     updateOrderDelivery,
-    refundOrder,
   } = useApp();
   const order = orders.find((o) => o.id === id);
 
@@ -148,9 +147,8 @@ function AdminOrderDetail() {
 
           <Select
             value={order.status}
-            onValueChange={(v) => {
-              updateOrderStatus(order.id, v as OrderStatus);
-              toast.success(`Order ${order.id} updated to ${v}`);
+            onValueChange={async (v) => {
+              if (await updateOrderStatus(order.id, v as OrderStatus)) toast.success(`Order ${order.id} updated to ${v}`);
             }}
           >
             <SelectTrigger className="h-9 w-44 font-medium">
@@ -186,9 +184,8 @@ function AdminOrderDetail() {
               <AlertDialogFooter>
                 <AlertDialogCancel>Back</AlertDialogCancel>
                 <AlertDialogAction
-                  onClick={() => {
-                    updateOrderStatus(order.id, "Cancelled");
-                    toast.success(`Order ${order.id} cancelled`);
+                  onClick={async () => {
+                    if (await updateOrderStatus(order.id, "Cancelled")) toast.success(`Order ${order.id} cancelled`);
                   }}
                   className="bg-danger text-white hover:bg-danger/90"
                 >
@@ -201,13 +198,10 @@ function AdminOrderDetail() {
           <Button
             variant="outline"
             size="sm"
-            disabled={order.payment === "Refunded"}
-            onClick={() => {
-              refundOrder(order.id);
-              toast.success(`Order ${order.id} marked as refunded`);
-            }}
+            disabled
+            title="Refund processing requires a configured payment provider"
           >
-            {order.payment === "Refunded" ? "Refunded" : "Process Refund"}
+            {order.payment === "Refunded" ? "Refunded" : "Refund provider required"}
           </Button>
         </div>
       </div>

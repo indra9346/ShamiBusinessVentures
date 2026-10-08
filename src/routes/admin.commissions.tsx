@@ -27,21 +27,18 @@ export const Route = createFileRoute("/admin/commissions")({
 });
 
 function AdminCommissions() {
-  const { vendors, setVendorStatus } = useApp();
-  const [rates, setRates] = useState<Record<string, number>>(() =>
-    Object.fromEntries(vendors.map((v) => [v.id, v.commission])),
-  );
+  const { vendors, setVendorCommission } = useApp();
   const [editing, setEditing] = useState<string | null>(null);
   const [rateInput, setRateInput] = useState("");
 
   const rows = useMemo(
     () =>
       vendors.map((v) => {
-        const pct = rates[v.id] ?? v.commission;
+        const pct = v.commission;
         const earned = Math.round(v.sales * (pct / 100));
         return { ...v, pct, earned, net: v.sales - earned };
       }),
-    [vendors, rates],
+    [vendors],
   );
 
   const totals = useMemo(
@@ -58,16 +55,16 @@ function AdminCommissions() {
 
   const openEdit = (id: string) => {
     setEditing(id);
-    setRateInput(String(rates[id] ?? 0));
+    setRateInput(String(vendors.find((vendor) => vendor.id === id)?.commission ?? 8));
   };
 
-  const save = () => {
+  const save = async () => {
     const val = Number(rateInput);
     if (!editingVendor || Number.isNaN(val) || val < 0 || val > 100) {
       toast.error("Enter a valid commission percentage (0-100)");
       return;
     }
-    setRates((r) => ({ ...r, [editingVendor.id]: val }));
+    if (!await setVendorCommission(editingVendor.id, val)) return;
     toast.success(`Commission for ${editingVendor.business} set to ${val}%`);
     setEditing(null);
   };

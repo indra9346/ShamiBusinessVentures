@@ -124,9 +124,8 @@ function VendorOrderDetail() {
                 <span className="text-xs font-semibold text-slate">Update Status</span>
                 <Select
                   value={order.status}
-                  onValueChange={(v) => {
-                    updateOrderStatus(order.id, v as OrderStatus);
-                    toast.success(`Order ${order.id} updated to ${v}`);
+                  onValueChange={async (v) => {
+                    if (await updateOrderStatus(order.id, v as OrderStatus)) toast.success(`Order ${order.id} updated to ${v}`);
                   }}
                 >
                   <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
@@ -140,7 +139,7 @@ function VendorOrderDetail() {
               <Button
                 variant="outline"
                 className="w-full"
-                onClick={() => toast.success(`Packing slip for ${order.id} sent to printer`)}
+                onClick={() => window.print()}
               >
                 <Printer className="mr-1.5 h-4 w-4" /> Print Packing Slip
               </Button>

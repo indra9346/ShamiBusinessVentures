@@ -10,7 +10,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Switch } from "@/components/ui/switch";
 import {
   Select,
   SelectContent,
@@ -20,6 +19,7 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { notificationTarget } from "@/lib/notification-target";
+import { supabase } from "@/integrations/supabase/client";
 
 export const Route = createFileRoute("/admin/notifications")({
   head: () => ({
@@ -43,7 +43,6 @@ function AdminNotifications() {
   const [role, setRole] = useState("All");
   const [type, setType] = useState("All");
   const [broadcast, setBroadcast] = useState({ audience: "All Vendors", subject: "", message: "" });
-  const [channels, setChannels] = useState({ email: true, sms: true, whatsapp: false, push: true });
 
   const list = useMemo(
     () =>
@@ -69,15 +68,18 @@ function AdminNotifications() {
     [notifications],
   );
 
-  const send = () => {
+  const send = async () => {
     if (!broadcast.subject.trim() || broadcast.message.trim().length < 5) {
       toast.error("Add a subject and a message of at least 5 characters");
       return;
     }
-    toast.success(`Broadcast sent to ${broadcast.audience}`);
+    const { data, error } = await supabase.rpc("admin_broadcast_notification", {
+      _audience: broadcast.audience, _title: broadcast.subject.trim(), _message: broadcast.message.trim(),
+    });
+    if (error) { toast.error("Could not send broadcast", { description: error.message }); return; }
+    toast.success(`Broadcast delivered to ${data} account${data === 1 ? "" : "s"}`);
     setBroadcast((b) => ({ ...b, subject: "", message: "" }));
   };
-
   return (
     <PanelLayout
       items={adminNav}
@@ -107,8 +109,7 @@ function AdminNotifications() {
                 variant="outline"
                 size="sm"
                 onClick={() => {
-                  markAllRead();
-                  toast.success("All notifications marked as read");
+                  void markAllRead().then((ok) => { if (ok) toast.success("Your notifications marked as read"); });
                 }}
               >
                 <CheckCheck className="mr-1 h-3.5 w-3.5" /> Mark all read
@@ -155,13 +156,13 @@ function AdminNotifications() {
                   <li
                     key={n.id}
                     onClick={() => {
-                      markRead(n.id);
+                      void markRead(n.id);
                       navigate({ to: notificationTarget(n, "admin", user, orders) as never });
                     }}
                     onKeyDown={(event) => {
                       if (event.key === "Enter" || event.key === " ") {
                         event.preventDefault();
-                        markRead(n.id);
+                        void markRead(n.id);
                         navigate({ to: notificationTarget(n, "admin", user, orders) as never });
                       }
                     }}
@@ -189,8 +190,7 @@ function AdminNotifications() {
                           size="sm"
                           onClick={(event) => {
                             event.stopPropagation();
-                            markRead(n.id);
-                            toast.success("Marked as read");
+                            void markRead(n.id).then((ok) => { if (ok) toast.success("Marked as read"); });
                           }}
                         >
                           Mark read
@@ -201,8 +201,7 @@ function AdminNotifications() {
                         size="sm"
                         onClick={(event) => {
                           event.stopPropagation();
-                          deleteNotification(n.id);
-                          toast.success("Notification deleted");
+                          void deleteNotification(n.id).then((ok) => { if (ok) toast.success("Notification deleted"); });
                         }}
                       >
                         <Trash2 className="h-3.5 w-3.5" />
@@ -270,11 +269,11 @@ function AdminNotifications() {
                   [
                     "email",
                     "Email notifications",
-                    "Order confirmations, invoices and payout advices",
+                    "Not connected. Configure an email delivery provider before enabling outbound email.",
                   ],
-                  ["sms", "SMS alerts", "Dispatch and delivery updates to Indian mobile numbers"],
-                  ["whatsapp", "WhatsApp Business", "Order tracking messages via WhatsApp API"],
-                  ["push", "Web push", "Real-time alerts inside vendor and admin panels"],
+                  ["sms", "SMS alerts", "Not connected. Configure an SMS delivery provider before enabling alerts."],
+                  ["whatsapp", "WhatsApp Business", "Not connected. Configure WhatsApp Business API before sending messages."],
+                  ["push", "In-app real-time alerts", "Available through Supabase Realtime for subscribed admin and vendor inboxes."],
                 ] as const
               ).map(([key, label, desc]) => (
                 <div
@@ -285,13 +284,7 @@ function AdminNotifications() {
                     <p className="text-sm font-bold text-navy">{label}</p>
                     <p className="text-xs text-slate">{desc}</p>
                   </div>
-                  <Switch
-                    checked={channels[key]}
-                    onCheckedChange={(v) => {
-                      setChannels((c) => ({ ...c, [key]: v }));
-                      toast.success(`${label} ${v ? "enabled" : "disabled"}`);
-                    }}
-                  />
+                  <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${key === "push" ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-900"}`}>{key === "push" ? "Available" : "Provider required"}</span>
                 </div>
               ))}
             </div>

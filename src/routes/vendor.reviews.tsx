@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { DataTable, Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { vendorNav } from "@/lib/panel-nav";
-import { useVendorScope } from "@/lib/store";
+import { useApp, useVendorScope } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -26,6 +26,7 @@ export const Route = createFileRoute("/vendor/reviews")({
 
 function VendorReviews() {
   const { vendorReviews } = useVendorScope();
+  const { replyReview, reportReview } = useApp();
   const [rating, setRating] = useState("all");
   const [replying, setReplying] = useState<(typeof vendorReviews)[number] | null>(null);
   const [reply, setReply] = useState("");
@@ -93,7 +94,7 @@ function VendorReviews() {
               <p className="font-medium text-navy">{r.title}</p>
               <p className="truncate text-xs text-slate">{r.body}</p>
             </div>,
-            replies[r.id] ? <p className="max-w-xs truncate text-xs text-slate">{replies[r.id]}</p> : <span className="text-xs text-slate">No reply yet</span>,
+            (replies[r.id] ?? r.reply) ? <p className="max-w-xs truncate text-xs text-slate">{replies[r.id] ?? r.reply}</p> : <span className="text-xs text-slate">No reply yet</span>,
             <StatusBadge status={r.status} />,
             <div className="flex gap-1.5">
               <Button
@@ -101,7 +102,7 @@ function VendorReviews() {
                 size="sm"
                 onClick={() => {
                   setReplying(r);
-                  setReply(replies[r.id] ?? "");
+                  setReply(replies[r.id] ?? r.reply ?? "");
                 }}
               >
                 Reply
@@ -109,7 +110,12 @@ function VendorReviews() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => toast.success(`Review ${r.id} reported to admin for moderation`)}
+                onClick={() => {
+                  const reason = window.prompt("Why should this review be moderated?");
+                  if (reason === null) return;
+                  if (!reason.trim()) { toast.error("Add a reason for the report"); return; }
+                  void reportReview(r.id, reason).then((ok) => { if (ok) toast.success("Review sent to admin moderation"); });
+                }}
               >
                 Report
               </Button>
@@ -134,9 +140,12 @@ function VendorReviews() {
                   toast.error("Reply cannot be empty");
                   return;
                 }
-                setReplies((r) => ({ ...r, [replying.id]: reply.trim() }));
-                toast.success(`Reply posted for ${replying.customer}'s review`);
-                setReplying(null);
+                void replyReview(replying.id, reply.trim()).then((ok) => {
+                  if (!ok) return;
+                  setReplies((r) => ({ ...r, [replying.id]: reply.trim() }));
+                  toast.success(`Reply posted for ${replying.customer}'s review`);
+                  setReplying(null);
+                });
               }}
             >
               Post Reply

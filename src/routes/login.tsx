@@ -6,6 +6,7 @@ import { AuthCard } from "@/components/site/AuthCard";
 import { OtpRequestStep, OtpVerifyStep } from "@/components/site/OtpForm";
 import { useEmailOtp } from "@/lib/otp";
 import { useApp } from "@/lib/store";
+import { supabase } from "@/integrations/supabase/client";
 
 export const Route = createFileRoute("/login")({
   validateSearch: z.object({
@@ -45,11 +46,13 @@ function LoginPage() {
     const ok = await otp.verify();
     if (!ok) return;
     const clean = email.trim().toLowerCase();
+    const { data: { user: authUser } } = await supabase.auth.getUser();
     const name =
       otp.channel === "phone"
         ? "Customer"
         : clean.split("@")[0]!.replace(/[._]/g, " ");
     login({
+      ...(authUser?.id ? { id: authUser.id } : {}),
       name,
       email: otp.channel === "email" ? clean : "",
       role: "customer",

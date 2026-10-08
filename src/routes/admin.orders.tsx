@@ -67,7 +67,7 @@ const paymentMethods = ["UPI", "Credit Card", "Debit Card", "Net Banking", "Cash
 
 function AdminOrders() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
-  const { orders, customers, products, placeOrder, updateOrderStatus, refundOrder } = useApp();
+  const { orders, customers, products, placeOrder, updateOrderStatus } = useApp();
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("all");
   const [payment, setPayment] = useState("all");
@@ -381,9 +381,8 @@ function AdminOrders() {
                 </Button>
                 <Select
                   value={o.status}
-                  onValueChange={(v) => {
-                    updateOrderStatus(o.id, v as OrderStatus);
-                    toast.success(`Order ${o.id} updated to ${v}`);
+                  onValueChange={async (v) => {
+                    if (await updateOrderStatus(o.id, v as OrderStatus)) toast.success(`Order ${o.id} updated to ${v}`);
                   }}
                 >
                   <SelectTrigger className="h-8 w-32 text-xs">
@@ -413,9 +412,8 @@ function AdminOrders() {
                     <AlertDialogFooter>
                       <AlertDialogCancel>Back</AlertDialogCancel>
                       <AlertDialogAction
-                        onClick={() => {
-                          updateOrderStatus(o.id, "Cancelled");
-                          toast.success(`Order ${o.id} cancelled`);
+                        onClick={async () => {
+                          if (await updateOrderStatus(o.id, "Cancelled")) toast.success(`Order ${o.id} cancelled`);
                         }}
                       >
                         Confirm Cancel
@@ -426,13 +424,10 @@ function AdminOrders() {
                 <Button
                   variant="outline"
                   size="sm"
-                  disabled={o.payment === "Refunded"}
-                  onClick={() => {
-                    refundOrder(o.id);
-                    toast.success(`Order ${o.id} refunded`);
-                  }}
+                  disabled
+                  title="Refund processing requires a configured payment provider"
                 >
-                  Refund
+                  Refund provider required
                 </Button>
               </div>,
             ];

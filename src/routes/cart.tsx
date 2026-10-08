@@ -27,7 +27,7 @@ function Cart() {
   const hasUnavailableLines = cartItems.length < cart.length;
   const checkoutBlocked = productCatalogStatus !== "ready" || hasUnavailableLines;
   const delivery = subtotal > 10000 || subtotal === 0 ? 0 : 250;
-  const tax = Math.round(subtotal * 0.05);
+  const tax = cartItems.reduce((sum, line) => sum + Math.round(line.product.price * line.qty * line.product.gst / 100), 0);
   const appliedCoupon = applied ? coupons.find((c) => c.code === applied) : undefined;
   const discount = appliedCoupon
     ? Math.min(appliedCoupon.max, appliedCoupon.type === "Percentage" ? Math.round((subtotal * parseFloat(appliedCoupon.value)) / 100) : parseFloat(appliedCoupon.value.replace(/[^0-9.]/g, "")))
@@ -151,7 +151,7 @@ function Cart() {
             <div className="mt-5 space-y-3 text-sm">
               <Row label="Subtotal" value={inr(subtotal)} />
               <Row label="Delivery charges" value={delivery === 0 ? "Free" : inr(delivery)} />
-              <Row label="GST (5%)" value={inr(tax)} />
+              <Row label="GST" value={inr(tax)} />
               {discount > 0 && <Row label={`Coupon discount (${applied})`} value={`- ${inr(discount)}`} gold />}
               <div className="hairline-gold my-2" />
               <div className="flex justify-between text-base font-bold text-navy">

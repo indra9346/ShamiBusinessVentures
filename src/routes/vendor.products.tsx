@@ -48,7 +48,10 @@ function VendorProducts() {
   if (pathname !== "/vendor/products" && pathname !== "/vendor/products/") {
     return <Outlet />;
   }
+  return <VendorProductsPanel />;
+}
 
+function VendorProductsPanel() {
   const { updateProduct, deleteProduct, duplicateProduct, categories } = useApp();
   const { vendorProducts } = useVendorScope();
   const [q, setQ] = useState("");
@@ -164,10 +167,7 @@ function VendorProducts() {
               <StatusBadge status={p.status} />,
               <Switch
                 checked={p.active}
-                onCheckedChange={(v) => {
-                  updateProduct(p.id, { active: v });
-                  toast.success(`${p.name} ${v ? "enabled" : "disabled"}`);
-                }}
+                onCheckedChange={async (v) => { if (await updateProduct(p.id, { active: v })) toast.success(`${p.name} ${v ? "enabled" : "disabled"}`); }}
               />,
               p.created,
               <div className="flex flex-wrap items-center gap-1.5">
@@ -195,8 +195,7 @@ function VendorProducts() {
                   variant="outline"
                   size="sm"
                   onClick={() => {
-                    duplicateProduct(p.id);
-                    toast.success(`${p.name} duplicated`);
+                    void duplicateProduct(p.id).then((ok) => { if (ok) toast.success(`${p.name} duplicated`); });
                   }}
                 >
                   Duplicate
@@ -213,10 +212,7 @@ function VendorProducts() {
                     <AlertDialogFooter>
                       <AlertDialogCancel>Cancel</AlertDialogCancel>
                       <AlertDialogAction
-                        onClick={() => {
-                          deleteProduct(p.id);
-                          toast.success(`${p.name} deleted`);
-                        }}
+                        onClick={() => { void deleteProduct(p.id).then((ok) => { if (ok) toast.success(`${p.name} deleted`); }); }}
                       >
                         Confirm Delete
                       </AlertDialogAction>
@@ -282,7 +278,7 @@ function VendorProducts() {
             <Button variant="outline" onClick={() => setEditing(null)}>Cancel</Button>
             <Button
               className="bg-navy text-white hover:bg-navy/90"
-              onClick={() => {
+              onClick={async () => {
                 if (!editing) return;
                 if (!editForm.name) {
                   toast.error("Name is required");
@@ -290,9 +286,7 @@ function VendorProducts() {
                 }
                 // Do not allow vendor to overwrite price or mrp
                 const { price: _p, mrp: _m, purchasePrice: _cost, ...safeVendorPatch } = editForm;
-                updateProduct(editing.id, safeVendorPatch);
-                toast.success(`${editForm.name} updated`);
-                setEditing(null);
+                if (await updateProduct(editing.id, safeVendorPatch)) { toast.success(`${editForm.name} updated`); setEditing(null); }
               }}
             >
               Save Changes
@@ -314,14 +308,14 @@ function VendorProducts() {
             <Button variant="outline" onClick={() => setStockDialog(null)}>Cancel</Button>
             <Button
               className="bg-navy text-white hover:bg-navy/90"
-              onClick={() => {
+              onClick={async () => {
                 if (!stockDialog) return;
                 const val = Number(stockValue);
                 if (Number.isNaN(val) || val < 0) {
                   toast.error("Enter a valid stock quantity");
                   return;
                 }
-                updateProduct(stockDialog.id, { stock: val });
+                if (!await updateProduct(stockDialog.id, { stock: val })) return;
                 toast.success(`Stock for ${stockDialog.name} updated to ${val}`);
                 setStockDialog(null);
               }}

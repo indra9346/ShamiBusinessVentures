@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { LayoutGrid, List, Search, SlidersHorizontal } from "lucide-react";
 import { SiteLayout, Breadcrumbs } from "@/components/site/SiteLayout";
 import { ProductCard } from "@/components/site/ProductCard";
@@ -58,6 +58,19 @@ function Shop() {
   const [page, setPage] = useState(1);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const perPage = 8;
+
+  // Search params are the source of truth for category/brand navigation. The
+  // router can reuse this page component while a user clicks several tiles.
+  useEffect(() => {
+    setQ(search.q ?? "");
+    setCats(search.category ? [search.category] : []);
+    setSort(sorts.includes(search.sort ?? "") ? search.sort! : "Popular");
+    setPage(1);
+  }, [search.q, search.category, search.sort]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [cats, vends, maxPrice, minRating, inStock, offersOnly, sort]);
 
   const filtered = useMemo(() => {
     const allowed = visibleCats.map((c) => c.name);

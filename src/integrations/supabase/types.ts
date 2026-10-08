@@ -587,10 +587,61 @@ export type Database = {
           },
         ]
       }
+      coupons: {
+        Row: { code: string; discount_type: string; discount_value: number; minimum_order: number; maximum_discount: number; starts_on: string; ends_on: string; usage_limit: number; used_count: number; active: boolean; created_by: string | null; created_at: string }
+        Insert: { code: string; discount_type: string; discount_value: number; minimum_order?: number; maximum_discount: number; starts_on: string; ends_on: string; usage_limit: number; used_count?: number; active?: boolean; created_by?: string | null; created_at?: string }
+        Update: { code?: string; discount_type?: string; discount_value?: number; minimum_order?: number; maximum_discount?: number; starts_on?: string; ends_on?: string; usage_limit?: number; used_count?: number; active?: boolean; created_by?: string | null; created_at?: string }
+        Relationships: []
+      }
+      product_reviews: {
+        Row: { id: string; order_id: string; product_id: string; customer_id: string; vendor_id: string; rating: number; title: string; body: string; vendor_reply: string | null; status: string; created_at: string }
+        Insert: { id?: string; order_id: string; product_id: string; customer_id: string; vendor_id: string; rating: number; title: string; body: string; vendor_reply?: string | null; status?: string; created_at?: string }
+        Update: { id?: string; order_id?: string; product_id?: string; customer_id?: string; vendor_id?: string; rating?: number; title?: string; body?: string; vendor_reply?: string | null; status?: string; created_at?: string }
+        Relationships: []
+      }
+      return_requests: {
+        Row: { id: string; order_id: string; order_item_id: string; customer_id: string; product_id: string; vendor_id: string; quantity: number; amount: number; reason: string; status: string; refund_status: string; created_at: string; updated_at: string }
+        Insert: { id?: string; order_id: string; order_item_id: string; customer_id: string; product_id: string; vendor_id: string; quantity: number; amount: number; reason: string; status?: string; refund_status?: string; created_at?: string; updated_at?: string }
+        Update: { id?: string; order_id?: string; order_item_id?: string; customer_id?: string; product_id?: string; vendor_id?: string; quantity?: number; amount?: number; reason?: string; status?: string; refund_status?: string; created_at?: string; updated_at?: string }
+        Relationships: []
+      }
+      vendor_payout_requests: {
+        Row: { id: string; vendor_id: string; amount: number; method: string; status: string; reference: string | null; requested_at: string; processed_at: string | null; processed_by: string | null }
+        Insert: { id?: string; vendor_id: string; amount: number; method?: string; status?: string; reference?: string | null; requested_at?: string; processed_at?: string | null; processed_by?: string | null }
+        Update: { id?: string; vendor_id?: string; amount?: number; method?: string; status?: string; reference?: string | null; requested_at?: string; processed_at?: string | null; processed_by?: string | null }
+        Relationships: []
+      }
+      vendor_settings: {
+        Row: { vendor_id: string; key: string; value: Json; updated_at: string }
+        Insert: { vendor_id: string; key: string; value?: Json; updated_at?: string }
+        Update: { vendor_id?: string; key?: string; value?: Json; updated_at?: string }
+        Relationships: []
+      }
+      customer_settings: {
+        Row: { user_id: string; key: string; value: Json; updated_at: string }
+        Insert: { user_id: string; key: string; value?: Json; updated_at?: string }
+        Update: { user_id?: string; key?: string; value?: Json; updated_at?: string }
+        Relationships: []
+      }
+      vendor_kyc_documents: {
+        Row: { id: string; vendor_id: string; user_id: string; document_type: string; object_path: string; status: string; admin_notes: string | null; created_at: string; reviewed_at: string | null; reviewed_by: string | null }
+        Insert: { id?: string; vendor_id: string; user_id: string; document_type: string; object_path: string; status?: string; admin_notes?: string | null; created_at?: string; reviewed_at?: string | null; reviewed_by?: string | null }
+        Update: { id?: string; vendor_id?: string; user_id?: string; document_type?: string; object_path?: string; status?: string; admin_notes?: string | null; created_at?: string; reviewed_at?: string | null; reviewed_by?: string | null }
+        Relationships: []
+      }
+      vendor_applications: {
+        Row: { id: string; applicant_id: string; business_name: string; owner_name: string; email: string; phone: string; gstin: string; city: string; address: string; status: string; admin_notes: string | null; vendor_id: string | null; created_at: string; reviewed_at: string | null; reviewed_by: string | null }
+        Insert: { id?: string; applicant_id: string; business_name: string; owner_name: string; email: string; phone: string; gstin?: string; city: string; address: string; status?: string; admin_notes?: string | null; vendor_id?: string | null; created_at?: string; reviewed_at?: string | null; reviewed_by?: string | null }
+        Update: { id?: string; applicant_id?: string; business_name?: string; owner_name?: string; email?: string; phone?: string; gstin?: string; city?: string; address?: string; status?: string; admin_notes?: string | null; vendor_id?: string | null; created_at?: string; reviewed_at?: string | null; reviewed_by?: string | null }
+        Relationships: []
+      }
       profiles: {
         Row: {
           avatar_url: string | null
+          business_address: string | null
+          business_city: string | null
           company: string | null
+          commission_rate: number
           created_at: string
           email: string
           full_name: string
@@ -603,7 +654,10 @@ export type Database = {
         }
         Insert: {
           avatar_url?: string | null
+          business_address?: string | null
+          business_city?: string | null
           company?: string | null
+          commission_rate?: number
           created_at?: string
           email?: string
           full_name?: string
@@ -616,7 +670,10 @@ export type Database = {
         }
         Update: {
           avatar_url?: string | null
+          business_address?: string | null
+          business_city?: string | null
           company?: string | null
+          commission_rate?: number
           created_at?: string
           email?: string
           full_name?: string
@@ -711,6 +768,17 @@ export type Database = {
     Functions: {
       can_read_order: { Args: { _order: string }; Returns: boolean }
       current_vendor_id: { Args: never; Returns: string }
+      admin_set_profile_status: { Args: { _profile_id: string; _status: string }; Returns: boolean }
+      admin_set_vendor_commission: { Args: { _vendor_id: string; _rate: number }; Returns: boolean }
+      admin_set_review_status: { Args: { _id: string; _status: string }; Returns: boolean }
+      admin_delete_review: { Args: { _id: string }; Returns: boolean }
+      customer_delete_own_review: { Args: { _id: string }; Returns: boolean }
+      vendor_reply_to_review: { Args: { _id: string; _reply: string }; Returns: boolean }
+      vendor_report_review: { Args: { _id: string; _reason: string }; Returns: boolean }
+      customer_request_return: { Args: { _order_item_id: string; _quantity: number; _reason: string }; Returns: string }
+      customer_set_default_address: { Args: { _id: string }; Returns: boolean }
+      admin_update_return: { Args: { _id: string; _status: string; _refund_status: string }; Returns: boolean }
+      admin_update_payout: { Args: { _id: string; _status: string; _reference?: string | null }; Returns: boolean }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
@@ -733,6 +801,13 @@ export type Database = {
         }
         Returns: Json
       }
+      request_vendor_payout: { Args: { _amount: number; _method?: string }; Returns: string }
+      admin_broadcast_notification: { Args: { _audience: string; _title: string; _message: string }; Returns: number }
+      admin_confirm_manual_payment: { Args: { _order_no: string; _amount: number; _utr: string }; Returns: boolean }
+      admin_receive_inventory_batch: { Args: { _batch_code: string; _product_id: string; _quantity: number; _unit_cost: number; _purchase_date: string | null; _warehouse: string }; Returns: string }
+      admin_review_vendor_kyc: { Args: { _id: string; _status: string; _notes?: string | null }; Returns: boolean }
+      customer_submit_vendor_application: { Args: { _business_name: string; _owner_name: string; _phone: string; _gstin: string; _city: string; _address: string }; Returns: string }
+      admin_review_vendor_application: { Args: { _id: string; _status: string; _notes?: string | null }; Returns: boolean }
     }
     Enums: {
       app_role: "admin" | "vendor" | "customer"

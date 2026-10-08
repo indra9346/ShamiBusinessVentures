@@ -37,7 +37,7 @@ export const Route = createFileRoute("/admin/payments")({
 const PAGE_SIZE = 10;
 
 function AdminPayments() {
-  const { orders, refundOrder, confirmPayment } = useApp();
+  const { orders, confirmPayment } = useApp();
 
   const txns = useMemo(
     () =>
@@ -237,21 +237,20 @@ function AdminPayments() {
                   size="sm"
                   variant="outline"
                   className="text-danger"
-                  onClick={() => {
-                    refundOrder(t.order);
-                    toast.success(`Refund initiated for ${t.order}`);
-                  }}
+                  disabled
+                  title="Configure a payment gateway before processing refunds"
                 >
-                  Refund
+                  Refund unavailable
                 </Button>
               )}
               {t.status === "Failed" && (
                 <Button
                   size="sm"
                   variant="outline"
-                  onClick={() => toast.success(`Retry initiated for ${t.txn}`)}
+                  disabled
+                  title="Payment retries require a configured payment gateway"
                 >
-                  Retry
+                  Retry unavailable
                 </Button>
               )}
               {(t.status === "Pending" || t.status === "Partially Paid") && (
@@ -373,17 +372,19 @@ function AdminPayments() {
                       className="h-9 rounded-md border border-border bg-background px-3 text-sm text-navy"
                     />
                   </label>
+                  <p className="text-sm text-slate">Use this only after you have verified the incoming bank transfer. This records a manual payment with the UTR for reconciliation.</p>
                   <Input
                     value={utr}
                     onChange={(e) => setUtr(e.target.value)}
-                    placeholder="UTR / transaction reference (optional)"
+                    placeholder="Verified UTR / transaction reference (required)"
                   />
                   <Button
                     className="w-full"
-                    disabled={advance <= 0}
-                    onClick={() => {
-                      confirmPayment(order.id, advance, utr, percent);
-                      toast.success(`Payment of ${inr(advance)} confirmed for ${order.id}`);
+                    disabled={advance <= 0 || utr.trim().length < 4}
+                    onClick={async () => {
+                      const saved = await confirmPayment(order.id, advance, utr, percent);
+                      if (!saved) return;
+                      toast.success(`Verified manual payment of ${inr(advance)} recorded for ${order.id}`);
                       setConfirmOrder(null);
                     }}
                   >

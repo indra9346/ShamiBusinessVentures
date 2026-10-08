@@ -1,5 +1,5 @@
 import { createFileRoute, Link, Outlet, useRouterState } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Building2, CheckCircle2, Download, IndianRupee, XCircle } from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
@@ -12,6 +12,8 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { downloadCSV } from "@/lib/export-utils";
+import { supabase } from "@/integrations/supabase/client";
+import { Textarea } from "@/components/ui/textarea";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
@@ -37,15 +39,56 @@ function AdminVendors() {
   if (pathname !== "/admin/vendors" && pathname !== "/admin/vendors/") {
     return <Outlet />;
   }
+  return <AdminVendorsPanel />;
+}
 
-  const { vendors, setVendorStatus } = useApp();
+function AdminVendorsPanel() {
+  const { vendors, setVendorStatus, products, orders, reviews } = useApp();
+  const [applications, setApplications] = useState<Array<{ id: string; applicant_id: string; business_name: string; owner_name: string; email: string; phone: string; gstin: string; city: string; address: string; status: string; admin_notes: string | null; created_at: string }>>([]);
+  const [applicationNotes, setApplicationNotes] = useState<Record<string, string>>({});
+  const [reviewingApplication, setReviewingApplication] = useState<string | null>(null);
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("all");
   const [sort, setSort] = useState("sales-desc");
   const [page, setPage] = useState(1);
 
+  useEffect(() => {
+    let active = true;
+    const load = async () => {
+      const { data, error } = await supabase.from("vendor_applications").select("id,applicant_id,business_name,owner_name,email,phone,gstin,city,address,status,admin_notes,created_at").order("created_at", { ascending: false });
+      if (!active) return;
+      if (error) toast.error("Could not load vendor applications", { description: error.message });
+      else setApplications(data ?? []);
+    };
+    void load();
+    const channel = supabase.channel("admin-vendor-applications").on("postgres_changes", { event: "*", schema: "public", table: "vendor_applications" }, () => void load()).subscribe();
+    return () => { active = false; void supabase.removeChannel(channel); };
+  }, []);
+
+  const reviewApplication = async (applicationId: string, status: "Approved" | "Rejected") => {
+    setReviewingApplication(applicationId);
+    const { data, error } = await supabase.rpc("admin_review_vendor_application", { _id: applicationId, _status: status, _notes: applicationNotes[applicationId] ?? "" });
+    setReviewingApplication(null);
+    if (error || !data) { toast.error("Could not review this application", { description: error?.message ?? "Application not found." }); return; }
+    setApplications((items) => items.map((item) => item.id === applicationId ? { ...item, status, admin_notes: applicationNotes[applicationId]?.trim() || null } : item));
+    toast.success(status === "Approved" ? "Vendor application approved; vendor role provisioned" : "Vendor application rejected");
+  };
+
+  const enrichedVendors = useMemo(() => vendors.map((vendor) => {
+    const productsForVendor = products.filter((product) => product.vendorId === vendor.id);
+    const ordersForVendor = orders.filter((order) => order.items.some((item) => item.vendorId === vendor.id));
+    const reviewsForVendor = reviews.filter((review) => review.vendorId === vendor.id && review.status === "Published");
+    return {
+      ...vendor,
+      products: productsForVendor.length,
+      orders: ordersForVendor.length,
+      sales: ordersForVendor.filter((order) => order.status !== "Cancelled").reduce((sum, order) => sum + order.items.filter((item) => item.vendorId === vendor.id).reduce((amount, item) => amount + item.product.price * item.qty, 0), 0),
+      rating: reviewsForVendor.length ? reviewsForVendor.reduce((sum, review) => sum + review.rating, 0) / reviewsForVendor.length : 0,
+    };
+  }), [vendors, products, orders, reviews]);
+
   const filtered = useMemo(() => {
-    let list = vendors.filter((v) => {
+    let list = enrichedVendors.filter((v) => {
       const s = q.trim().toLowerCase();
       const matchesQ = !s || v.business.toLowerCase().includes(s) || v.owner.toLowerCase().includes(s) || v.email.toLowerCase().includes(s);
       const matchesStatus = status === "all" || v.status === status;
@@ -58,7 +101,7 @@ function AdminVendors() {
       return 0;
     });
     return list;
-  }, [vendors, q, status, sort]);
+  }, [enrichedVendors, q, status, sort]);
 
   const pages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const pageSafe = Math.min(page, pages);
@@ -66,7 +109,7 @@ function AdminVendors() {
 
   const approved = vendors.filter((v) => v.status === "approved").length;
   const pending = vendors.filter((v) => v.status === "pending").length;
-  const totalSales = vendors.reduce((s, v) => s + v.sales, 0);
+  const totalSales = enrichedVendors.reduce((s, v) => s + v.sales, 0);
 
   const handleExportVendors = () => {
     downloadCSV(
@@ -99,6 +142,23 @@ function AdminVendors() {
         <StatCard label="Pending Approval" value={String(pending)} icon={XCircle} />
         <StatCard label="Total Sales" value={inr(totalSales)} icon={IndianRupee} />
       </div>
+
+      <Panel title={`Vendor Applications (${applications.filter((application) => application.status === "Pending").length} pending)`} className="mt-6">
+        {applications.length === 0 ? <p className="py-6 text-sm text-slate">No vendor applications have been submitted.</p> : <div className="space-y-4">
+          {applications.map((application) => <div key={application.id} className="rounded-lg border border-border p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div><p className="font-semibold text-navy">{application.business_name}</p><p className="text-sm text-charcoal">{application.owner_name} · {application.city}</p><p className="text-xs text-slate">{application.email} · {application.phone}{application.gstin ? ` · GSTIN ${application.gstin}` : ""}</p></div>
+              <StatusBadge status={application.status} />
+            </div>
+            <p className="mt-2 text-sm text-slate">{application.address}</p>
+            {application.admin_notes && <p className="mt-2 text-sm text-charcoal">Previous note: {application.admin_notes}</p>}
+            {application.status === "Pending" && <>
+              <Textarea className="mt-3" rows={2} maxLength={2000} placeholder="Optional review note" value={applicationNotes[application.id] ?? ""} onChange={(event) => setApplicationNotes((notes) => ({ ...notes, [application.id]: event.target.value }))} />
+              <div className="mt-3 flex gap-2"><Button className="bg-navy text-white" disabled={reviewingApplication === application.id} onClick={() => void reviewApplication(application.id, "Approved")}>{reviewingApplication === application.id ? "Saving…" : "Approve and provision vendor"}</Button><Button variant="destructive" disabled={reviewingApplication === application.id} onClick={() => void reviewApplication(application.id, "Rejected")}>Reject</Button></div>
+            </>}
+          </div>)}
+        </div>}
+      </Panel>
 
       <Panel
         title="All Vendors"
@@ -162,7 +222,7 @@ function AdminVendors() {
                 variant="outline"
                 size="sm"
                 disabled={v.status === "approved"}
-                onClick={() => { setVendorStatus(v.id, "approved"); toast.success(`${v.business} approved`); }}
+                onClick={() => { void setVendorStatus(v.id, "approved").then((ok) => { if (ok) toast.success(`${v.business} approved`); }); }}
               >
                 Approve
               </Button>
@@ -170,7 +230,7 @@ function AdminVendors() {
                 variant="outline"
                 size="sm"
                 disabled={v.status === "pending"}
-                onClick={() => { setVendorStatus(v.id, "pending"); toast.success(`${v.business} marked pending / rejected`); }}
+                onClick={() => { void setVendorStatus(v.id, "pending").then((ok) => { if (ok) toast.success(`${v.business} marked pending / rejected`); }); }}
               >
                 Reject
               </Button>
@@ -185,7 +245,7 @@ function AdminVendors() {
                   </AlertDialogHeader>
                   <AlertDialogFooter>
                     <AlertDialogCancel>Cancel</AlertDialogCancel>
-                    <AlertDialogAction onClick={() => { setVendorStatus(v.id, "suspended"); toast.success(`${v.business} suspended`); }}>
+                    <AlertDialogAction onClick={() => { void setVendorStatus(v.id, "suspended").then((ok) => { if (ok) toast.success(`${v.business} suspended`); }); }}>
                       Suspend
                     </AlertDialogAction>
                   </AlertDialogFooter>

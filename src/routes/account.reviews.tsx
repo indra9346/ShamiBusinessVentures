@@ -5,6 +5,8 @@ import { PanelLayout } from "@/components/panel/PanelLayout";
 import { Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { accountNav } from "@/lib/account-nav";
 import { useApp } from "@/lib/store";
+import { supabase } from "@/integrations/supabase/client";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 
 export const Route = createFileRoute("/account/reviews")({
@@ -22,8 +24,9 @@ export const Route = createFileRoute("/account/reviews")({
 
 function AccountReviews() {
   const { user, reviews } = useApp();
+  const [deletedIds, setDeletedIds] = useState<string[]>([]);
   const mine = user
-    ? reviews.filter((r) => r.customerId === user.email || r.customerId === user.phone)
+    ? reviews.filter((r) => !deletedIds.includes(r.id) && (r.customerId === user.id || (!user.id && (r.customerId === user.email || r.customerId === user.phone))))
     : [];
   const avg = mine.length ? Math.round((mine.reduce((s, r) => s + r.rating, 0) / mine.length) * 10) / 10 : 0;
 
@@ -57,14 +60,11 @@ function AccountReviews() {
                 </div>
                 <p className="mt-2 text-sm font-medium text-charcoal">{r.title}</p>
                 <p className="mt-1 text-sm text-slate">{r.body}</p>
-                <div className="mt-3 flex gap-2">
-                  <Button variant="outline" size="sm" onClick={() => toast.success("Review editing opens after moderation")}>
-                    Edit
-                  </Button>
-                  <Button variant="outline" size="sm" onClick={() => toast.success(`Review ${r.id} deletion requested`)}>
-                    Delete
-                  </Button>
-                </div>
+                {r.status === "Pending" && <div className="mt-3 flex gap-2"><Button variant="outline" size="sm" onClick={async () => {
+                  const { data, error } = await supabase.rpc("customer_delete_own_review", { _id: r.id });
+                  if (error || !data) { toast.error("Could not delete this review", { description: error?.message ?? "Review is no longer pending." }); return; }
+                  setDeletedIds((ids) => [...ids, r.id]); toast.success("Pending review deleted");
+                }}>Delete pending review</Button></div>}
               </div>
             ))}
           </div>

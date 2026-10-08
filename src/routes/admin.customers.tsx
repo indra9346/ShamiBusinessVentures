@@ -33,7 +33,10 @@ function AdminCustomers() {
   if (pathname !== "/admin/customers" && pathname !== "/admin/customers/") {
     return <Outlet />;
   }
+  return <AdminCustomersPanel />;
+}
 
+function AdminCustomersPanel() {
   const { customers, setCustomerStatus } = useApp();
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("all");
@@ -160,13 +163,12 @@ function AdminCustomers() {
                 size="sm"
                 onClick={() => {
                   const next = c.status === "blocked" ? "active" : "blocked";
-                  setCustomerStatus(c.id, next);
-                  toast.success(`${c.name} ${next === "blocked" ? "blocked" : "unblocked"}`);
+                  void setCustomerStatus(c.id, next).then((ok) => { if (ok) toast.success(`${c.name} ${next === "blocked" ? "blocked" : "unblocked"}`); });
                 }}
               >
                 {c.status === "blocked" ? "Unblock" : "Block"}
               </Button>
-              <Button variant="outline" size="sm" onClick={() => toast.success(`Email sent to ${c.email}`)}>Email</Button>
+              <Button variant="outline" size="sm" onClick={() => { window.location.href = `mailto:${encodeURIComponent(c.email)}`; }}>Email</Button>
             </div>,
           ])}
         />

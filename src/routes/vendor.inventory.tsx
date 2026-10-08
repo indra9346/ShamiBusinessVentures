@@ -43,8 +43,9 @@ function VendorInventory() {
   const lowStock = vendorProducts.filter((p) => p.stock > 0 && p.stock < REORDER_LEVEL);
   const healthy = vendorProducts.filter((p) => p.stock >= REORDER_LEVEL);
 
-  const restockAll = () => {
-    lowStock.forEach((p) => updateProduct(p.id, { stock: REORDER_LEVEL + 100 }));
+  const restockAll = async () => {
+    const results = await Promise.all(lowStock.map((p) => updateProduct(p.id, { stock: REORDER_LEVEL + 100 })));
+    if (results.some((ok) => !ok)) return;
     toast.success(`Restocked ${lowStock.length} low-stock product${lowStock.length === 1 ? "" : "s"}`);
   };
 
@@ -94,7 +95,7 @@ function VendorInventory() {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => {
+              onClick={async () => {
                 setStockDialog(p);
                 setStockValue(String(p.stock));
               }}
@@ -118,14 +119,14 @@ function VendorInventory() {
             <Button variant="outline" onClick={() => setStockDialog(null)}>Cancel</Button>
             <Button
               className="bg-navy text-white hover:bg-navy/90"
-              onClick={() => {
+              onClick={async () => {
                 if (!stockDialog) return;
                 const val = Number(stockValue);
                 if (Number.isNaN(val) || val < 0) {
                   toast.error("Enter a valid stock quantity");
                   return;
                 }
-                updateProduct(stockDialog.id, { stock: val });
+                if (!await updateProduct(stockDialog.id, { stock: val })) return;
                 toast.success(`Stock for ${stockDialog.name} updated to ${val}`);
                 setStockDialog(null);
               }}

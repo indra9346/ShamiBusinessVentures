@@ -215,9 +215,8 @@ function AccountOrders() {
                     <AlertDialogFooter>
                       <AlertDialogCancel>Back</AlertDialogCancel>
                       <AlertDialogAction
-                        onClick={() => {
-                          updateOrderStatus(o.id, "Cancelled" as OrderStatus);
-                          toast.success(`Order ${o.id} cancelled`);
+                        onClick={async () => {
+                          if (await updateOrderStatus(o.id, "Cancelled" as OrderStatus)) toast.success(`Order ${o.id} cancelled`);
                         }}
                       >
                         Confirm Cancel
