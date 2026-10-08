@@ -50,8 +50,8 @@ type AppState = {
   cartItems: { product: Product; qty: number }[];
   cartCount: number;
   subtotal: number;
-  catalogStatus: "loading" | "ready" | "unavailable";
-  catalogError: string | null;
+  productCatalogStatus: "loading" | "ready" | "unavailable";
+  categoryCatalogStatus: "loading" | "ready" | "unavailable";
   addToCart: (id: string, qty?: number) => void;
   setQty: (id: string, qty: number) => void;
   removeFromCart: (id: string) => void;
@@ -152,42 +152,43 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [addresses, setAddresses] = useState<Address[]>([]);
   const [addressesByUser, setAddressesByUser] = useState<Record<string, Address[]>>({});
   const [hydrated, setHydrated] = useState(false);
-  const [catalogStatus, setCatalogStatus] = useState<"loading" | "ready" | "unavailable">("loading");
-  const [catalogError, setCatalogError] = useState<string | null>(null);
+  const [productCatalogStatus, setProductCatalogStatus] = useState<"loading" | "ready" | "unavailable">("loading");
+  const [categoryCatalogStatus, setCategoryCatalogStatus] = useState<"loading" | "ready" | "unavailable">("loading");
 
   // The public catalog and dashboard catalog are read from Supabase. Demo fixtures
   // stay available to local development only and are never treated as production data.
   useEffect(() => {
     if (STATIC_DATA_MODE) {
-      setCatalogStatus("ready");
-      setCatalogError(null);
+      setProductCatalogStatus("ready");
+      setCategoryCatalogStatus("ready");
       return;
     }
     let active = true;
     const reloadCatalog = async () => {
-      setCatalogStatus("loading");
+      setProductCatalogStatus("loading");
+      setCategoryCatalogStatus("loading");
       const [productResult, categoryResult] = await Promise.all([
         supabase.from("catalog_products").select("payload"),
         supabase.from("store_categories").select("payload").order("sort_order"),
       ]);
       if (!active) return;
-      const catalogIssue = productResult.error ?? categoryResult.error;
-      if (catalogIssue) {
-        console.error("Could not load the Supabase product catalog:", productResult.error?.message ?? "unknown catalog error");
-        console.error("Could not load Supabase store categories:", categoryResult.error?.message ?? "unknown category error");
-        setCatalogStatus("unavailable");
-        setCatalogError(catalogIssue.message || "The live catalog is currently unavailable.");
-        // Keep the storefront navigable without inventing product data. These are
-        // category labels only; live product rows are still read exclusively from Supabase.
-        setCategories(storeCategorySeed);
+      if (productResult.error) {
+        console.error("Could not load the Supabase product catalog:", productResult.error.message);
+        setProductCatalogStatus("unavailable");
         setProducts([]);
       } else {
-        const nextProducts = productResult.data.map((row) => row.payload as unknown as Product);
+        setProductCatalogStatus("ready");
+        setProducts(productResult.data.map((row) => row.payload as unknown as Product));
+      }
+      if (categoryResult.error) {
+        console.error("Could not load Supabase store categories:", categoryResult.error.message);
+        setCategoryCatalogStatus("unavailable");
+        // Seed labels keep navigation available; they are not live category records.
+        setCategories(storeCategorySeed);
+      } else {
+        setCategoryCatalogStatus("ready");
         const persistedCategories = categoryResult.data.map((row) => row.payload as unknown as StoreCategory);
-        setCatalogStatus("ready");
-        setCatalogError(null);
-        setProducts(nextProducts);
-        setCategories(persistedCategories.length ? persistedCategories : storeCategorySeed);
+        setCategories(persistedCategories);
       }
       if (user?.role) {
         const [
@@ -550,10 +551,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
       cart,
       cartItems,
-      cartCount: cart.reduce((s, l) => s + l.qty, 0),
+      cartCount: cartItems.reduce((s, l) => s + l.qty, 0),
       subtotal: cartItems.reduce((s, l) => s + l.product.price * l.qty, 0),
-      catalogStatus,
-      catalogError,
+      productCatalogStatus,
+      categoryCatalogStatus,
       addToCart: (id, qty = 1) =>
         setCart((c) => {
           const prod = products.find((p) => p.id === id);
@@ -1080,7 +1081,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         });
       },
     };
-  }, [user, cart, wishlist, wishlistsByUser, categories, products, batches, orders, vendors, customers, reviews, returns, coupons, notifications, addresses, addressesByUser, catalogStatus, catalogError]);
+  }, [user, cart, wishlist, wishlistsByUser, categories, products, batches, orders, vendors, customers, reviews, returns, coupons, notifications, addresses, addressesByUser, productCatalogStatus, categoryCatalogStatus]);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 }

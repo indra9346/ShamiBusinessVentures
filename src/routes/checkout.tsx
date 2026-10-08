@@ -31,7 +31,7 @@ const steps = ["Address", "Delivery", "Payment", "Review", "Confirmation"];
 const methods = ["UPI", "Credit Card", "Debit Card", "Net Banking"];
 
 function Checkout() {
-  const { user, hydrated, cartItems, products, clearCart, addresses, addAddress, placeOrder, coupons } =
+  const { user, hydrated, cart, cartItems, products, productCatalogStatus, clearCart, removeFromCart, addresses, addAddress, placeOrder, coupons } =
     useApp();
   const { productId } = Route.useSearch();
   const navigate = useNavigate();
@@ -79,6 +79,7 @@ function Checkout() {
   const checkoutItems = productId
     ? cartItems.filter((line) => line.product.id === productId)
     : cartItems;
+  const unresolvedCartLines = cartItems.length < cart.length;
   const subtotal = checkoutItems.reduce((sum, line) => sum + line.product.price * line.qty, 0);
   const shipCost = ship === "Express" ? 650 : subtotal > 10000 ? 0 : 250;
   const tax = Math.round(subtotal * 0.05);
@@ -113,6 +114,10 @@ function Checkout() {
   }
 
   const goNext = async () => {
+    if (productCatalogStatus !== "ready" || unresolvedCartLines) {
+      toast.error("Checkout is unavailable while saved cart items cannot be verified against the live catalog.");
+      return;
+    }
     if (checkoutItems.length === 0) {
       toast.error("Your cart is empty");
       void navigate({ to: "/cart" });
@@ -141,7 +146,8 @@ function Checkout() {
       } catch {
         return;
       }
-      clearCart();
+      if (productId) removeFromCart(productId);
+      else clearCart();
       setPlacedId(order.id);
       toast.success("Order placed", { description: `${order.id} confirmed` });
       setStep(step + 1);
@@ -181,6 +187,29 @@ function Checkout() {
   };
 
   const selectedAddress = addresses.find((a) => a.id === addr);
+
+  if (productCatalogStatus !== "ready" || unresolvedCartLines || checkoutItems.length === 0) {
+    const unavailable = productCatalogStatus !== "ready" || unresolvedCartLines;
+    return (
+      <SiteLayout>
+        <div className="mx-auto max-w-xl px-6 py-20 text-center">
+          <h1 className="text-2xl font-bold text-navy">
+            {unavailable ? "Checkout is temporarily unavailable" : "Your cart is empty"}
+          </h1>
+          <p className="mt-3 text-sm text-slate">
+            {productCatalogStatus === "loading"
+              ? "We’re loading the live catalog before verifying your cart."
+              : unavailable
+                ? "Some saved cart items could not be verified against live products. Review your cart after the catalog is restored."
+                : "Add a product to your cart before continuing to checkout."}
+          </p>
+          <Link to="/cart" className="mt-6 inline-block rounded-md bg-navy px-5 py-3 text-sm font-semibold text-white hover:bg-midnight">
+            Review cart
+          </Link>
+        </div>
+      </SiteLayout>
+    );
+  }
 
   return (
     <SiteLayout>

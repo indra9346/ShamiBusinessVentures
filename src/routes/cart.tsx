@@ -21,10 +21,11 @@ export const Route = createFileRoute("/cart")({
 });
 
 function Cart() {
-  const { cart, cartItems, setQty, removeFromCart, subtotal, coupons, clearCart, catalogStatus, catalogError } = useApp();
+  const { cart, cartItems, setQty, removeFromCart, subtotal, coupons, clearCart, productCatalogStatus } = useApp();
   const [coupon, setCoupon] = useState("");
   const [applied, setApplied] = useState<string | null>(null);
-  const hasCatalogIssue = cart.length > 0 && cartItems.length === 0;
+  const hasUnavailableLines = cartItems.length < cart.length;
+  const checkoutBlocked = productCatalogStatus !== "ready" || hasUnavailableLines;
   const delivery = subtotal > 10000 || subtotal === 0 ? 0 : 250;
   const tax = Math.round(subtotal * 0.05);
   const appliedCoupon = applied ? coupons.find((c) => c.code === applied) : undefined;
@@ -65,15 +66,21 @@ function Cart() {
         <div className="mx-auto grid max-w-md place-items-center gap-3 px-6 py-24 text-center">
           <ShoppingBag className="h-10 w-10 text-gold" />
           <p className="text-lg font-bold text-navy">
-            {hasCatalogIssue ? "Your cart is temporarily unavailable" : "Your cart is empty"}
+            {hasUnavailableLines
+              ? productCatalogStatus === "loading" ? "Loading your saved cart" : "Your saved cart items are unavailable"
+              : "Your cart is empty"}
           </p>
           <p className="text-sm text-slate">
-            {hasCatalogIssue
-              ? "Saved cart items are still on this device, but the live catalog did not load. Refresh the page or wait for the catalog to become available before checking out."
+            {hasUnavailableLines
+              ? productCatalogStatus === "loading"
+                ? "We’re matching saved cart items with the live catalog."
+                : "Some saved items could not be matched to live products. They are not included in the total, and checkout is unavailable until the catalog is restored."
               : "Browse the catalogue and add sugar, rice, oils or pulses."}
           </p>
-          {catalogStatus === "unavailable" && catalogError && (
-            <p className="max-w-sm text-xs text-danger">{catalogError}</p>
+          {hasUnavailableLines && (
+            <button onClick={clearCart} className="text-sm font-semibold text-danger hover:underline">
+              Clear saved cart
+            </button>
           )}
           <Link to="/shop" className="mt-3 rounded-md bg-navy px-6 py-3 text-sm font-semibold text-white hover:bg-midnight">
             Continue Shopping
@@ -82,6 +89,15 @@ function Cart() {
       ) : (
         <div className="mx-auto grid max-w-7xl gap-8 px-6 py-10 lg:grid-cols-[minmax(0,1fr)_360px]">
           <div className="space-y-4">
+            {checkoutBlocked && (
+              <div role="alert" className="rounded-lg border border-danger/30 bg-danger/5 p-4 text-sm text-danger">
+                {productCatalogStatus === "loading"
+                  ? "The live catalog is still loading; checkout is temporarily unavailable."
+                  : hasUnavailableLines
+                    ? "Some saved cart items are unavailable in the live catalog. They are excluded from this subtotal, and checkout is disabled."
+                    : "The live product catalog is unavailable, so checkout is disabled."}
+              </div>
+            )}
             {cartItems.map(({ product, qty }) => (
               <div key={product.id} className="flex flex-col gap-4 rounded-lg border border-border bg-card p-4 shadow-card sm:flex-row">
                 <img src={product.image} alt={product.name} loading="lazy" width={800} height={800} className="h-24 w-24 shrink-0 rounded-md object-cover" />
@@ -154,12 +170,18 @@ function Cart() {
               </button>
             </div>
 
-            <Link
-              to="/checkout"
-              className="mt-5 block rounded-md bg-gold py-3.5 text-center text-sm font-bold text-midnight transition-colors hover:bg-gold-light"
-            >
-              Proceed to Checkout
-            </Link>
+            {checkoutBlocked ? (
+              <button disabled className="mt-5 block w-full cursor-not-allowed rounded-md bg-border py-3.5 text-center text-sm font-bold text-slate">
+                Checkout unavailable
+              </button>
+            ) : (
+              <Link
+                to="/checkout"
+                className="mt-5 block rounded-md bg-gold py-3.5 text-center text-sm font-bold text-midnight transition-colors hover:bg-gold-light"
+              >
+                Proceed to Checkout
+              </Link>
+            )}
           </aside>
         </div>
       )}

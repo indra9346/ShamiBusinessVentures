@@ -12,22 +12,33 @@ export function useVisibleCategories(): StoreCategory[] {
 
 export function CategoryCards({ limit }: { limit?: number }) {
   const cats = useVisibleCategories();
-  const { products, catalogStatus, catalogError } = useApp();
+  const { products, categoryCatalogStatus, productCatalogStatus } = useApp();
   const list = limit ? cats.slice(0, limit) : cats;
-
-  if (catalogStatus === "unavailable" && list.length === 0) {
-    return (
-      <div className="rounded-lg border border-dashed border-border bg-card p-6 text-center text-sm text-slate">
-        <p className="font-semibold text-navy">Categories are temporarily unavailable.</p>
-        <p className="mt-2 text-slate">{catalogError ?? "The live category catalog is not available yet."}</p>
-      </div>
-    );
-  }
 
   return (
     <div className="grid grid-cols-2 gap-3 sm:gap-5 lg:grid-cols-3">
+      {categoryCatalogStatus !== "ready" && (
+        <div className="col-span-full rounded-lg border border-dashed border-border bg-card p-5 text-center text-sm text-slate">
+          <p className="font-semibold text-navy">
+            {categoryCatalogStatus === "loading" ? "Loading live categories…" : "Live categories are temporarily unavailable."}
+          </p>
+          <p className="mt-2">
+            {categoryCatalogStatus === "loading"
+              ? "Category names and product counts will update when the catalog finishes loading."
+              : "The category names below are navigation labels; live category data could not be loaded."}
+          </p>
+        </div>
+      )}
+      {categoryCatalogStatus === "ready" && list.length === 0 && (
+        <div className="col-span-full rounded-lg border border-dashed border-border bg-card p-6 text-center text-sm text-slate">
+          <p className="font-semibold text-navy">No storefront categories are available yet.</p>
+        </div>
+      )}
       {list.map((c, i) => {
         const count = products.filter((p) => p.category === c.name && isStorefrontProduct(p)).length;
+        const countLabel = productCatalogStatus === "ready"
+          ? `${count} products`
+          : productCatalogStatus === "loading" ? "Loading…" : "Unavailable";
         const slug = categorySlug(c.name === "Cooking Oil" ? "Oil" : c.name);
         const node = getCategoryNode(slug);
         return node ? (
@@ -38,7 +49,7 @@ export function CategoryCards({ limit }: { limit?: number }) {
             style={{ animationDelay: `${i * 70}ms` }}
             className="card-premium animate-rise group relative flex flex-col overflow-hidden active:scale-[0.98] active:transition-transform"
           >
-            <CardBody c={c} count={count} />
+            <CardBody c={c} countLabel={countLabel} />
           </Link>
         ) : (
           <Link
@@ -59,7 +70,7 @@ export function CategoryCards({ limit }: { limit?: number }) {
               />
               <span className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-midnight/70 to-transparent" />
               <span className="absolute bottom-2 left-3 rounded-full bg-gold px-2.5 py-1 text-[10px] font-bold text-midnight sm:bottom-3 sm:left-4 sm:text-[11px]">
-                {count} products
+                {countLabel}
               </span>
             </div>
             <div className="flex min-w-0 flex-1 flex-col p-3 sm:p-5">
@@ -88,7 +99,7 @@ export function CategoryCards({ limit }: { limit?: number }) {
   );
 }
 
-function CardBody({ c, count }: { c: StoreCategory; count: number }) {
+function CardBody({ c, countLabel }: { c: StoreCategory; countLabel: string }) {
   return (
     <>
       <div className="relative overflow-hidden bg-ivory">
@@ -102,7 +113,7 @@ function CardBody({ c, count }: { c: StoreCategory; count: number }) {
         />
         <span className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-midnight/70 to-transparent" />
         <span className="absolute bottom-2 left-3 rounded-full bg-gold px-2.5 py-1 text-[10px] font-bold text-midnight sm:bottom-3 sm:left-4 sm:text-[11px]">
-          {count} products
+          {countLabel}
         </span>
       </div>
       <div className="flex min-w-0 flex-1 flex-col p-3 sm:p-5">

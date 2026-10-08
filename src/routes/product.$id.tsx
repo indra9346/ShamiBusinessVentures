@@ -19,16 +19,22 @@ export const Route = createFileRoute("/product/$id")({
     if (STATIC_DATA_MODE) {
       const product = demoProducts.find((item) => item.id === params.id);
       if (!product || !isStorefrontProduct(product)) throw notFound();
-      return { product };
+      return { product, catalogUnavailable: false };
     }
     const { data, error } = await supabase.from("catalog_products").select("payload").eq("id", params.id).maybeSingle();
     const product = data?.payload as unknown as import("@/lib/data").Product | undefined;
-    if (error || !product || !isStorefrontProduct(product)) throw notFound();
-    return { product };
+    if (error) return { product: null, catalogUnavailable: true };
+    if (!product || !isStorefrontProduct(product)) throw notFound();
+    return { product, catalogUnavailable: false };
   },
   head: ({ loaderData }) => {
-    if (!loaderData) {
-      return { meta: [{ title: "Product not found | Shami" }, { name: "robots", content: "noindex" }] };
+    if (!loaderData?.product) {
+      return {
+        meta: [
+          { title: loaderData?.catalogUnavailable ? "Catalog temporarily unavailable | Shami" : "Product not found | Shami" },
+          { name: "robots", content: "noindex" },
+        ],
+      };
     }
     const p = loaderData.product;
     return {
@@ -44,10 +50,28 @@ export const Route = createFileRoute("/product/$id")({
 });
 
 function ProductDetail() {
-  const { product } = Route.useLoaderData();
+  const { product, catalogUnavailable } = Route.useLoaderData();
   const { addToCart, toggleWishlist, wishlist, products, reviews, vendors } = useApp();
   const [qty, setQty] = useState(1);
   const [active, setActive] = useState(0);
+
+  if (!product) {
+    return (
+      <SiteLayout>
+        <div className="mx-auto max-w-xl px-6 py-20 text-center">
+          <h1 className="text-2xl font-bold text-navy">Product details are temporarily unavailable</h1>
+          <p className="mt-3 text-sm text-slate">
+            {catalogUnavailable
+              ? "The live product catalog could not be reached. Please try again later."
+              : "This product is not available."}
+          </p>
+          <Link to="/shop" className="mt-6 inline-block rounded-md bg-navy px-5 py-3 text-sm font-semibold text-white hover:bg-midnight">
+            Browse the shop
+          </Link>
+        </div>
+      </SiteLayout>
+    );
+  }
   const vendor = vendors.find((v) => v.id === product.vendorId);
   const off = Math.round(((product.mrp - product.price) / product.mrp) * 100);
   const gallery = [product.image, product.image, product.image];

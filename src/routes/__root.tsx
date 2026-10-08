@@ -140,7 +140,7 @@ function RootComponent() {
       {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
       <LanguageProvider>
         <AppProvider>
-          {STATIC_DATA_MODE && <div role="status" className="bg-amber-100 px-4 py-2 text-center text-xs font-semibold text-amber-950">Static preview mode: demo data only. Changes stay in this browser; email OTP is 12345678 and phone OTP is 123456; no database, email, or payment is used.</div>}
+          {STATIC_DATA_MODE && <div role="status" className="bg-amber-100 px-4 py-2 text-center text-xs font-semibold text-amber-950">Static preview mode: demo data only; no database, email, or payment is used. Customer demo OTPs: email 12345678, phone 123456. Admin/vendor sign-in is simulated in this preview only.</div>}
           <Outlet />
           <CartFloatingNotifier />
           <Toaster position="top-right" richColors />
