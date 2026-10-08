@@ -87,6 +87,7 @@ function VendorLogin() {
         <Link to="/reset-password" className="inline-block text-sm font-semibold text-gold hover:underline">
           Set or reset password
         </Link>
+        <p className="text-sm text-slate">New to Shami as a seller? <Link to="/vendor/register" className="font-semibold text-gold hover:underline">Apply for vendor access</Link></p>
       </form>
     </AuthCard>
   );

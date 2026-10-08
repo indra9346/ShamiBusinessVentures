@@ -54,6 +54,7 @@ export async function signInProvisionedAccount(email: string, password: string, 
     }
 
     return {
+      id: authData.user.id,
       name: profile.full_name.trim() || cleanEmail.split("@")[0] || role,
       email: authData.user.email ?? cleanEmail,
       ...(profile.phone ? { phone: profile.phone } : {}),

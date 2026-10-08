@@ -72,6 +72,7 @@ function ProductDetail() {
       </SiteLayout>
     );
   }
+  const availableStock = Math.max(0, Math.floor((Number(product.stock) || 0) - (Number(product.reserved) || 0)));
   const vendor = vendors.find((v) => v.id === product.vendorId);
   const off = Math.round(((product.mrp - product.price) / product.mrp) * 100);
   const gallery = [product.image, product.image, product.image];
@@ -134,10 +135,10 @@ function ProductDetail() {
             <span className="text-lg text-slate line-through">{inr(product.mrp)}</span>
             {off > 0 && <span className="rounded-full bg-gold/12 px-2.5 py-1 text-xs font-bold text-gold">{off}% off</span>}
           </div>
-          <p className="mt-1 text-xs text-slate">Inclusive of all taxes · Pack size {product.weight}</p>
+          <p className="mt-1 text-xs text-slate">GST calculated at checkout · Pack size {product.weight}</p>
 
-          <p className={cn("mt-4 text-sm font-semibold", product.stock > 0 ? "text-success" : "text-danger")}>
-            {product.stock > 0 ? `In stock — ${product.stock} units available` : "Currently out of stock"}
+          <p className={cn("mt-4 text-sm font-semibold", availableStock > 0 ? "text-success" : "text-danger")}>
+            {availableStock > 0 ? `In stock — ${availableStock} units available` : "Currently out of stock"}
           </p>
 
           <div className="mt-6 flex flex-wrap items-center gap-4">
@@ -146,7 +147,7 @@ function ProductDetail() {
                 <Minus className="h-4 w-4" />
               </button>
               <span className="w-12 text-center font-semibold text-navy">{qty}</span>
-              <button onClick={() => setQty(qty + 1)} className="p-3 text-navy hover:text-gold" aria-label="Increase">
+              <button onClick={() => setQty(Math.min(availableStock || 1, qty + 1))} className="p-3 text-navy hover:text-gold" aria-label="Increase" disabled={qty >= availableStock}>
                 <Plus className="h-4 w-4" />
               </button>
             </div>
@@ -159,7 +160,7 @@ function ProductDetail() {
               }}
               className={cn(
                 "flex-1 rounded-md bg-gold px-6 py-3.5 text-center text-sm font-bold text-midnight transition-colors hover:bg-gold-light sm:flex-none",
-                product.stock === 0 && "pointer-events-none opacity-40",
+                availableStock === 0 && "pointer-events-none opacity-40",
               )}
             >
               Buy Now
@@ -238,8 +239,8 @@ function ProductDetail() {
             </p>
           </TabsContent>
           <TabsContent value="delivery" className="rounded-lg border border-border bg-card p-6 text-sm text-charcoal">
-            Standard freight delivery in 2–4 business days across 480+ pin codes. Free delivery on orders above
-            ₹10,000. Cash on delivery available up to ₹25,000.
+            Standard freight delivery in 2–4 business days. Free delivery applies to eligible orders above ₹10,000.
+            Online payment options are shown at checkout; cash on delivery is currently unavailable.
           </TabsContent>
           <TabsContent value="reviews" className="rounded-lg border border-border bg-card p-6">
             <div className="space-y-5">

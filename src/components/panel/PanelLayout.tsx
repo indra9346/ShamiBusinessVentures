@@ -49,6 +49,65 @@ export function PanelLayout({
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const [verifiedRole, setVerifiedRole] = useState(false);
+  const [adminIdleTimeoutMinutes, setAdminIdleTimeoutMinutes] = useState(30);
+
+  useEffect(() => {
+    if (tone !== "admin" || STATIC_DATA_MODE) return;
+    let active = true;
+    void supabase.from("settings").select("value").eq("key", "security_config").maybeSingle().then(({ data, error }) => {
+      if (!active || error) return;
+      const config = data?.value && typeof data.value === "object" && !Array.isArray(data.value)
+        ? data.value as Record<string, unknown>
+        : {};
+      const configured = Number(config["autoLogout"] ?? (Number(config["session_hours"]) * 60));
+      if (Number.isFinite(configured) && configured >= 5) setAdminIdleTimeoutMinutes(Math.min(1440, configured));
+    });
+    const applySavedTimeout = (event: Event) => {
+      const value = Number((event as CustomEvent<number>).detail);
+      if (Number.isFinite(value) && value >= 5) setAdminIdleTimeoutMinutes(Math.min(1440, value));
+    };
+    window.addEventListener("admin-idle-timeout-updated", applySavedTimeout);
+    return () => {
+      active = false;
+      window.removeEventListener("admin-idle-timeout-updated", applySavedTimeout);
+    };
+  }, [tone]);
+
+  useEffect(() => {
+    if (tone !== "admin" || !user?.id || !verifiedRole || typeof window === "undefined") return;
+    const key = `shami-admin-last-activity:${user.id}`;
+    const timeoutMs = adminIdleTimeoutMinutes * 60_000;
+    if (!localStorage.getItem(key)) localStorage.setItem(key, String(Date.now()));
+    let signingOut = false;
+    const recordActivity = () => {
+      localStorage.setItem(key, String(Date.now()));
+    };
+    const expireIfIdle = () => {
+      const lastActivity = Number(localStorage.getItem(key) ?? 0);
+      if (signingOut || !lastActivity || Date.now() - lastActivity < timeoutMs) return;
+      signingOut = true;
+      void supabase.auth.signOut().finally(() => {
+        localStorage.removeItem(key);
+        logout();
+        navigate({ to: "/admin/login", replace: true });
+      });
+    };
+    const activityEvents = ["pointerdown", "keydown", "scroll", "touchstart"] as const;
+    for (const eventName of activityEvents) window.addEventListener(eventName, recordActivity, { passive: true });
+    const storageListener = (event: StorageEvent) => {
+      if (event.key === key) expireIfIdle();
+    };
+    window.addEventListener("storage", storageListener);
+    const interval = window.setInterval(expireIfIdle, 15_000);
+    document.addEventListener("visibilitychange", expireIfIdle);
+    expireIfIdle();
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", expireIfIdle);
+      window.removeEventListener("storage", storageListener);
+      for (const eventName of activityEvents) window.removeEventListener(eventName, recordActivity);
+    };
+  }, [tone, user?.id, verifiedRole, adminIdleTimeoutMinutes, logout, navigate]);
 
   useEffect(() => {
     let active = true;

@@ -30,6 +30,7 @@ function AccountAddresses() {
   const { addresses, addAddress, updateAddress, deleteAddress, setDefaultAddress } = useApp();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
   const [form, setForm] = useState(blank);
 
   const set = (k: keyof typeof blank, v: string) => setForm((f) => ({ ...f, [k]: v }));
@@ -85,20 +86,14 @@ function AccountAddresses() {
                   variant="outline"
                   size="sm"
                   disabled={a.default}
-                  onClick={() => {
-                    setDefaultAddress(a.id);
-                    toast.success(`${a.label} set as default address`);
-                  }}
+                  onClick={() => { void setDefaultAddress(a.id).then((ok) => { if (ok) toast.success(`${a.label} set as default address`); }); }}
                 >
                   Set Default
                 </Button>
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => {
-                    deleteAddress(a.id);
-                    toast.success(`${a.label} address removed`);
-                  }}
+                  onClick={() => { void deleteAddress(a.id).then((ok) => { if (ok) toast.success(`${a.label} address removed`); }); }}
                 >
                   Delete
                 </Button>
@@ -128,22 +123,36 @@ function AccountAddresses() {
             <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
             <Button
               className="bg-navy text-white hover:bg-navy/90"
-              onClick={() => {
+              disabled={saving}
+              onClick={() => void (async () => {
                 if (!form.label.trim() || !form.line.trim() || !form.city.trim() || form.pin.length !== 6) {
                   toast.error("Fill label, address, city and a valid 6-digit PIN");
                   return;
                 }
+                if (saving) return;
+                setSaving(true);
                 if (editing) {
-                  updateAddress(editing, form);
+                  const saved = await updateAddress(editing, form);
+                  if (!saved) { setSaving(false); return; }
                   toast.success("Address updated");
                 } else {
-                  addAddress({ id: crypto.randomUUID(), ...form, default: addresses.length === 0 });
+                  let saved = false;
+                  try {
+                    saved = await addAddress({ id: crypto.randomUUID(), ...form, default: addresses.length === 0 });
+                  } catch (error) {
+                    toast.error("Could not save this address", { description: error instanceof Error ? error.message : "Please retry." });
+                  }
+                  if (!saved) {
+                    setSaving(false);
+                    return;
+                  }
                   toast.success("New address added");
                 }
+                setSaving(false);
                 setOpen(false);
-              }}
+              })()}
             >
-              {editing ? "Save Changes" : "Add Address"}
+              {saving ? "Saving…" : editing ? "Save Changes" : "Add Address"}
             </Button>
           </DialogFooter>
         </DialogContent>

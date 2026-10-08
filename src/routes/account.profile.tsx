@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { Panel } from "@/components/panel/widgets";
@@ -27,6 +27,11 @@ function AccountProfile() {
   const [name, setName] = useState(user?.name ?? "Rahul Deshpande");
   const [email, setEmail] = useState(user?.email ?? "rahul.deshpande@example.com");
   const [phone, setPhone] = useState(user?.phone ?? "+91 98765 43210");
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    if (!user) return;
+    setName(user.name); setEmail(user.email); setPhone(user.phone ?? "");
+  }, [user?.id, user?.name, user?.email, user?.phone]);
 
   return (
     <PanelLayout items={accountNav} tone="customer" title="My Profile" subtitle="Your personal account details">
@@ -52,13 +57,16 @@ function AccountProfile() {
         <div className="mt-6 flex justify-end">
           <Button
             className="bg-navy text-white hover:bg-navy/90"
-            onClick={() => {
+            disabled={saving}
+            onClick={async () => {
               if (!name.trim() || !email.trim()) {
                 toast.error("Name and email are required");
                 return;
               }
-              updateProfile({ name: name.trim(), email: email.trim(), phone: phone.trim() });
-              toast.success("Profile updated successfully");
+              setSaving(true);
+              const saved = await updateProfile({ name: name.trim(), email: email.trim(), phone: phone.trim() });
+              setSaving(false);
+              if (saved && email.trim().toLowerCase() === user?.email.trim().toLowerCase()) toast.success("Profile updated successfully");
             }}
           >
             Save Changes

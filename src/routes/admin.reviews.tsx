@@ -123,10 +123,10 @@ function AdminReviews() {
               <p className="text-sm text-slate">{r.body}</p>
               <div className="mt-3 flex flex-wrap gap-2">
                 {r.status !== "Published" && (
-                  <Button size="sm" variant="outline" onClick={() => { setReviewStatus(r.id, "Published"); toast.success(`Review by ${r.customer} approved`); }}>Approve</Button>
+                  <Button size="sm" variant="outline" onClick={() => { void setReviewStatus(r.id, "Published").then((ok) => { if (ok) toast.success(`Review by ${r.customer} approved`); }); }}>Approve</Button>
                 )}
                 {r.status !== "Rejected" && (
-                  <Button size="sm" variant="outline" className="text-danger" onClick={() => { setReviewStatus(r.id, "Rejected"); toast.success(`Review by ${r.customer} rejected`); }}>Reject</Button>
+                  <Button size="sm" variant="outline" className="text-danger" onClick={() => { void setReviewStatus(r.id, "Rejected").then((ok) => { if (ok) toast.success(`Review by ${r.customer} rejected`); }); }}>Reject</Button>
                 )}
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
@@ -139,7 +139,7 @@ function AdminReviews() {
                     </AlertDialogHeader>
                     <AlertDialogFooter>
                       <AlertDialogCancel>Cancel</AlertDialogCancel>
-                      <AlertDialogAction onClick={() => { deleteReview(r.id); toast.success("Review deleted"); }}>Delete</AlertDialogAction>
+                      <AlertDialogAction onClick={() => { void deleteReview(r.id).then((ok) => { if (ok) toast.success("Review deleted"); }); }}>Delete</AlertDialogAction>
                     </AlertDialogFooter>
                   </AlertDialogContent>
                 </AlertDialog>

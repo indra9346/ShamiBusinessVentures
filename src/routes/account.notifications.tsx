@@ -54,8 +54,7 @@ function AccountNotifications() {
             variant="outline"
             size="sm"
             onClick={() => {
-              markAllRead();
-              toast.success("All notifications marked as read");
+              void markAllRead().then((ok) => { if (ok) toast.success("All notifications marked as read"); });
             }}
           >
             Mark All Read
@@ -69,14 +68,12 @@ function AccountNotifications() {
               role="button"
               tabIndex={0}
               onClick={() => {
-                markRead(n.id);
-                navigate({ to: notificationTarget(n, "customer", user, orders) as never });
+                void markRead(n.id).then((ok) => { if (ok) navigate({ to: notificationTarget(n, "customer", user, orders) as never }); });
               }}
               onKeyDown={(event) => {
                 if (event.key === "Enter" || event.key === " ") {
                   event.preventDefault();
-                  markRead(n.id);
-                  navigate({ to: notificationTarget(n, "customer", user, orders) as never });
+                  void markRead(n.id).then((ok) => { if (ok) navigate({ to: notificationTarget(n, "customer", user, orders) as never }); });
                 }
               }}
               className={`flex cursor-pointer flex-wrap items-start justify-between gap-3 rounded-lg border p-4 transition-colors hover:bg-ivory ${n.read ? "border-border" : "border-gold/40 bg-gold/5"}`}
@@ -92,8 +89,7 @@ function AccountNotifications() {
                   size="sm"
                   onClick={(event) => {
                     event.stopPropagation();
-                    markRead(n.id);
-                    toast.success("Marked as read");
+                    void markRead(n.id).then((ok) => { if (ok) toast.success("Marked as read"); });
                   }}
                 >
                   Mark Read

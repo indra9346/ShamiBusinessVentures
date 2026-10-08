@@ -1,7 +1,7 @@
 import { createFileRoute, Link, Outlet, useRouterState } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import { toast } from "sonner";
-import { AlertTriangle, Boxes, Download, Minus, Package, PackageX, Plus } from "lucide-react";
+import { AlertTriangle, Boxes, Download, ImagePlus, Minus, Package, PackageX, Plus } from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { DataTable, Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { Pager } from "@/components/panel/pager";
@@ -28,6 +28,8 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { downloadCSV } from "@/lib/export-utils";
+import { uploadCatalogImage } from "@/lib/catalog-images";
+import { defaultGstForCategory, loadTaxSettings } from "@/lib/business-rules";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -117,6 +119,26 @@ function AdminProductsPanel() {
     warehouseStock: "",
     requiredStock: "",
   });
+  const [imageUploading, setImageUploading] = useState(false);
+  const [editImageUploading, setEditImageUploading] = useState(false);
+
+  const uploadProductImage = async (event: ChangeEvent<HTMLInputElement>, editingProduct = false) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const setUploading = editingProduct ? setEditImageUploading : setImageUploading;
+    setUploading(true);
+    try {
+      const image = await uploadCatalogImage(file, "products");
+      if (editingProduct) setEditForm((current) => ({ ...current, image }));
+      else setForm((current) => ({ ...current, image }));
+      toast.success("Product image uploaded");
+    } catch (error) {
+      toast.error("Could not upload the product image", { description: error instanceof Error ? error.message : "Try again." });
+    } finally {
+      setUploading(false);
+      event.target.value = "";
+    }
+  };
 
   const [stockEditing, setStockEditing] = useState<Product | null>(null);
   const [stockValue, setStockValue] = useState("");
@@ -464,7 +486,13 @@ function AdminProductsPanel() {
                       <Label>Category</Label>
                       <Select
                         value={form.category}
-                        onValueChange={(v) => setForm({ ...form, category: v, subcategory: categoryChoices.find((c) => c.name === v)?.subs[0] ?? v })}
+                        onValueChange={(v) => {
+                          setForm((current) => ({ ...current, category: v, subcategory: categoryChoices.find((c) => c.name === v)?.subs[0] ?? v }));
+                          void loadTaxSettings().then((settings) => {
+                            const gst = defaultGstForCategory(settings, v);
+                            setForm((current) => current.category === v ? { ...current, gst: String(gst) } : current);
+                          }).catch((error: unknown) => toast.error("Could not load GST defaults", { description: error instanceof Error ? error.message : "Using the current product rate." }));
+                        }}
                       >
                         <SelectTrigger>
                           <SelectValue />
@@ -552,6 +580,11 @@ function AdminProductsPanel() {
                       onChange={(e) => setForm({ ...form, image: e.target.value })}
                       placeholder="Paste image URL (optional)"
                     />
+                    <label className="mt-2 inline-flex cursor-pointer items-center gap-2 text-sm font-medium text-navy hover:text-gold">
+                      <ImagePlus className="h-4 w-4" /> {imageUploading ? "Uploading…" : "Browse local files"}
+                      <input className="sr-only" type="file" accept="image/jpeg,image/png,image/webp,image/gif,image/avif" disabled={imageUploading} onChange={(event) => void uploadProductImage(event)} />
+                    </label>
+                    {form.image && <img src={form.image} alt="Product preview" className="mt-2 h-24 w-24 rounded-md border object-cover" />}
                   </div>
                   <div className="grid grid-cols-3 gap-3">
                     <div>
@@ -665,10 +698,7 @@ function AdminProductsPanel() {
               <StatusBadge status={p.status} />,
               <Switch
                 checked={p.active}
-                onCheckedChange={(v) => {
-                  updateProduct(p.id, { active: v });
-                  toast.success(`${p.name} ${v ? "enabled" : "disabled"}`);
-                }}
+                onCheckedChange={async (v) => { if (await updateProduct(p.id, { active: v })) toast.success(`${p.name} ${v ? "enabled" : "disabled"}`); }}
               />,
               p.created,
               <div className="flex flex-wrap items-center gap-1.5">
@@ -707,8 +737,7 @@ function AdminProductsPanel() {
                   variant="outline"
                   size="sm"
                   onClick={() => {
-                    duplicateProduct(p.id);
-                    toast.success(`${p.name} duplicated`);
+                    void duplicateProduct(p.id).then((ok) => { if (ok) toast.success(`${p.name} duplicated`); });
                   }}
                 >
                   Duplicate
@@ -729,10 +758,7 @@ function AdminProductsPanel() {
                     <AlertDialogFooter>
                       <AlertDialogCancel>Cancel</AlertDialogCancel>
                       <AlertDialogAction
-                        onClick={() => {
-                          deleteProduct(p.id);
-                          toast.success(`${p.name} deleted`);
-                        }}
+                        onClick={() => { void deleteProduct(p.id).then((ok) => { if (ok) toast.success(`${p.name} deleted`); }); }}
                       >
                         Delete
                       </AlertDialogAction>
@@ -799,6 +825,11 @@ function AdminProductsPanel() {
                   value={editForm.image}
                   onChange={(e) => setEditForm({ ...editForm, image: e.target.value })}
                 />
+                <label className="mt-2 inline-flex cursor-pointer items-center gap-2 text-sm font-medium text-navy hover:text-gold">
+                  <ImagePlus className="h-4 w-4" /> {editImageUploading ? "Uploading…" : "Browse local files"}
+                  <input className="sr-only" type="file" accept="image/jpeg,image/png,image/webp,image/gif,image/avif" disabled={editImageUploading} onChange={(event) => void uploadProductImage(event, true)} />
+                </label>
+                {editForm.image && <img src={editForm.image} alt="Product preview" className="mt-2 h-24 w-24 rounded-md border object-cover" />}
               </div>
             </div>
             <div className="grid grid-cols-2 gap-3">
@@ -845,9 +876,9 @@ function AdminProductsPanel() {
               Cancel
             </Button>
             <Button
-              onClick={() => {
+              onClick={async () => {
                 if (!editing) return;
-                updateProduct(editing.id, {
+                const saved = await updateProduct(editing.id, {
                   name: editForm.name,
                   mrp: Number(editForm.mrp),
                   price: Number(editForm.price),
@@ -859,8 +890,7 @@ function AdminProductsPanel() {
                   warehouseStock: Number(editForm.warehouseStock),
                   requiredStock: Number(editForm.requiredStock),
                 });
-                toast.success(`${editForm.name} updated`);
-                setEditing(null);
+                if (saved) { toast.success(`${editForm.name} updated`); setEditing(null); }
               }}
             >
               Save Changes
@@ -910,9 +940,9 @@ function AdminProductsPanel() {
               Cancel
             </Button>
             <Button
-              onClick={() => {
+              onClick={async () => {
                 if (!stockEditing) return;
-                updateProduct(stockEditing.id, { stock: Number(stockValue) || 0 });
+                if (!await updateProduct(stockEditing.id, { stock: Number(stockValue) || 0 })) return;
                 toast.success(`Stock for ${stockEditing.name} updated to ${stockValue}`);
                 setStockEditing(null);
               }}

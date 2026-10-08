@@ -525,7 +525,7 @@ export const orderStages: OrderStatus[] = [
   "Placed", "Payment Confirmed", "Accepted", "Packed", "Dispatched", "Out for Delivery", "Delivered",
 ];
 
-export type OrderItem = { product: Product; qty: number; vendor: string; vendorId: string; capacity?: string; unitPrice?: number };
+export type OrderItem = { product: Product; qty: number; vendor: string; vendorId: string; capacity?: string; unitPrice?: number; dbItemId?: string };
 export type Order = {
   id: string;
   date: string;

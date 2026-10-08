@@ -169,18 +169,18 @@ function AdminInventory() {
     setNewStock(String(stock));
   };
 
-  const saveStock = () => {
+  const saveStock = async () => {
     const val = Number(newStock);
     if (!targetProduct || Number.isNaN(val) || val < 0) {
       toast.error("Enter a valid stock quantity");
       return;
     }
-    updateProduct(targetProduct.id, { stock: val });
+    if (!await updateProduct(targetProduct.id, { stock: val })) return;
     toast.success(`Stock for ${targetProduct.name} updated to ${val} units`);
     setTarget(null);
   };
 
-  const handleSavePurchaseBatch = () => {
+  const handleSavePurchaseBatch = async () => {
     const p = products.find((x) => x.id === batchForm.productId);
     if (!p) {
       toast.error("Select a valid product");
@@ -201,7 +201,7 @@ function AdminInventory() {
       batchForm.batchCode.trim() ||
       `LOT-${p.sku.replace("SBV-", "")}-${Date.now().toString().slice(-4)}`;
 
-    addBatch({
+    const saved = await addBatch({
       batchCode,
       productId: p.id,
       productName: p.name,
@@ -215,6 +215,7 @@ function AdminInventory() {
       status: "Active",
     });
 
+    if (!saved) return;
     toast.success(`Recorded Purchase Batch ${batchCode}: ${qty} units @ ${inr(cost)}`);
     setAddBatchOpen(false);
     setBatchForm({

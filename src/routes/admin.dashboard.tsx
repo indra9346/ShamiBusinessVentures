@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Building2,
   Calendar,
@@ -27,8 +27,9 @@ import {
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { DataTable, Filters, Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { adminNav } from "@/lib/panel-nav";
-import { inr, payouts } from "@/lib/data";
+import { inr } from "@/lib/data";
 import { useApp } from "@/lib/store";
+import { supabase } from "@/integrations/supabase/client";
 
 export const Route = createFileRoute("/admin/dashboard")({
   head: () => ({
@@ -85,6 +86,17 @@ function AdminDashboard() {
   const todayISO = new Date().toISOString().slice(0, 10);
   const [customStart, setCustomStart] = useState(todayISO);
   const [customEnd, setCustomEnd] = useState(todayISO);
+  const [payouts, setPayouts] = useState<{ id: string; date: string; amount: number; status: string }[]>([]);
+  useEffect(() => {
+    const load = async () => {
+      const { data, error } = await supabase.from("vendor_payout_requests").select("id,requested_at,amount,status");
+      if (error) return;
+      setPayouts((data ?? []).map((p) => ({ id: p.id, date: p.requested_at, amount: Number(p.amount), status: p.status })));
+    };
+    void load();
+    const channel = supabase.channel("admin-dashboard-payouts").on("postgres_changes", { event: "*", schema: "public", table: "vendor_payout_requests" }, () => void load()).subscribe();
+    return () => { void supabase.removeChannel(channel); };
+  }, []);
 
   // Determine active date boundaries based on business logic
   const dateRange = useMemo(() => {
@@ -151,10 +163,10 @@ function AdminDashboard() {
 
   const filteredPayouts = useMemo(() => {
     return payouts.filter((p) => {
-      const pd = parseDate(p.date);
+      const pd = new Date(p.date);
       return pd >= dateRange.start && pd <= dateRange.end;
     });
-  }, [dateRange]);
+  }, [dateRange, payouts]);
 
   // Financial statistics with 100% precision
   const financialStats = useMemo(() => {
@@ -220,7 +232,7 @@ function AdminDashboard() {
       todayRevenue,
       bankBalance,
     };
-  }, [filteredOrders, filteredPayouts, orders]);
+  }, [filteredOrders, filteredPayouts, orders, payouts]);
 
   // Derived counts for the period
   const pendingOrders = filteredOrders.filter(

@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
@@ -29,14 +29,14 @@ import {
 } from "./data";
 
 export type Role = "customer" | "vendor" | "admin";
-export type SessionUser = { name: string; email: string; role: Role; phone?: string; avatar?: string; addressKey?: string };
+export type SessionUser = { id?: string; name: string; email: string; role: Role; phone?: string; avatar?: string; addressKey?: string };
 export type CartLine = { id: string; qty: number };
 export type Address = (typeof seedAddresses)[number];
 export type Customer = (typeof seedCustomers)[number];
-export type Vendor = (typeof seedVendors)[number];
-export type Review = (typeof seedReviews)[number];
+export type Vendor = (typeof seedVendors)[number] & { avatar?: string; businessAddress?: string };
+export type Review = (typeof seedReviews)[number] & { reply?: string };
 export type Coupon = (typeof seedCoupons)[number];
-export type Notif = (typeof seedNotifications)[number] & { source?: "seed" | "live" };
+export type Notif = (typeof seedNotifications)[number] & { source?: "seed" | "live"; databaseId?: string };
 
 
 type AppState = {
@@ -44,7 +44,7 @@ type AppState = {
   user: SessionUser | null;
   login: (u: SessionUser) => void;
   logout: () => void;
-  updateProfile: (p: Partial<SessionUser>) => void;
+  updateProfile: (p: Partial<SessionUser>) => Promise<boolean>;
 
   cart: CartLine[];
   cartItems: { product: Product; qty: number }[];
@@ -61,19 +61,19 @@ type AppState = {
   toggleWishlist: (id: string) => void;
 
   categories: StoreCategory[];
-  addCategory: (c: Omit<StoreCategory, "id" | "order">) => void;
-  updateCategory: (id: string, patch: Partial<StoreCategory>) => void;
-  deleteCategory: (id: string) => void;
+  addCategory: (c: Omit<StoreCategory, "id" | "order">) => Promise<boolean>;
+  updateCategory: (id: string, patch: Partial<StoreCategory>) => Promise<boolean>;
+  deleteCategory: (id: string) => Promise<boolean>;
   moveCategory: (id: string, dir: -1 | 1) => void;
 
   products: Product[];
   addProduct: (p: Product) => Promise<boolean>;
-  updateProduct: (id: string, patch: Partial<Product>) => void;
-  deleteProduct: (id: string) => void;
-  duplicateProduct: (id: string) => void;
+  updateProduct: (id: string, patch: Partial<Product>) => Promise<boolean>;
+  deleteProduct: (id: string) => Promise<boolean>;
+  duplicateProduct: (id: string) => Promise<boolean>;
 
   batches: PurchaseBatch[];
-  addBatch: (b: Omit<PurchaseBatch, "id">) => void;
+  addBatch: (b: Omit<PurchaseBatch, "id">) => Promise<boolean>;
   updateBatch: (id: string, patch: Partial<PurchaseBatch>) => void;
   deleteBatch: (id: string) => void;
   getFIFOCost: (productId: string) => number;
@@ -97,38 +97,42 @@ type AppState = {
     source?: string;
     paymentDueDate?: string;
   }) => Promise<Order>;
-  updateOrderStatus: (id: string, status: OrderStatus) => void;
+  updateOrderStatus: (id: string, status: OrderStatus) => Promise<boolean>;
   updateOrderItem: (orderId: string, index: number, patch: { qty?: number; capacity?: string; unitPrice?: number }) => boolean;
   updateOrderDelivery: (orderId: string, delivery: string) => void;
-  confirmPayment: (id: string, amount: number, utr: string, advancePercent?: number) => void;
-  refundOrder: (id: string) => void;
+  confirmPayment: (id: string, amount: number, utr: string, advancePercent?: number) => Promise<boolean>;
+  refundOrder: (id: string) => Promise<boolean>;
 
   vendors: Vendor[];
-  setVendorStatus: (id: string, status: string) => void;
+  setVendorStatus: (id: string, status: string) => Promise<boolean>;
+  setVendorCommission: (id: string, rate: number) => Promise<boolean>;
   customers: Customer[];
-  setCustomerStatus: (id: string, status: string) => void;
+  setCustomerStatus: (id: string, status: string) => Promise<boolean>;
 
   reviews: Review[];
-  setReviewStatus: (id: string, status: string) => void;
-  deleteReview: (id: string) => void;
+  setReviewStatus: (id: string, status: string) => Promise<boolean>;
+  deleteReview: (id: string) => Promise<boolean>;
+  replyReview: (id: string, reply: string) => Promise<boolean>;
+  reportReview: (id: string, reason: string) => Promise<boolean>;
 
   returns: ReturnRequest[];
-  setReturnStatus: (id: string, status: string, refund?: string) => void;
+  setReturnStatus: (id: string, status: string, refund?: string) => Promise<boolean>;
+  requestReturn: (orderItemId: string, quantity: number, reason: string) => Promise<boolean>;
 
   coupons: Coupon[];
-  addCoupon: (c: Coupon) => void;
-  deleteCoupon: (code: string) => void;
+  addCoupon: (c: Coupon) => Promise<boolean>;
+  deleteCoupon: (code: string) => Promise<boolean>;
 
   notifications: Notif[];
-  markRead: (id: number) => void;
-  markAllRead: () => void;
-  deleteNotification: (id: number) => void;
+  markRead: (id: number) => Promise<boolean>;
+  markAllRead: () => Promise<boolean>;
+  deleteNotification: (id: number) => Promise<boolean>;
 
   addresses: Address[];
-  addAddress: (a: Address) => void;
-  updateAddress: (id: string, patch: Partial<Address>) => void;
-  deleteAddress: (id: string) => void;
-  setDefaultAddress: (id: string) => void;
+  addAddress: (a: Address) => Promise<boolean>;
+  updateAddress: (id: string, patch: Partial<Address>) => Promise<boolean>;
+  deleteAddress: (id: string) => Promise<boolean>;
+  setDefaultAddress: (id: string) => Promise<boolean>;
 };
 
 const AppContext = createContext<AppState | null>(null);
@@ -196,11 +200,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
           { data: roleRows, error: rolesError },
           { data: batchRows, error: batchError },
           { data: orderRows, error: orderError },
+          { data: reviewRows, error: reviewError },
+          { data: returnRows, error: returnError },
+          { data: couponRows, error: couponError },
         ] = await Promise.all([
-          supabase.from("profiles").select("id, full_name, email, phone, company, gstin, vendor_id, status, created_at"),
+          supabase.from("profiles").select("id, full_name, email, phone, company, gstin, avatar_url, business_city, business_address, vendor_id, commission_rate, status, created_at"),
           supabase.from("user_roles").select("user_id, role"),
           supabase.from("batches").select("*").order("purchase_date", { ascending: true }),
           supabase.from("orders").select("*").order("created_at", { ascending: false }),
+          supabase.from("product_reviews").select("*").order("created_at", { ascending: false }),
+          supabase.from("return_requests").select("*").order("created_at", { ascending: false }),
+          supabase.from("coupons").select("*").order("created_at", { ascending: false }),
         ]);
         if (!active) return;
         if (!batchError) {
@@ -223,9 +233,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }
         if (!orderError) {
           const ids = orderRows.map((order) => order.id);
-          const { data: itemRows, error: itemError } = ids.length
-            ? await supabase.from("order_items").select("*").in("order_id", ids)
-            : { data: [], error: null };
+          const [{ data: itemRows, error: itemError }, { data: paymentRows, error: paymentError }] = ids.length
+            ? await Promise.all([
+              supabase.from("order_items").select("*").in("order_id", ids),
+              supabase.from("payments").select("*").in("order_id", ids).order("created_at", { ascending: false }),
+            ])
+            : [{ data: [], error: null }, { data: [], error: null }];
           if (!active) return;
           if (itemError) {
             console.error("Could not load order lines", itemError);
@@ -236,6 +249,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
             }));
             const itemsByOrder = new Map<string, typeof itemRows>();
             for (const item of itemRows ?? []) itemsByOrder.set(item.order_id, [...(itemsByOrder.get(item.order_id) ?? []), item]);
+            const latestPaymentByOrder = new Map<string, NonNullable<typeof paymentRows>[number]>();
+            for (const payment of paymentRows ?? []) if (payment.order_id && !latestPaymentByOrder.has(payment.order_id)) latestPaymentByOrder.set(payment.order_id, payment);
             const allowedStatuses: OrderStatus[] = ["Placed", "Payment Confirmed", "Accepted", "Packed", "Dispatched", "Out for Delivery", "Delivered", "Cancelled"];
             setOrders(orderRows.map((row) => {
               const orderDate = new Date(row.created_at);
@@ -250,16 +265,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
                   sold: 0, weight: "", status: "approved" as const, active: true, tags: [], description: "", specs: [],
                   created: "", updated: "",
                 };
-                return { product, qty: Number(item.qty), vendor: item.vendor || "", vendorId: item.vendor_id || "", capacity: product.weight, unitPrice: Number(item.unit_price) };
+                return { product, qty: Number(item.qty), vendor: item.vendor || "", vendorId: item.vendor_id || "", capacity: product.weight, unitPrice: Number(item.unit_price), dbItemId: item.id };
               });
               const paymentStatus = row.payment_status.toLowerCase();
+              const latestPayment = latestPaymentByOrder.get(row.id);
               const payment: Order["payment"] = paymentStatus === "paid" ? "Paid" : paymentStatus.includes("partial") ? "Partially Paid" : paymentStatus === "refunded" ? "Refunded" : paymentStatus === "failed" ? "Failed" : "Pending";
               return {
                 id: row.order_no, date: Number.isNaN(orderDate.getTime()) ? row.created_at : orderDate.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }),
                 customer: row.customer_name, customerId: row.user_id || "", email: row.customer_email, phone: row.customer_phone || "",
                 ...(row.customer_gstin ? { gstin: row.customer_gstin } : {}), items: orderItems, subtotal: Number(row.subtotal), discount: Number(row.discount),
                 tax: Number(row.gst_amount), shipping: Number(row.shipping), amount: Number(row.total), payment,
-                ...(Number(row.paid_amount) ? { paidAmount: Number(row.paid_amount) } : {}), method: row.payment_method || "", txn: "",
+                ...(Number(row.paid_amount) ? { paidAmount: Number(row.paid_amount) } : {}), method: row.payment_method || "", txn: latestPayment?.txn_ref || "",
+                ...(latestPayment?.txn_ref ? { utr: latestPayment.txn_ref } : {}),
                 status: allowedStatuses.includes(row.order_status as OrderStatus) ? row.order_status as OrderStatus : "Placed",
                 address: String(shippingAddress["line"] || ""), city: String(shippingAddress["city"] || ""), state: String(shippingAddress["state"] || ""),
                 pin: String(shippingAddress["pin"] || ""), delivery: row.shipping_method === "Express" ? "Express Freight — next business day" : "Standard Freight — 2 to 4 days",
@@ -267,20 +284,62 @@ export function AppProvider({ children }: { children: ReactNode }) {
               };
             }));
           }
+          if (paymentError) console.error("Could not load payment references", paymentError.message);
         } else {
           console.error("Could not load orders", orderError);
         }
+        const asDate = (value: string) => new Date(value).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+        const liveProducts = (productResult.data ?? []).map((row) => row.payload as unknown as Product);
+        if (!reviewError) {
+          setReviews((reviewRows ?? []).map((row) => {
+            const product = liveProducts.find((item) => item.id === row.product_id);
+            const customer = profiles?.find((profile) => profile.id === row.customer_id);
+            const vendor = profiles?.find((profile) => profile.vendor_id === row.vendor_id);
+            return {
+              id: row.id, product: product?.name ?? row.product_id, productId: row.product_id,
+              customer: customer?.full_name || "Customer", customerId: row.customer_id,
+              avatar: (customer?.full_name || "C").split(/\s+/).map((word) => word[0] ?? "").join("").slice(0, 2),
+              vendor: vendor?.company || vendor?.full_name || "Vendor", vendorId: row.vendor_id,
+              rating: row.rating, title: row.title, body: row.body, date: asDate(row.created_at), status: row.status,
+              ...(row.vendor_reply ? { reply: row.vendor_reply } : {}),
+            };
+          }) as Review[]);
+        } else console.error("Could not load product reviews", reviewError);
+        if (!returnError) {
+          setReturns((returnRows ?? []).map((row) => {
+            const customer = profiles?.find((profile) => profile.id === row.customer_id);
+            const product = liveProducts.find((item) => item.id === row.product_id);
+            const vendor = profiles?.find((profile) => profile.vendor_id === row.vendor_id);
+            const order = orderRows?.find((item) => item.id === row.order_id);
+            return {
+              id: row.id, order: order?.order_no ?? row.order_id, customer: customer?.full_name || "Customer",
+              product: product?.name || row.product_id, vendor: vendor?.company || vendor?.full_name || "Vendor",
+              reason: row.reason, amount: Number(row.amount), date: asDate(row.created_at), status: row.status, refund: row.refund_status,
+            };
+          }) as ReturnRequest[]);
+        } else console.error("Could not load return requests", returnError);
+        if (!couponError) {
+          const todayISO = new Date().toISOString().slice(0, 10);
+          setCoupons((couponRows ?? []).map((row) => ({
+            code: row.code, type: row.discount_type,
+            value: row.discount_type === "Percentage" ? `${row.discount_value}%` : `₹${row.discount_value}`,
+            min: Number(row.minimum_order), max: Number(row.maximum_discount),
+            start: asDate(row.starts_on), end: asDate(row.ends_on), limit: row.usage_limit, used: row.used_count,
+            status: !row.active || row.used_count >= row.usage_limit || row.ends_on < todayISO ? "Expired" : row.starts_on > todayISO ? "Scheduled" : "Active",
+          })));
+        } else console.error("Could not load coupons", couponError);
         if (!profilesError && !rolesError) {
           const rolesByUser = new Map(roleRows.map((row) => [row.user_id, row.role]));
-          const asDate = (value: string) => new Date(value).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
           setVendors(profiles.filter((profile) => rolesByUser.get(profile.id) === "vendor").map((profile) => ({
             id: profile.vendor_id || profile.id,
             business: profile.company || profile.full_name,
             owner: profile.full_name,
             email: profile.email,
             phone: profile.phone || "",
-            city: "",
-            commission: 0,
+            ...(profile.avatar_url ? { avatar: profile.avatar_url } : {}),
+            ...(profile.business_address ? { businessAddress: profile.business_address } : {}),
+            city: profile.business_city || "",
+            commission: Number(profile.commission_rate),
             status: profile.status,
             gst: profile.gstin || "",
             rating: 0,
@@ -290,23 +349,30 @@ export function AppProvider({ children }: { children: ReactNode }) {
             orders: 0,
             sales: 0,
           }) as Vendor));
-          setCustomers(profiles.filter((profile) => rolesByUser.get(profile.id) === "customer").map((profile) => ({
-            id: profile.id,
-            name: profile.full_name,
-            email: profile.email,
-            phone: profile.phone || "",
-            city: "",
-            state: "",
-            pin: "",
-            gst: profile.gstin || "",
-            address: "",
-            joined: asDate(profile.created_at),
-            orders: 0,
-            spend: 0,
-            lastOrder: "—",
-            status: profile.status.toLowerCase(),
-            avatar: profile.full_name.split(/\s+/).map((word) => word[0] ?? "").join("").slice(0, 2),
-          }) as Customer));
+          setCustomers(profiles.filter((profile) => rolesByUser.get(profile.id) === "customer").map((profile) => {
+            const customerOrders = (orderRows ?? []).filter((order) => order.user_id === profile.id);
+            const latest = customerOrders[0];
+            const address = latest?.shipping_address && typeof latest.shipping_address === "object" && !Array.isArray(latest.shipping_address)
+              ? latest.shipping_address as Record<string, unknown>
+              : {};
+            return {
+              id: profile.id,
+              name: profile.full_name,
+              email: profile.email,
+              phone: profile.phone || "",
+              city: String(address["city"] || ""),
+              state: String(address["state"] || ""),
+              pin: String(address["pin"] || ""),
+              gst: profile.gstin || "",
+              address: String(address["line"] || ""),
+              joined: asDate(profile.created_at),
+              orders: customerOrders.filter((order) => order.order_status !== "Cancelled").length,
+              spend: customerOrders.filter((order) => order.order_status !== "Cancelled").reduce((sum, order) => sum + Number(order.total), 0),
+              lastOrder: latest ? asDate(latest.created_at) : "—",
+              status: profile.status.toLowerCase(),
+              avatar: profile.full_name.split(/\s+/).map((word) => word[0] ?? "").join("").slice(0, 2),
+            } as Customer;
+          }));
         } else {
           console.error("Could not load authorized profile records", profilesError ?? rolesError);
         }
@@ -335,16 +401,43 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const channel = supabase.channel(`catalog-${user?.role ?? "public"}`)
       .on("postgres_changes", { event: "*", schema: "public", table: "catalog_products" }, () => { void reloadCatalog(); })
       .on("postgres_changes", { event: "*", schema: "public", table: "store_categories" }, () => { void reloadCatalog(); })
+      .on("postgres_changes", { event: "*", schema: "public", table: "profiles" }, () => { void reloadCatalog(); })
+      .on("postgres_changes", { event: "*", schema: "public", table: "user_roles" }, () => { void reloadCatalog(); })
       .on("postgres_changes", { event: "*", schema: "public", table: "orders" }, () => { void reloadCatalog(); })
       .on("postgres_changes", { event: "*", schema: "public", table: "order_items" }, () => { void reloadCatalog(); })
+      .on("postgres_changes", { event: "*", schema: "public", table: "payments" }, () => { void reloadCatalog(); })
+      .on("postgres_changes", { event: "*", schema: "public", table: "product_reviews" }, () => { void reloadCatalog(); })
+      .on("postgres_changes", { event: "*", schema: "public", table: "return_requests" }, () => { void reloadCatalog(); })
+      .on("postgres_changes", { event: "*", schema: "public", table: "coupons" }, () => { void reloadCatalog(); })
       .subscribe();
     return () => {
       active = false;
       void supabase.removeChannel(channel);
     };
-  }, [user?.role]);
+  }, [user]);
 
-  const saveProduct = async (product: Product, newVendorSubmission = false) => {
+  useEffect(() => {
+    if (STATIC_DATA_MODE || !user?.id) return;
+    const recipientId = user.id;
+    let active = true;
+    const load = async () => {
+      const { data, error } = await supabase.from("notifications").select("*").eq("recipient_id", recipientId).order("created_at", { ascending: false }).limit(100);
+      if (!active) return;
+      if (error) { console.error("Could not load account notifications", error.message); return; }
+      const persisted: Notif[] = (data ?? []).map((row) => ({
+        id: Number.parseInt(row.id.replaceAll("-", "").slice(0, 12), 16), databaseId: row.id, source: "live",
+        role: row.recipient_role === "admin" || row.recipient_role === "vendor" ? row.recipient_role : "customer",
+        title: row.title, type: row.status || "info", body: row.message,
+        time: new Date(row.created_at).toLocaleString("en-IN"), read: row.read,
+      }));
+      setNotifications((current) => [...persisted, ...current.filter((item) => !item.databaseId)]);
+    };
+    void load();
+    const channel = supabase.channel(`notifications-${recipientId}`).on("postgres_changes", { event: "*", schema: "public", table: "notifications", filter: `recipient_id=eq.${recipientId}` }, () => void load()).subscribe();
+    return () => { active = false; void supabase.removeChannel(channel); };
+  }, [user?.id]);
+
+  const saveProduct = useCallback(async (product: Product, newVendorSubmission = false) => {
     if (STATIC_DATA_MODE) {
       if (user?.role === "vendor") {
         const demoVendor = vendors.find((vendor) => vendor.email.toLowerCase() === user.email.toLowerCase())
@@ -377,7 +470,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         ...product,
         vendorId: profile.vendor_id,
         vendor: profile.company || product.vendor,
-        ...(newVendorSubmission ? { status: "pending" as const } : {}),
+        // Every seller change returns the item to the admin review queue.
+        status: "pending",
       };
     }
     const { error } = await supabase.from("catalog_products").upsert({
@@ -391,12 +485,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
     });
     if (error) {
       console.error("Catalog save failed", error);
-      toast.error("Could not save this product", { description: error.message });
+      const description = error.code === "42501" && user?.role === "vendor"
+        ? "Your vendor account may need approved KYC documents before catalog changes. Open Store Profile → KYC Documents, submit the required files, and wait for admin review."
+        : error.message;
+      toast.error("Could not save this product", { description });
       return false;
     }
     if (record !== product) setProducts((list) => list.map((item) => item.id === product.id ? record : item));
     return true;
-  };
+  }, [user, vendors]);
 
   const saveCategory = async (category: StoreCategory) => {
     if (STATIC_DATA_MODE) return true;
@@ -519,15 +616,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setWishlist(signedInUser.addressKey ? wishlistsByUser[signedInUser.addressKey] ?? [] : []);
       },
       logout: () => { setUser(null); setAddresses([]); setWishlist([]); setCart([]); },
-      updateProfile: (p) => {
+      updateProfile: async (p) => {
         const current = user;
-        if (!current) return;
+        if (!current) return false;
         const changeEmail = Boolean(p.email && p.email.trim().toLowerCase() !== current.email.trim().toLowerCase());
         const localPatch = { ...p };
         if (changeEmail) delete localPatch.email;
         setUser({ ...current, ...localPatch });
-        if (STATIC_DATA_MODE) return;
-        void (async () => {
+        if (STATIC_DATA_MODE) return true;
+        try {
           const { data: { user: authUser }, error: authError } = await supabase.auth.getUser();
           if (authError || !authUser) throw new Error("Sign in again before updating your profile");
           const profilePatch = {
@@ -543,10 +640,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
             if (error) throw error;
             toast.info("Confirm the email change from the message sent to your new address.");
           }
-        })().catch((error: unknown) => {
+          return true;
+        } catch (error) {
           toast.error("Could not update your profile", { description: error instanceof Error ? error.message : "Please retry." });
           setUser(current);
-        });
+          return false;
+        }
       },
 
       cart,
@@ -555,28 +654,35 @@ export function AppProvider({ children }: { children: ReactNode }) {
       subtotal: cartItems.reduce((s, l) => s + l.product.price * l.qty, 0),
       productCatalogStatus,
       categoryCatalogStatus,
-      addToCart: (id, qty = 1) =>
-        setCart((c) => {
-          const prod = products.find((p) => p.id === id);
-          const addAmount = Math.max(1, Math.floor(Number(qty) || 1));
-          if (c.some((l) => l.id === id)) {
-            return c.map((l) => {
-              if (l.id !== id) return l;
-              const nextQty = l.qty + addAmount;
-              const safeQty = prod && prod.stock > 0 ? Math.min(nextQty, prod.stock) : nextQty;
-              return { ...l, qty: safeQty };
-            });
-          }
-          const initialQty = prod && prod.stock > 0 ? Math.min(addAmount, prod.stock) : addAmount;
-          return [...c, { id, qty: initialQty }];
-        }),
-      setQty: (id, qty) =>
-        setCart((c) => {
-          const prod = products.find((p) => p.id === id);
-          const parsed = Math.max(1, Math.floor(Number(qty) || 1));
-          const safeQty = prod && prod.stock > 0 ? Math.min(parsed, prod.stock) : parsed;
-          return c.map((l) => (l.id === id ? { ...l, qty: safeQty } : l));
-        }),
+      addToCart: (id, qty = 1) => {
+        const product = products.find((item) => item.id === id);
+        const addAmount = Math.max(1, Math.floor(Number(qty) || 1));
+        const available = product ? Math.max(0, Math.floor((Number(product.stock) || 0) - (Number(product.reserved) || 0))) : null;
+        if (product && available === 0) {
+          toast.error("This product is currently out of stock");
+          return;
+        }
+        const existing = cart.find((line) => line.id === id);
+        const requested = (existing?.qty ?? 0) + addAmount;
+        const safeQty = Math.min(requested, available ?? requested);
+        if (safeQty < requested) toast.warning(`Only ${safeQty} unit${safeQty === 1 ? "" : "s"} available`);
+        setCart((current) => existing
+          ? current.map((line) => line.id === id ? { ...line, qty: safeQty } : line)
+          : [...current, { id, qty: safeQty }]);
+      },
+      setQty: (id, qty) => {
+        const product = products.find((item) => item.id === id);
+        const parsed = Math.max(1, Math.floor(Number(qty) || 1));
+        const available = product ? Math.max(0, Math.floor((Number(product.stock) || 0) - (Number(product.reserved) || 0))) : null;
+        const safeQty = available === null ? parsed : Math.min(parsed, available);
+        if (product && safeQty === 0) {
+          toast.error("This product is out of stock and has been removed from your cart");
+          setCart((current) => current.filter((line) => line.id !== id));
+          return;
+        }
+        if (safeQty < parsed) toast.warning(`Quantity adjusted to ${safeQty}; that is the available stock`);
+        setCart((current) => current.map((line) => line.id === id ? { ...line, qty: safeQty } : line));
+      },
       removeFromCart: (id) => setCart((c) => c.filter((l) => l.id !== id)),
       clearCart: () => setCart([]),
 
@@ -584,31 +690,29 @@ export function AppProvider({ children }: { children: ReactNode }) {
       toggleWishlist: (id) => setWishlist((w) => (w.includes(id) ? w.filter((x) => x !== id) : [...w, id])),
 
       categories,
-      addCategory: (c) => {
+      addCategory: async (c) => {
         const category = { ...c, id: `C${Date.now().toString().slice(-6)}`, order: categories.length + 1 };
+        if (!await saveCategory(category)) return false;
         setCategories((list) => [...list, category]);
-        void saveCategory(category).then((ok) => {
-          if (!ok) setCategories((list) => list.filter((item) => item.id !== category.id));
-        });
+        return true;
       },
-      updateCategory: (id, patch) => {
+      updateCategory: async (id, patch) => {
         const category = categories.find((item) => item.id === id);
-        if (!category) return;
+        if (!category) return false;
         const next = { ...category, ...patch };
+        if (!await saveCategory(next)) return false;
         setCategories((list) => list.map((item) => item.id === id ? next : item));
-        void saveCategory(next).then((ok) => {
-          if (!ok) setCategories((list) => list.map((item) => item.id === id ? category : item));
-        });
+        return true;
       },
-      deleteCategory: (id) => {
+      deleteCategory: async (id) => {
         const existing = categories.find((category) => category.id === id);
+        if (!existing) return false;
+        if (!STATIC_DATA_MODE) {
+          const { error } = await supabase.from("store_categories").delete().eq("id", id);
+          if (error) { toast.error("Could not delete this category", { description: error.message }); return false; }
+        }
         setCategories((list) => list.filter((category) => category.id !== id));
-        if (!STATIC_DATA_MODE) void supabase.from("store_categories").delete().eq("id", id).then(({ error }) => {
-          if (error) {
-            toast.error("Could not delete this category", { description: error.message });
-            if (existing) setCategories((list) => [...list, existing].sort((a, b) => a.order - b.order));
-          }
-        });
+        return true;
       },
       moveCategory: (id, dir) =>
         setCategories((l) => {
@@ -629,7 +733,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (!saved) setProducts((list) => list.filter((item) => item.id !== p.id));
         return saved;
       },
-      updateProduct: (id, patch) => {
+      updateProduct: async (id, patch) => {
         // Enforce Admin-only pricing and cost modifications (Requirement 3)
         const hasPriceOrCostChange =
           patch.price !== undefined ||
@@ -641,44 +745,57 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }
 
         const existing = products.find((product) => product.id === id);
-        if (!existing) return;
+        if (!existing) return false;
         const updated = { ...existing, ...patch, updated: today() };
         setProducts((list) => list.map((p) => (p.id === id ? updated : p)));
-        void saveProduct(updated).then((ok) => {
-          if (!ok) setProducts((list) => list.map((item) => item.id === id ? existing : item));
-        });
+        const ok = await saveProduct(updated);
+        if (!ok) setProducts((list) => list.map((item) => item.id === id ? existing : item));
+        return ok;
       },
-      deleteProduct: (id) => {
+      deleteProduct: async (id) => {
         const existing = products.find((product) => product.id === id);
+        if (!existing) return false;
+        if (!STATIC_DATA_MODE) {
+          const { error } = await supabase.from("catalog_products").delete().eq("id", id);
+          if (error) { toast.error("Could not delete this product", { description: error.message }); return false; }
+        }
         setProducts((list) => list.filter((p) => p.id !== id));
-        if (!STATIC_DATA_MODE) void supabase.from("catalog_products").delete().eq("id", id).then(({ error }) => {
-          if (error) {
-            toast.error("Could not delete this product", { description: error.message });
-            if (existing) setProducts((list) => [existing, ...list.filter((product) => product.id !== id)]);
-          }
-        });
+        return true;
       },
-      duplicateProduct: (id) =>
-        setProducts((list) => {
-          const p = list.find((x) => x.id === id);
-          if (!p) return list;
-          const copy: Product = {
+      duplicateProduct: async (id) => {
+        const p = products.find((x) => x.id === id);
+        if (!p) return false;
+        const copy: Product = {
             ...p,
-            id: `P${Date.now().toString().slice(-6)}`,
+            id: `P${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`,
             name: `${p.name} (Copy)`,
-            sku: `${p.sku}-C`,
+            sku: `${p.sku}-C-${crypto.randomUUID().slice(0, 6).toUpperCase()}`,
             sold: 0,
             created: today(),
             updated: today(),
           };
-          void saveProduct(copy);
-          return [copy, ...list];
-        }),
+        setProducts((list) => [copy, ...list]);
+        const saved = await saveProduct(copy, user?.role === "vendor");
+        if (!saved) setProducts((list) => list.filter((item) => item.id !== copy.id));
+        return saved;
+      },
 
       batches,
-      addBatch: (batchData) => {
+      addBatch: async (batchData) => {
         if (user && user.role !== "admin") {
           throw new Error("Unauthorized: Only an Administrator can add purchase batches.");
+        }
+        if (!STATIC_DATA_MODE) {
+          const { data, error } = await supabase.rpc("admin_receive_inventory_batch", {
+            _batch_code: batchData.batchCode, _product_id: batchData.productId,
+            _quantity: batchData.quantity, _unit_cost: batchData.unitCost,
+            _purchase_date: batchData.purchaseDate || null, _warehouse: batchData.warehouse,
+          });
+          if (error || !data) { toast.error("Could not save this inventory batch", { description: error?.message ?? "Product not found." }); return false; }
+          const persisted = { ...batchData, id: data, status: batchData.remainingQty > 0 ? "Active" : "Depleted" } as PurchaseBatch;
+          setBatches((list) => [persisted, ...list]);
+          setProducts((list) => list.map((p) => p.id === batchData.productId ? { ...p, stock: p.stock + batchData.remainingQty, updated: today() } : p));
+          return true;
         }
         const newBatch: PurchaseBatch = {
           ...batchData,
@@ -694,30 +811,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         );
         const product = products.find((item) => item.id === batchData.productId);
         if (product) void saveProduct({ ...product, stock: product.stock + batchData.remainingQty, updated: today() });
-        if (!STATIC_DATA_MODE) void supabase.from("batches").insert({
-          batch_code: batchData.batchCode,
-          product_id: batchData.productId,
-          product_name: batchData.productName,
-          vendor: batchData.vendor,
-          vendor_id: batchData.vendorId || null,
-          quantity: batchData.quantity,
-          remaining_quantity: batchData.remainingQty,
-          unit_cost: batchData.unitCost,
-          purchase_date: batchData.purchaseDate || null,
-          warehouse: batchData.warehouse,
-          status: batchData.remainingQty > 0 ? "Active" : "Depleted",
-        }).select("id").single().then(({ data, error }) => {
-          if (error) {
-            toast.error("Could not save this inventory batch", { description: error.message });
-            setBatches((list) => list.filter((batch) => batch.batchCode !== batchData.batchCode));
-            if (product) {
-              setProducts((list) => list.map((item) => item.id === product.id ? product : item));
-              void saveProduct(product);
-            }
-          } else if (data) {
-            setBatches((list) => list.map((batch) => batch.batchCode === batchData.batchCode ? { ...batch, id: data.id } : batch));
-          }
-        });
+        return true;
       },
       updateBatch: (batchId, patch) => {
         if (user && user.role !== "admin" && patch.unitCost !== undefined) {
@@ -815,6 +909,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           order.customerId = customerOverride?.id ?? authUser.id;
           if (!customerOverride) delete order.gstin;
           const addressPayload = {
+            id: shippingAddress?.id,
             name: shippingAddress?.name ?? customerOverride?.name ?? order.customer,
             phone: shippingAddress?.phone ?? customerOverride?.phone ?? order.phone,
             line: order.address,
@@ -892,15 +987,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
         pushNotif("New order received", `${id} was placed worth â‚¹${order.amount.toLocaleString("en-IN")}.`, "info");
         return order;
       },
-      updateOrderStatus: (id, status) => {
+      updateOrderStatus: async (id, status) => {
         const existing = orders.find((order) => order.id === id);
+        if (!existing) return false;
         setOrders((list) => list.map((order) => order.id === id ? { ...order, status } : order));
-        if (!STATIC_DATA_MODE) void supabase.from("orders").update({ order_status: status }).eq("order_no", id).then(({ error }) => {
+        if (!STATIC_DATA_MODE) {
+          const { error } = await supabase.from("orders").update({ order_status: status }).eq("order_no", id);
           if (error) {
             toast.error("Could not update order status", { description: error.message });
-            if (existing) setOrders((list) => list.map((order) => order.id === id ? existing : order));
+            setOrders((list) => list.map((order) => order.id === id ? existing : order));
+            return false;
           }
-        });
+        }
+        return true;
       },
       updateOrderDelivery: (orderId, delivery) => {
         const existing = orders.find((order) => order.id === orderId);
@@ -965,13 +1064,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
         pushNotif("Order updated", `${orderId} item details were updated.`, "info", "admin");
         return true;
       },
-      confirmPayment: (id, amount, utr, advancePercent = 30) => {
+      confirmPayment: async (id, amount, utr, advancePercent = 30) => {
         if (!STATIC_DATA_MODE) {
-          toast.error("Payment confirmation is not connected to a verified payment workflow yet");
-          return;
+          const { data, error } = await supabase.rpc("admin_confirm_manual_payment", { _order_no: id, _amount: amount, _utr: utr.trim() });
+          if (error || !data) { toast.error("Could not record payment", { description: error?.message ?? "Order not found." }); return false; }
+          return true;
         }
         const order = orders.find((candidate) => candidate.id === id);
-        if (!order || !Number.isFinite(amount) || amount <= 0) return;
+        if (!order || !Number.isFinite(amount) || amount <= 0) return false;
         const paidAmount = Math.min(order.amount, (order.paidAmount ?? (order.payment === "Paid" ? order.amount : 0)) + amount);
         setOrders((list) => list.map((candidate) => candidate.id === id ? {
           ...candidate,
@@ -983,105 +1083,227 @@ export function AppProvider({ children }: { children: ReactNode }) {
         } : candidate));
         pushNotif("Payment confirmed", `${inr(amount)} confirmed for ${id}${utr.trim() ? ` Â· UTR ${utr.trim()}` : ""}.`, "success", "admin");
         pushNotif("Payment confirmed", `We have confirmed your payment of ${inr(amount)} for order ${id}.`, "success", "customer");
+        return true;
       },
-      refundOrder: (id) => {
+      refundOrder: async (id) => {
         if (!STATIC_DATA_MODE) {
           toast.error("Refunds are not connected to a payment provider yet");
-          return;
+          return false;
         }
         setOrders((list) => list.map((o) => (o.id === id ? { ...o, payment: "Refunded", status: "Cancelled" } : o)));
+        return true;
       },
 
       vendors,
-      setVendorStatus: (id, status) => setVendors((l) => l.map((v) => (v.id === id ? { ...v, status } : v))),
+      setVendorStatus: async (id, status) => {
+        if (!STATIC_DATA_MODE) {
+          const { data: profile, error: lookupError } = await supabase.from("profiles").select("id").eq("vendor_id", id).maybeSingle();
+          if (lookupError || !profile) {
+            toast.error("Could not update vendor status", { description: lookupError?.message ?? "No matching vendor profile was found." });
+            return false;
+          }
+          const { data, error } = await supabase.rpc("admin_set_profile_status", { _profile_id: profile.id, _status: status });
+          if (error || !data) {
+            toast.error("Could not update vendor status", { description: error?.message ?? "No matching vendor profile was found." });
+            return false;
+          }
+        }
+        setVendors((list) => list.map((vendor) => vendor.id === id ? { ...vendor, status } : vendor));
+        return true;
+      },
+      setVendorCommission: async (id, rate) => {
+        if (!Number.isFinite(rate) || rate < 0 || rate > 100) return false;
+        if (!STATIC_DATA_MODE) {
+          const { data, error } = await supabase.rpc("admin_set_vendor_commission", { _vendor_id: id, _rate: rate });
+          if (error || !data) {
+            toast.error("Could not save vendor commission", { description: error?.message ?? "No matching vendor profile was found." });
+            return false;
+          }
+        }
+        setVendors((list) => list.map((vendor) => vendor.id === id ? { ...vendor, commission: rate } : vendor));
+        return true;
+      },
       customers,
-      setCustomerStatus: (id, status) => {
+      setCustomerStatus: async (id, status) => {
         const previous = customers.find((customer) => customer.id === id);
+        if (!STATIC_DATA_MODE) {
+          const { data, error } = await supabase.rpc("admin_set_profile_status", { _profile_id: id, _status: status });
+          if (error || !data) {
+            toast.error("Could not update customer status", { description: error?.message ?? "No matching customer profile was found." });
+            return false;
+          }
+        }
         setCustomers((list) => list.map((customer) => customer.id === id ? { ...customer, status } : customer));
         if (previous && previous.status !== status) pushNotif("Customer status updated", `${previous.name}: ${previous.status} â†’ ${status}.`, "info", "admin");
+        return true;
       },
 
       reviews,
-      setReviewStatus: (id, status) => setReviews((l) => l.map((r) => (r.id === id ? { ...r, status } : r))),
-      deleteReview: (id) => setReviews((l) => l.filter((r) => r.id !== id)),
+      setReviewStatus: async (id, status) => {
+        if (!STATIC_DATA_MODE) {
+          const { data, error } = await supabase.rpc("admin_set_review_status", { _id: id, _status: status });
+          if (error || !data) { toast.error("Could not update review status", { description: error?.message ?? "Review not found." }); return false; }
+        }
+        setReviews((list) => list.map((review) => review.id === id ? { ...review, status } : review));
+        return true;
+      },
+      deleteReview: async (id) => {
+        if (!STATIC_DATA_MODE) {
+          const { data, error } = await supabase.rpc("admin_delete_review", { _id: id });
+          if (error || !data) { toast.error("Could not delete review", { description: error?.message ?? "Review not found." }); return false; }
+        }
+        setReviews((list) => list.filter((review) => review.id !== id));
+        return true;
+      },
+      replyReview: async (id, reply) => {
+        if (!reply.trim()) return false;
+        if (!STATIC_DATA_MODE) {
+          const { data, error } = await supabase.rpc("vendor_reply_to_review", { _id: id, _reply: reply.trim() });
+          if (error || !data) { toast.error("Could not post review reply", { description: error?.message ?? "Review not found for this vendor." }); return false; }
+        }
+        setReviews((list) => list.map((review) => review.id === id ? { ...review, reply: reply.trim() } : review));
+        return true;
+      },
+      reportReview: async (id, reason) => {
+        if (STATIC_DATA_MODE) return false;
+        const { data, error } = await supabase.rpc("vendor_report_review", { _id: id, _reason: reason.trim() });
+        if (error || !data) { toast.error("Could not report review", { description: error?.message ?? "Review not found for this vendor." }); return false; }
+        return true;
+      },
 
       returns,
-      setReturnStatus: (id, status, refund) =>
-        setReturns((l) => l.map((r) => (r.id === id ? { ...r, status, refund: refund ?? r.refund } : r))),
+      setReturnStatus: async (id, status, refund) => {
+        if (!STATIC_DATA_MODE) {
+          const { data, error } = await supabase.rpc("admin_update_return", { _id: id, _status: status, _refund_status: refund ?? "Pending" });
+          if (error || !data) { toast.error("Could not update return request", { description: error?.message ?? "Return request not found." }); return false; }
+        }
+        setReturns((list) => list.map((item) => item.id === id ? { ...item, status, refund: refund ?? item.refund } : item));
+        return true;
+      },
+      requestReturn: async (orderItemId, quantity, reason) => {
+        if (STATIC_DATA_MODE) return true;
+        const { data, error } = await supabase.rpc("customer_request_return", { _order_item_id: orderItemId, _quantity: quantity, _reason: reason });
+        if (error || !data) { toast.error("Could not submit return request", { description: error?.message ?? "Try again." }); return false; }
+        return true;
+      },
 
       coupons,
-      addCoupon: (c) => setCoupons((l) => [c, ...l]),
-      deleteCoupon: (code) => setCoupons((l) => l.filter((c) => c.code !== code)),
+      addCoupon: async (c) => {
+        if (!STATIC_DATA_MODE) {
+          const { data: { user: authUser } } = await supabase.auth.getUser();
+          const value = Number.parseFloat(c.value.replace(/[^\d.]/g, ""));
+          const startsOn = new Date(c.start).toISOString().slice(0, 10);
+          const endsOn = new Date(c.end).toISOString().slice(0, 10);
+          const { error } = await supabase.from("coupons").insert({
+            code: c.code.toUpperCase(), discount_type: c.type, discount_value: value,
+            minimum_order: c.min, maximum_discount: c.max, starts_on: startsOn, ends_on: endsOn,
+            usage_limit: c.limit, active: c.status !== "Expired", created_by: authUser?.id ?? null,
+          });
+          if (error) { toast.error("Could not save coupon", { description: error.message }); return false; }
+        }
+        setCoupons((list) => [c, ...list]);
+        return true;
+      },
+      deleteCoupon: async (code) => {
+        if (!STATIC_DATA_MODE) {
+          const { error } = await supabase.from("coupons").delete().eq("code", code);
+          if (error) { toast.error("Could not delete coupon", { description: error.message }); return false; }
+        }
+        setCoupons((list) => list.filter((coupon) => coupon.code !== code));
+        return true;
+      },
 
       notifications,
-      markRead: (id) => setNotifications((l) => l.map((n) => (n.id === id ? { ...n, read: true } : n))),
-      markAllRead: () => setNotifications((l) => l.map((n) => ({ ...n, read: true }))),
-      deleteNotification: (id) => setNotifications((l) => l.filter((n) => n.id !== id)),
+      markRead: async (id) => {
+        const notification = notifications.find((item) => item.id === id);
+        if (!notification) return false;
+        if (!STATIC_DATA_MODE && notification.databaseId) {
+          const { error } = await supabase.from("notifications").update({ read: true }).eq("id", notification.databaseId).eq("recipient_id", user?.id ?? "");
+          if (error) { toast.error("Could not mark notification read", { description: error.message }); return false; }
+        }
+        setNotifications((list) => list.map((item) => item.id === id ? { ...item, read: true } : item));
+        return true;
+      },
+      markAllRead: async () => {
+        if (!STATIC_DATA_MODE && user?.id) {
+          const { error } = await supabase.from("notifications").update({ read: true }).eq("recipient_id", user.id).eq("read", false);
+          if (error) { toast.error("Could not mark notifications read", { description: error.message }); return false; }
+        }
+        setNotifications((list) => list.map((item) => ({ ...item, read: true })));
+        return true;
+      },
+      deleteNotification: async (id) => {
+        const notification = notifications.find((item) => item.id === id);
+        if (!notification) return false;
+        if (!STATIC_DATA_MODE && notification.databaseId) {
+          const { error } = await supabase.from("notifications").delete().eq("id", notification.databaseId).eq("recipient_id", user?.id ?? "");
+          if (error) { toast.error("Could not delete notification", { description: error.message }); return false; }
+        }
+        setNotifications((list) => list.filter((item) => item.id !== id));
+        return true;
+      },
 
       addresses,
-      addAddress: (a) => {
-        setAddresses((list) => [...list, a]);
-        if (!STATIC_DATA_MODE) void (async () => {
-          const { data: { user: authUser } } = await supabase.auth.getUser();
-          if (!authUser) throw new Error("Sign in to save an address");
+      addAddress: async (a) => {
+        if (!STATIC_DATA_MODE) {
+          const { data: { user: authUser }, error: authError } = await supabase.auth.getUser();
+          if (authError || !authUser) {
+            toast.error("Sign in again before saving an address");
+            return false;
+          }
           const { error } = await supabase.from("addresses").insert({
             id: a.id, user_id: authUser.id, label: a.label, name: a.name, phone: a.phone,
             line: a.line, city: a.city, state: a.state, pin: a.pin, landmark: a.landmark || null, is_default: a.default,
           });
-          if (error) throw error;
-        })().catch((error: unknown) => {
-          toast.error("Could not save this address", { description: error instanceof Error ? error.message : "Please retry." });
-          setAddresses((list) => list.filter((item) => item.id !== a.id));
-        });
+          if (error) {
+            toast.error("Could not save this address", { description: error.message });
+            return false;
+          }
+        }
+        setAddresses((list) => [...list, a]);
+        return true;
       },
-      updateAddress: (id, patch) => {
+      updateAddress: async (id, patch) => {
         const existing = addresses.find((address) => address.id === id);
+        if (!existing) return false;
         const updated = { ...existing, ...patch } as Address;
+        if (!STATIC_DATA_MODE) {
+          const { error } = await supabase.from("addresses").update({
+            ...(patch.label !== undefined ? { label: patch.label } : {}),
+            ...(patch.name !== undefined ? { name: patch.name } : {}),
+            ...(patch.phone !== undefined ? { phone: patch.phone } : {}),
+            ...(patch.line !== undefined ? { line: patch.line } : {}),
+            ...(patch.city !== undefined ? { city: patch.city } : {}),
+            ...(patch.state !== undefined ? { state: patch.state } : {}),
+            ...(patch.pin !== undefined ? { pin: patch.pin } : {}),
+            ...(patch.landmark !== undefined ? { landmark: patch.landmark || null } : {}),
+          }).eq("id", id).eq("user_id", user?.id ?? "");
+          if (error) { toast.error("Could not update this address", { description: error.message }); return false; }
+        }
         setAddresses((list) => list.map((address) => address.id === id ? updated : address));
-        if (!STATIC_DATA_MODE) void supabase.from("addresses").update({
-          ...(patch.label !== undefined ? { label: patch.label } : {}),
-          ...(patch.name !== undefined ? { name: patch.name } : {}),
-          ...(patch.phone !== undefined ? { phone: patch.phone } : {}),
-          ...(patch.line !== undefined ? { line: patch.line } : {}),
-          ...(patch.city !== undefined ? { city: patch.city } : {}),
-          ...(patch.state !== undefined ? { state: patch.state } : {}),
-          ...(patch.pin !== undefined ? { pin: patch.pin } : {}),
-          ...(patch.landmark !== undefined ? { landmark: patch.landmark || null } : {}),
-          ...(patch.default !== undefined ? { is_default: patch.default } : {}),
-        }).eq("id", id).then(({ error }) => {
-          if (error) {
-            toast.error("Could not update this address", { description: error.message });
-            if (existing) setAddresses((list) => list.map((address) => address.id === id ? existing : address));
-          }
-        });
+        return true;
       },
-      deleteAddress: (id) => {
+      deleteAddress: async (id) => {
         const existing = addresses.find((address) => address.id === id);
+        if (!existing) return false;
+        if (!STATIC_DATA_MODE) {
+          const { error } = await supabase.from("addresses").delete().eq("id", id).eq("user_id", user?.id ?? "");
+          if (error) { toast.error("Could not delete this address", { description: error.message }); return false; }
+        }
         setAddresses((list) => list.filter((address) => address.id !== id));
-        if (!STATIC_DATA_MODE) void supabase.from("addresses").delete().eq("id", id).then(({ error }) => {
-          if (error) {
-            toast.error("Could not delete this address", { description: error.message });
-            if (existing) setAddresses((list) => [...list, existing]);
-          }
-        });
+        return true;
       },
-      setDefaultAddress: (id) => {
-        const existing = addresses;
+      setDefaultAddress: async (id) => {
+        if (!addresses.some((address) => address.id === id)) return false;
+        if (!STATIC_DATA_MODE) {
+          const { data, error } = await supabase.rpc("customer_set_default_address", { _id: id });
+          if (error || !data) { toast.error("Could not change your default address", { description: error?.message ?? "Address not found." }); return false; }
+        }
         setAddresses((list) => list.map((address) => ({ ...address, default: address.id === id })));
-        if (!STATIC_DATA_MODE) void (async () => {
-          const { data: { user: authUser } } = await supabase.auth.getUser();
-          if (!authUser) throw new Error("Sign in to update your default address");
-          const clear = await supabase.from("addresses").update({ is_default: false }).eq("user_id", authUser.id);
-          if (clear.error) throw clear.error;
-          const selected = await supabase.from("addresses").update({ is_default: true }).eq("id", id).eq("user_id", authUser.id);
-          if (selected.error) throw selected.error;
-        })().catch((error: unknown) => {
-          toast.error("Could not change your default address", { description: error instanceof Error ? error.message : "Please retry." });
-          setAddresses(existing);
-        });
+        return true;
       },
     };
-  }, [user, cart, wishlist, wishlistsByUser, categories, products, batches, orders, vendors, customers, reviews, returns, coupons, notifications, addresses, addressesByUser, productCatalogStatus, categoryCatalogStatus]);
+  }, [hydrated, user, cart, wishlist, wishlistsByUser, categories, products, batches, orders, vendors, customers, reviews, returns, coupons, notifications, addresses, addressesByUser, productCatalogStatus, categoryCatalogStatus, saveProduct]);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 }
@@ -1132,9 +1354,10 @@ export function useVendorScope() {
   const vendorProducts = products.filter((p) => p.vendorId === vendorId);
   const vendorOrders = orders.filter((o) => o.items.some((i) => i.vendorId === vendorId));
   const vendorReviews = reviews.filter((r) => r.vendorId === vendorId);
+  const vendor = vendors.find((item) => item.id === vendorId) ?? null;
   const revenue = vendorOrders.reduce(
     (s, o) => s + o.items.filter((i) => i.vendorId === vendorId).reduce((t, i) => t + i.product.price * i.qty, 0),
     0,
   );
-  return { vendorId, vendorProducts, vendorOrders, vendorReviews, revenue, user };
+  return { vendorId, vendor, vendorProducts, vendorOrders, vendorReviews, revenue, user };
 }

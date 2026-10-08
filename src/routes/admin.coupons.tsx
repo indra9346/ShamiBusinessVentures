@@ -45,7 +45,7 @@ function AdminCoupons() {
     return { total: coupons.length, active, expired, scheduled, used };
   }, [coupons]);
 
-  const create = () => {
+  const create = async () => {
     if (!form.code.trim() || !form.value.trim() || !form.min || !form.max || !form.start || !form.end || !form.limit) {
       toast.error("Please fill in all coupon fields");
       return;
@@ -60,20 +60,20 @@ function AdminCoupons() {
       value: form.type === "Percentage" ? `${form.value}%` : `₹${form.value}`,
       min: Number(form.min),
       max: Number(form.max),
-      start: form.start,
-      end: form.end,
+      start: new Date(`${form.start}T00:00:00`).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }),
+      end: new Date(`${form.end}T00:00:00`).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }),
       limit: Number(form.limit),
       used: 0,
-      status: "Active",
+      status: form.start > new Date().toISOString().slice(0, 10) ? "Scheduled" : form.end < new Date().toISOString().slice(0, 10) ? "Expired" : "Active",
     };
-    addCoupon(coupon);
+    if (!await addCoupon(coupon)) return;
     toast.success(`Coupon "${coupon.code}" created`);
     setForm(emptyForm);
     setOpen(false);
   };
 
-  const remove = (code: string) => {
-    deleteCoupon(code);
+  const remove = async (code: string) => {
+    if (!await deleteCoupon(code)) return;
     toast.success(`Coupon "${code}" deleted`);
   };
 
@@ -116,8 +116,8 @@ function AdminCoupons() {
                 <div className="grid gap-1.5"><Label>Min Order Value</Label><Input type="number" value={form.min} onChange={(e) => setForm((f) => ({ ...f, min: e.target.value }))} /></div>
                 <div className="grid gap-1.5"><Label>Max Discount</Label><Input type="number" value={form.max} onChange={(e) => setForm((f) => ({ ...f, max: e.target.value }))} /></div>
                 <div className="grid gap-1.5"><Label>Usage Limit</Label><Input type="number" value={form.limit} onChange={(e) => setForm((f) => ({ ...f, limit: e.target.value }))} /></div>
-                <div className="grid gap-1.5"><Label>Start Date</Label><Input placeholder="01 Sep 2026" value={form.start} onChange={(e) => setForm((f) => ({ ...f, start: e.target.value }))} /></div>
-                <div className="grid gap-1.5"><Label>End Date</Label><Input placeholder="30 Sep 2026" value={form.end} onChange={(e) => setForm((f) => ({ ...f, end: e.target.value }))} /></div>
+                <div className="grid gap-1.5"><Label>Start Date</Label><Input type="date" value={form.start} onChange={(e) => setForm((f) => ({ ...f, start: e.target.value }))} /></div>
+                <div className="grid gap-1.5"><Label>End Date</Label><Input type="date" value={form.end} onChange={(e) => setForm((f) => ({ ...f, end: e.target.value }))} /></div>
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>

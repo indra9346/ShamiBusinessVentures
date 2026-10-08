@@ -164,7 +164,7 @@ function AdminProductDetail() {
           <div><Label>New Stock Quantity</Label><Input type="number" value={stockValue} onChange={(e) => setStockValue(e.target.value)} /></div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setStockOpen(false)}>Cancel</Button>
-            <Button onClick={() => { updateProduct(product.id, { stock: Number(stockValue) || 0 }); toast.success(`Stock updated to ${stockValue}`); setStockOpen(false); }}>Save</Button>
+            <Button onClick={async () => { if (await updateProduct(product.id, { stock: Number(stockValue) || 0 })) { toast.success(`Stock updated to ${stockValue}`); setStockOpen(false); } }}>Save</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -175,7 +175,7 @@ function AdminProductDetail() {
           <div><Label>New Sale Price</Label><Input type="number" value={priceValue} onChange={(e) => setPriceValue(e.target.value)} /></div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setPriceOpen(false)}>Cancel</Button>
-            <Button onClick={() => { updateProduct(product.id, { price: Number(priceValue) || product.price }); toast.success(`Price updated to ${inr(Number(priceValue))}`); setPriceOpen(false); }}>Save</Button>
+            <Button onClick={async () => { if (await updateProduct(product.id, { price: Number(priceValue) || product.price })) { toast.success(`Price updated to ${inr(Number(priceValue))}`); setPriceOpen(false); } }}>Save</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -13,6 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
+import { uploadCatalogImage } from "@/lib/catalog-images";
 
 export const Route = createFileRoute("/admin/categories")({
   head: () => ({ meta: [{ title: "Categories | Shami Business Ventures Admin" }, { name: "description", content: "Manage marketplace categories, images and subcategories." }, { name: "robots", content: "noindex" }] }),
@@ -29,24 +30,26 @@ function AdminCategories() {
 
   const startAdd = () => { setEditing(null); setForm({ name: "", tagline: "", subs: "", image: "", enabled: true }); setOpen(true); };
   const startEdit = (category: StoreCategory) => { setEditing(category); setForm({ name: category.name, tagline: category.tagline, subs: category.grades.join(", "), image: category.image, enabled: category.enabled }); setOpen(true); };
-  const chooseImage = (event: ChangeEvent<HTMLInputElement>) => {
+  const chooseImage = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
-    if (!file.type.startsWith("image/")) { toast.error("Choose an image file"); return; }
-    if (file.size > 1_500_000) { toast.error("Image must be 1.5 MB or smaller"); return; }
-    const reader = new FileReader();
-    reader.onload = () => setForm((current) => ({ ...current, image: String(reader.result ?? "") }));
-    reader.onerror = () => toast.error("Could not read this image");
-    reader.readAsDataURL(file);
+    try {
+      const url = await uploadCatalogImage(file, "categories");
+      setForm((current) => ({ ...current, image: url }));
+    } catch (error) {
+      toast.error("Could not upload this category image", { description: error instanceof Error ? error.message : "Try again." });
+    } finally {
+      event.target.value = "";
+    }
   };
-  const save = () => {
+  const save = async () => {
     const name = form.name.trim();
     if (!name) { toast.error("Category name is required"); return; }
     const grades = [...new Set(form.subs.split(",").map((s) => s.trim()).filter(Boolean))];
     if (!grades.length) { toast.error("Add at least one subcategory"); return; }
     const patch = { name, tagline: form.tagline.trim() || `${name} products`, grades, image: form.image || storeCategorySeed[0]!.image, enabled: form.enabled };
-    if (editing) updateCategory(editing.id, patch);
-    else addCategory(patch);
+    const saved = editing ? await updateCategory(editing.id, patch) : await addCategory(patch);
+    if (!saved) return;
     toast.success(`Category “${name}” ${editing ? "updated" : "created"}`);
     setOpen(false);
   };
@@ -75,7 +78,7 @@ function AdminCategories() {
         </Dialog>
       </div>
       <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {ordered.map((c) => <div key={c.id} className="overflow-hidden rounded-lg border border-border bg-card shadow-card"><img src={c.image} alt={c.name} className="h-36 w-full object-cover" /><div className="p-4"><div className="flex items-start justify-between gap-2"><div><p className="font-bold text-navy">{c.name}</p><p className="text-xs text-slate">{c.grades.length} subcategories</p></div><StatusBadge status={c.enabled ? "Active" : "Hidden"} /></div><p className="mt-2 text-2xl font-bold text-navy">{counts[c.name] ?? 0}</p><p className="text-xs text-slate">products</p><p className="mt-2 text-xs text-slate">{c.grades.join(" · ")}</p><div className="mt-3 flex gap-2"><Button size="sm" variant="outline" onClick={() => startEdit(c)}><Pencil className="mr-1 h-3.5 w-3.5" /> Edit</Button><AlertDialog><AlertDialogTrigger asChild><Button size="sm" variant="outline" className="text-danger hover:text-danger"><Trash2 className="mr-1 h-3.5 w-3.5" /> Delete</Button></AlertDialogTrigger><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Delete “{c.name}”?</AlertDialogTitle><AlertDialogDescription>Products assigned to this category are retained but may no longer appear in storefront category filters.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction onClick={() => { deleteCategory(c.id); toast.success(`Category “${c.name}” deleted`); }}>Delete</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog></div></div></div>)}
+        {ordered.map((c) => <div key={c.id} className="overflow-hidden rounded-lg border border-border bg-card shadow-card"><img src={c.image} alt={c.name} className="h-36 w-full object-cover" /><div className="p-4"><div className="flex items-start justify-between gap-2"><div><p className="font-bold text-navy">{c.name}</p><p className="text-xs text-slate">{c.grades.length} subcategories</p></div><StatusBadge status={c.enabled ? "Active" : "Hidden"} /></div><p className="mt-2 text-2xl font-bold text-navy">{counts[c.name] ?? 0}</p><p className="text-xs text-slate">products</p><p className="mt-2 text-xs text-slate">{c.grades.join(" · ")}</p><div className="mt-3 flex gap-2"><Button size="sm" variant="outline" onClick={() => startEdit(c)}><Pencil className="mr-1 h-3.5 w-3.5" /> Edit</Button><AlertDialog><AlertDialogTrigger asChild><Button size="sm" variant="outline" className="text-danger hover:text-danger"><Trash2 className="mr-1 h-3.5 w-3.5" /> Delete</Button></AlertDialogTrigger><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Delete “{c.name}”?</AlertDialogTitle><AlertDialogDescription>Products assigned to this category are retained but may no longer appear in storefront category filters.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction onClick={async () => { if (await deleteCategory(c.id)) toast.success(`Category “${c.name}” deleted`); }}>Delete</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog></div></div></div>)}
       </div>
       <Panel title="All Categories"><DataTable columns={["Category", "Subcategories", "Products", "Visibility"]} rows={ordered.map((c) => [<span className="font-semibold text-navy">{c.name}</span>, <span className="text-xs text-slate">{c.grades.join(", ")}</span>, counts[c.name] ?? 0, <StatusBadge status={c.enabled ? "Active" : "Hidden"} />])} /></Panel>
       <p className="mt-2 text-xs text-slate">Category and product counts reflect the connected Supabase catalog.</p>

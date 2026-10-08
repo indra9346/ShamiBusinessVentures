@@ -133,8 +133,7 @@ function AdminCustomerDetail() {
             size="sm"
             onClick={() => {
               const next = customer.status === "blocked" ? "active" : "blocked";
-              setCustomerStatus(customer.id, next);
-              toast.success(`${customer.name} ${next === "blocked" ? "blocked" : "unblocked"}`);
+              void setCustomerStatus(customer.id, next).then((ok) => { if (ok) toast.success(`${customer.name} ${next === "blocked" ? "blocked" : "unblocked"}`); });
             }}
           >
             {customer.status === "blocked" ? "Unblock Customer" : "Block Customer"}

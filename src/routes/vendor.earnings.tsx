@@ -6,12 +6,13 @@ import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YA
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { DataTable, Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { vendorNav } from "@/lib/panel-nav";
-import { inr, salesSeries } from "@/lib/data";
+import { inr } from "@/lib/data";
 import { useApp, useVendorScope } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { supabase } from "@/integrations/supabase/client";
 
 export const Route = createFileRoute("/vendor/earnings")({
   head: () => ({
@@ -37,6 +38,18 @@ function VendorEarnings() {
 
   const commissionAmt = Math.round(revenue * (commission / 100));
   const netRevenue = revenue - commissionAmt;
+  const revenueSeries = useMemo(() => {
+    const months = new Map<string, number>();
+    for (const order of vendorOrders) {
+      if (order.status !== "Delivered") continue;
+      const d = new Date(order.date);
+      if (Number.isNaN(d.getTime())) continue;
+      const key = d.toLocaleString("en-IN", { month: "short" });
+      const amount = order.items.filter((i) => i.vendorId === vendorId).reduce((sum, i) => sum + i.product.price * i.qty, 0);
+      months.set(key, (months.get(key) ?? 0) + amount);
+    }
+    return [...months.entries()].map(([month, value]) => ({ month, revenue: value }));
+  }, [vendorOrders, vendorId]);
 
   const pendingEarnings = useMemo(
     () =>
@@ -65,7 +78,7 @@ function VendorEarnings() {
       <Panel title="Revenue Trend" className="mt-6">
         <div className="h-64">
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={salesSeries}>
+            <AreaChart data={revenueSeries}>
               <defs>
                 <linearGradient id="rev-vendor" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor="var(--gold)" stopOpacity={0.5} />
@@ -120,7 +133,7 @@ function VendorEarnings() {
             <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
             <Button
               className="bg-navy text-white hover:bg-navy/90"
-              onClick={() => {
+              onClick={async () => {
                 const val = Number(amount);
                 if (!val || val <= 0) {
                   toast.error("Enter a valid amount");
@@ -130,7 +143,9 @@ function VendorEarnings() {
                   toast.error("Amount exceeds your available earnings");
                   return;
                 }
-                toast.success(`Withdrawal request of ${inr(val)} submitted`);
+                const { error } = await supabase.rpc("request_vendor_payout", { _amount: val, _method: "NEFT" });
+                if (error) { toast.error(error.message); return; }
+                toast.success(`Withdrawal request of ${inr(val)} submitted for review`);
                 setOpen(false);
                 setAmount("");
               }}
