@@ -21,9 +21,10 @@ export const Route = createFileRoute("/cart")({
 });
 
 function Cart() {
-  const { cartItems, setQty, removeFromCart, subtotal, coupons, clearCart } = useApp();
+  const { cart, cartItems, setQty, removeFromCart, subtotal, coupons, clearCart, catalogStatus, catalogError } = useApp();
   const [coupon, setCoupon] = useState("");
   const [applied, setApplied] = useState<string | null>(null);
+  const hasCatalogIssue = cart.length > 0 && cartItems.length === 0;
   const delivery = subtotal > 10000 || subtotal === 0 ? 0 : 250;
   const tax = Math.round(subtotal * 0.05);
   const appliedCoupon = applied ? coupons.find((c) => c.code === applied) : undefined;
@@ -63,8 +64,17 @@ function Cart() {
       {cartItems.length === 0 ? (
         <div className="mx-auto grid max-w-md place-items-center gap-3 px-6 py-24 text-center">
           <ShoppingBag className="h-10 w-10 text-gold" />
-          <p className="text-lg font-bold text-navy">Your cart is empty</p>
-          <p className="text-sm text-slate">Browse the catalogue and add sugar, rice, oils or pulses.</p>
+          <p className="text-lg font-bold text-navy">
+            {hasCatalogIssue ? "Your cart is temporarily unavailable" : "Your cart is empty"}
+          </p>
+          <p className="text-sm text-slate">
+            {hasCatalogIssue
+              ? "Saved cart items are still on this device, but the live catalog did not load. Refresh the page or wait for the catalog to become available before checking out."
+              : "Browse the catalogue and add sugar, rice, oils or pulses."}
+          </p>
+          {catalogStatus === "unavailable" && catalogError && (
+            <p className="max-w-sm text-xs text-danger">{catalogError}</p>
+          )}
           <Link to="/shop" className="mt-3 rounded-md bg-navy px-6 py-3 text-sm font-semibold text-white hover:bg-midnight">
             Continue Shopping
           </Link>

@@ -12,8 +12,17 @@ export function useVisibleCategories(): StoreCategory[] {
 
 export function CategoryCards({ limit }: { limit?: number }) {
   const cats = useVisibleCategories();
-  const { products } = useApp();
+  const { products, catalogStatus, catalogError } = useApp();
   const list = limit ? cats.slice(0, limit) : cats;
+
+  if (catalogStatus === "unavailable" && list.length === 0) {
+    return (
+      <div className="rounded-lg border border-dashed border-border bg-card p-6 text-center text-sm text-slate">
+        <p className="font-semibold text-navy">Categories are temporarily unavailable.</p>
+        <p className="mt-2 text-slate">{catalogError ?? "The live category catalog is not available yet."}</p>
+      </div>
+    );
+  }
 
   return (
     <div className="grid grid-cols-2 gap-3 sm:gap-5 lg:grid-cols-3">
