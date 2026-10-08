@@ -4,17 +4,26 @@ import { Heart, Minus, Plus, ShieldCheck, Star, Truck, Store } from "lucide-reac
 import { toast } from "sonner";
 import { SiteLayout, Breadcrumbs, SectionHeading } from "@/components/site/SiteLayout";
 import { ProductCard } from "@/components/site/ProductCard";
-import { inr, isStorefrontProduct, products, reviews, vendors } from "@/lib/data";
+import { inr, isStorefrontProduct } from "@/lib/data";
 import { useApp } from "@/lib/store";
+import { supabase } from "@/integrations/supabase/client";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { showCustomerNotification } from "@/components/site/CartFloatingNotification";
 import { AddToCartPicker } from "@/components/site/AddToCartPicker";
+import { STATIC_DATA_MODE } from "@/lib/demo-mode";
+import { products as demoProducts } from "@/lib/data";
 
 export const Route = createFileRoute("/product/$id")({
-  loader: ({ params }) => {
-    const product = products.find((p) => p.id === params.id);
-    if (!product) throw notFound();
+  loader: async ({ params }) => {
+    if (STATIC_DATA_MODE) {
+      const product = demoProducts.find((item) => item.id === params.id);
+      if (!product || !isStorefrontProduct(product)) throw notFound();
+      return { product };
+    }
+    const { data, error } = await supabase.from("catalog_products").select("payload").eq("id", params.id).maybeSingle();
+    const product = data?.payload as unknown as import("@/lib/data").Product | undefined;
+    if (error || !product || !isStorefrontProduct(product)) throw notFound();
     return { product };
   },
   head: ({ loaderData }) => {
@@ -36,13 +45,14 @@ export const Route = createFileRoute("/product/$id")({
 
 function ProductDetail() {
   const { product } = Route.useLoaderData();
-  const { addToCart, toggleWishlist, wishlist } = useApp();
+  const { addToCart, toggleWishlist, wishlist, products, reviews, vendors } = useApp();
   const [qty, setQty] = useState(1);
   const [active, setActive] = useState(0);
-  const vendor = vendors.find((v) => v.id === product.vendorId)!;
+  const vendor = vendors.find((v) => v.id === product.vendorId);
   const off = Math.round(((product.mrp - product.price) / product.mrp) * 100);
   const gallery = [product.image, product.image, product.image];
   const related = products.filter((p) => isStorefrontProduct(p) && p.id !== product.id).slice(0, 4);
+  const productReviews = reviews.filter((review) => review.productId === product.id && review.status === "Published");
 
   return (
     <SiteLayout>
@@ -195,12 +205,12 @@ function ProductDetail() {
             </dl>
           </TabsContent>
           <TabsContent value="vendor" className="rounded-lg border border-border bg-card p-6 text-sm">
-            <p className="text-lg font-bold text-navy">{vendor.business}</p>
+            <p className="text-lg font-bold text-navy">{vendor?.business ?? product.vendor}</p>
             <p className="mt-1 text-slate">
-              {vendor.city} · GSTIN {vendor.gst}
+              {vendor ? `${vendor.city} · GSTIN ${vendor.gst}` : "Verified marketplace vendor"}
             </p>
             <p className="mt-4 text-charcoal">
-              {vendor.products} active listings · {vendor.orders} orders fulfilled · Verified vendor since 2024.
+              {vendor ? `${vendor.products} active listings · ${vendor.orders} orders fulfilled · ` : ""}Verified vendor.
             </p>
           </TabsContent>
           <TabsContent value="delivery" className="rounded-lg border border-border bg-card p-6 text-sm text-charcoal">
@@ -209,7 +219,7 @@ function ProductDetail() {
           </TabsContent>
           <TabsContent value="reviews" className="rounded-lg border border-border bg-card p-6">
             <div className="space-y-5">
-              {reviews.map((r) => (
+              {productReviews.map((r) => (
                 <div key={r.id} className="border-b border-border pb-5 last:border-0 last:pb-0">
                   <div className="flex items-center gap-2">
                     <span className="flex items-center gap-1 rounded bg-gold/12 px-2 py-0.5 text-xs font-bold text-gold">
@@ -223,6 +233,7 @@ function ProductDetail() {
                   </p>
                 </div>
               ))}
+              {productReviews.length === 0 && <p className="text-sm text-slate">No published reviews yet.</p>}
             </div>
           </TabsContent>
         </Tabs>

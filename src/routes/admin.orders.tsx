@@ -81,7 +81,7 @@ function AdminOrders() {
     Array<{ productId: string; qty: string; capacity: string; price: string }>
   >([]);
 
-  const createOrder = () => {
+  const createOrder = async () => {
     const customer = customers.find((item) => item.id === customerId);
     const lines = draftItems.map((item) => {
       const product = products.find((candidate) => candidate.id === item.productId);
@@ -122,20 +122,25 @@ function AdminOrders() {
       );
       return;
     }
-    const order = placeOrder({
-      lines: lines.map((line) => ({
-        product: line.product!,
-        qty: line.qty,
-        capacity: line.capacity,
-        unitPrice: line.unitPrice,
-      })),
-      method: "UPI",
-      payment: "Pending",
-      customerOverride: customer,
-      delivery,
-      source: "WhatsApp / Admin entry",
-      ...(paymentDueDate ? { paymentDueDate } : {}),
-    });
+    let order: Awaited<ReturnType<typeof placeOrder>>;
+    try {
+      order = await placeOrder({
+        lines: lines.map((line) => ({
+          product: line.product!,
+          qty: line.qty,
+          capacity: line.capacity,
+          unitPrice: line.unitPrice,
+        })),
+        method: "UPI",
+        payment: "Pending",
+        customerOverride: customer,
+        delivery,
+        source: "WhatsApp / Admin entry",
+        ...(paymentDueDate ? { paymentDueDate } : {}),
+      });
+    } catch {
+      return;
+    }
     toast.success(
       `Order ${order.id} created. Review and edit its lines before confirming payment.`,
     );

@@ -6,7 +6,7 @@ import { PanelLayout } from "@/components/panel/PanelLayout";
 import { DataTable, Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { Pager } from "@/components/panel/pager";
 import { vendorNav } from "@/lib/panel-nav";
-import { categories, inr } from "@/lib/data";
+import { inr } from "@/lib/data";
 import { useApp, useVendorScope } from "@/lib/store";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -49,7 +49,7 @@ function VendorProducts() {
     return <Outlet />;
   }
 
-  const { updateProduct, deleteProduct, duplicateProduct } = useApp();
+  const { updateProduct, deleteProduct, duplicateProduct, categories } = useApp();
   const { vendorProducts } = useVendorScope();
   const [q, setQ] = useState("");
   const [category, setCategory] = useState("all");
@@ -91,7 +91,7 @@ function VendorProducts() {
   const totalSold = vendorProducts.reduce((s, p) => s + p.sold, 0);
 
   return (
-    <PanelLayout items={vendorNav} tone="vendor" title="My Products" subtitle="Shami Sugar Mills catalogue">
+    <PanelLayout items={vendorNav} tone="vendor" title="My Products" subtitle="Manage your vendor catalogue">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard label="Total Products" value={String(total)} icon={Package} highlight />
         <StatCard label="Active Products" value={String(active)} icon={Package} />

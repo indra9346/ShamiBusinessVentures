@@ -7,6 +7,13 @@
 import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 
 export default defineConfig({
+  vite: {
+    // Vercel preview deployments are static UI sandboxes; production remains
+    // Supabase-backed unless explicitly configured in local development.
+    define: {
+      "import.meta.env.VERCEL_ENV": JSON.stringify(process.env["VERCEL_ENV"] ?? ""),
+    },
+  },
   tanstackStart: {
     // Redirect TanStack Start's bundled server entry to src/server.ts (our SSR error wrapper).
     // nitro/vite builds from this

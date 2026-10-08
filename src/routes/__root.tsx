@@ -15,6 +15,7 @@ import { AppProvider } from "@/lib/store";
 import { LanguageProvider } from "@/lib/i18n";
 import { Toaster } from "@/components/ui/sonner";
 import { CartFloatingNotifier } from "@/components/site/CartFloatingNotification";
+import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 
 function NotFoundComponent() {
   return (
@@ -139,6 +140,7 @@ function RootComponent() {
       {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
       <LanguageProvider>
         <AppProvider>
+          {STATIC_DATA_MODE && <div role="status" className="bg-amber-100 px-4 py-2 text-center text-xs font-semibold text-amber-950">Static preview mode: demo data only. Changes stay in this browser; OTP code is 123456; no database, email, or payment is used.</div>}
           <Outlet />
           <CartFloatingNotifier />
           <Toaster position="top-right" richColors />

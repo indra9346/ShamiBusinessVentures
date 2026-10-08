@@ -5,7 +5,7 @@ import { Layers, Package, Plus, Tags, Trash2, Pencil, ImagePlus } from "lucide-r
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { DataTable, Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { adminNav } from "@/lib/panel-nav";
-import { categorySales, storeCategorySeed, type StoreCategory } from "@/lib/data";
+import { storeCategorySeed, type StoreCategory } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,7 +26,6 @@ function AdminCategories() {
   const [form, setForm] = useState({ name: "", tagline: "", subs: "", image: "", enabled: true });
   const ordered = useMemo(() => [...categories].sort((a, b) => a.order - b.order), [categories]);
   const counts = useMemo(() => products.reduce<Record<string, number>>((m, p) => ({ ...m, [p.category]: (m[p.category] ?? 0) + 1 }), {}), [products]);
-  const shareMap = useMemo(() => Object.fromEntries(categorySales.map((c) => [c.name, c.value])), []);
 
   const startAdd = () => { setEditing(null); setForm({ name: "", tagline: "", subs: "", image: "", enabled: true }); setOpen(true); };
   const startEdit = (category: StoreCategory) => { setEditing(category); setForm({ name: category.name, tagline: category.tagline, subs: category.grades.join(", "), image: category.image, enabled: category.enabled }); setOpen(true); };
@@ -76,10 +75,10 @@ function AdminCategories() {
         </Dialog>
       </div>
       <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {ordered.map((c) => <div key={c.id} className="overflow-hidden rounded-lg border border-border bg-card shadow-card"><img src={c.image} alt={c.name} className="h-36 w-full object-cover" /><div className="p-4"><div className="flex items-start justify-between gap-2"><div><p className="font-bold text-navy">{c.name}</p><p className="text-xs text-slate">{c.grades.length} subcategories</p></div><StatusBadge status={c.enabled ? "Active" : "Hidden"} /></div><p className="mt-2 text-2xl font-bold text-navy">{counts[c.name] ?? 0}</p><p className="text-xs text-slate">products · {shareMap[c.name] ?? 0}% sample revenue share</p><p className="mt-2 text-xs text-slate">{c.grades.join(" · ")}</p><div className="mt-3 flex gap-2"><Button size="sm" variant="outline" onClick={() => startEdit(c)}><Pencil className="mr-1 h-3.5 w-3.5" /> Edit</Button><AlertDialog><AlertDialogTrigger asChild><Button size="sm" variant="outline" className="text-danger hover:text-danger"><Trash2 className="mr-1 h-3.5 w-3.5" /> Delete</Button></AlertDialogTrigger><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Delete “{c.name}”?</AlertDialogTitle><AlertDialogDescription>Products assigned to this category are retained but may no longer appear in storefront category filters.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction onClick={() => { deleteCategory(c.id); toast.success(`Category “${c.name}” deleted`); }}>Delete</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog></div></div></div>)}
+        {ordered.map((c) => <div key={c.id} className="overflow-hidden rounded-lg border border-border bg-card shadow-card"><img src={c.image} alt={c.name} className="h-36 w-full object-cover" /><div className="p-4"><div className="flex items-start justify-between gap-2"><div><p className="font-bold text-navy">{c.name}</p><p className="text-xs text-slate">{c.grades.length} subcategories</p></div><StatusBadge status={c.enabled ? "Active" : "Hidden"} /></div><p className="mt-2 text-2xl font-bold text-navy">{counts[c.name] ?? 0}</p><p className="text-xs text-slate">products</p><p className="mt-2 text-xs text-slate">{c.grades.join(" · ")}</p><div className="mt-3 flex gap-2"><Button size="sm" variant="outline" onClick={() => startEdit(c)}><Pencil className="mr-1 h-3.5 w-3.5" /> Edit</Button><AlertDialog><AlertDialogTrigger asChild><Button size="sm" variant="outline" className="text-danger hover:text-danger"><Trash2 className="mr-1 h-3.5 w-3.5" /> Delete</Button></AlertDialogTrigger><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Delete “{c.name}”?</AlertDialogTitle><AlertDialogDescription>Products assigned to this category are retained but may no longer appear in storefront category filters.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction onClick={() => { deleteCategory(c.id); toast.success(`Category “${c.name}” deleted`); }}>Delete</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog></div></div></div>)}
       </div>
-      <Panel title="All Categories"><DataTable columns={["Category", "Subcategories", "Products", "Revenue share*", "Visibility"]} rows={ordered.map((c) => [<span className="font-semibold text-navy">{c.name}</span>, <span className="text-xs text-slate">{c.grades.join(", ")}</span>, counts[c.name] ?? 0, `${shareMap[c.name] ?? 0}%`, <StatusBadge status={c.enabled ? "Active" : "Hidden"} />])} /></Panel>
-      <p className="mt-2 text-xs text-slate">* Revenue share is seeded demo reporting data. Catalog changes are currently saved in this browser; they are not yet shared through the SQL database.</p>
+      <Panel title="All Categories"><DataTable columns={["Category", "Subcategories", "Products", "Visibility"]} rows={ordered.map((c) => [<span className="font-semibold text-navy">{c.name}</span>, <span className="text-xs text-slate">{c.grades.join(", ")}</span>, counts[c.name] ?? 0, <StatusBadge status={c.enabled ? "Active" : "Hidden"} />])} /></Panel>
+      <p className="mt-2 text-xs text-slate">Category and product counts reflect the connected Supabase catalog.</p>
     </PanelLayout>
   );
 }

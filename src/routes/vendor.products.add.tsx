@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { Panel } from "@/components/panel/widgets";
 import { vendorNav } from "@/lib/panel-nav";
-import { categories, products as seedProducts, type Product } from "@/lib/data";
+import { products as seedProducts, type Product } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -26,7 +26,7 @@ export const Route = createFileRoute("/vendor/products/add")({
 });
 
 function VendorAddProduct() {
-  const { addProduct } = useApp();
+  const { addProduct, categories } = useApp();
   const navigate = useNavigate();
 
   const [name, setName] = useState("");
@@ -59,7 +59,7 @@ function VendorAddProduct() {
     if (!stock || stockNum < 0) { toast.error("Enter a valid stock quantity"); return; }
     if (!description.trim()) { toast.error("Description is required"); return; }
 
-    const sampleImage = seedProducts.find((p) => p.category === category)?.image ?? seedProducts[0]!.image;
+    const sampleImage = seedProducts.find((p) => p.category === category)?.image ?? "";
     const id = `P${Date.now().toString().slice(-6)}`;
     const today = new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
 
@@ -68,8 +68,8 @@ function VendorAddProduct() {
       name: name.trim(),
       sku,
       brand: "Shami Select",
-      vendor: "Shami Sugar Mills",
-      vendorId: "V01",
+      vendor: "",
+      vendorId: "",
       category,
       subcategory,
       image: sampleImage,
@@ -91,9 +91,11 @@ function VendorAddProduct() {
       updated: today,
     };
 
-    addProduct(product);
-    toast.success(`${product.name} added to your catalogue`);
-    navigate({ to: "/vendor/products" });
+    void addProduct(product).then((saved) => {
+      if (!saved) return;
+      toast.success(`${product.name} submitted for approval`);
+      navigate({ to: "/vendor/products" });
+    });
   };
 
   return (
@@ -113,7 +115,7 @@ function VendorAddProduct() {
             <Select value={category} onValueChange={(v) => { setCategory(v); setSubcategory(""); }}>
               <SelectTrigger><SelectValue placeholder="Select category" /></SelectTrigger>
               <SelectContent>
-                {categories.map((c) => (
+                {categories.filter((c) => c.enabled).map((c) => (
                   <SelectItem key={c.name} value={c.name}>{c.name}</SelectItem>
                 ))}
               </SelectContent>
@@ -124,7 +126,7 @@ function VendorAddProduct() {
             <Select value={subcategory} onValueChange={setSubcategory} disabled={!cat}>
               <SelectTrigger><SelectValue placeholder="Select subcategory" /></SelectTrigger>
               <SelectContent>
-                {cat?.subs.map((s) => (
+                {cat?.grades.map((s) => (
                   <SelectItem key={s} value={s}>{s}</SelectItem>
                 ))}
               </SelectContent>
@@ -164,7 +166,6 @@ function VendorAddProduct() {
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="pending">Submit for Approval</SelectItem>
-                <SelectItem value="approved">Approved</SelectItem>
               </SelectContent>
             </Select>
           </div>

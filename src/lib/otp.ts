@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import type { Role } from "@/lib/store";
+import { STATIC_DATA_MODE, STATIC_DEMO_OTP } from "@/lib/demo-mode";
 
 const OTP_TTL = 5 * 60;
 const RESEND_AFTER = 30;
@@ -58,6 +59,18 @@ export function useEmailOtp({ shouldCreateUser = true, requiredRole }: OtpOption
 
       setSending(true);
       const requestMetadata = metadata ?? metadataRef.current;
+      if (STATIC_DATA_MODE) {
+        destinationRef.current = via === "email" ? cleanEmail : `+91${normalisePhone(destination)}`;
+        metadataRef.current = requestMetadata;
+        setChannel(via);
+        setCode("");
+        setStage("verify");
+        setExpiresIn(OTP_TTL);
+        setResendIn(RESEND_AFTER);
+        setSending(false);
+        toast.success("Static preview code ready", { description: `Use ${STATIC_DEMO_OTP}. No email or SMS was sent.` });
+        return true;
+      }
       let result;
       try {
         result = via === "email"
@@ -113,6 +126,14 @@ export function useEmailOtp({ shouldCreateUser = true, requiredRole }: OtpOption
     }
 
     setVerifying(true);
+    if (STATIC_DATA_MODE) {
+      setVerifying(false);
+      if (code !== STATIC_DEMO_OTP) {
+        toast.error(`For static preview, enter ${STATIC_DEMO_OTP}`);
+        return false;
+      }
+      return true;
+    }
     let result;
     try {
       result = channel === "email"
