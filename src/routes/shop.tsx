@@ -38,7 +38,7 @@ const sorts = ["Popular", "Newest", "Price Low → High", "Price High → Low", 
 
 function Shop() {
   const search = Route.useSearch();
-  const { products, vendors } = useApp();
+  const { products, vendors, productCatalogStatus } = useApp();
   const vendorOptions = useMemo(() => {
     const approved = vendors.filter((vendor) => vendor.status === "approved");
     if (approved.length) return approved.map((vendor) => ({ id: vendor.id, business: vendor.business }));
@@ -97,6 +97,9 @@ function Shop() {
     return sorted;
   }, [products, visibleCats, q, cats, vends, maxPrice, minRating, inStock, offersOnly, sort]);
 
+  const eligibleProducts = products.filter(
+    (product) => isStorefrontProduct(product) && visibleCats.some((category) => category.name === product.category),
+  );
   const pages = Math.max(1, Math.ceil(filtered.length / perPage));
   const current = filtered.slice((page - 1) * perPage, page * perPage);
 
@@ -110,7 +113,11 @@ function Shop() {
           <Breadcrumbs items={[{ label: "Shop" }]} />
           <h1 className="mt-3 text-2xl font-bold text-navy sm:text-3xl">Shop All Products</h1>
           <p className="mt-2 text-sm text-slate">
-            {filtered.length} products from {vendorOptions.length} verified vendors
+            {productCatalogStatus === "loading"
+              ? "Loading live products…"
+              : productCatalogStatus === "unavailable"
+                ? "The live product catalog is unavailable."
+                : `${filtered.length} products from ${vendorOptions.length} verified vendors`}
           </p>
         </div>
       </div>
@@ -214,8 +221,32 @@ function Shop() {
 
           {current.length === 0 ? (
             <div className="grid place-items-center gap-2 rounded-lg border border-border bg-card py-20 text-center">
-              <p className="font-semibold text-navy">No products match your filters</p>
-              <p className="text-sm text-slate">Try widening the price range or clearing category filters.</p>
+              <p className="font-semibold text-navy">
+                {productCatalogStatus === "loading"
+                  ? "Loading products"
+                  : productCatalogStatus === "unavailable"
+                    ? "Products are temporarily unavailable"
+                    : products.length === 0
+                      ? "No products are available yet"
+                      : visibleCats.length === 0
+                        ? "No storefront categories are enabled"
+                        : eligibleProducts.length === 0
+                          ? "No approved products are available in these categories"
+                        : "No products match your filters"}
+              </p>
+              <p className="text-sm text-slate">
+                {productCatalogStatus === "loading"
+                  ? "The live catalog is still being loaded."
+                  : productCatalogStatus === "unavailable"
+                    ? "The live product catalog could not be loaded. Please try again later."
+                    : products.length === 0
+                      ? "There are currently no approved products to display."
+                      : visibleCats.length === 0
+                        ? "Enable at least one storefront category to browse these products."
+                        : eligibleProducts.length === 0
+                          ? "Approved product listings will appear here when available."
+                        : "Try widening the price range or clearing category filters."}
+              </p>
             </div>
           ) : (
             <div className={cn("grid gap-5", view === "grid" ? "grid-cols-1 sm:grid-cols-2 xl:grid-cols-3" : "grid-cols-1")}>

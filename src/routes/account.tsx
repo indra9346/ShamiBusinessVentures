@@ -46,7 +46,9 @@ function Account() {
     reviews,
     wishlist,
     products,
+    cart,
     cartItems,
+    productCatalogStatus,
     coupons,
     notifications,
   } = useApp();
@@ -263,10 +265,20 @@ function Account() {
             </Link>
           }
         >
-          {cartItems.length === 0 ? (
+          {cart.length === 0 ? (
             <p className="text-sm text-slate">Your cart is empty.</p>
           ) : (
             <div className="space-y-3">
+              {cartItems.length < cart.length && (
+                <p className="text-sm text-danger">
+                  {productCatalogStatus === "loading"
+                    ? "Matching saved items with the live catalog…"
+                    : "Some saved items are unavailable in the live catalog. Review your cart before checkout."}
+                </p>
+              )}
+              {cartItems.length === 0 && productCatalogStatus === "loading" && (
+                <p className="text-sm text-slate">Loading saved cart items…</p>
+              )}
               {cartItems.slice(0, 4).map(({ product, qty }) => (
                 <div key={product.id} className="flex items-center gap-3">
                   <ShoppingCart className="h-4 w-4 shrink-0 text-gold" />
@@ -301,24 +313,32 @@ function Account() {
 
       <div className="mt-6 grid gap-6 lg:grid-cols-2">
         <Panel title="Recommended for you">
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            {recommended.map((p) => (
-              <Link
-                key={p.id}
-                to="/product/$id"
-                params={{ id: p.id }}
-                className="rounded-lg border border-border p-2 text-center hover:border-gold"
-              >
-                <img
-                  src={p.image}
-                  alt={p.name}
-                  className="mx-auto h-14 w-14 rounded-md object-cover"
-                />
-                <p className="mt-2 line-clamp-2 text-xs font-medium text-navy">{p.name}</p>
-                <p className="text-xs font-semibold text-gold">{inr(p.price)}</p>
-              </Link>
-            ))}
-          </div>
+          {productCatalogStatus !== "ready" ? (
+            <p className="text-sm text-slate">
+              {productCatalogStatus === "loading" ? "Loading product recommendations…" : "Recommendations are temporarily unavailable because the live product catalog could not be loaded."}
+            </p>
+          ) : recommended.length === 0 ? (
+            <p className="text-sm text-slate">No recommendations are available yet.</p>
+          ) : (
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              {recommended.map((p) => (
+                <Link
+                  key={p.id}
+                  to="/product/$id"
+                  params={{ id: p.id }}
+                  className="rounded-lg border border-border p-2 text-center hover:border-gold"
+                >
+                  <img
+                    src={p.image}
+                    alt={p.name}
+                    className="mx-auto h-14 w-14 rounded-md object-cover"
+                  />
+                  <p className="mt-2 line-clamp-2 text-xs font-medium text-navy">{p.name}</p>
+                  <p className="text-xs font-semibold text-gold">{inr(p.price)}</p>
+                </Link>
+              ))}
+            </div>
+          )}
         </Panel>
 
         <Panel
