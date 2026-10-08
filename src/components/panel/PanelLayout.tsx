@@ -87,10 +87,6 @@ export function PanelLayout({
     return () => { active = false; };
   }, [hydrated, user?.role, tone, logout, navigate]);
 
-  if (!hydrated || user?.role !== tone || !verifiedRole) {
-    return <div className="grid min-h-screen place-items-center bg-panel text-sm text-slate">Redirecting to secure sign in…</div>;
-  }
-
   const relevantNotifs = useMemo(() => {
     return notifications.filter((n) => {
       if (tone === "admin") return n.role === "admin" || !n.role;
@@ -148,6 +144,12 @@ export function PanelLayout({
         })),
     ].slice(0, 8);
   }, [globalQuery, products, categories, customers, vendors, orders]);
+
+  // Keep hooks above this guard. React requires the same hooks on the initial
+  // loading render and on the later authenticated render.
+  if (!hydrated || user?.role !== tone || !verifiedRole) {
+    return <div className="grid min-h-screen place-items-center bg-panel text-sm text-slate">Redirecting to secure sign in…</div>;
+  }
 
   const sidebarBg =
     tone === "customer" ? "bg-navy" : tone === "vendor" ? "bg-midnight" : "bg-midnight";
