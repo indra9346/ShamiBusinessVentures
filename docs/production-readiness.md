@@ -26,7 +26,7 @@ The repository’s linked production database was checked on 2026-10-08. `npx su
 - Admin access requires a Supabase Auth account with the `admin` row in `public.user_roles` and a complete profile. Public admin registration is disabled. Provision the first administrator using the secured Supabase dashboard/SQL process already used by the project owner; never expose a service-role credential to the browser.
 - Vendor access begins with a customer-authenticated application. An administrator reviews the application and required KYC files. Vendors must set a password for the approved account before using the vendor email/password login.
 - Keep `vendor-kyc` private. Documents are read through short-lived signed URLs and are protected by RLS/storage policies. Do not make this bucket public.
-- Admin MFA, automatic inactivity logout, and configurable password-strength policy are **not enforced by the app yet**. Do not advertise these as enabled or rely on their settings as a security control. Use Supabase Auth/dashboard security controls and organizational access policy until app enforcement is implemented.
+- Admin inactivity timeout is configurable in System Settings (5–1,440 minutes) and signs the admin out of the browser session after inactivity, including across open admin tabs. Admin MFA and configurable password-strength policy are **not enforced by the app yet**. The inactivity timeout is a client-side session control; continue to use Supabase Auth and RLS as the security boundary.
 
 ## Payments and refunds
 

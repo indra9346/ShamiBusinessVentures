@@ -64,11 +64,16 @@ function AdminSettings() {
       const savedCommerce = { ...obj("commerce_rules"), ...obj("order") }, savedShipping = obj("shipping");
       if (Object.keys(savedCommerce).length || Object.keys(savedShipping).length) setCommerce((old) => ({ ...old, advance: String(savedCommerce["advance"] ?? savedCommerce["advance_percent"] ?? old.advance), splitThreshold: String(savedCommerce["splitThreshold"] ?? savedCommerce["split_threshold"] ?? old.splitThreshold), paymentWindow: String(savedCommerce["paymentWindow"] ?? savedCommerce["payment_timer_minutes"] ?? old.paymentWindow), freeShipAbove: String(savedShipping["free_above"] ?? old.freeShipAbove), shippingFlat: String(savedShipping["standard"] ?? old.shippingFlat), codEnabled: false }));
       const savedSecurity = { ...obj("security"), ...obj("security_config") };
-      if (Object.keys(savedSecurity).length) setSecurity((old) => ({ ...old, twoFactor: Boolean(savedSecurity["twoFactor"] ?? old.twoFactor), vendorKyc: Boolean(savedSecurity["vendorKyc"] ?? old.vendorKyc), autoLogout: String(savedSecurity["autoLogout"] ?? savedSecurity["session_hours"] ?? old.autoLogout), passwordPolicy: String(savedSecurity["passwordPolicy"] ?? old.passwordPolicy) }));
+      if (Object.keys(savedSecurity).length) setSecurity((old) => ({ ...old, twoFactor: Boolean(savedSecurity["twoFactor"] ?? old.twoFactor), vendorKyc: Boolean(savedSecurity["vendorKyc"] ?? old.vendorKyc), autoLogout: String(savedSecurity["autoLogout"] ?? (Number(savedSecurity["session_hours"]) ? Number(savedSecurity["session_hours"]) * 60 : old.autoLogout)), passwordPolicy: String(savedSecurity["passwordPolicy"] ?? old.passwordPolicy) }));
     });
     return () => { active = false; };
   }, []);
   const saveSetting = async (key: typeof settingKeys[number], value: object, label: string) => {
+    const idleTimeout = Math.min(1440, Math.max(5, Math.round(Number(security.autoLogout) || 30)));
+    if (key === "security_config" && !Number.isFinite(Number(security.autoLogout))) {
+      toast.error("Enter an inactivity timeout from 5 to 1,440 minutes");
+      return;
+    }
     const valueJson = JSON.parse(JSON.stringify(value)) as Json;
     const rows: { key: string; value: Json; is_public: boolean }[] = [{ key, value: valueJson, is_public: false }];
     if (key === "business_profile") rows.push({ key: "company", value: { name: business.name, email: business.email, phone: business.phone, address: business.address, gstin: business.gstin, pan: business.pan }, is_public: true });
@@ -79,9 +84,13 @@ function AdminSettings() {
       rows.push({ key: "order", value: { split_threshold: Number(commerce.splitThreshold), advance_percent: Number(commerce.advance), payment_timer_minutes: Number(commerce.paymentWindow), cod_enabled: false }, is_public: true });
       rows.push({ key: "shipping", value: { ...oldShipping, free_above: Number(commerce.freeShipAbove), standard: Number(commerce.shippingFlat) } as Json, is_public: true });
     }
-    if (key === "security_config") rows.push({ key: "security", value: { ...JSON.parse(JSON.stringify(value)), session_hours: Math.max(1, Math.ceil(Number(security.autoLogout) / 60)), password_min: 8 }, is_public: false });
+    if (key === "security_config") rows.push({ key: "security", value: { ...JSON.parse(JSON.stringify(value)), autoLogout: idleTimeout, session_hours: Math.max(1, Math.ceil(idleTimeout / 60)), password_min: 8 }, is_public: false });
     const { error } = await supabase.from("settings").upsert(rows, { onConflict: "key" });
     if (error) { toast.error(`Could not save ${label.toLowerCase()}`, { description: error.message }); return; }
+    if (key === "security_config") {
+      setSecurity((current) => ({ ...current, autoLogout: String(idleTimeout) }));
+      window.dispatchEvent(new CustomEvent("admin-idle-timeout-updated", { detail: idleTimeout }));
+    }
     toast.success(`${label} saved`);
   };
 
@@ -196,7 +205,7 @@ function AdminSettings() {
         <TabsContent value="security">
           <Panel title="Security & Access">
             <div className="grid gap-4 xl:max-w-3xl">
-              <p className="rounded-md border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">Vendor KYC controls whether vendor accounts can submit or edit catalog listings. Admin MFA challenges, automatic session expiry and selectable password rules still need their own enforcement flows.</p>
+              <p className="rounded-md border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">The inactivity timeout is enforced in admin browser sessions. Admin MFA and selectable password-strength rules are not enforced by this app yet.</p>
               <div className="flex items-center justify-between gap-4 rounded-md border border-border p-4">
                 <div>
                   <p className="text-sm font-bold text-navy">Two-factor authentication for admins</p>
@@ -214,7 +223,7 @@ function AdminSettings() {
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="grid gap-1.5">
                   <Label>Auto logout after (minutes)</Label>
-                  <Input type="number" value={security.autoLogout} disabled />
+                  <Input type="number" min={5} max={1440} value={security.autoLogout} onChange={(event) => setSecurity((current) => ({ ...current, autoLogout: event.target.value }))} />
                 </div>
                 <div className="grid gap-1.5">
                   <Label>Password policy</Label>
