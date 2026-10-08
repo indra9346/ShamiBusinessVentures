@@ -36,7 +36,9 @@ function LoginPage() {
   const { next, productId } = Route.useSearch();
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
-  const otp = useEmailOtp({ requiredRole: "customer" });
+  // A sign-in request must never create an account. Customer accounts are
+  // created only through /register, where the profile is collected.
+  const otp = useEmailOtp({ shouldCreateUser: false, requiredRole: "customer" });
   const destination = otp.channel === "phone" ? phone : email.trim();
 
   const finish = async () => {

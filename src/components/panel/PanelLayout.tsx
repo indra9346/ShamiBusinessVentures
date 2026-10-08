@@ -57,6 +57,7 @@ export function PanelLayout({
       const { data: { user: authUser } } = await supabase.auth.getUser();
       if (!authUser || user?.role !== tone) {
         if (active) {
+          if (authUser) await supabase.auth.signOut();
           logout();
           navigate({ to: tone === "admin" ? "/admin/login" : tone === "vendor" ? "/vendor/login" : "/login", replace: true });
         }
@@ -185,7 +186,8 @@ export function PanelLayout({
           );
         })}
         <button
-          onClick={() => {
+          onClick={async () => {
+            await supabase.auth.signOut();
             logout();
             navigate({ to: "/" });
           }}

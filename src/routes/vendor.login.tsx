@@ -1,4 +1,4 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { toast } from "sonner";
 import { AuthCard } from "@/components/site/AuthCard";
@@ -46,14 +46,6 @@ function VendorLogin() {
     <AuthCard
       title="Vendor Login"
       subtitle="Verify your business email or mobile number with a one-time code"
-      footer={
-        <>
-          New vendor?{" "}
-          <Link to="/vendor/register" className="font-semibold text-gold hover:underline">
-            Register your business
-          </Link>
-        </>
-      }
     >
       {otp.stage === "request" ? (
         <OtpRequestStep
