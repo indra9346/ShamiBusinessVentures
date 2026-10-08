@@ -9,6 +9,7 @@ import { notificationBelongsToUser } from "@/lib/account-identity";
 import { Input } from "@/components/ui/input";
 import { LanguageSwitcher } from "@/components/site/LanguageSwitcher";
 import { supabase } from "@/integrations/supabase/client";
+import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 
 export type NavItem = {
   label: string;
@@ -53,6 +54,11 @@ export function PanelLayout({
     let active = true;
     setVerifiedRole(false);
     if (!hydrated) return () => { active = false; };
+    if (STATIC_DATA_MODE) {
+      if (user?.role === tone) setVerifiedRole(true);
+      else navigate({ to: tone === "admin" ? "/admin/login" : tone === "vendor" ? "/vendor/login" : "/login", replace: true });
+      return () => { active = false; };
+    }
     void (async () => {
       const { data: { user: authUser } } = await supabase.auth.getUser();
       if (!authUser || user?.role !== tone) {

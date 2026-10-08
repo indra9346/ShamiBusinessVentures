@@ -28,7 +28,7 @@ export const Route = createFileRoute("/checkout")({
 });
 
 const steps = ["Address", "Delivery", "Payment", "Review", "Confirmation"];
-const methods = ["UPI", "Credit Card", "Debit Card", "Net Banking", "Cash on Delivery"];
+const methods = ["UPI", "Credit Card", "Debit Card", "Net Banking"];
 
 function Checkout() {
   const { user, hydrated, cartItems, products, clearCart, addresses, addAddress, placeOrder, coupons } =
@@ -42,6 +42,10 @@ function Checkout() {
   const [step, setStep] = useState(0);
   const [addr, setAddr] = useState(addresses[0]?.id ?? "");
   const [addressFormOpen, setAddressFormOpen] = useState(addresses.length === 0);
+  useEffect(() => {
+    if (!addr && addresses.length > 0) setAddr(addresses.find((address) => address.default)?.id ?? addresses[0]!.id);
+    if (addresses.length > 0) setAddressFormOpen(false);
+  }, [addresses, addr]);
   const [addressForm, setAddressForm] = useState({
     label: "Home",
     name: user?.name ?? "",
@@ -108,7 +112,7 @@ function Checkout() {
     );
   }
 
-  const goNext = () => {
+  const goNext = async () => {
     if (checkoutItems.length === 0) {
       toast.error("Your cart is empty");
       void navigate({ to: "/cart" });
@@ -120,17 +124,23 @@ function Checkout() {
     }
     if (step === 3) {
       setConfirmationSummary({ subtotal, shipCost, tax, discount, total });
-      const order = placeOrder({
-        lines: checkoutItems,
-        method,
-        payment: method === "Cash on Delivery" ? "COD" : "Paid",
-        ...(appliedCoupon ? { coupon: appliedCoupon.code } : {}),
-        subtotal,
-        discount,
-        tax,
-        shipping: shipCost,
-        delivery: ship === "Express" ? "Express Freight — next business day" : "Standard Freight — 2 to 4 days",
-      });
+      let order: Awaited<ReturnType<typeof placeOrder>>;
+      try {
+        order = await placeOrder({
+          lines: checkoutItems,
+          method,
+          payment: "Pending",
+          ...(selectedAddress ? { shippingAddress: selectedAddress } : {}),
+          ...(appliedCoupon ? { coupon: appliedCoupon.code } : {}),
+          subtotal,
+          discount,
+          tax,
+          shipping: shipCost,
+          delivery: ship === "Express" ? "Express Freight — next business day" : "Standard Freight — 2 to 4 days",
+        });
+      } catch {
+        return;
+      }
       clearCart();
       setPlacedId(order.id);
       toast.success("Order placed", { description: `${order.id} confirmed` });
@@ -152,7 +162,7 @@ function Checkout() {
       toast.error("Enter your name, valid phone, full address, city and 6-digit PIN code");
       return;
     }
-    const id = `A${Date.now()}`;
+    const id = crypto.randomUUID();
     addAddress({
       id,
       label: addressForm.label.trim() || "Delivery",
@@ -384,7 +394,7 @@ function Checkout() {
                 <h2 className="mt-5 text-xl font-bold text-navy">Order Confirmed</h2>
                 <p className="mt-2 text-sm text-slate">
                   Order ID <span className="font-bold text-gold">{placedId}</span> · Payment{" "}
-                  {method === "Cash on Delivery" ? "pending (COD)" : "successful"} · Estimated
+                  pending payment · Amount confirmed after the payment provider is connected
                   delivery in {ship === "Express" ? "1 day" : "2–4 days"}
                 </p>
                 <div className="mt-6 flex flex-wrap justify-center gap-3">

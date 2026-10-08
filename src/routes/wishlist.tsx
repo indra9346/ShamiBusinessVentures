@@ -2,7 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { Heart } from "lucide-react";
 import { SiteLayout, Breadcrumbs } from "@/components/site/SiteLayout";
 import { ProductCard } from "@/components/site/ProductCard";
-import { isStorefrontProduct, products } from "@/lib/data";
+import { isStorefrontProduct } from "@/lib/data";
 import { useApp } from "@/lib/store";
 
 export const Route = createFileRoute("/wishlist")({
@@ -18,7 +18,7 @@ export const Route = createFileRoute("/wishlist")({
 });
 
 function Wishlist() {
-  const { wishlist } = useApp();
+  const { wishlist, products } = useApp();
   const items = products.filter((p) => wishlist.includes(p.id) && isStorefrontProduct(p));
   return (
     <SiteLayout>

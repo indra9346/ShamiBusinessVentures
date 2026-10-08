@@ -70,8 +70,10 @@ export type Database = {
           product_name: string
           purchase_date: string | null
           quantity: number
+          remaining_quantity: number
           status: string
           unit: string
+          unit_cost: number
           updated_at: string
           vendor: string | null
           vendor_id: string | null
@@ -87,8 +89,10 @@ export type Database = {
           product_name: string
           purchase_date?: string | null
           quantity?: number
+          remaining_quantity?: number
           status?: string
           unit?: string
+          unit_cost?: number
           updated_at?: string
           vendor?: string | null
           vendor_id?: string | null
@@ -104,13 +108,21 @@ export type Database = {
           product_name?: string
           purchase_date?: string | null
           quantity?: number
+          remaining_quantity?: number
           status?: string
           unit?: string
+          unit_cost?: number
           updated_at?: string
           vendor?: string | null
           vendor_id?: string | null
           warehouse?: string | null
         }
+        Relationships: []
+      }
+      catalog_products: {
+        Row: { id: string; vendor_id: string; category: string; status: string; active: boolean; payload: Json; created_at: string; updated_at: string }
+        Insert: { id: string; vendor_id: string; category: string; status?: string; active?: boolean; payload: Json; created_at?: string; updated_at?: string }
+        Update: { id?: string; vendor_id?: string; category?: string; status?: string; active?: boolean; payload?: Json; created_at?: string; updated_at?: string }
         Relationships: []
       }
       crm_notes: {
@@ -638,6 +650,12 @@ export type Database = {
         }
         Relationships: []
       }
+      store_categories: {
+        Row: { id: string; name: string; enabled: boolean; sort_order: number; payload: Json; updated_at: string }
+        Insert: { id: string; name: string; enabled?: boolean; sort_order?: number; payload: Json; updated_at?: string }
+        Update: { id?: string; name?: string; enabled?: boolean; sort_order?: number; payload?: Json; updated_at?: string }
+        Relationships: []
+      }
       user_roles: {
         Row: {
           created_at: string
@@ -699,6 +717,21 @@ export type Database = {
           _user_id: string
         }
         Returns: boolean
+      }
+      place_marketplace_order: {
+        Args: {
+          _order_no: string
+          _target_user_id: string
+          _customer_name: string
+          _customer_email: string
+          _customer_phone: string | null
+          _customer_gstin: string | null
+          _shipping_address: Json
+          _shipping_method: string
+          _payment_method: string
+          _items: Json
+        }
+        Returns: Json
       }
     }
     Enums: {

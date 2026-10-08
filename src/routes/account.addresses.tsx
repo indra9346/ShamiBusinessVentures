@@ -137,7 +137,7 @@ function AccountAddresses() {
                   updateAddress(editing, form);
                   toast.success("Address updated");
                 } else {
-                  addAddress({ id: `A${Date.now()}`, ...form, default: addresses.length === 0 });
+                  addAddress({ id: crypto.randomUUID(), ...form, default: addresses.length === 0 });
                   toast.success("New address added");
                 }
                 setOpen(false);

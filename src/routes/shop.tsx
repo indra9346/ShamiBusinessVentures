@@ -3,7 +3,7 @@ import { useMemo, useState } from "react";
 import { LayoutGrid, List, Search, SlidersHorizontal } from "lucide-react";
 import { SiteLayout, Breadcrumbs } from "@/components/site/SiteLayout";
 import { ProductCard } from "@/components/site/ProductCard";
-import { inr, isStorefrontProduct, vendors } from "@/lib/data";
+import { inr, isStorefrontProduct } from "@/lib/data";
 import { useVisibleCategories } from "@/components/site/CategoryCards";
 import { useApp } from "@/lib/store";
 import { Input } from "@/components/ui/input";
@@ -38,7 +38,13 @@ const sorts = ["Popular", "Newest", "Price Low → High", "Price High → Low", 
 
 function Shop() {
   const search = Route.useSearch();
-  const { products } = useApp();
+  const { products, vendors } = useApp();
+  const vendorOptions = useMemo(() => {
+    const approved = vendors.filter((vendor) => vendor.status === "approved");
+    if (approved.length) return approved.map((vendor) => ({ id: vendor.id, business: vendor.business }));
+    return [...new Set(products.filter(isStorefrontProduct).map((product) => product.vendor))]
+      .map((business) => ({ id: business, business }));
+  }, [vendors, products]);
   const visibleCats = useVisibleCategories();
   const [q, setQ] = useState(search.q ?? "");
   const [cats, setCats] = useState<string[]>(search.category ? [search.category] : []);
@@ -104,7 +110,7 @@ function Shop() {
           <Breadcrumbs items={[{ label: "Shop" }]} />
           <h1 className="mt-3 text-2xl font-bold text-navy sm:text-3xl">Shop All Products</h1>
           <p className="mt-2 text-sm text-slate">
-            {filtered.length} products from {vendors.filter((v) => v.status === "approved").length} verified vendors
+            {filtered.length} products from {vendorOptions.length} verified vendors
           </p>
         </div>
       </div>
@@ -147,9 +153,7 @@ function Shop() {
           </FilterGroup>
 
           <FilterGroup title="Vendor">
-            {vendors
-              .filter((v) => v.status === "approved")
-              .map((v) => (
+            {vendorOptions.map((v) => (
                 <Row
                   key={v.id}
                   label={v.business}

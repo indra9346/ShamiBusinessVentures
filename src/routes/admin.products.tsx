@@ -1,12 +1,12 @@
 import { createFileRoute, Link, Outlet, useRouterState } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { AlertTriangle, Boxes, Download, Minus, Package, PackageX, Plus } from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { DataTable, Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { Pager } from "@/components/panel/pager";
 import { adminNav } from "@/lib/panel-nav";
-import { inr, vendors, type Product } from "@/lib/data";
+import { inr, type Product } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -58,12 +58,12 @@ export const Route = createFileRoute("/admin/products")({
 
 const PAGE_SIZE = 10;
 
-function emptyForm(defaultCategory = "Rice", defaultSubcategory = "Raw Rice") {
+function emptyForm(defaultCategory = "Rice", defaultSubcategory = "Raw Rice", defaultVendorId = "") {
   return {
     name: "",
     category: defaultCategory,
     subcategory: defaultSubcategory,
-    vendorId: vendors[0]!.id,
+    vendorId: defaultVendorId,
     mrp: "",
     price: "",
     gst: "5",
@@ -85,7 +85,7 @@ function AdminProducts() {
 }
 
 function AdminProductsPanel() {
-  const { products, categories, addProduct, updateProduct, deleteProduct, duplicateProduct, getFIFOCost } =
+  const { products, categories, vendors, addProduct, updateProduct, deleteProduct, duplicateProduct, getFIFOCost } =
     useApp();
   const categoryChoices = categories.map((c) => ({ name: c.name, subs: c.grades }));
   const [q, setQ] = useState("");
@@ -96,7 +96,10 @@ function AdminProductsPanel() {
   const [page, setPage] = useState(1);
 
   const [addOpen, setAddOpen] = useState(false);
-  const [form, setForm] = useState(emptyForm(categoryChoices[0]?.name, categoryChoices[0]?.subs[0]));
+  const [form, setForm] = useState(emptyForm(categoryChoices[0]?.name, categoryChoices[0]?.subs[0], vendors[0]?.id));
+  useEffect(() => {
+    if (!form.vendorId && vendors.length > 0) setForm((current) => ({ ...current, vendorId: vendors[0]!.id }));
+  }, [form.vendorId, vendors]);
 
   const [quickOpen, setQuickOpen] = useState(false);
   const [quickForm, setQuickForm] = useState({ name: "", qty: "", price: "" });
@@ -144,7 +147,7 @@ function AdminProductsPanel() {
   const lowStock = products.filter((p) => p.stock > 0 && p.stock < 30).length;
   const outStock = products.filter((p) => p.stock === 0).length;
 
-  const submitQuickAdd = () => {
+  const submitQuickAdd = async () => {
     if (!quickForm.name.trim() || !quickForm.qty) {
       toast.error("Enter item name and quantity");
       return;
@@ -155,7 +158,11 @@ function AdminProductsPanel() {
       return;
     }
     const price = Number(quickForm.price) || 0;
-    const vendor = vendors[0]!;
+    const vendor = vendors[0];
+    if (!vendor) {
+      toast.error("Create or approve a vendor profile before assigning products");
+      return;
+    }
     const stamp = Date.now().toString().slice(-6);
     const dateStr = new Date().toLocaleDateString("en-IN", {
       day: "2-digit",
@@ -171,7 +178,7 @@ function AdminProductsPanel() {
       vendorId: vendor.id,
       category: "Sugar",
       subcategory: "S1 Sugar",
-      image: products[0]!.image,
+      image: products[0]?.image ?? "",
       mrp: price,
       price,
       gst: 5,
@@ -189,18 +196,22 @@ function AdminProductsPanel() {
       created: dateStr,
       updated: dateStr,
     };
-    addProduct(item);
+    if (!await addProduct(item)) return;
     toast.success(`${item.name} added with ${qty} units`);
     setQuickForm({ name: "", qty: "", price: "" });
     setQuickOpen(false);
   };
 
-  const submitAdd = () => {
+  const submitAdd = async () => {
     if (!form.name.trim() || !form.mrp || !form.price) {
       toast.error("Please fill product name, MRP and price");
       return;
     }
-    const vendor = vendors.find((v) => v.id === form.vendorId)!;
+    const vendor = vendors.find((v) => v.id === form.vendorId);
+    if (!vendor) {
+      toast.error("Choose an existing vendor profile before creating this product");
+      return;
+    }
     const id = `P${Date.now().toString().slice(-6)}`;
     const product: Product = {
       id,
@@ -211,7 +222,7 @@ function AdminProductsPanel() {
       vendorId: vendor.id,
       category: form.category,
       subcategory: form.subcategory || form.category,
-      image: form.image.trim() || products[0]!.image,
+      image: form.image.trim() || products[0]?.image || "",
       mrp: Number(form.mrp),
       price: Number(form.price),
       gst: Number(form.gst),
@@ -240,10 +251,10 @@ function AdminProductsPanel() {
         year: "numeric",
       }),
     };
-    addProduct(product);
+    if (!await addProduct(product)) return;
     toast.success(`${product.name} added to catalogue`);
     setAddOpen(false);
-    setForm(emptyForm(categoryChoices[0]?.name, categoryChoices[0]?.subs[0]));
+    setForm(emptyForm(categoryChoices[0]?.name, categoryChoices[0]?.subs[0], vendors[0]?.id));
   };
 
   const handleExportProducts = () => {
