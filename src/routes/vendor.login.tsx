@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { toast } from "sonner";
 import { AuthCard } from "@/components/site/AuthCard";
@@ -84,6 +84,9 @@ function VendorLogin() {
         <p className="text-xs text-slate">
           Vendor access is restricted to accounts with an active vendor role and assigned vendor ID. No OTP is used for vendor sign-in.
         </p>
+        <Link to="/reset-password" className="inline-block text-sm font-semibold text-gold hover:underline">
+          Set or reset password
+        </Link>
       </form>
     </AuthCard>
   );
