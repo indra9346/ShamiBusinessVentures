@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { toast } from "sonner";
 import { AuthCard } from "@/components/site/AuthCard";
@@ -85,6 +85,9 @@ function AdminLogin() {
         <p className="text-xs text-slate">
           Admin access requires an existing Supabase Auth account with an administrator role. No OTP is used for admin sign-in.
         </p>
+        <Link to="/reset-password" className="inline-block text-sm font-semibold text-gold hover:underline">
+          Set or reset password
+        </Link>
       </form>
     </AuthCard>
   );
