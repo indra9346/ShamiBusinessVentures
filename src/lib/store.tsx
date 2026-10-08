@@ -163,12 +163,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
       ]);
       if (!active) return;
       if (productResult.error) {
-        console.error("Could not load the Supabase product catalog", productResult.error);
+        console.error("Could not load the Supabase product catalog:", productResult.error.message);
       } else {
         setProducts(productResult.data.map((row) => row.payload as unknown as Product));
       }
       if (categoryResult.error) {
-        console.error("Could not load Supabase store categories", categoryResult.error);
+        console.error("Could not load Supabase store categories:", categoryResult.error.message);
+        // Keep the storefront navigable if production has not provisioned the
+        // category table yet. These are category labels only; live products are
+        // still read exclusively from Supabase.
+        setCategories(storeCategorySeed);
       } else {
         const persistedCategories = categoryResult.data.map((row) => row.payload as unknown as StoreCategory);
         // Keep the storefront manageable on a brand-new project before an admin
