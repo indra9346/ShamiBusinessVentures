@@ -7,6 +7,8 @@ import { Input } from "@/components/ui/input";
 import { inr, isStorefrontProduct } from "@/lib/data";
 import { LanguageSwitcher } from "@/components/site/LanguageSwitcher";
 
+import { SearchAutosuggest } from "@/components/site/SearchAutosuggest";
+
 const nav = [
   { label: "Home", to: "/" },
   { label: "Shop", to: "/shop" },
@@ -16,33 +18,10 @@ const nav = [
 ];
 
 export function SiteHeader() {
-  const { cartCount, subtotal, wishlist, user, products: appProducts, categories } = useApp();
+  const { cartCount, subtotal, wishlist, user } = useApp();
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
   const navigate = useNavigate();
-  const suggestions =
-    q.trim().length > 1
-      ? [
-          ...appProducts
-            .filter(
-              (p) =>
-                isStorefrontProduct(p) &&
-                `${p.name} ${p.sku} ${p.category}`.toLowerCase().includes(q.trim().toLowerCase()),
-            )
-            .slice(0, 4)
-            .map((product) => ({ kind: "product" as const, product })),
-          ...categories
-            .filter((category) => category.name.toLowerCase().includes(q.trim().toLowerCase()))
-            .slice(0, 2)
-            .map((category) => ({ kind: "category" as const, category })),
-        ]
-      : [];
-
-  const submit = () => {
-    navigate({ to: "/shop", search: { q } });
-    setQ("");
-    setOpen(false);
-  };
 
   return (
     <header className="sticky top-0 z-50 w-full">
@@ -59,45 +38,18 @@ export function SiteHeader() {
           <Logo />
 
           <div className="relative hidden min-w-0 flex-1 max-w-xl mx-6 lg:block">
-            <Search className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-slate" />
-            <Input
+            <SearchAutosuggest
               value={q}
-              onChange={(e) => setQ(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && submit()}
+              onChange={setQ}
+              onSearch={(query) => {
+                navigate({ to: "/shop", search: query ? { q: query } : {} });
+                setQ("");
+                setOpen(false);
+              }}
               placeholder="Search S1 sugar, SKU or vendor…"
-              className="h-9 rounded-full border-white/15 bg-card pl-10 text-sm text-charcoal shadow-inner"
+              variant="header"
+              id="header-desktop-search"
             />
-            {suggestions.length > 0 && (
-              <div className="absolute top-13 left-0 z-50 w-full overflow-hidden rounded-xl border border-border bg-card shadow-elevated">
-                {suggestions.map((suggestion) =>
-                  suggestion.kind === "product" ? (
-                    <Link
-                      key={suggestion.product.id}
-                      to="/product/$id"
-                      params={{ id: suggestion.product.id }}
-                      onClick={() => setQ("")}
-                      className="flex items-center justify-between px-4 py-2.5 text-sm text-charcoal transition-colors hover:bg-ivory"
-                    >
-                      <span className="truncate">{suggestion.product.name}</span>
-                      <span className="ml-3 shrink-0 text-xs text-slate">
-                        {suggestion.product.sku}
-                      </span>
-                    </Link>
-                  ) : (
-                    <Link
-                      key={suggestion.category.id}
-                      to="/categories/$slug"
-                      params={{ slug: suggestion.category.name.toLowerCase() }}
-                      onClick={() => setQ("")}
-                      className="flex items-center justify-between px-4 py-2.5 text-sm text-charcoal transition-colors hover:bg-ivory"
-                    >
-                      <span className="truncate">{suggestion.category.name}</span>
-                      <span className="ml-3 shrink-0 text-xs text-slate">Category</span>
-                    </Link>
-                  ),
-                )}
-              </div>
-            )}
           </div>
 
           <div className="flex items-center gap-1.5 sm:gap-2">
@@ -181,14 +133,18 @@ export function SiteHeader() {
 
       {open && (
         <div className="animate-rise border-b border-white/10 bg-navy px-4 pb-5 lg:hidden">
-          <div className="relative py-3">
-            <Search className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-slate" />
-            <Input
+          <div className="py-2.5">
+            <SearchAutosuggest
               value={q}
-              onChange={(e) => setQ(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && submit()}
-              placeholder="Search products…"
-              className="h-9 rounded-full bg-white pl-10 text-sm text-charcoal"
+              onChange={setQ}
+              onSearch={(query) => {
+                navigate({ to: "/shop", search: query ? { q: query } : {} });
+                setQ("");
+                setOpen(false);
+              }}
+              placeholder="Search S1 sugar, SKU or vendor…"
+              variant="header"
+              id="header-mobile-search"
             />
           </div>
           <div className="grid gap-1">

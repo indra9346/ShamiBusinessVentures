@@ -8,6 +8,7 @@ import { inr, isStorefrontProduct, storeCategorySeed, type Product } from "@/lib
 import { useApp } from "@/lib/store";
 import { useLanguage } from "@/lib/i18n";
 import { showCartNotification, showCustomerNotification } from "@/components/site/CartFloatingNotification";
+import { SearchAutosuggest } from "@/components/site/SearchAutosuggest";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -51,24 +52,20 @@ function Index() {
 
   return (
     <SiteLayout>
-      {/* Mobile-Friendly Search Bar */}
+      {/* Search Bar with Real-Time Autosuggestions */}
       <section className="mx-auto max-w-7xl px-4 pt-4 sm:px-6 sm:pt-6">
-        <form onSubmit={searchProducts} className="flex max-w-xl gap-2">
-          <div className="relative min-w-0 flex-1">
-            <Search className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-slate" />
-            <Input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder={t("Search category, product, code or brand")}
-              aria-label={t("Search products")}
-              className="h-10 rounded-full pl-9 pr-3 text-sm border-border bg-card"
-            />
-          </div>
-          <Button type="submit" size="sm" className="h-10 shrink-0 rounded-full px-4 font-bold bg-navy text-white hover:bg-midnight">
-            <Search className="h-4 w-4 sm:hidden" />
-            <span className="hidden sm:inline">Search</span>
-          </Button>
-        </form>
+        <div className="max-w-xl">
+          <SearchAutosuggest
+            value={query}
+            onChange={setQuery}
+            onSearch={(q) => {
+              if (q) navigate({ to: "/shop", search: { q } });
+              else navigate({ to: "/shop" });
+            }}
+            placeholder={t("Search category, product, code or brand")}
+            variant="home"
+          />
+        </div>
       </section>
 
       {/* Shop by Category - Circular Cards */}
