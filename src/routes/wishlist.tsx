@@ -23,14 +23,14 @@ function Wishlist() {
   return (
     <SiteLayout>
       <div className="border-b border-border bg-ivory">
-        <div className="mx-auto max-w-7xl px-6 py-8">
+        <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8">
           <Breadcrumbs items={[{ label: "Wishlist" }]} />
-          <h1 className="mt-3 text-3xl font-bold text-navy">My Wishlist</h1>
+          <h1 className="mt-3 text-2xl font-bold text-navy sm:text-3xl">My Wishlist</h1>
         </div>
       </div>
-      <div className="mx-auto max-w-7xl px-6 py-10">
+      <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-10">
         {items.length === 0 ? (
-          <div className="grid place-items-center gap-3 py-20 text-center">
+          <div className="grid place-items-center gap-3 py-16 text-center sm:py-20">
             <Heart className="h-10 w-10 text-gold" />
             <p className="text-lg font-bold text-navy">Your wishlist is empty</p>
             <Link to="/shop" className="mt-2 rounded-md bg-navy px-6 py-3 text-sm font-semibold text-white hover:bg-midnight">
@@ -38,7 +38,7 @@ function Wishlist() {
             </Link>
           </div>
         ) : (
-          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
             {items.map((p) => (
               <ProductCard key={p.id} product={p} />
             ))}

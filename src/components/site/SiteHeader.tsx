@@ -125,10 +125,10 @@ export function SiteHeader() {
               </div>
 
               {/* Glowing Hairline Divider (Separates Icon and Cost) */}
-              <div className="h-5 w-px bg-gradient-to-b from-transparent via-gold/50 to-transparent" />
+              <div className="hidden h-5 w-px bg-gradient-to-b from-transparent via-gold/50 to-transparent sm:block" />
 
               {/* Clear Two-Tier Text Stack: No Collision */}
-              <div className="flex flex-col text-left leading-tight pr-0.5">
+              <div className="hidden flex-col text-left leading-tight pr-0.5 sm:flex">
                 <span className="text-[11px] font-bold text-white/95 tracking-wide leading-none uppercase">
                   {cartCount} {cartCount === 1 ? "item" : "items"}
                 </span>
@@ -147,7 +147,7 @@ export function SiteHeader() {
               </span>
             </Link>
             <Link
-              to={user ? "/account" : "/login"}
+              to={user ? (user.role === "admin" ? "/admin/dashboard" : user.role === "vendor" ? "/vendor/dashboard" : "/account") : "/login"}
               className="hidden items-center gap-2 rounded-full border border-white/20 px-4 py-2 text-sm font-medium text-white transition-colors hover:border-gold hover:text-gold sm:flex"
             >
               <User className="h-4 w-4" />
@@ -203,6 +203,50 @@ export function SiteHeader() {
                 {n.label}
               </Link>
             ))}
+          </div>
+
+          <div className="mt-4 border-t border-white/10 pt-3">
+            {user ? (
+              <div className="grid gap-1">
+                <Link
+                  to={user.role === "admin" ? "/admin/dashboard" : user.role === "vendor" ? "/vendor/dashboard" : "/account"}
+                  onClick={() => setOpen(false)}
+                  className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold text-gold hover:bg-white/5"
+                >
+                  <User className="h-4 w-4" /> {user.name} ({user.role})
+                </Link>
+                {user.role === "customer" && (
+                  <Link
+                    to="/account/orders"
+                    onClick={() => setOpen(false)}
+                    className="rounded-lg px-3 py-2 text-sm text-white/80 hover:bg-white/5"
+                  >
+                    My Orders
+                  </Link>
+                )}
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-2">
+                <Link
+                  to="/login"
+                  onClick={() => setOpen(false)}
+                  className="flex items-center justify-center gap-2 rounded-lg border border-white/20 py-2.5 text-center text-sm font-semibold text-white hover:border-gold hover:text-gold"
+                >
+                  <User className="h-4 w-4" /> Login
+                </Link>
+                <Link
+                  to="/register"
+                  onClick={() => setOpen(false)}
+                  className="rounded-lg bg-gold py-2.5 text-center text-sm font-bold text-midnight hover:bg-gold-light"
+                >
+                  Register
+                </Link>
+              </div>
+            )}
+            <div className="mt-3 flex items-center justify-between px-3 pt-2">
+              <span className="text-xs text-white/60">Language</span>
+              <LanguageSwitcher light />
+            </div>
           </div>
         </div>
       )}

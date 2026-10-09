@@ -61,11 +61,14 @@ export function CategoryCards({ limit }: { limit?: number }) {
           >
             <div className="relative overflow-hidden bg-ivory">
               <img
-                src={c.image}
+                src={c.image || `/categories/${c.name.toLowerCase()}.jpg`}
                 alt={`${c.name} category`}
                 loading="lazy"
                 width={800}
                 height={800}
+                onError={(e) => {
+                  (e.currentTarget as HTMLImageElement).src = `/categories/${c.name.toLowerCase()}.jpg`;
+                }}
                 className="aspect-[4/3] w-full object-cover transition-transform duration-500 group-hover:scale-105 sm:aspect-square"
               />
               <span className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-midnight/70 to-transparent" />
@@ -104,11 +107,14 @@ function CardBody({ c, countLabel }: { c: StoreCategory; countLabel: string }) {
     <>
       <div className="relative overflow-hidden bg-ivory">
         <img
-          src={c.image}
+          src={c.image || `/categories/${c.name.toLowerCase()}.jpg`}
           alt={`${c.name} category`}
           loading="lazy"
           width={800}
           height={800}
+          onError={(e) => {
+            (e.currentTarget as HTMLImageElement).src = `/categories/${c.name.toLowerCase()}.jpg`;
+          }}
           className="aspect-[4/3] w-full object-cover transition-transform duration-500 group-hover:scale-105 sm:aspect-square"
         />
         <span className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-midnight/70 to-transparent" />

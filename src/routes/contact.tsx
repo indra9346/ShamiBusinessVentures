@@ -52,14 +52,14 @@ function Contact() {
   return (
     <SiteLayout>
       <div className="border-b border-border bg-ivory">
-        <div className="mx-auto max-w-7xl px-6 py-8">
+        <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8">
           <Breadcrumbs items={[{ label: "Contact" }]} />
-          <h1 className="mt-3 text-3xl font-bold text-navy">Contact Us</h1>
+          <h1 className="mt-3 text-2xl font-bold text-navy sm:text-3xl">Contact Us</h1>
         </div>
       </div>
 
-      <div className="mx-auto grid max-w-7xl gap-10 px-6 py-14 lg:grid-cols-[minmax(0,1fr)_380px]">
-        <form onSubmit={submit} className="rounded-lg border border-border bg-card p-6 shadow-card sm:p-8">
+      <div className="mx-auto grid max-w-7xl gap-8 px-4 py-8 sm:gap-10 sm:px-6 sm:py-14 lg:grid-cols-[minmax(0,1fr)_380px]">
+        <form onSubmit={submit} className="rounded-lg border border-border bg-card p-4 shadow-card sm:p-8">
           <h2 className="text-lg font-bold text-navy">Send an enquiry</h2>
           <p className="mt-1 text-sm text-slate">Bulk quotes, vendor onboarding or order support.</p>
           <div className="mt-6 grid gap-5 sm:grid-cols-2">
@@ -85,7 +85,7 @@ function Contact() {
           </div>
           <button
             disabled={loading}
-            className="mt-6 rounded-md bg-navy px-7 py-3 text-sm font-semibold text-white transition-colors hover:bg-midnight disabled:opacity-60"
+            className="mt-6 w-full sm:w-auto rounded-md bg-navy px-7 py-3 text-sm font-semibold text-white transition-colors hover:bg-midnight disabled:opacity-60"
           >
             {loading ? "Submitting…" : "Submit Enquiry"}
           </button>

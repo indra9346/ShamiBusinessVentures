@@ -24,7 +24,24 @@ function RegisterPage() {
   const finish = async () => {
     if (!await otp.verify()) return;
     const { data: { user: authUser } } = await supabase.auth.getUser();
-    login({ ...(authUser?.id ? { id: authUser.id } : {}), name: name.trim(), email: otp.channel === "email" ? email.trim().toLowerCase() : "", role: "customer", ...(otp.channel === "phone" ? { phone: `+91${phone.replace(/\D/g, "").slice(-10)}` } : {}) });
+    const cleanEmail = otp.channel === "email" ? email.trim().toLowerCase() : (authUser?.email || "");
+    const cleanPhone = otp.channel === "phone" ? `+91${phone.replace(/\D/g, "").slice(-10)}` : (phone.trim() || undefined);
+    if (authUser?.id) {
+      await supabase.from("profiles").upsert({
+        id: authUser.id,
+        full_name: name.trim(),
+        ...(cleanEmail ? { email: cleanEmail } : {}),
+        ...(cleanPhone ? { phone: cleanPhone } : {}),
+        updated_at: new Date().toISOString(),
+      });
+    }
+    login({
+      ...(authUser?.id ? { id: authUser.id } : {}),
+      name: name.trim(),
+      email: cleanEmail,
+      role: "customer",
+      ...(cleanPhone ? { phone: cleanPhone } : {}),
+    });
     toast.success("Your account is verified");
     navigate({ to: "/account", replace: true });
   };

@@ -75,6 +75,7 @@ function emptyForm(defaultCategory = "Rice", defaultSubcategory = "Raw Rice", de
     warehouseStock: "",
     requiredStock: "",
     image: "",
+    status: "approved" as "approved" | "pending" | "rejected",
   };
 }
 
@@ -118,6 +119,7 @@ function AdminProductsPanel() {
     minimumStock: "",
     warehouseStock: "",
     requiredStock: "",
+    status: "approved" as "approved" | "pending" | "rejected",
   });
   const [imageUploading, setImageUploading] = useState(false);
   const [editImageUploading, setEditImageUploading] = useState(false);
@@ -257,7 +259,7 @@ function AdminProductsPanel() {
       reserved: 0,
       sold: 0,
       weight: form.weight.trim() || "1 unit",
-      status: "pending",
+      status: form.status,
       active: true,
       tags: [],
       description: "Newly added product pending catalogue review.",
@@ -624,6 +626,20 @@ function AdminProductsPanel() {
                       onChange={(e) => setForm({ ...form, minimumStock: e.target.value })}
                     />
                   </div>
+                  <div>
+                    <Label>Approval Status</Label>
+                    <Select
+                      value={form.status}
+                      onValueChange={(v) => setForm({ ...form, status: v as "approved" | "pending" | "rejected" })}
+                    >
+                      <SelectTrigger><SelectValue placeholder="Select status" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="approved">Approved (Live on storefront)</SelectItem>
+                        <SelectItem value="pending">Pending review</SelectItem>
+                        <SelectItem value="rejected">Rejected (Hidden)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
                 <DialogFooter>
                   <Button variant="outline" onClick={() => setAddOpen(false)}>
@@ -694,8 +710,23 @@ function AdminProductsPanel() {
               p.requiredStock ?? 0,
               p.minimumStock ?? 30,
               <StatusBadge status={p.stock > 0 ? "Available" : "Out of Stock"} />,
-              `${p.rating}★ (${p.reviews})`,
-              <StatusBadge status={p.status} />,
+              <Select
+                value={p.status}
+                onValueChange={async (v) => {
+                  if (await updateProduct(p.id, { status: v as "approved" | "pending" | "rejected" })) {
+                    toast.success(`${p.name} marked as ${v}`);
+                  }
+                }}
+              >
+                <SelectTrigger className="h-7 w-[108px] text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="approved">Approved</SelectItem>
+                  <SelectItem value="pending">Pending</SelectItem>
+                  <SelectItem value="rejected">Rejected</SelectItem>
+                </SelectContent>
+              </Select>,
               <Switch
                 checked={p.active}
                 onCheckedChange={async (v) => { if (await updateProduct(p.id, { active: v })) toast.success(`${p.name} ${v ? "enabled" : "disabled"}`); }}
@@ -718,6 +749,7 @@ function AdminProductsPanel() {
                       minimumStock: String(p.minimumStock ?? 30),
                       warehouseStock: String(p.warehouseStock ?? p.stock),
                       requiredStock: String(p.requiredStock ?? 0),
+                      status: p.status,
                     });
                   }}
                 >
@@ -869,6 +901,20 @@ function AdminProductsPanel() {
                   onChange={(e) => setEditForm({ ...editForm, minimumStock: e.target.value })}
                 />
               </div>
+              <div>
+                <Label>Approval Status</Label>
+                <Select
+                  value={editForm.status}
+                  onValueChange={(v) => setEditForm({ ...editForm, status: v as "approved" | "pending" | "rejected" })}
+                >
+                  <SelectTrigger><SelectValue placeholder="Select status" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="approved">Approved (Live on storefront)</SelectItem>
+                    <SelectItem value="pending">Pending review</SelectItem>
+                    <SelectItem value="rejected">Rejected (Hidden)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
           </div>
           <DialogFooter>
@@ -889,6 +935,7 @@ function AdminProductsPanel() {
                   minimumStock: Number(editForm.minimumStock),
                   warehouseStock: Number(editForm.warehouseStock),
                   requiredStock: Number(editForm.requiredStock),
+                  status: editForm.status,
                 });
                 if (saved) { toast.success(`${editForm.name} updated`); setEditing(null); }
               }}

@@ -23,13 +23,13 @@ function About() {
   return (
     <SiteLayout>
       <div className="border-b border-border bg-ivory">
-        <div className="mx-auto max-w-7xl px-6 py-8">
+        <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8">
           <Breadcrumbs items={[{ label: "About" }]} />
-          <h1 className="mt-3 text-3xl font-bold text-navy">About the Company</h1>
+          <h1 className="mt-3 text-2xl font-bold text-navy sm:text-3xl">About the Company</h1>
         </div>
       </div>
 
-      <div className="mx-auto grid max-w-7xl gap-12 px-6 py-14 lg:grid-cols-[minmax(0,1fr)_360px]">
+      <div className="mx-auto grid max-w-7xl gap-8 px-4 py-8 sm:gap-12 sm:px-6 sm:py-14 lg:grid-cols-[minmax(0,1fr)_360px]">
         <div className="space-y-6 text-[15px] leading-relaxed text-charcoal">
           <p>
             Shami Business Ventures Pvt. Ltd. is a commodity trading and distribution company operating a

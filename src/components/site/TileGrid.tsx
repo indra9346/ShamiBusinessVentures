@@ -16,6 +16,15 @@ export function TileGrid({ tiles, basePath }: { tiles: Tile[]; basePath: string 
                 loading="lazy"
                 width={800}
                 height={800}
+                onError={(e) => {
+                  const cat = (basePath || t.label).toLowerCase();
+                  (e.currentTarget as HTMLImageElement).src =
+                    cat.includes("sugar")
+                      ? "/products/sugar.jpg"
+                      : cat.includes("oil")
+                      ? "/products/oil.jpg"
+                      : "/products/rice.jpg";
+                }}
                 className="aspect-[4/3] w-full object-cover transition-transform duration-500 group-hover:scale-105 sm:aspect-square"
               />
               <span className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-midnight/70 to-transparent" />

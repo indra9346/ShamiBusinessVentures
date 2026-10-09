@@ -106,9 +106,20 @@ function Checkout() {
       setAddr(addresses[0]!.id);
     }
   }, [addresses, addr]);
+  useEffect(() => {
+    if (user?.name || user?.phone) {
+      setAddressForm((current) => ({
+        ...current,
+        name: current.name || user.name || "",
+        phone: current.phone || user.phone || "",
+      }));
+    }
+  }, [user?.name, user?.phone]);
   const selectedProduct = productId ? products.find((p) => p.id === productId) : undefined;
   const checkoutItems = productId
-    ? cartItems.filter((line) => line.product.id === productId)
+    ? (cartItems.some((line) => line.product.id === productId)
+        ? cartItems.filter((line) => line.product.id === productId)
+        : (selectedProduct ? [{ product: selectedProduct, qty: 1 }] : []))
     : cartItems;
   const unresolvedCartLines = cartItems.length < cart.length;
   const subtotal = checkoutItems.reduce((sum, line) => sum + line.product.price * line.qty, 0);
@@ -273,21 +284,21 @@ function Checkout() {
   return (
     <SiteLayout>
       <div className="border-b border-border bg-ivory">
-        <div className="mx-auto max-w-7xl px-6 py-8">
+        <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8">
           <Breadcrumbs items={[{ label: "Cart", to: "/cart" }, { label: "Checkout" }]} />
-          <h1 className="mt-3 text-3xl font-bold text-navy">
+          <h1 className="mt-3 text-2xl font-bold text-navy sm:text-3xl">
             {selectedProduct ? `${selectedProduct.name} — CHECKOUT` : "Checkout"}
           </h1>
         </div>
       </div>
 
-      <div className="mx-auto max-w-7xl px-6 py-10">
-        <ol className="mb-10 flex flex-wrap gap-x-6 gap-y-3">
+      <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-10">
+        <ol className="mb-8 flex flex-wrap gap-x-4 gap-y-2 sm:mb-10 sm:gap-x-6 sm:gap-y-3">
           {steps.map((s, i) => (
-            <li key={s} className="flex items-center gap-2 text-sm">
+            <li key={s} className="flex items-center gap-1.5 sm:gap-2 text-xs sm:text-sm">
               <span
                 className={cn(
-                  "grid h-7 w-7 place-items-center rounded-full text-xs font-bold",
+                  "grid h-6 w-6 sm:h-7 sm:w-7 place-items-center rounded-full text-xs font-bold",
                   i < step
                     ? "bg-gold text-midnight"
                     : i === step
@@ -304,8 +315,8 @@ function Checkout() {
           ))}
         </ol>
 
-        <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_360px]">
-          <div className="rounded-lg border border-border bg-card p-6 shadow-card">
+        <div className="grid gap-6 sm:gap-8 lg:grid-cols-[minmax(0,1fr)_360px]">
+          <div className="rounded-lg border border-border bg-card p-4 sm:p-6 shadow-card">
             {step === 0 && (
               <>
                 <h2 className="text-lg font-bold text-navy">Delivery Address</h2>
@@ -451,11 +462,20 @@ function Checkout() {
                       className="flex items-center gap-3 border-b border-border pb-3 last:border-0"
                     >
                       <img
-                        src={product.image}
+                        src={product.image || `/products/${product.category.toLowerCase()}.jpg`}
                         alt={product.name}
                         loading="lazy"
                         width={800}
                         height={800}
+                        onError={(e) => {
+                          const cat = product.category.toLowerCase();
+                          (e.currentTarget as HTMLImageElement).src =
+                            cat.includes("sugar")
+                              ? "/products/sugar.jpg"
+                              : cat.includes("oil")
+                              ? "/products/oil.jpg"
+                              : "/products/rice.jpg";
+                        }}
                         className="h-14 w-14 rounded-md object-cover"
                       />
                       <div className="min-w-0 flex-1">

@@ -9,7 +9,7 @@ import { AddToCartPicker } from "@/components/site/AddToCartPicker";
 
 export function ProductCard({ product }: { product: Product }) {
   const { addToCart, toggleWishlist, wishlist } = useApp();
-  const off = Math.round(((product.mrp - product.price) / product.mrp) * 100);
+  const off = product.mrp > product.price ? Math.max(0, Math.round(((product.mrp - product.price) / product.mrp) * 100)) : 0;
   const wished = wishlist.includes(product.id);
 
   return (
@@ -17,11 +17,20 @@ export function ProductCard({ product }: { product: Product }) {
       <div className="relative overflow-hidden bg-ivory">
         <Link to="/product/$id" params={{ id: product.id }}>
           <img
-            src={product.image}
+            src={product.image || `/products/${product.category.toLowerCase()}.jpg`}
             alt={product.name}
             loading="lazy"
             width={800}
             height={800}
+            onError={(e) => {
+              const cat = product.category.toLowerCase();
+              (e.currentTarget as HTMLImageElement).src =
+                cat.includes("sugar")
+                  ? "/products/sugar.jpg"
+                  : cat.includes("oil")
+                  ? "/products/oil.jpg"
+                  : "/products/rice.jpg";
+            }}
             className="aspect-square w-full object-cover transition-transform duration-500 group-hover:scale-105"
           />
         </Link>

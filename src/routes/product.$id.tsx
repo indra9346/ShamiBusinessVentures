@@ -75,36 +75,46 @@ function ProductDetail() {
   const availableStock = Math.max(0, Math.floor((Number(product.stock) || 0) - (Number(product.reserved) || 0)));
   const vendor = vendors.find((v) => v.id === product.vendorId);
   const off = Math.round(((product.mrp - product.price) / product.mrp) * 100);
-  const gallery = [product.image, product.image, product.image];
+  const productImg = product.image || `/products/${product.category.toLowerCase()}.jpg`;
+  const gallery = [productImg, productImg, productImg];
   const related = products.filter((p) => isStorefrontProduct(p) && p.id !== product.id).slice(0, 4);
   const productReviews = reviews.filter((review) => review.productId === product.id && review.status === "Published");
 
   return (
     <SiteLayout>
       <div className="border-b border-border bg-ivory">
-        <div className="mx-auto max-w-7xl px-6 py-6">
+        <div className="mx-auto max-w-7xl px-4 py-4 sm:px-6 sm:py-6">
           <Breadcrumbs items={[{ label: "Shop", to: "/shop" }, { label: product.category }, { label: product.name }]} />
         </div>
       </div>
 
-      <div className="mx-auto grid max-w-7xl gap-10 px-6 py-10 lg:grid-cols-2">
+      <div className="mx-auto grid max-w-7xl gap-8 px-4 py-6 sm:gap-10 sm:px-6 sm:py-10 lg:grid-cols-2">
         <div>
           <div className="overflow-hidden rounded-xl border border-border bg-ivory">
             <img
-              src={gallery[active]}
+              src={gallery[active] || productImg}
               alt={product.name}
               width={800}
               height={800}
+              onError={(e) => {
+                const cat = product.category.toLowerCase();
+                (e.currentTarget as HTMLImageElement).src =
+                  cat.includes("sugar")
+                    ? "/products/sugar.jpg"
+                    : cat.includes("oil")
+                    ? "/products/oil.jpg"
+                    : "/products/rice.jpg";
+              }}
               className="aspect-square w-full object-cover"
             />
           </div>
-          <div className="mt-4 flex gap-3">
+          <div className="mt-4 flex gap-3 overflow-x-auto pb-1">
             {gallery.map((g, i) => (
               <button
                 key={i}
                 onClick={() => setActive(i)}
                 className={cn(
-                  "h-20 w-20 overflow-hidden rounded-lg border-2",
+                  "h-16 w-16 sm:h-20 sm:w-20 shrink-0 overflow-hidden rounded-lg border-2",
                   active === i ? "border-gold" : "border-border",
                 )}
               >
@@ -141,17 +151,17 @@ function ProductDetail() {
             {availableStock > 0 ? `In stock — ${availableStock} units available` : "Currently out of stock"}
           </p>
 
-          <div className="mt-6 flex flex-wrap items-center gap-4">
+          <div className="mt-6 flex flex-wrap items-center gap-3 sm:gap-4">
             <div className="flex items-center rounded-md border border-border">
-              <button onClick={() => setQty(Math.max(1, qty - 1))} className="p-3 text-navy hover:text-gold" aria-label="Decrease">
+              <button onClick={() => setQty(Math.max(1, qty - 1))} className="p-2.5 sm:p-3 text-navy hover:text-gold" aria-label="Decrease">
                 <Minus className="h-4 w-4" />
               </button>
-              <span className="w-12 text-center font-semibold text-navy">{qty}</span>
-              <button onClick={() => setQty(Math.min(availableStock || 1, qty + 1))} className="p-3 text-navy hover:text-gold" aria-label="Increase" disabled={qty >= availableStock}>
+              <span className="w-10 sm:w-12 text-center font-semibold text-navy">{qty}</span>
+              <button onClick={() => setQty(Math.min(availableStock || 1, qty + 1))} className="p-2.5 sm:p-3 text-navy hover:text-gold" aria-label="Increase" disabled={qty >= availableStock}>
                 <Plus className="h-4 w-4" />
               </button>
             </div>
-            <div className="min-w-52 flex-1 sm:flex-none"><AddToCartPicker product={product} initialQty={qty} /></div>
+            <div className="w-full sm:w-auto min-w-44 flex-1"><AddToCartPicker product={product} initialQty={qty} /></div>
             <Link
               to="/checkout"
               search={{ productId: product.id }}
@@ -159,7 +169,7 @@ function ProductDetail() {
                 addToCart(product.id, qty);
               }}
               className={cn(
-                "flex-1 rounded-md bg-gold px-6 py-3.5 text-center text-sm font-bold text-midnight transition-colors hover:bg-gold-light sm:flex-none",
+                "w-full sm:w-auto flex-1 rounded-md bg-gold px-6 py-3.5 text-center text-sm font-bold text-midnight transition-colors hover:bg-gold-light sm:flex-none",
                 availableStock === 0 && "pointer-events-none opacity-40",
               )}
             >
@@ -200,7 +210,7 @@ function ProductDetail() {
         </div>
       </div>
 
-      <div className="mx-auto max-w-7xl px-6 pb-14">
+      <div className="mx-auto max-w-7xl px-4 pb-12 sm:px-6 sm:pb-14">
         <Tabs defaultValue="desc">
           <TabsList className="flex-wrap">
             <TabsTrigger value="desc">Description</TabsTrigger>
