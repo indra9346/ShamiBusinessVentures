@@ -13,13 +13,24 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+interface EnquiryRequestBody {
+  name?: string;
+  email?: string;
+  phone?: string;
+  message?: string;
+}
+
 serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
 
   try {
-    const { name, email, phone, message } = await req.json();
+    const body = ((await req.json()) || {}) as EnquiryRequestBody;
+    const name = (body.name || "").trim();
+    const email = (body.email || "").trim();
+    const phone = (body.phone || "").trim();
+    const message = (body.message || "").trim();
 
     if (!name || !email || !message) {
       return new Response(
@@ -106,9 +117,10 @@ serve(async (req: Request) => {
       }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
-  } catch (error: any) {
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Unknown error processing enquiry";
     return new Response(
-      JSON.stringify({ error: error?.message || "Unknown error processing enquiry" }),
+      JSON.stringify({ error: errorMessage }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
