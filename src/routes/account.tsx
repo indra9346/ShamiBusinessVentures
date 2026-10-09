@@ -388,7 +388,7 @@ function Account() {
             </div>
             <div>
               <dt className="text-xs text-slate uppercase">Phone</dt>
-              <dd className="font-semibold text-navy">{user?.phone ?? "—"}</dd>
+              <dd className="font-semibold text-navy">{user?.phone || "—"}</dd>
             </div>
           </dl>
         </Panel>
