@@ -29,19 +29,17 @@ export function AddToCartPicker({
       setTypedQty("");
       return;
     }
-    const clean = raw.replace(/\D/g, "");
-    if (!clean) {
-      setTypedQty("");
+    if (!/^\d+$/.test(raw)) {
       return;
     }
-    const num = parseInt(clean, 10);
+    const num = parseInt(raw, 10);
     if (availableStock > 0 && num > availableStock) {
       toast.error(`Only ${availableStock} units available`);
       setQty(availableStock);
       setTypedQty(String(availableStock));
       return;
     }
-    setTypedQty(clean);
+    setTypedQty(raw);
     if (num >= 1) {
       setQty(num);
     }

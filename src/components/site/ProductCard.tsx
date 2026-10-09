@@ -119,9 +119,15 @@ export function ProductCard({
             <Link
               to="/checkout"
               search={{ productId: product.id }}
-              onClick={() => {
+              onClick={(e) => {
+                if (availableStock === 0) {
+                  e.preventDefault();
+                  return;
+                }
                 addToCart(product.id);
               }}
+              tabIndex={availableStock === 0 ? -1 : undefined}
+              aria-disabled={availableStock === 0}
               className={cn(
                 "flex h-9 sm:h-10 flex-1 items-center justify-center rounded-md bg-gold px-4 text-xs sm:text-sm font-bold text-midnight transition-colors hover:bg-gold-light",
                 availableStock === 0 && "pointer-events-none opacity-40",
@@ -214,9 +220,15 @@ export function ProductCard({
           <Link
             to="/checkout"
             search={{ productId: product.id }}
-            onClick={() => {
+            onClick={(e) => {
+              if (availableStock === 0) {
+                e.preventDefault();
+                return;
+              }
               addToCart(product.id);
             }}
+            tabIndex={availableStock === 0 ? -1 : undefined}
+            aria-disabled={availableStock === 0}
             className={cn(
               "flex flex-1 items-center justify-center rounded-md bg-gold px-3 py-2 sm:py-2.5 text-xs font-bold text-midnight transition-colors hover:bg-gold-light",
               availableStock === 0 && "pointer-events-none opacity-40",

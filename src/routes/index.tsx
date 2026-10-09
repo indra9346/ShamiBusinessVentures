@@ -174,11 +174,13 @@ function HomeProductCard({ product }: { product: Product }) {
     : "/products/rice.jpg";
 
   const add = () => {
+    if (availableStock === 0) return;
     addToCart(product.id);
     showCartNotification(t("Added to cart"), t(product.name), "add", product.image || fallbackImg);
   };
 
   const buy = () => {
+    if (availableStock === 0) return;
     addToCart(product.id);
     showCustomerNotification(
       `${product.name} — CHECKOUT`,

@@ -91,20 +91,18 @@ function ProductDetail() {
       setTypedQty("");
       return;
     }
-    const digitsOnly = raw.replace(/\D/g, "");
-    if (!digitsOnly) {
-      setTypedQty("");
+    if (!/^\d+$/.test(raw)) {
       return;
     }
     const max = availableStock > 0 ? availableStock : 9999;
-    const num = parseInt(digitsOnly, 10);
+    const num = parseInt(raw, 10);
     if (num > max) {
       toast.error(`Only ${max} units available in stock`);
       setTypedQty(String(max));
       setQty(max);
       return;
     }
-    setTypedQty(digitsOnly);
+    setTypedQty(raw);
     if (num >= 1) {
       setQty(num);
     }
@@ -262,9 +260,15 @@ function ProductDetail() {
               <Link
                 to="/checkout"
                 search={{ productId: product.id }}
-                onClick={() => {
+                onClick={(e) => {
+                  if (availableStock === 0) {
+                    e.preventDefault();
+                    return;
+                  }
                   addToCart(product.id, qty);
                 }}
+                tabIndex={availableStock === 0 ? -1 : undefined}
+                aria-disabled={availableStock === 0}
                 className={cn(
                   "flex h-11 flex-1 items-center justify-center rounded-md bg-gold px-6 text-sm font-bold text-midnight transition-colors hover:bg-gold-light shadow-xs sm:flex-none sm:min-w-36",
                   availableStock === 0 && "pointer-events-none opacity-40",
