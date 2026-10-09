@@ -1,3 +1,11 @@
+// Ambient types for Deno runtime compatibility in non-Deno IDEs
+declare const Deno: {
+  env: {
+    get(key: string): string | undefined;
+  };
+};
+
+// @ts-ignore - Deno URL import for Supabase Edge Functions
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
 const corsHeaders = {

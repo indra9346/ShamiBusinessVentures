@@ -230,36 +230,46 @@ function Contact() {
             </div>
 
             <div className="mt-6 grid gap-5 sm:grid-cols-2">
-              <Field label="Full name" error={errors["name"]}>
+              <Field id="contact-name" label="Full name" error={errors["name"]}>
                 <Input
+                  id="contact-name"
+                  name="name"
                   value={form.name}
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
-                  placeholder="e.g. K S Indra Kumar"
+                  placeholder="Enter your full name"
                   maxLength={100}
                 />
               </Field>
-              <Field label="Email" error={errors["email"]}>
+              <Field id="contact-email" label="Email" error={errors["email"]}>
                 <Input
+                  id="contact-email"
+                  name="email"
+                  type="email"
                   value={form.email}
                   onChange={(e) => setForm({ ...form, email: e.target.value })}
-                  placeholder="e.g. ik989344@gmail.com"
+                  placeholder="name@example.com"
                   maxLength={255}
                 />
               </Field>
-              <Field label="Phone number" error={errors["phone"]}>
+              <Field id="contact-phone" label="Phone number" error={errors["phone"]}>
                 <Input
+                  id="contact-phone"
+                  name="phone"
+                  type="tel"
                   value={form.phone}
                   onChange={(e) => setForm({ ...form, phone: e.target.value })}
-                  placeholder="e.g. 9346476951"
+                  placeholder="+91 98765 43210"
                   maxLength={15}
                 />
               </Field>
               <div className="sm:col-span-2">
-                <Field label="Message / Requirement details" error={errors["message"]}>
+                <Field id="contact-message" label="Message / Requirement details" error={errors["message"]}>
                   <Textarea
+                    id="contact-message"
+                    name="message"
                     rows={5}
                     maxLength={1000}
-                    placeholder="Tell us about your requirement, bulk quantity (e.g. 25 MT Sugar, 50 bags Sona Masoori Rice), or support issue..."
+                    placeholder="Describe your bulk commodity requirement, quantity, or query..."
                     value={form.message}
                     onChange={(e) => setForm({ ...form, message: e.target.value })}
                   />
@@ -357,19 +367,23 @@ function Contact() {
 }
 
 function Field({
+  id,
   label,
   error,
   children,
 }: {
+  id?: string;
   label: string;
   error?: string | undefined;
   children: React.ReactNode;
 }) {
   return (
-    <label className="block">
-      <span className="mb-1.5 block text-xs font-semibold text-charcoal">{label}</span>
+    <div className="block">
+      <label htmlFor={id} className="mb-1.5 block text-xs font-semibold text-charcoal cursor-pointer">
+        {label}
+      </label>
       {children}
       {error && <span className="mt-1 block text-xs font-medium text-danger">{error}</span>}
-    </label>
+    </div>
   );
 }
