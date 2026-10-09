@@ -888,6 +888,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
       orders,
       placeOrder: async ({ lines, method, payment, coupon, customerIndex = 0, customerOverride, shippingAddress, delivery, subtotal, discount, tax, shipping, source, paymentDueDate }) => {
+        if (method === "Cash on Delivery" || method === "COD") {
+          throw new Error("Cash on delivery is not enabled for this store. Please select an online payment method (UPI, Card, Net Banking).");
+        }
         const id = `ORD-${20000 + Math.floor(Math.random() * 9000)}`;
         const order = buildOrder(
           id,

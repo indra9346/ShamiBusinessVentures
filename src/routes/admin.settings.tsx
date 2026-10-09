@@ -197,12 +197,12 @@ function AdminSettings() {
               <div className="grid gap-1.5"><Label>Payment window (minutes)</Label><Input type="number" value={commerce.paymentWindow} onChange={(e) => setCommerce((c) => ({ ...c, paymentWindow: e.target.value }))} /></div>
               <div className="grid gap-1.5"><Label>Free freight above (₹)</Label><Input type="number" value={commerce.freeShipAbove} onChange={(e) => setCommerce((c) => ({ ...c, freeShipAbove: e.target.value }))} /></div>
               <div className="grid gap-1.5"><Label>Flat freight charge (₹)</Label><Input type="number" value={commerce.shippingFlat} onChange={(e) => setCommerce((c) => ({ ...c, shippingFlat: e.target.value }))} /></div>
-              <div className="flex items-center justify-between gap-4 rounded-md border border-border p-4 sm:col-span-2">
+              <div className="flex items-center justify-between gap-4 rounded-md border border-border bg-ivory/40 p-4 sm:col-span-2">
                 <div>
-                  <p className="text-sm font-bold text-navy">Cash on Delivery</p>
-                  <p className="text-xs text-slate">Cash on delivery is currently blocked by checkout until a verified collection and reconciliation workflow is configured.</p>
+                  <p className="text-sm font-bold text-navy">Cash on Delivery (Disabled)</p>
+                  <p className="text-xs text-slate">Cash on delivery is permanently disabled across the platform. All commodity and marketplace orders require online payment (UPI, Cards, Net Banking).</p>
                 </div>
-                <Switch checked={false} disabled aria-label="Cash on delivery is unavailable" />
+                <Switch checked={false} disabled aria-label="Cash on delivery is permanently disabled" />
               </div>
               <Button
                 className="bg-navy text-white hover:bg-navy/90 sm:w-fit"

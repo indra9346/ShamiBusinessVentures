@@ -353,7 +353,7 @@ function ProductDetail() {
           </TabsContent>
           <TabsContent value="delivery" className="rounded-lg border border-border bg-card p-6 text-sm text-charcoal">
             Standard freight delivery in 2–4 business days. Free delivery applies to eligible orders above ₹10,000.
-            Online payment options are shown at checkout; cash on delivery is currently unavailable.
+            Online payment options are shown at checkout (UPI, Credit/Debit Card, Net Banking); Cash on Delivery is not available.
           </TabsContent>
           <TabsContent value="reviews" className="rounded-lg border border-border bg-card p-6">
             <div className="space-y-5">

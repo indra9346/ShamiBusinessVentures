@@ -90,14 +90,54 @@ export function SiteFooter() {
             <p className="mt-0.5 text-white/50">GSTIN 29ABCDE1234F1Z5 · FSSAI 10023456789012</p>
           </div>
 
-          <div className="flex items-center gap-2 text-white/70">
-            <span className="text-[11px] font-medium tracking-wide">Developed by</span>
+          <div className="flex flex-wrap items-center gap-1.5 text-white/75 text-xs sm:text-[13px]">
+            <span className="font-medium tracking-wide">Designed &amp; Developed with</span>
+            <span
+              className="inline-flex items-center mx-1 select-none align-middle"
+              aria-label="love"
+              title="Crafted with passion"
+            >
+              <span className="inline-block animate-realistic-3d-heart transform-gpu">
+                <svg
+                  viewBox="0 0 32 32"
+                  className="h-4.5 w-4.5 sm:h-5 sm:w-5"
+                  fill="none"
+                  xmlns="http://www.w3.org/2000/svg"
+                >
+                  <defs>
+                    <radialGradient id="footerHeart3d" cx="35%" cy="30%" r="65%">
+                      <stop offset="0%" stopColor="#ff5a79" />
+                      <stop offset="40%" stopColor="#ef233c" />
+                      <stop offset="85%" stopColor="#a30022" />
+                      <stop offset="100%" stopColor="#590012" />
+                    </radialGradient>
+                    <linearGradient id="footerHeartHighlight" x1="20%" y1="15%" x2="55%" y2="55%">
+                      <stop offset="0%" stopColor="#ffffff" stopOpacity="0.85" />
+                      <stop offset="100%" stopColor="#ffffff" stopOpacity="0" />
+                    </linearGradient>
+                  </defs>
+                  <path
+                    d="M16 28.5C15.6 28.5 15.2 28.3 14.9 28C11.5 24.6 3 17.5 3 10.5C3 5.8 6.8 2 11.5 2C13.8 2 15.1 3.1 16 4.2C16.9 3.1 18.2 2 20.5 2C25.2 2 29 5.8 29 10.5C29 17.5 20.5 24.6 17.1 28C16.8 28.3 16.4 28.5 16 28.5Z"
+                    fill="url(#footerHeart3d)"
+                  />
+                  <ellipse
+                    cx="10.5"
+                    cy="7.5"
+                    rx="4.5"
+                    ry="2.5"
+                    transform="rotate(-35 10.5 7.5)"
+                    fill="url(#footerHeartHighlight)"
+                  />
+                </svg>
+              </span>
+            </span>
+            <span className="font-medium tracking-wide">by</span>
             <a
-              href="https://webhostingbaba.com"
+              href="https://webhostingbaba.com/"
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center transition-transform hover:scale-105"
-              title="Web Hosting Baba"
+              className="inline-flex items-center transition-all duration-300 hover:scale-105 hover:opacity-95"
+              title="Web Hosting Baba — https://webhostingbaba.com/"
             >
               <img
                 src={webHostingBabaLogo}
