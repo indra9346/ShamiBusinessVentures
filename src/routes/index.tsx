@@ -130,7 +130,7 @@ function Index() {
               <h2 className="mt-1 text-2xl font-bold text-navy sm:text-3xl">Popular Products</h2>
             </div>
             <Link
-              to="/shop"
+              to="/categories"
               className="shrink-0 text-sm font-semibold text-navy transition-colors hover:text-gold"
             >
               View all
@@ -143,7 +143,7 @@ function Index() {
           </div>
           <div className="mt-8 text-center">
             <Button asChild size="lg" className="h-11 px-7 font-bold bg-navy text-white hover:bg-midnight">
-              <Link to="/shop">
+              <Link to="/categories">
                 All Products <ArrowRight className="ml-2 h-4 w-4" />
               </Link>
             </Button>

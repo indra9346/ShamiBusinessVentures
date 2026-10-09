@@ -41,7 +41,7 @@ function Categories() {
 
       <div className="mx-auto max-w-7xl space-y-12 px-4 pb-14 sm:px-6 sm:space-y-14">
         {cats.map((c) => {
-          const items = products.filter((p) => p.category === c.name && isStorefrontProduct(p)).slice(0, 4);
+          const items = products.filter((p) => p.category === c.name && isStorefrontProduct(p));
           if (!items.length) return null;
           return (
             <section key={c.id}>

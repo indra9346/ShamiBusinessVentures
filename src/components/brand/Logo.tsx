@@ -14,7 +14,7 @@ export function Logo({
   return (
     <Link
       to={to}
-      className={cn("inline-flex shrink-0 items-center", className)}
+      className={cn("inline-flex shrink-0 items-center gap-2 sm:gap-2.5", className)}
       aria-label="Grain Bazar home"
     >
       <img
@@ -22,11 +22,11 @@ export function Logo({
         alt="Grain Bazar"
         width={512}
         height={512}
-        className="h-10 w-10 rounded-lg bg-white object-contain p-1 shadow-sm sm:h-11 sm:w-11"
+        className="h-9 w-9 rounded-lg bg-white object-contain p-1 shadow-sm sm:h-11 sm:w-11"
       />
       <span
         className={cn(
-          "ml-2.5 whitespace-nowrap text-sm font-extrabold tracking-wide sm:text-base",
+          "whitespace-nowrap text-xs font-extrabold tracking-wide sm:text-base",
           variant === "light" ? "text-white" : "text-navy",
         )}
       >
