@@ -59,8 +59,19 @@ export function PanelLayout({
       const config = data?.value && typeof data.value === "object" && !Array.isArray(data.value)
         ? data.value as Record<string, unknown>
         : {};
-      const configured = Number(config["autoLogout"] ?? (Number(config["session_hours"]) * 60));
-      if (Number.isFinite(configured) && configured >= 5) setAdminIdleTimeoutMinutes(Math.min(1440, configured));
+      const rawAutoLogout = config["autoLogout"];
+      const rawSessionHours = config["session_hours"];
+      let configured: number | null = null;
+      if (rawAutoLogout !== null && rawAutoLogout !== undefined && rawAutoLogout !== "") {
+        const num = Number(rawAutoLogout);
+        if (Number.isFinite(num)) configured = num;
+      } else if (rawSessionHours !== null && rawSessionHours !== undefined && rawSessionHours !== "") {
+        const hours = Number(rawSessionHours);
+        if (Number.isFinite(hours) && hours > 0) configured = hours * 60;
+      }
+      if (configured !== null && Number.isFinite(configured) && configured >= 5) {
+        setAdminIdleTimeoutMinutes(Math.min(1440, configured));
+      }
     });
     const applySavedTimeout = (event: Event) => {
       const value = Number((event as CustomEvent<number>).detail);

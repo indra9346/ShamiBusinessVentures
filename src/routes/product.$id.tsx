@@ -1,6 +1,6 @@
 import { createFileRoute, Link, notFound } from "@tanstack/react-router";
-import { useState } from "react";
-import { Heart, Minus, Plus, ShieldCheck, Star, Truck, Store } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Heart, Minus, Plus, ShieldCheck, Star, Truck, Store, ShoppingCart } from "lucide-react";
 import { toast } from "sonner";
 import { SiteLayout, Breadcrumbs, SectionHeading } from "@/components/site/SiteLayout";
 import { ProductCard } from "@/components/site/ProductCard";
@@ -53,7 +53,12 @@ function ProductDetail() {
   const { product, catalogUnavailable } = Route.useLoaderData();
   const { addToCart, toggleWishlist, wishlist, products, reviews, vendors } = useApp();
   const [qty, setQty] = useState(1);
+  const [typedQty, setTypedQty] = useState("1");
   const [active, setActive] = useState(0);
+
+  useEffect(() => {
+    setTypedQty(String(qty));
+  }, [qty]);
 
   if (!product) {
     return (
@@ -75,36 +80,82 @@ function ProductDetail() {
   const availableStock = Math.max(0, Math.floor((Number(product.stock) || 0) - (Number(product.reserved) || 0)));
   const vendor = vendors.find((v) => v.id === product.vendorId);
   const off = Math.round(((product.mrp - product.price) / product.mrp) * 100);
-  const gallery = [product.image, product.image, product.image];
+  const productImg = product.image || `/products/${product.category.toLowerCase()}.jpg`;
+  const gallery = [productImg, productImg, productImg];
   const related = products.filter((p) => isStorefrontProduct(p) && p.id !== product.id).slice(0, 4);
   const productReviews = reviews.filter((review) => review.productId === product.id && review.status === "Published");
+
+  const handleQtyChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const raw = e.target.value;
+    if (raw === "") {
+      setTypedQty("");
+      return;
+    }
+    if (!/^\d+$/.test(raw)) {
+      return;
+    }
+    const max = availableStock > 0 ? availableStock : 9999;
+    const num = parseInt(raw, 10);
+    if (num > max) {
+      toast.error(`Only ${max} units available in stock`);
+      setTypedQty(String(max));
+      setQty(max);
+      return;
+    }
+    setTypedQty(raw);
+    if (num >= 1) {
+      setQty(num);
+    }
+  };
+
+  const handleQtyBlur = () => {
+    const parsed = parseInt(typedQty, 10);
+    if (isNaN(parsed) || parsed < 1) {
+      setQty(1);
+      setTypedQty("1");
+    } else {
+      const max = availableStock > 0 ? availableStock : 9999;
+      const clamped = Math.min(max, parsed);
+      setQty(clamped);
+      setTypedQty(String(clamped));
+    }
+  };
 
   return (
     <SiteLayout>
       <div className="border-b border-border bg-ivory">
-        <div className="mx-auto max-w-7xl px-6 py-6">
+        <div className="mx-auto max-w-7xl px-4 py-4 sm:px-6 sm:py-6">
           <Breadcrumbs items={[{ label: "Shop", to: "/shop" }, { label: product.category }, { label: product.name }]} />
         </div>
       </div>
 
-      <div className="mx-auto grid max-w-7xl gap-10 px-6 py-10 lg:grid-cols-2">
+      <div className="mx-auto grid max-w-7xl gap-8 px-4 py-6 sm:gap-10 sm:px-6 sm:py-10 lg:grid-cols-2">
         <div>
           <div className="overflow-hidden rounded-xl border border-border bg-ivory">
             <img
-              src={gallery[active]}
+              src={gallery[active] || productImg}
               alt={product.name}
               width={800}
               height={800}
+              onError={(e) => {
+                const cat = product.category.toLowerCase();
+                (e.currentTarget as HTMLImageElement).src =
+                  cat.includes("sugar")
+                    ? "/products/sugar.jpg"
+                    : cat.includes("oil")
+                    ? "/products/oil.jpg"
+                    : "/products/rice.jpg";
+              }}
               className="aspect-square w-full object-cover"
             />
           </div>
-          <div className="mt-4 flex gap-3">
+          <div className="mt-4 flex gap-3 overflow-x-auto pb-1">
             {gallery.map((g, i) => (
               <button
                 key={i}
                 onClick={() => setActive(i)}
                 className={cn(
-                  "h-20 w-20 overflow-hidden rounded-lg border-2",
+                  "h-16 w-16 sm:h-20 sm:w-20 shrink-0 overflow-hidden rounded-lg border-2",
                   active === i ? "border-gold" : "border-border",
                 )}
               >
@@ -141,46 +192,108 @@ function ProductDetail() {
             {availableStock > 0 ? `In stock — ${availableStock} units available` : "Currently out of stock"}
           </p>
 
-          <div className="mt-6 flex flex-wrap items-center gap-4">
-            <div className="flex items-center rounded-md border border-border">
-              <button onClick={() => setQty(Math.max(1, qty - 1))} className="p-3 text-navy hover:text-gold" aria-label="Decrease">
-                <Minus className="h-4 w-4" />
-              </button>
-              <span className="w-12 text-center font-semibold text-navy">{qty}</span>
-              <button onClick={() => setQty(Math.min(availableStock || 1, qty + 1))} className="p-3 text-navy hover:text-gold" aria-label="Increase" disabled={qty >= availableStock}>
-                <Plus className="h-4 w-4" />
+          <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-3">
+            <div className="flex items-center gap-2.5 sm:gap-3">
+              <div className="flex h-11 items-center rounded-md border border-border bg-card shadow-xs focus-within:border-gold focus-within:ring-1 focus-within:ring-gold">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = Math.max(1, qty - 1);
+                    setQty(next);
+                    setTypedQty(String(next));
+                  }}
+                  disabled={qty <= 1}
+                  className="flex h-full w-10 items-center justify-center text-navy transition-colors hover:text-gold disabled:opacity-30"
+                  aria-label="Decrease quantity"
+                >
+                  <Minus className="h-4 w-4" />
+                </button>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  value={typedQty}
+                  onChange={handleQtyChange}
+                  onBlur={handleQtyBlur}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      (e.target as HTMLInputElement).blur();
+                    }
+                  }}
+                  aria-label="Product quantity"
+                  className="h-full w-12 sm:w-14 border-0 bg-transparent text-center font-bold text-navy outline-none focus:outline-none focus:ring-0"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = Math.min(availableStock || 1, qty + 1);
+                    setQty(next);
+                    setTypedQty(String(next));
+                  }}
+                  disabled={qty >= availableStock}
+                  className="flex h-full w-10 items-center justify-center text-navy transition-colors hover:text-gold disabled:opacity-30"
+                  aria-label="Increase quantity"
+                >
+                  <Plus className="h-4 w-4" />
+                </button>
+              </div>
+
+              <button
+                type="button"
+                disabled={availableStock === 0}
+                onClick={() => {
+                  addToCart(product.id, qty);
+                  showCustomerNotification(
+                    "Added to cart",
+                    `${product.name} (Qty ${qty})`,
+                    "success",
+                    productImg,
+                  );
+                }}
+                className="flex h-11 flex-1 sm:flex-initial sm:min-w-44 items-center justify-center gap-2 rounded-md bg-navy px-4 text-sm font-bold text-white transition-colors hover:bg-midnight disabled:opacity-40 shadow-xs"
+              >
+                <ShoppingCart className="h-4 w-4" /> Add to Cart
               </button>
             </div>
-            <div className="min-w-52 flex-1 sm:flex-none"><AddToCartPicker product={product} initialQty={qty} /></div>
-            <Link
-              to="/checkout"
-              search={{ productId: product.id }}
-              onClick={() => {
-                addToCart(product.id, qty);
-              }}
-              className={cn(
-                "flex-1 rounded-md bg-gold px-6 py-3.5 text-center text-sm font-bold text-midnight transition-colors hover:bg-gold-light sm:flex-none",
-                availableStock === 0 && "pointer-events-none opacity-40",
-              )}
-            >
-              Buy Now
-            </Link>
-            <button
-              onClick={() => {
-                const nextWished = !wishlist.includes(product.id);
-                toggleWishlist(product.id);
-                showCustomerNotification(
-                  nextWished ? "Added to wishlist" : "Removed from wishlist",
-                  product.name,
-                  nextWished ? "success" : "remove",
-                  product.image
-                );
-              }}
-              aria-label="Wishlist"
-              className="grid h-12 w-12 place-items-center rounded-md border border-border text-slate hover:border-gold hover:text-gold"
-            >
-              <Heart className={cn("h-5 w-5", wishlist.includes(product.id) && "fill-gold text-gold")} />
-            </button>
+
+            <div className="flex items-center gap-2.5 sm:gap-3 sm:flex-1">
+              <Link
+                to="/checkout"
+                search={{ productId: product.id }}
+                onClick={(e) => {
+                  if (availableStock === 0) {
+                    e.preventDefault();
+                    return;
+                  }
+                  addToCart(product.id, qty);
+                }}
+                tabIndex={availableStock === 0 ? -1 : undefined}
+                aria-disabled={availableStock === 0}
+                className={cn(
+                  "flex h-11 flex-1 items-center justify-center rounded-md bg-gold px-6 text-sm font-bold text-midnight transition-colors hover:bg-gold-light shadow-xs sm:flex-none sm:min-w-36",
+                  availableStock === 0 && "pointer-events-none opacity-40",
+                )}
+              >
+                Buy Now
+              </Link>
+              <button
+                type="button"
+                onClick={() => {
+                  const nextWished = !wishlist.includes(product.id);
+                  toggleWishlist(product.id);
+                  showCustomerNotification(
+                    nextWished ? "Added to wishlist" : "Removed from wishlist",
+                    product.name,
+                    nextWished ? "success" : "remove",
+                    product.image,
+                  );
+                }}
+                aria-label="Wishlist"
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md border border-border text-slate transition-colors hover:border-gold hover:text-gold shadow-xs"
+              >
+                <Heart className={cn("h-5 w-5", wishlist.includes(product.id) && "fill-gold text-gold")} />
+              </button>
+            </div>
           </div>
 
           <div className="mt-8 grid gap-3 rounded-lg border border-border bg-ivory p-5 text-sm sm:grid-cols-3">
@@ -200,7 +313,7 @@ function ProductDetail() {
         </div>
       </div>
 
-      <div className="mx-auto max-w-7xl px-6 pb-14">
+      <div className="mx-auto max-w-7xl px-4 pb-12 sm:px-6 sm:pb-14">
         <Tabs defaultValue="desc">
           <TabsList className="flex-wrap">
             <TabsTrigger value="desc">Description</TabsTrigger>

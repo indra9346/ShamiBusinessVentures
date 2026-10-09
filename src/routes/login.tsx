@@ -47,16 +47,33 @@ function LoginPage() {
     if (!ok) return;
     const clean = email.trim().toLowerCase();
     const { data: { user: authUser } } = await supabase.auth.getUser();
-    const name =
+    let name =
       otp.channel === "phone"
         ? "Customer"
         : clean.split("@")[0]!.replace(/[._]/g, " ");
+    let userPhone = otp.channel === "phone" ? `+91${phone.replace(/\D/g, "").slice(-10)}` : "";
+    let userEmail = otp.channel === "email" ? clean : (authUser?.email ?? "");
+
+    if (authUser?.id) {
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("full_name, phone, email")
+        .eq("id", authUser.id)
+        .maybeSingle();
+
+      if (profile) {
+        if (profile.full_name) name = profile.full_name;
+        if (profile.phone) userPhone = profile.phone;
+        if (profile.email) userEmail = profile.email;
+      }
+    }
+
     login({
       ...(authUser?.id ? { id: authUser.id } : {}),
       name,
-      email: otp.channel === "email" ? clean : "",
+      email: userEmail,
       role: "customer",
-      ...(otp.channel === "phone" ? { phone: phone.trim() } : {}),
+      ...(userPhone ? { phone: userPhone } : {}),
     });
     toast.success(otp.channel === "phone" ? "Mobile number verified" : "Email verified", {
       description: `Signed in as ${name}`,

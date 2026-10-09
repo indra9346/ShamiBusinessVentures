@@ -73,9 +73,52 @@ function AdminProductDetail() {
 
         <div className="space-y-6">
           <Panel title="Overview">
-            <div className="mb-3 flex flex-wrap items-center gap-2">
-              <StatusBadge status={product.status} />
-              <StatusBadge status={product.active ? "active" : "blocked"} />
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <StatusBadge status={product.status} />
+                <StatusBadge status={product.active ? "active" : "blocked"} />
+              </div>
+              <div className="flex items-center gap-2">
+                {product.status !== "approved" && (
+                  <Button
+                    size="sm"
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                    onClick={async () => {
+                      if (await updateProduct(product.id, { status: "approved", active: true })) {
+                        toast.success(`${product.name} approved and live on storefront`);
+                      }
+                    }}
+                  >
+                    Approve & Publish
+                  </Button>
+                )}
+                {product.status === "approved" && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="text-amber-700 hover:bg-amber-50"
+                    onClick={async () => {
+                      if (await updateProduct(product.id, { status: "rejected" })) {
+                        toast.success(`${product.name} rejected / delisted from storefront`);
+                      }
+                    }}
+                  >
+                    Reject / Delist
+                  </Button>
+                )}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={async () => {
+                    const nextActive = !product.active;
+                    if (await updateProduct(product.id, { active: nextActive })) {
+                      toast.success(`${product.name} ${nextActive ? "enabled" : "disabled"}`);
+                    }
+                  }}
+                >
+                  {product.active ? "Disable" : "Enable"}
+                </Button>
+              </div>
             </div>
             <dl className="grid gap-2 text-sm sm:grid-cols-2">
               <div className="flex justify-between"><dt className="text-slate">Brand</dt><dd className="font-medium text-navy">{product.brand}</dd></div>

@@ -41,7 +41,7 @@ function Categories() {
 
       <div className="mx-auto max-w-7xl space-y-12 px-4 pb-14 sm:px-6 sm:space-y-14">
         {cats.map((c) => {
-          const items = products.filter((p) => p.category === c.name && isStorefrontProduct(p)).slice(0, 4);
+          const items = products.filter((p) => p.category === c.name && isStorefrontProduct(p));
           if (!items.length) return null;
           return (
             <section key={c.id}>
@@ -58,7 +58,7 @@ function Categories() {
                   </Link>
                 }
               />
-              <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
                 {items.map((p) => (
                   <ProductCard key={p.id} product={p} />
                 ))}

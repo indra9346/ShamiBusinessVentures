@@ -103,6 +103,29 @@ export function useEmailOtp({ shouldCreateUser = true, requiredRole }: OtpOption
       }
 
       if (result.error) {
+        const msg = result.error.message || "";
+        const errCode = (result.error as { code?: string }).code || "";
+        if (errCode === "phone_provider_disabled" || msg.toLowerCase().includes("unsupported phone provider")) {
+          toast.error("SMS Provider Not Configured in Supabase", {
+            description: "Phone OTP requires enabling an SMS provider (e.g. Twilio) or test numbers in your Supabase Auth dashboard. You can use Email OTP to sign in.",
+            duration: 8000,
+          });
+          return false;
+        }
+        if (errCode === "otp_disabled" || msg.toLowerCase().includes("signups not allowed for otp")) {
+          toast.error("No Account Found", {
+            description: "No registered customer account exists with this phone or email. Please register first.",
+            duration: 6000,
+          });
+          return false;
+        }
+        if (errCode === "over_sms_send_rate_limit" || msg.toLowerCase().includes("rate limit")) {
+          toast.error("Too Many Requests", {
+            description: "Please wait a few moments before requesting another OTP code.",
+            duration: 6000,
+          });
+          return false;
+        }
         toast.error("Could not send the verification code", { description: result.error.message });
         return false;
       }
@@ -162,16 +185,33 @@ export function useEmailOtp({ shouldCreateUser = true, requiredRole }: OtpOption
     }
 
     if (requiredRole) {
-      const { data: roleRecord, error: roleError } = await supabase
-        .from("user_roles")
-        .select("role")
-        .eq("user_id", result.data.user.id)
-        .eq("role", requiredRole)
-        .maybeSingle();
-      if (roleError || !roleRecord) {
-        await supabase.auth.signOut();
-        toast.error(`This account is not authorized for ${requiredRole} access`);
-        return false;
+      let roleRecord = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const query = supabase
+          .from("user_roles")
+          .select("role")
+          .eq("user_id", result.data.user.id);
+        const { data } = requiredRole === "customer"
+          ? await query.in("role", ["customer", "vendor", "admin"]).maybeSingle()
+          : await query.eq("role", requiredRole).maybeSingle();
+        if (data) {
+          roleRecord = data;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 350));
+      }
+      if (!roleRecord) {
+        if (requiredRole === "customer") {
+          await supabase.from("user_roles").insert({
+            user_id: result.data.user.id,
+            role: "customer",
+          });
+          roleRecord = { role: "customer" };
+        } else {
+          await supabase.auth.signOut();
+          toast.error(`This account is not authorized for ${requiredRole} access`);
+          return false;
+        }
       }
     }
 

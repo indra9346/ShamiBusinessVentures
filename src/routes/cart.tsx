@@ -56,14 +56,14 @@ function Cart() {
   return (
     <SiteLayout>
       <div className="border-b border-border bg-ivory">
-        <div className="mx-auto max-w-7xl px-6 py-8">
+        <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8">
           <Breadcrumbs items={[{ label: "Cart" }]} />
-          <h1 className="mt-3 text-3xl font-bold text-navy">Shopping Cart</h1>
+          <h1 className="mt-3 text-2xl font-bold text-navy sm:text-3xl">Shopping Cart</h1>
         </div>
       </div>
 
       {cartItems.length === 0 ? (
-        <div className="mx-auto grid max-w-md place-items-center gap-3 px-6 py-24 text-center">
+        <div className="mx-auto grid max-w-md place-items-center gap-3 px-4 py-16 text-center sm:px-6 sm:py-24">
           <ShoppingBag className="h-10 w-10 text-gold" />
           <p className="text-lg font-bold text-navy">
             {hasUnavailableLines
@@ -87,7 +87,7 @@ function Cart() {
           </Link>
         </div>
       ) : (
-        <div className="mx-auto grid max-w-7xl gap-8 px-6 py-10 lg:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="mx-auto grid max-w-7xl gap-6 px-4 py-6 sm:gap-8 sm:px-6 sm:py-10 lg:grid-cols-[minmax(0,1fr)_360px]">
           <div className="space-y-4">
             {checkoutBlocked && (
               <div role="alert" className="rounded-lg border border-danger/30 bg-danger/5 p-4 text-sm text-danger">
@@ -100,7 +100,23 @@ function Cart() {
             )}
             {cartItems.map(({ product, qty }) => (
               <div key={product.id} className="flex flex-col gap-4 rounded-lg border border-border bg-card p-4 shadow-card sm:flex-row">
-                <img src={product.image} alt={product.name} loading="lazy" width={800} height={800} className="h-24 w-24 shrink-0 rounded-md object-cover" />
+                <img
+                  src={product.image || `/products/${product.category.toLowerCase()}.jpg`}
+                  alt={product.name}
+                  loading="lazy"
+                  width={800}
+                  height={800}
+                  onError={(e) => {
+                    const cat = product.category.toLowerCase();
+                    (e.currentTarget as HTMLImageElement).src =
+                      cat.includes("sugar")
+                        ? "/products/sugar.jpg"
+                        : cat.includes("oil")
+                        ? "/products/oil.jpg"
+                        : "/products/rice.jpg";
+                  }}
+                  className="h-24 w-24 shrink-0 rounded-md object-cover"
+                />
                 <div className="min-w-0 flex-1">
                   <p className="text-[11px] tracking-wider text-slate uppercase">{product.vendor}</p>
                   <Link to="/product/$id" params={{ id: product.id }} className="font-semibold text-navy hover:text-gold">

@@ -112,9 +112,8 @@ export const storefrontCategories = categories
 export const isStorefrontCategory = (name: string) =>
   storefrontCategories.some((c) => c.name === name || c.subs.includes(name));
 export const isStorefrontProduct = (p: Product) =>
-  p.status === "approved" &&
-  STOREFRONT_CATEGORIES.includes(p.category) &&
-  (p.category !== "Sugar" || STOREFRONT_SUBCATEGORIES.includes(p.subcategory));
+  p.status === "approved" && p.active !== false;
+
 
 const catImage: Record<string, string> = {
   Sugar: sugarImg, Rice: riceImg, Oil: oilImg, Pulses: dalImg,

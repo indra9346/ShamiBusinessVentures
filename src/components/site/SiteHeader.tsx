@@ -55,10 +55,10 @@ export function SiteHeader() {
       </div>
 
       <div className="border-b border-white/10 bg-navy/95 backdrop-blur-md">
-        <div className="mx-auto grid max-w-7xl grid-cols-[auto_1fr_auto] items-center gap-4 px-4 py-3 sm:px-6">
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-3.5 py-2.5 sm:px-6 sm:py-3">
           <Logo />
 
-          <div className="relative hidden min-w-0 lg:block">
+          <div className="relative hidden min-w-0 flex-1 max-w-xl mx-6 lg:block">
             <Search className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-slate" />
             <Input
               value={q}
@@ -100,10 +100,10 @@ export function SiteHeader() {
             )}
           </div>
 
-          <div className="flex items-center gap-1 sm:gap-2">
+          <div className="flex items-center gap-1.5 sm:gap-2">
             <Link
               to="/wishlist"
-              className="relative rounded-full p-2.5 text-white transition-colors hover:text-gold"
+              className="relative flex h-10 w-10 items-center justify-center rounded-full text-white transition-colors hover:text-gold"
               aria-label="Wishlist"
             >
               <Heart className="h-5 w-5" />
@@ -111,11 +111,11 @@ export function SiteHeader() {
             </Link>
             <Link
               to="/cart"
-              className="group relative flex items-center gap-3 rounded-full border border-gold/70 bg-gradient-to-r from-midnight/90 via-navy/95 to-midnight/90 px-3.5 py-1.5 text-white transition-all duration-300 shadow-[0_0_15px_rgba(234,179,8,0.38)] ring-1 ring-gold/40 hover:shadow-[0_0_24px_rgba(234,179,8,0.65)] hover:border-gold hover:scale-[1.02]"
+              className="group relative flex h-10 w-10 sm:h-auto sm:w-auto items-center justify-center sm:justify-start gap-2.5 rounded-full border border-gold/70 bg-gradient-to-r from-midnight/90 via-navy/95 to-midnight/90 p-2 sm:px-3.5 sm:py-1.5 text-white transition-all duration-300 shadow-[0_0_12px_rgba(234,179,8,0.35)] ring-1 ring-gold/40 hover:shadow-[0_0_20px_rgba(234,179,8,0.6)] hover:border-gold hover:scale-[1.02]"
               aria-label={`Shopping Cart, ${cartCount} items, total ${inr(subtotal)}`}
             >
               {/* Cart Icon with Dedicated Non-Colliding Badge (Pic 1) */}
-              <div className="relative flex shrink-0 items-center justify-center p-0.5">
+              <div className="relative flex shrink-0 items-center justify-center">
                 <ShoppingCart className="h-5 w-5 text-amber-400 transition-transform duration-300 group-hover:scale-110 drop-shadow-xs" />
                 {cartCount > 0 && (
                   <span className="absolute -top-2 -right-2.5 flex h-4 min-w-[17px] items-center justify-center rounded-full bg-gradient-to-br from-amber-300 via-amber-400 to-yellow-500 px-1 text-[10px] font-black text-midnight shadow-md ring-1 ring-midnight/90">
@@ -125,10 +125,10 @@ export function SiteHeader() {
               </div>
 
               {/* Glowing Hairline Divider (Separates Icon and Cost) */}
-              <div className="h-5 w-px bg-gradient-to-b from-transparent via-gold/50 to-transparent" />
+              <div className="hidden h-5 w-px bg-gradient-to-b from-transparent via-gold/50 to-transparent sm:block" />
 
               {/* Clear Two-Tier Text Stack: No Collision */}
-              <div className="flex flex-col text-left leading-tight pr-0.5">
+              <div className="hidden flex-col text-left leading-tight pr-0.5 sm:flex">
                 <span className="text-[11px] font-bold text-white/95 tracking-wide leading-none uppercase">
                   {cartCount} {cartCount === 1 ? "item" : "items"}
                 </span>
@@ -147,7 +147,7 @@ export function SiteHeader() {
               </span>
             </Link>
             <Link
-              to={user ? "/account" : "/login"}
+              to={user ? (user.role === "admin" ? "/admin/dashboard" : user.role === "vendor" ? "/vendor/dashboard" : "/account") : "/login"}
               className="hidden items-center gap-2 rounded-full border border-white/20 px-4 py-2 text-sm font-medium text-white transition-colors hover:border-gold hover:text-gold sm:flex"
             >
               <User className="h-4 w-4" />
@@ -155,7 +155,7 @@ export function SiteHeader() {
             </Link>
             <button
               onClick={() => setOpen((v) => !v)}
-              className="rounded-full p-2.5 text-white transition-colors hover:text-gold lg:hidden"
+              className="flex h-10 w-10 items-center justify-center rounded-full text-white transition-colors hover:text-gold lg:hidden"
               aria-label="Menu"
             >
               {open ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
@@ -203,6 +203,50 @@ export function SiteHeader() {
                 {n.label}
               </Link>
             ))}
+          </div>
+
+          <div className="mt-4 border-t border-white/10 pt-3">
+            {user ? (
+              <div className="grid gap-1">
+                <Link
+                  to={user.role === "admin" ? "/admin/dashboard" : user.role === "vendor" ? "/vendor/dashboard" : "/account"}
+                  onClick={() => setOpen(false)}
+                  className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold text-gold hover:bg-white/5"
+                >
+                  <User className="h-4 w-4" /> {user.name} ({user.role})
+                </Link>
+                {user.role === "customer" && (
+                  <Link
+                    to="/account/orders"
+                    onClick={() => setOpen(false)}
+                    className="rounded-lg px-3 py-2 text-sm text-white/80 hover:bg-white/5"
+                  >
+                    My Orders
+                  </Link>
+                )}
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-2">
+                <Link
+                  to="/login"
+                  onClick={() => setOpen(false)}
+                  className="flex items-center justify-center gap-2 rounded-lg border border-white/20 py-2.5 text-center text-sm font-semibold text-white hover:border-gold hover:text-gold"
+                >
+                  <User className="h-4 w-4" /> Login
+                </Link>
+                <Link
+                  to="/register"
+                  onClick={() => setOpen(false)}
+                  className="rounded-lg bg-gold py-2.5 text-center text-sm font-bold text-midnight hover:bg-gold-light"
+                >
+                  Register
+                </Link>
+              </div>
+            )}
+            <div className="mt-3 flex items-center justify-between px-3 pt-2">
+              <span className="text-xs text-white/60">Language</span>
+              <LanguageSwitcher light />
+            </div>
           </div>
         </div>
       )}

@@ -218,17 +218,41 @@ function Shop() {
                 <option key={s}>{s}</option>
               ))}
             </select>
-            <div className="flex overflow-hidden rounded-md border border-border">
-              {(["grid", "list"] as const).map((v) => (
-                <button
-                  key={v}
-                  onClick={() => setView(v)}
-                  aria-label={`${v} view`}
-                  className={cn("p-2.5", view === v ? "bg-navy text-white" : "bg-card text-slate hover:text-gold")}
-                >
-                  {v === "grid" ? <LayoutGrid className="h-4 w-4" /> : <List className="h-4 w-4" />}
-                </button>
-              ))}
+            <div
+              role="group"
+              aria-label="Product display view"
+              className="flex items-center rounded-lg border border-border bg-card p-0.5 shadow-xs shrink-0"
+            >
+              <button
+                type="button"
+                onClick={() => setView("grid")}
+                aria-pressed={view === "grid"}
+                aria-label="Grid view"
+                title="Grid view"
+                className={cn(
+                  "flex h-9 w-9 sm:h-10 sm:w-10 items-center justify-center rounded-md transition-all duration-200",
+                  view === "grid"
+                    ? "bg-navy text-white shadow-xs"
+                    : "text-slate hover:bg-ivory hover:text-navy",
+                )}
+              >
+                <LayoutGrid className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setView("list")}
+                aria-pressed={view === "list"}
+                aria-label="List view"
+                title="List view"
+                className={cn(
+                  "flex h-9 w-9 sm:h-10 sm:w-10 items-center justify-center rounded-md transition-all duration-200",
+                  view === "list"
+                    ? "bg-navy text-white shadow-xs"
+                    : "text-slate hover:bg-ivory hover:text-navy",
+                )}
+              >
+                <List className="h-4 w-4" />
+              </button>
             </div>
           </div>
 
@@ -262,9 +286,16 @@ function Shop() {
               </p>
             </div>
           ) : (
-            <div className={cn("grid gap-5", view === "grid" ? "grid-cols-1 sm:grid-cols-2 xl:grid-cols-3" : "grid-cols-1")}>
+            <div
+              className={cn(
+                "grid transition-all duration-300",
+                view === "grid"
+                  ? "grid-cols-2 gap-3 sm:gap-5 lg:grid-cols-3 xl:grid-cols-3"
+                  : "grid-cols-1 gap-3 sm:gap-4",
+              )}
+            >
               {current.map((p) => (
-                <ProductCard key={p.id} product={p} />
+                <ProductCard key={p.id} product={p} layout={view} />
               ))}
             </div>
           )}

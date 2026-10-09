@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { Minus, Plus, ShoppingCart } from "lucide-react";
+import { toast } from "sonner";
 import { showCartNotification } from "@/components/site/CartFloatingNotification";
 import { useApp } from "@/lib/store";
 import type { Product } from "@/lib/data";
@@ -15,11 +16,46 @@ export function AddToCartPicker({
   const { addToCart, cart } = useApp();
   const [open, setOpen] = useState(false);
   const [qty, setQty] = useState(Math.max(1, initialQty));
+  const [typedQty, setTypedQty] = useState(String(Math.max(1, initialQty)));
   const inCart = cart.find((line) => line.id === product.id)?.qty ?? 0;
   const availableStock = Math.max(0, Math.floor((Number(product.stock) || 0) - (Number(product.reserved) || 0)));
   const bagWeight = Number.parseFloat(product.weight.replace(/[^\d.]/g, "")) || 0;
   const unit = product.weight.toLowerCase().includes("kg") ? "kg" : "bags";
   const selectedWeight = bagWeight * qty;
+
+  const handleManualQtyChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const raw = event.target.value;
+    if (raw === "") {
+      setTypedQty("");
+      return;
+    }
+    if (!/^\d+$/.test(raw)) {
+      return;
+    }
+    const num = parseInt(raw, 10);
+    if (availableStock > 0 && num > availableStock) {
+      toast.error(`Only ${availableStock} units available`);
+      setQty(availableStock);
+      setTypedQty(String(availableStock));
+      return;
+    }
+    setTypedQty(raw);
+    if (num >= 1) {
+      setQty(num);
+    }
+  };
+
+  const handleManualQtyBlur = () => {
+    const num = parseInt(typedQty, 10);
+    if (!typedQty || isNaN(num) || num < 1) {
+      setQty(1);
+      setTypedQty("1");
+    } else {
+      const clamped = Math.min(Math.max(1, num), availableStock || 1);
+      setQty(clamped);
+      setTypedQty(String(clamped));
+    }
+  };
 
   if (!open) {
     return (
@@ -27,7 +63,9 @@ export function AddToCartPicker({
         type="button"
         disabled={availableStock === 0}
         onClick={() => {
-          setQty(Math.max(1, initialQty));
+          const initial = Math.max(1, initialQty);
+          setQty(initial);
+          setTypedQty(String(initial));
           setOpen(true);
         }}
         className="flex w-full items-center justify-center gap-1.5 rounded-md bg-navy px-3 py-2.5 text-xs font-semibold text-white transition-colors hover:bg-midnight disabled:opacity-40"
@@ -59,7 +97,10 @@ export function AddToCartPicker({
           <button
             key={value}
             type="button"
-            onClick={() => setQty(value)}
+            onClick={() => {
+              setQty(value);
+              setTypedQty(String(value));
+            }}
             aria-pressed={qty === value}
             className={`rounded-md border py-2 text-sm font-bold ${qty === value ? "border-gold bg-ivory text-navy" : "border-border text-charcoal hover:border-gold"}`}
           >
@@ -71,28 +112,38 @@ export function AddToCartPicker({
         <button
           type="button"
           aria-label="Decrease quantity"
-          onClick={() => setQty((value) => Math.max(1, value - 1))}
+          onClick={() => {
+            const next = Math.max(1, qty - 1);
+            setQty(next);
+            setTypedQty(String(next));
+          }}
           className="grid h-10 w-10 shrink-0 place-items-center rounded-md bg-success text-white hover:bg-success/90"
         >
           <Minus className="h-4 w-4" />
         </button>
         <input
           aria-label="Number of bags"
-          type="number"
-          min={1}
-          max={availableStock}
-          value={qty}
-          onChange={(event) =>
-            setQty(
-              Math.max(1, Math.min(availableStock, Number(event.target.value) || 1)),
-            )
-          }
-          className="h-10 min-w-0 flex-1 rounded-md border border-border bg-background text-center font-bold text-navy"
+          type="text"
+          inputMode="numeric"
+          pattern="[0-9]*"
+          value={typedQty}
+          onChange={handleManualQtyChange}
+          onBlur={handleManualQtyBlur}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              (e.target as HTMLInputElement).blur();
+            }
+          }}
+          className="h-10 min-w-0 flex-1 rounded-md border border-border bg-background text-center font-bold text-navy focus:border-gold focus:outline-none"
         />
         <button
           type="button"
           aria-label="Increase quantity"
-          onClick={() => setQty((value) => Math.min(availableStock, value + 1))}
+          onClick={() => {
+            const next = Math.min(availableStock || 1, qty + 1);
+            setQty(next);
+            setTypedQty(String(next));
+          }}
           className="grid h-10 w-10 shrink-0 place-items-center rounded-md bg-success text-white hover:bg-success/90"
         >
           <Plus className="h-4 w-4" />

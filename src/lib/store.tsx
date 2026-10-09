@@ -182,7 +182,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setProducts([]);
       } else {
         setProductCatalogStatus("ready");
-        setProducts(productResult.data.map((row) => row.payload as unknown as Product));
+        setProducts(
+          productResult.data.map((row) => {
+            const p = row.payload as unknown as Product;
+            return {
+              ...p,
+              image: p.image || `/products/${p.category.toLowerCase()}.jpg`,
+            };
+          }),
+        );
       }
       if (categoryResult.error) {
         console.error("Could not load Supabase store categories:", categoryResult.error.message);
@@ -191,8 +199,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setCategories(storeCategorySeed);
       } else {
         setCategoryCatalogStatus("ready");
-        const persistedCategories = categoryResult.data.map((row) => row.payload as unknown as StoreCategory);
-        setCategories(persistedCategories);
+        const persistedCategories = categoryResult.data.map((row) => {
+          const payload = row.payload as unknown as StoreCategory;
+          const seed = storeCategorySeed.find(
+            (s) => s.id === payload.id || s.name.toLowerCase() === payload.name.toLowerCase(),
+          );
+          return {
+            ...payload,
+            image: payload.image || seed?.image || `/categories/${payload.name.toLowerCase()}.jpg`,
+          };
+        });
+        setCategories(persistedCategories.length > 0 ? persistedCategories : storeCategorySeed);
       }
       if (user?.role) {
         const [
@@ -615,7 +632,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setAddresses(signedInUser.addressKey ? addressesByUser[signedInUser.addressKey] ?? [] : []);
         setWishlist(signedInUser.addressKey ? wishlistsByUser[signedInUser.addressKey] ?? [] : []);
       },
-      logout: () => { setUser(null); setAddresses([]); setWishlist([]); setCart([]); },
+      logout: () => {
+        void supabase.auth.signOut();
+        setUser(null);
+        setAddresses([]);
+        setWishlist([]);
+        setCart([]);
+        try {
+          localStorage.removeItem(KEY);
+        } catch {
+          /* ignore */
+        }
+      },
       updateProfile: async (p) => {
         const current = user;
         if (!current) return false;

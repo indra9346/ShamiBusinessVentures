@@ -59,12 +59,12 @@ export function Panel({
   return (
     <section className={cn("rounded-lg border border-border bg-card shadow-card", className)}>
       {(title || action) && (
-        <header className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-border px-5 py-4">
-          <h2 className="truncate text-sm font-bold tracking-wide text-navy uppercase">{title}</h2>
-          {action}
+        <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b border-border px-4 py-3 sm:px-5 sm:py-4">
+          {title && <h2 className="truncate text-sm font-bold tracking-wide text-navy uppercase">{title}</h2>}
+          {action && <div className="flex flex-wrap items-center gap-2">{action}</div>}
         </header>
       )}
-      <div className="p-5">{children}</div>
+      <div className="p-4 sm:p-5">{children}</div>
     </section>
   );
 }

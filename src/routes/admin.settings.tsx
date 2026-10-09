@@ -64,7 +64,21 @@ function AdminSettings() {
       const savedCommerce = { ...obj("commerce_rules"), ...obj("order") }, savedShipping = obj("shipping");
       if (Object.keys(savedCommerce).length || Object.keys(savedShipping).length) setCommerce((old) => ({ ...old, advance: String(savedCommerce["advance"] ?? savedCommerce["advance_percent"] ?? old.advance), splitThreshold: String(savedCommerce["splitThreshold"] ?? savedCommerce["split_threshold"] ?? old.splitThreshold), paymentWindow: String(savedCommerce["paymentWindow"] ?? savedCommerce["payment_timer_minutes"] ?? old.paymentWindow), freeShipAbove: String(savedShipping["free_above"] ?? old.freeShipAbove), shippingFlat: String(savedShipping["standard"] ?? old.shippingFlat), codEnabled: false }));
       const savedSecurity = { ...obj("security"), ...obj("security_config") };
-      if (Object.keys(savedSecurity).length) setSecurity((old) => ({ ...old, twoFactor: Boolean(savedSecurity["twoFactor"] ?? old.twoFactor), vendorKyc: Boolean(savedSecurity["vendorKyc"] ?? old.vendorKyc), autoLogout: String(savedSecurity["autoLogout"] ?? (Number(savedSecurity["session_hours"]) ? Number(savedSecurity["session_hours"]) * 60 : old.autoLogout)), passwordPolicy: String(savedSecurity["passwordPolicy"] ?? old.passwordPolicy) }));
+      if (Object.keys(savedSecurity).length) {
+        const rawSec = savedSecurity["autoLogout"];
+        const rawHours = savedSecurity["session_hours"];
+        setSecurity((old) => ({
+          ...old,
+          twoFactor: Boolean(savedSecurity["twoFactor"] ?? old.twoFactor),
+          vendorKyc: Boolean(savedSecurity["vendorKyc"] ?? old.vendorKyc),
+          autoLogout: rawSec !== null && rawSec !== undefined && rawSec !== ""
+            ? String(rawSec)
+            : Number(rawHours)
+            ? String(Number(rawHours) * 60)
+            : old.autoLogout,
+          passwordPolicy: String(savedSecurity["passwordPolicy"] ?? old.passwordPolicy),
+        }));
+      }
     });
     return () => { active = false; };
   }, []);
