@@ -24,13 +24,15 @@ export const Route = createFileRoute("/account/profile")({
 
 function AccountProfile() {
   const { user, updateProfile } = useApp();
-  const [name, setName] = useState(user?.name ?? "Rahul Deshpande");
-  const [email, setEmail] = useState(user?.email ?? "rahul.deshpande@example.com");
-  const [phone, setPhone] = useState(user?.phone ?? "+91 98765 43210");
+  const [name, setName] = useState(user?.name ?? "");
+  const [email, setEmail] = useState(user?.email ?? "");
+  const [phone, setPhone] = useState(user?.phone ?? "");
   const [saving, setSaving] = useState(false);
   useEffect(() => {
     if (!user) return;
-    setName(user.name); setEmail(user.email); setPhone(user.phone ?? "");
+    setName(user.name || "");
+    setEmail(user.email || "");
+    setPhone(user.phone || "");
   }, [user?.id, user?.name, user?.email, user?.phone]);
 
   return (
@@ -66,7 +68,9 @@ function AccountProfile() {
               setSaving(true);
               const saved = await updateProfile({ name: name.trim(), email: email.trim(), phone: phone.trim() });
               setSaving(false);
-              if (saved && email.trim().toLowerCase() === user?.email.trim().toLowerCase()) toast.success("Profile updated successfully");
+              if (saved) {
+                toast.success("Profile updated successfully");
+              }
             }}
           >
             Save Changes

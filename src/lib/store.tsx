@@ -29,7 +29,7 @@ import {
 } from "./data";
 
 export type Role = "customer" | "vendor" | "admin";
-export type SessionUser = { id?: string; name: string; email: string; role: Role; phone?: string; avatar?: string; addressKey?: string };
+export type SessionUser = { id?: string | undefined; name: string; email: string; role: Role; phone?: string | undefined; avatar?: string | undefined; addressKey?: string | undefined };
 export type CartLine = { id: string; qty: number };
 export type Address = (typeof seedAddresses)[number];
 export type Customer = (typeof seedCustomers)[number];
@@ -390,6 +390,28 @@ export function AppProvider({ children }: { children: ReactNode }) {
               avatar: profile.full_name.split(/\s+/).map((word) => word[0] ?? "").join("").slice(0, 2),
             } as Customer;
           }));
+          const activeUserId = user?.id;
+          if (activeUserId && profiles) {
+            const myProf = profiles.find((p) => p.id === activeUserId);
+            if (myProf) {
+              setUser((prev) => {
+                if (!prev) return prev;
+                const nextName = myProf.full_name || prev.name;
+                const nextPhone = (myProf.phone !== undefined && myProf.phone !== null && myProf.phone !== "") ? myProf.phone : (prev.phone || "");
+                const nextEmail = myProf.email || prev.email;
+                if (nextName === prev.name && nextPhone === (prev.phone || "") && nextEmail === prev.email) {
+                  return prev;
+                }
+                const updated: SessionUser = {
+                  ...prev,
+                  name: nextName,
+                  phone: nextPhone,
+                  email: nextEmail,
+                };
+                return updated;
+              });
+            }
+          }
         } else {
           console.error("Could not load authorized profile records", profilesError ?? rolesError);
         }
@@ -586,6 +608,70 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    if (STATIC_DATA_MODE) return;
+    let active = true;
+
+    const syncAuthSession = async (userCandidate?: { id: string; email?: string; phone?: string; user_metadata?: Record<string, unknown> } | null) => {
+      try {
+        let authUser = userCandidate;
+        if (!authUser) {
+          const { data } = await supabase.auth.getUser();
+          authUser = data.user;
+        }
+        if (!active || !authUser) return;
+
+        const [{ data: profile }, { data: roleRow }] = await Promise.all([
+          supabase.from("profiles").select("id, full_name, email, phone, company, gstin, avatar_url, vendor_id, status").eq("id", authUser.id).maybeSingle(),
+          supabase.from("user_roles").select("role").eq("user_id", authUser.id).maybeSingle(),
+        ]);
+
+        if (!active) return;
+
+        const meta = (authUser.user_metadata ?? {}) as Record<string, unknown>;
+        const role: Role = (roleRow?.role as Role) || (meta["role"] as Role) || "customer";
+        const name = profile?.full_name || (meta["full_name"] as string) || (authUser.email ? authUser.email.split("@")[0] : "Customer") || "Customer";
+        const email = profile?.email || authUser.email || "";
+        const phone = profile?.phone || authUser.phone || (meta["phone"] as string) || "";
+
+        setUser((current) => {
+          const base: SessionUser = current ?? {
+            id: authUser.id,
+            name: name || "Customer",
+            email,
+            role,
+            phone,
+          };
+          const nextUser: SessionUser = {
+            ...base,
+            id: authUser.id,
+            name: name || base.name || "Customer",
+            email: email || base.email,
+            phone: phone !== undefined && phone !== "" ? phone : (base.phone || ""),
+            role: role || base.role,
+            addressKey: base.addressKey ?? addressOwnerKey(base),
+          };
+          return nextUser;
+        });
+      } catch (err) {
+        console.warn("Could not sync auth session:", err);
+      }
+    };
+
+    void syncAuthSession();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "SIGNED_IN" || event === "USER_UPDATED" || event === "TOKEN_REFRESHED") {
+        void syncAuthSession(session?.user);
+      }
+    });
+
+    return () => {
+      active = false;
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
     if (!hydrated || !user?.addressKey) return;
     setAddressesByUser((saved) => saved[user.addressKey!] === addresses
       ? saved
@@ -650,22 +736,83 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const changeEmail = Boolean(p.email && p.email.trim().toLowerCase() !== current.email.trim().toLowerCase());
         const localPatch = { ...p };
         if (changeEmail) delete localPatch.email;
-        setUser({ ...current, ...localPatch });
+        const updatedUser = { ...current, ...localPatch };
+        setUser(updatedUser);
+
+        // Immediately update localStorage so any immediate reload preserves the updated values
+        try {
+          const raw = localStorage.getItem(KEY);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            localStorage.setItem(KEY, JSON.stringify({ ...parsed, user: updatedUser }));
+          }
+        } catch { /* ignore */ }
+
+        // Immediately update customer row in memory so admin customer management reflects right away
+        if (current.id) {
+          setCustomers((list) =>
+            list.map((c) =>
+              c.id === current.id
+                ? {
+                    ...c,
+                    name: updatedUser.name,
+                    email: updatedUser.email,
+                    phone: updatedUser.phone || "",
+                  }
+                : c,
+            ),
+          );
+        }
+
         if (STATIC_DATA_MODE) return true;
         try {
           const { data: { user: authUser }, error: authError } = await supabase.auth.getUser();
           if (authError || !authUser) throw new Error("Sign in again before updating your profile");
-          const profilePatch = {
-            ...(p.name !== undefined ? { full_name: p.name } : {}),
-            ...(p.phone !== undefined ? { phone: p.phone || null } : {}),
-          };
-          if (Object.keys(profilePatch).length) {
-            const { error } = await supabase.from("profiles").update(profilePatch).eq("id", authUser.id);
-            if (error) throw error;
+
+          // 1. Try dedicated RPC
+          let rpcSuccess = false;
+          try {
+            const rpcCaller = supabase.rpc as unknown as (name: string, args: Record<string, unknown>) => Promise<{ error: unknown }>;
+            const { error: rpcError } = await rpcCaller("save_profile", {
+              _full_name: p.name !== undefined ? p.name.trim() : current.name,
+              _phone: p.phone !== undefined ? p.phone.trim() : (current.phone || ""),
+            });
+            if (!rpcError) rpcSuccess = true;
+          } catch {
+            // fallback to direct table
           }
+
+          // 2. Direct table update / upsert fallback
+          if (!rpcSuccess) {
+            const profilePatch = {
+              ...(p.name !== undefined ? { full_name: p.name.trim() } : {}),
+              ...(p.phone !== undefined ? { phone: p.phone.trim() || null } : {}),
+              updated_at: new Date().toISOString(),
+            };
+            const { error: upsertError } = await supabase.from("profiles").upsert({
+              id: authUser.id,
+              full_name: p.name !== undefined ? p.name.trim() : current.name,
+              email: authUser.email || current.email,
+              phone: p.phone !== undefined ? (p.phone.trim() || null) : (current.phone || null),
+              updated_at: new Date().toISOString(),
+            }, { onConflict: "id" });
+
+            if (upsertError) {
+              const { error: updateError } = await supabase.from("profiles").update(profilePatch).eq("id", authUser.id);
+              if (updateError) throw updateError;
+            }
+          }
+
+          // 3. Keep Supabase Auth user metadata synchronized with name and phone
+          await supabase.auth.updateUser({
+            data: {
+              ...(p.name !== undefined ? { full_name: p.name.trim() } : {}),
+              ...(p.phone !== undefined ? { phone: p.phone.trim() } : {}),
+            },
+            ...(changeEmail && p.email ? { email: p.email.trim().toLowerCase() } : {}),
+          }).catch((err) => console.warn("Could not sync auth metadata:", err));
+
           if (changeEmail && p.email) {
-            const { error } = await supabase.auth.updateUser({ email: p.email.trim().toLowerCase() });
-            if (error) throw error;
             toast.info("Confirm the email change from the message sent to your new address.");
           }
           return true;
@@ -888,6 +1035,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
       orders,
       placeOrder: async ({ lines, method, payment, coupon, customerIndex = 0, customerOverride, shippingAddress, delivery, subtotal, discount, tax, shipping, source, paymentDueDate }) => {
+        if (method === "Cash on Delivery" || method === "COD") {
+          throw new Error("Cash on delivery is not enabled for this store. Please select an online payment method (UPI, Card, Net Banking).");
+        }
         const id = `ORD-${20000 + Math.floor(Math.random() * 9000)}`;
         const order = buildOrder(
           id,
@@ -1342,9 +1492,10 @@ const today = () =>
 function addressOwnerKey(user: SessionUser | null) {
   if (!user || user.role !== "customer") return "";
   if (user.addressKey) return user.addressKey;
+  if (user.id) return `uid:${user.id}`;
   const phone = user.phone?.replace(/\D/g, "").slice(-10);
   if (phone) return `phone:${phone}`;
-  const email = user.email.trim().toLowerCase();
+  const email = user.email?.trim().toLowerCase();
   return email ? `email:${email}` : "";
 }
 

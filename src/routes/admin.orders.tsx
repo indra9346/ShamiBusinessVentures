@@ -63,7 +63,7 @@ export const Route = createFileRoute("/admin/orders")({
 });
 
 const PAGE_SIZE = 10;
-const paymentMethods = ["UPI", "Credit Card", "Debit Card", "Net Banking", "Cash on Delivery"];
+const paymentMethods = ["UPI", "Credit Card", "Debit Card", "Net Banking"];
 
 function AdminOrders() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });

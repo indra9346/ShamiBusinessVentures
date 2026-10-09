@@ -58,6 +58,15 @@ function Checkout() {
     pin: "",
     landmark: "",
   });
+  useEffect(() => {
+    if (user?.name || user?.phone) {
+      setAddressForm((prev) => ({
+        ...prev,
+        name: prev.name || user.name || "",
+        phone: prev.phone || user.phone || "",
+      }));
+    }
+  }, [user?.name, user?.phone]);
   const [ship, setShip] = useState("Standard");
   const [method, setMethod] = useState("UPI");
   const [couponCode, setCouponCode] = useState("");

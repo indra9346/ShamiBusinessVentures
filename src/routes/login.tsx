@@ -66,6 +66,13 @@ function LoginPage() {
         if (profile.phone) userPhone = profile.phone;
         if (profile.email) userEmail = profile.email;
       }
+      const meta = (authUser.user_metadata ?? {}) as Record<string, unknown>;
+      if (!userPhone) {
+        userPhone = authUser.phone || (meta["phone"] as string) || "";
+      }
+      if ((!name || name === "Customer") && meta["full_name"]) {
+        name = meta["full_name"] as string;
+      }
     }
 
     login({

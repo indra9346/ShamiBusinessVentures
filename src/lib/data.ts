@@ -556,7 +556,7 @@ export type Order = {
   coupon?: string;
 };
 
-const methods = ["UPI", "Credit Card", "Debit Card", "Net Banking", "Cash on Delivery", "UPI", "Credit Card"];
+const methods = ["UPI", "Credit Card", "Debit Card", "Net Banking"];
 const statusCycle: OrderStatus[] = ["Delivered", "Out for Delivery", "Dispatched", "Packed", "Accepted", "Placed", "Delivered", "Payment Confirmed", "Cancelled", "Delivered"];
 
 export const buildOrder = (
@@ -596,7 +596,7 @@ export const orders: Order[] = Array.from({ length: 54 }, (_, i) => {
   });
   const method = pick(methods, i);
   const payment: Order["payment"] =
-    method === "Cash on Delivery" ? "COD" : i % 13 === 5 ? "Pending" : i % 17 === 9 ? "Refunded" : i % 19 === 11 ? "Failed" : "Paid";
+    i % 13 === 5 ? "Pending" : i % 17 === 9 ? "Refunded" : i % 19 === 11 ? "Failed" : "Paid";
   const dateStr =
     i === 0 || i === 1
       ? "29 Sep 2026"
