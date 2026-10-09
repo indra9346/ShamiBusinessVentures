@@ -64,13 +64,14 @@ export function matchProductSearch(p: Product, rawQuery: string): boolean {
 
   // 1. Direct SKU / Code matches (highest priority)
   if (skuLower === stripped || skuLower === rawLower) return true;
-  if (skuAlpha && strippedAlpha && (skuAlpha === strippedAlpha || skuAlpha.includes(strippedAlpha) || strippedAlpha.includes(skuAlpha))) {
+  if (skuAlpha && strippedAlpha && (skuAlpha === strippedAlpha || skuAlpha.includes(strippedAlpha))) {
     return true;
   }
-  if (idLower === stripped || idLower === rawLower || idAlpha === strippedAlpha) return true;
+  if (idLower === stripped || idLower === rawLower || (idAlpha && strippedAlpha && idAlpha === strippedAlpha)) return true;
 
   // Check if query contains product SKU or ID as a word
-  if (rawLower.includes(skuLower) || (stripped && rawLower.includes(stripped))) return true;
+  if (skuLower && rawLower.includes(skuLower)) return true;
+  if (idLower && rawLower.includes(idLower)) return true;
 
   // 2. Build full searchable text corpus for this product
   const pName = p.name.toLowerCase();

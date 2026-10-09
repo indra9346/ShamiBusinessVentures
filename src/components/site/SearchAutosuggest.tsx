@@ -145,7 +145,8 @@ export function SearchAutosuggest({
           <input
             ref={inputRef}
             id={id}
-            type="search"
+            type="text"
+            inputMode="search"
             value={query}
             onChange={handleInputChange}
             onFocus={() => {
