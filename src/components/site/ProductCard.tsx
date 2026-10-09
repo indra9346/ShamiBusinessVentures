@@ -11,6 +11,7 @@ export function ProductCard({ product }: { product: Product }) {
   const { addToCart, toggleWishlist, wishlist } = useApp();
   const off = product.mrp > product.price ? Math.max(0, Math.round(((product.mrp - product.price) / product.mrp) * 100)) : 0;
   const wished = wishlist.includes(product.id);
+  const availableStock = Math.max(0, Math.floor((Number(product.stock) || 0) - (Number(product.reserved) || 0)));
 
   return (
     <article className="card-premium group relative flex flex-col overflow-hidden">
@@ -84,7 +85,7 @@ export function ProductCard({ product }: { product: Product }) {
           {off > 0 && <span className="text-xs font-semibold text-gold">Save {inr(product.mrp - product.price)}</span>}
         </div>
 
-        {product.stock === 0 && <p className="mt-1 text-xs font-medium text-danger">Currently unavailable</p>}
+        {availableStock === 0 && <p className="mt-1 text-xs font-medium text-danger">Currently unavailable</p>}
 
         <div className="mt-4 flex gap-2 pt-1">
           <AddToCartPicker product={product} />
@@ -96,7 +97,7 @@ export function ProductCard({ product }: { product: Product }) {
             }}
             className={cn(
               "flex flex-1 items-center justify-center rounded-md bg-gold px-3 py-2.5 text-xs font-bold text-midnight transition-colors hover:bg-gold-light",
-              product.stock === 0 && "pointer-events-none opacity-40",
+              availableStock === 0 && "pointer-events-none opacity-40",
             )}
           >
             Buy Now

@@ -158,6 +158,10 @@ function HomeProductCard({ product }: { product: Product }) {
   const { addToCart } = useApp();
   const { t } = useLanguage();
   const navigate = useNavigate();
+  const availableStock = Math.max(
+    0,
+    Math.floor((Number(product.stock) || 0) - (Number(product.reserved) || 0)),
+  );
   const discount = product.mrp > product.price
     ? Math.round(((product.mrp - product.price) / product.mrp) * 100)
     : 0;
@@ -230,13 +234,16 @@ function HomeProductCard({ product }: { product: Product }) {
             </span>
           )}
         </div>
+        {availableStock === 0 && (
+          <p className="mt-1 text-xs font-medium text-danger">Currently unavailable</p>
+        )}
         <div className="mt-auto grid grid-cols-2 gap-2 pt-3">
           <Button
             type="button"
             variant="outline"
             size="sm"
             onClick={add}
-            disabled={product.stock === 0}
+            disabled={availableStock === 0}
             className="h-9 px-2 font-bold"
           >
             <ShoppingCart className="h-3.5 w-3.5 mr-1" /> Add
@@ -245,7 +252,7 @@ function HomeProductCard({ product }: { product: Product }) {
             type="button"
             size="sm"
             onClick={buy}
-            disabled={product.stock === 0}
+            disabled={availableStock === 0}
             className="h-9 px-2 font-bold bg-navy text-white hover:bg-midnight"
           >
             Buy Now
