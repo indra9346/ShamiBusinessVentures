@@ -272,7 +272,8 @@ async function saveZohoSnapshot(
 
 export const getZohoCommerceReadMirror = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
-  .handler(async ({ context }) => {
+  .validator(z.object({ salesOrdersPage: z.number().int().min(1).max(999).default(1) }))
+  .handler(async ({ data, context }) => {
     await ensureAdmin(context.supabase, context.userId);
     const db = await dbAdmin();
     const { data: connection, error: connectionError } = await db
@@ -297,14 +298,21 @@ export const getZohoCommerceReadMirror = createServerFn({ method: "GET" })
     const snapshots: Record<string, { external_id: string; payload: Json; captured_at: string }[]> =
       {};
     for (const state of resources ?? []) {
-      const { data: rows, error: rowsError } = await db
+      let query = db
         .from("zoho_commerce_sync_data")
         .select("external_id,payload,captured_at")
         .eq("organization_id", connection.organization_id)
         .eq("resource", state.resource)
         .eq("batch_id", state.current_batch_id)
-        .order("external_id", { ascending: true })
-        .limit(200);
+        .order("external_id", { ascending: true });
+      if (state.resource === "sales_orders") {
+        const pageSize = 200;
+        const start = (data.salesOrdersPage - 1) * pageSize;
+        query = query.range(start, start + pageSize - 1);
+      } else {
+        query = query.limit(200);
+      }
+      const { data: rows, error: rowsError } = await query;
       if (rowsError) throw new Error(`Could not load Zoho ${state.resource} records`);
       snapshots[state.resource] = rows ?? [];
     }
