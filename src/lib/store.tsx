@@ -649,8 +649,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
           reviews: Review[]; returns: ReturnRequest[]; coupons: Coupon[]; notifications: Notif[];
           addressesByUser: Record<string, Address[]>; wishlistsByUser: Record<string, string[]>;
         }>;
-        const restoredUser = s.user ? { ...s.user, addressKey: s.user.addressKey ?? addressOwnerKey(s.user) } : null;
-        const savedAddresses = s.addressesByUser ?? {};
+        // In live mode Supabase Auth is the identity source. Do not restore a
+        // cached role/profile/address as if it were a verified session.
+        const restoredUser = STATIC_DATA_MODE && s.user
+          ? { ...s.user, addressKey: s.user.addressKey ?? addressOwnerKey(s.user) }
+          : null;
+        const savedAddresses = STATIC_DATA_MODE ? s.addressesByUser ?? {} : {};
         const savedWishlists = s.wishlistsByUser ?? {};
         const restoredOwner = restoredUser?.addressKey ?? "";
         setUser(restoredUser);
@@ -781,12 +785,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
       : { ...saved, [user.addressKey!]: wishlist });
   }, [hydrated, user, wishlist]);
 
+  const liveWishlistOwnerKey = addressOwnerKey(user);
+  useEffect(() => {
+    if (STATIC_DATA_MODE || !hydrated) return;
+    setWishlist(liveWishlistOwnerKey ? wishlistsByUser[liveWishlistOwnerKey] ?? [] : []);
+  }, [hydrated, liveWishlistOwnerKey, wishlistsByUser]);
+
   useEffect(() => {
     if (!hydrated) return;
     try {
+      const persistedState = STATIC_DATA_MODE
+        ? { user, cart, wishlist, wishlistsByUser, categories, products, batches, orders, vendors, customers, reviews, returns, coupons, notifications, addressesByUser }
+        : { cart, wishlistsByUser };
       localStorage.setItem(
         KEY,
-        JSON.stringify({ user, cart, wishlist, wishlistsByUser, categories, products, batches, orders, vendors, customers, reviews, returns, coupons, notifications, addressesByUser }),
+        JSON.stringify(persistedState),
       );
     } catch {
       /* quota */
