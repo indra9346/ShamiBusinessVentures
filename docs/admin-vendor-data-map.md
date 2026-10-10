@@ -76,8 +76,10 @@ the signed-in Supabase role.
 - External payment collection/refunds and outbound SMS/WhatsApp/email are not
   connected. Manual payment reconciliation and in-app notifications remain the
   supported workflows until provider setup is completed.
-- This map documents current code-to-schema wiring. The linked production
-  project migration history has been verified against the local migration
-  files through `20261011010000`, and Supabase reports no pending migrations.
-  Route behavior still needs a live acceptance pass with separate admin,
-  vendor, and customer accounts.
+- This map documents current code-to-schema wiring. The last authenticated
+  production migration check confirmed history through `20261011010000`.
+  `20261011020000_admin_order_item_workflows.sql` and
+  `20261011030000_guard_paid_and_terminal_order_cancellation.sql` remain
+  pending until the matching application build is deployed. Route behavior
+  still needs a live acceptance pass with separate admin, vendor, and customer
+  accounts.
