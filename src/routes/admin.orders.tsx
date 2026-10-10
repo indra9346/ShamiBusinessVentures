@@ -420,7 +420,9 @@ function AdminOrders() {
                           ? "This will mark the order as cancelled and restore its available inventory."
                           : needsRefund
                             ? "Paid orders cannot be cancelled until a verified refund is completed. Refund processing is not configured yet."
-                            : "Orders cannot be cancelled after dispatch. Contact support if this order needs intervention."}
+                            : o.vendorStatuses?.some((fulfillment) => ["Dispatched", "Out for Delivery", "Delivered"].includes(fulfillment.status))
+                              ? "Orders cannot be cancelled after any vendor has dispatched. Contact support if this order needs intervention."
+                              : "A vendor has already started fulfilment. Contact support if this order needs intervention."}
                       </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>

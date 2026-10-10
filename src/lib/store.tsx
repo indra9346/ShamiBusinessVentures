@@ -51,6 +51,7 @@ export type Coupon = (typeof seedCoupons)[number] & {
 
 type OrderRow = Database["public"]["Tables"]["orders"]["Row"];
 type OrderItemRow = Database["public"]["Tables"]["order_items"]["Row"];
+type OrderVendorFulfillmentRow = Database["public"]["Tables"]["order_vendor_fulfillments"]["Row"];
 type PaymentRow = Database["public"]["Tables"]["payments"]["Row"];
 type NotificationRow = Database["public"]["Tables"]["notifications"]["Row"];
 
@@ -301,14 +302,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }
         if (!orderError) {
           const ids = (orderRows ?? []).map((order) => order.id);
-          const [{ data: itemRows, error: itemError }, { data: paymentRows, error: paymentError }] = ids.length
+          const [
+            { data: itemRows, error: itemError },
+            { data: paymentRows, error: paymentError },
+            { data: fulfillmentRows, error: fulfillmentError },
+          ] = ids.length
             ? await Promise.all([
               fetchOrderRowsInChunks<OrderItemRow>(ids, (orderIds, from, to) => supabase.from("order_items").select("*")
                 .in("order_id", orderIds).order("id", { ascending: true }).range(from, to)),
               fetchOrderRowsInChunks<PaymentRow>(ids, (orderIds, from, to) => supabase.from("payments").select("*")
                 .in("order_id", orderIds).order("created_at", { ascending: false }).order("id", { ascending: false }).range(from, to)),
+              fetchOrderRowsInChunks<OrderVendorFulfillmentRow>(ids, (orderIds, from, to) => supabase.from("order_vendor_fulfillments").select("*")
+                .in("order_id", orderIds).order("order_id", { ascending: true }).order("vendor_id", { ascending: true }).range(from, to)),
             ])
-            : [{ data: [], error: null }, { data: [], error: null }];
+            : [{ data: [], error: null }, { data: [], error: null }, { data: [], error: null }];
           if (!active || revision !== loadRevision) return;
           if (itemError) {
             console.error("Could not load order lines", itemError);
@@ -321,6 +328,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
             for (const item of itemRows ?? []) itemsByOrder.set(item.order_id, [...(itemsByOrder.get(item.order_id) ?? []), item]);
             const latestPaymentByOrder = new Map<string, NonNullable<typeof paymentRows>[number]>();
             for (const payment of paymentRows ?? []) if (payment.order_id && !latestPaymentByOrder.has(payment.order_id)) latestPaymentByOrder.set(payment.order_id, payment);
+            const fulfillmentByOrder = new Map<string, OrderVendorFulfillmentRow[]>();
+            for (const fulfillment of fulfillmentRows ?? []) {
+              fulfillmentByOrder.set(fulfillment.order_id, [...(fulfillmentByOrder.get(fulfillment.order_id) ?? []), fulfillment]);
+            }
             const allowedStatuses: OrderStatus[] = ["Placed", "Payment Confirmed", "Accepted", "Packed", "Dispatched", "Out for Delivery", "Delivered", "Cancelled"];
             setOrders((orderRows ?? []).map((row) => {
               const orderDate = new Date(row.created_at);
@@ -340,6 +351,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
               const paymentStatus = row.payment_status.toLowerCase();
               const latestPayment = latestPaymentByOrder.get(row.id);
               const payment: Order["payment"] = paymentStatus === "paid" ? "Paid" : paymentStatus.includes("partial") ? "Partially Paid" : paymentStatus === "refunded" ? "Refunded" : paymentStatus === "failed" ? "Failed" : "Pending";
+              const vendorStatuses = (fulfillmentByOrder.get(row.id) ?? []).filter((fulfillment) => allowedStatuses.includes(fulfillment.status as OrderStatus))
+                .map((fulfillment) => ({
+                  vendorId: fulfillment.vendor_id,
+                  vendor: orderItems.find((item) => item.vendorId === fulfillment.vendor_id)?.vendor || fulfillment.vendor_id,
+                  status: fulfillment.status as OrderStatus,
+                }));
               return {
                 id: row.order_no, date: Number.isNaN(orderDate.getTime()) ? row.created_at : orderDate.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }), createdAt: row.created_at,
                 customer: row.customer_name, customerId: row.user_id || "", email: row.customer_email, phone: row.customer_phone || "",
@@ -351,10 +368,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
                 address: String(shippingAddress["line"] || ""), city: String(shippingAddress["city"] || ""), state: String(shippingAddress["state"] || ""),
                 pin: String(shippingAddress["pin"] || ""), delivery: row.shipping_method === "Express" ? "Express Freight — next business day" : "Standard Freight — 2 to 4 days",
                 ...(row.coupon ? { coupon: row.coupon } : {}),
+                ...(vendorStatuses.length ? { vendorStatuses } : {}),
               };
             }));
           }
           if (paymentError) console.error("Could not load payment references", paymentError);
+          if (fulfillmentError) console.error("Could not load vendor fulfillment statuses", fulfillmentError);
         } else {
           console.error("Could not load orders", orderError);
         }
@@ -508,6 +527,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       .on("postgres_changes", { event: "*", schema: "public", table: "user_roles" }, scheduleReload)
       .on("postgres_changes", { event: "*", schema: "public", table: "orders" }, scheduleReload)
       .on("postgres_changes", { event: "*", schema: "public", table: "order_items" }, scheduleReload)
+      .on("postgres_changes", { event: "*", schema: "public", table: "order_vendor_fulfillments" }, scheduleReload)
       .on("postgres_changes", { event: "*", schema: "public", table: "payments" }, scheduleReload)
       .on("postgres_changes", { event: "*", schema: "public", table: "product_reviews" }, scheduleReload)
       .on("postgres_changes", { event: "*", schema: "public", table: "return_requests" }, scheduleReload)
@@ -1280,7 +1300,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
       updateOrderStatus: async (id, status) => {
         const existing = orders.find((order) => order.id === id);
         if (!existing) return false;
-        if (existing.status === "Cancelled" && status !== "Cancelled") {
+        const currentVendorId = user?.role === "vendor"
+          ? vendors.find((vendor) => vendor.email.toLowerCase() === user.email.toLowerCase())?.id
+          : undefined;
+        const previousStatus = user?.role === "vendor"
+          ? existing.vendorStatuses?.find((fulfillment) => fulfillment.vendorId === currentVendorId)?.status
+          : existing.status;
+        if (previousStatus === "Cancelled" && status !== "Cancelled") {
           toast.error("Cancelled orders cannot be reopened", { description: "Create a new order to fulfil this purchase." });
           return false;
         }
@@ -1295,15 +1321,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
             return false;
           }
         }
-        setOrders((list) => list.map((order) => order.id === id ? { ...order, status } : order));
+        const optimisticUpdate = STATIC_DATA_MODE || user?.role !== "vendor";
+        if (optimisticUpdate) {
+          setOrders((list) => list.map((order) => order.id === id ? { ...order, status } : order));
+        }
         if (!STATIC_DATA_MODE) {
           const result = status === "Cancelled"
             ? await supabase.rpc("cancel_marketplace_order", { _order_no: id })
-            : await supabase.from("orders").update({ order_status: status }).eq("order_no", id);
+            : user?.role === "vendor"
+              ? await supabase.rpc("vendor_update_order_fulfillment", { _order_no: id, _status: status })
+              : user?.role === "admin"
+                ? await supabase.rpc("admin_update_order_status", { _order_no: id, _status: status })
+                : { error: { message: "Only administrators can update this order status." } };
           const { error } = result;
           if (error) {
             toast.error("Could not update order status", { description: error.message });
-            setOrders((list) => list.map((order) => order.id === id ? existing : order));
+            if (optimisticUpdate) setOrders((list) => list.map((order) => order.id === id ? existing : order));
             return false;
           }
         }
@@ -1691,7 +1724,10 @@ export function useVendorScope() {
     return () => { active = false; };
   }, [user?.role, user?.email, vendors]);
   const vendorProducts = products.filter((p) => p.vendorId === vendorId);
-  const vendorOrders = orders.filter((o) => o.items.some((i) => i.vendorId === vendorId));
+  const vendorOrders = orders.filter((o) => o.items.some((i) => i.vendorId === vendorId)).map((order) => ({
+    ...order,
+    status: order.vendorStatuses?.find((fulfillment) => fulfillment.vendorId === vendorId)?.status ?? order.status,
+  }));
   const vendorReviews = reviews.filter((r) => r.vendorId === vendorId);
   const vendor = vendors.find((item) => item.id === vendorId) ?? null;
   const revenue = vendorOrders.reduce(

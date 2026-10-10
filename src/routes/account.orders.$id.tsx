@@ -121,7 +121,9 @@ function AccountOrderDetail() {
                 <AlertDialogDescription>
                   {canCancel
                     ? "This will mark the order as cancelled and restore its available inventory."
-                    : "Paid orders cannot be cancelled until a verified refund is completed. Contact support if you need help."}
+                    : order.vendorStatuses?.some((fulfillment) => !["Placed", "Payment Confirmed", "Cancelled"].includes(fulfillment.status))
+                      ? "A vendor has started fulfilment. Contact support if you need help cancelling this order."
+                      : "Paid orders cannot be cancelled until a verified refund is completed. Contact support if you need help."}
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
@@ -174,6 +176,20 @@ function AccountOrderDetail() {
           </div>
         )}
       </Panel>
+
+      {order.vendorStatuses && order.vendorStatuses.length > 0 && (
+        <Panel title="Vendor Shipments" className="mt-5">
+          <div className="space-y-3">
+            {order.vendorStatuses.map((fulfillment) => (
+              <div key={fulfillment.vendorId} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border px-3 py-2">
+                <span className="text-sm font-semibold text-navy">{fulfillment.vendor}</span>
+                <StatusBadge status={fulfillment.status} />
+              </div>
+            ))}
+          </div>
+          <p className="mt-3 text-xs text-slate">The overall timeline advances when all vendor shipments reach the next stage.</p>
+        </Panel>
+      )}
 
       <div className="mt-6 grid gap-6 xl:grid-cols-3">
         <Panel title="Customer Details">

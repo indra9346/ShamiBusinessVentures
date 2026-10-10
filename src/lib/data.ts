@@ -529,6 +529,17 @@ export type OrderItem = { product: Product; qty: number; vendor: string; vendorI
 export function getOrderItemTotal(item: OrderItem): number {
   return Math.round((item.unitPrice ?? item.product.price) * item.qty * 100) / 100;
 }
+/** Merchandise sales actually collected for a vendor, excluding that vendor's cancelled shipment lines. */
+export function getVendorPaidSales(orders: Order[], vendorId: string): number {
+  return orders.reduce((total, order) => {
+    if (order.payment !== "Paid" || order.status === "Cancelled") return total;
+    const fulfillment = order.vendorStatuses?.find((item) => item.vendorId === vendorId);
+    if (fulfillment?.status === "Cancelled") return total;
+    return total + order.items
+      .filter((item) => item.vendorId === vendorId)
+      .reduce((orderTotal, item) => orderTotal + getOrderItemTotal(item), 0);
+  }, 0);
+}
 export type Order = {
   id: string;
   date: string;
@@ -560,15 +571,35 @@ export type Order = {
   pin: string;
   delivery: string;
   coupon?: string;
+  /** Per-vendor status for split marketplace fulfillment. */
+  vendorStatuses?: { vendorId: string; vendor: string; status: OrderStatus }[];
 };
 
+/** Customer funds received for an order, excluding cancelled or fully refunded orders. */
+export function getOrderPaymentsReceived(order: Pick<Order, "amount" | "paidAmount" | "payment" | "status">): number {
+  if (order.status === "Cancelled" || order.payment === "Refunded") return 0;
+  if (order.paidAmount !== undefined) return Math.max(0, Math.min(order.amount, order.paidAmount));
+  return order.payment === "Paid" ? Math.max(0, order.amount) : 0;
+}
+
 /** Whether an order can be cancelled without stranding captured customer funds. */
-export function canCancelOrder(order: Pick<Order, "status" | "payment" | "paidAmount">, actor: "admin" | "customer" = "admin"): boolean {
+export function canCancelOrder(order: Pick<Order, "status" | "payment" | "paidAmount" | "vendorStatuses">, actor: "admin" | "customer" = "admin"): boolean {
   const allowedStatuses: OrderStatus[] = actor === "customer"
     ? ["Placed", "Payment Confirmed"]
     : ["Placed", "Payment Confirmed", "Accepted", "Packed"];
   const hasUnrefundedPayment = (order.paidAmount ?? 0) > 0 || order.payment === "Paid" || order.payment === "Partially Paid";
-  return allowedStatuses.includes(order.status) && !hasUnrefundedPayment;
+  const vendorStatuses = order.vendorStatuses?.map((fulfillment) => fulfillment.status);
+  const hasPartiallyCancelledVendorSet = Boolean(vendorStatuses?.includes("Cancelled")
+    && vendorStatuses.some((status) => status !== "Cancelled"));
+  const vendorHasDispatched = vendorStatuses?.some((status) => ["Dispatched", "Out for Delivery", "Delivered"].includes(status)) ?? false;
+  const customerVendorStagesAllowCancellation = actor !== "customer"
+    || !vendorStatuses
+    || vendorStatuses.every((status) => status === "Placed" || status === "Payment Confirmed");
+  return allowedStatuses.includes(order.status)
+    && !hasUnrefundedPayment
+    && !hasPartiallyCancelledVendorSet
+    && !vendorHasDispatched
+    && customerVendorStagesAllowCancellation;
 }
 
 const vendorOrderNextStatus: Partial<Record<OrderStatus, OrderStatus>> = {
