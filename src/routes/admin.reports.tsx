@@ -65,6 +65,16 @@ const PIE_COLORS = [
   "#B08A3E",
 ];
 
+function paidVendorLine(order: { payment: string; status: string; vendorStatuses?: { vendorId: string; status: string }[] }, vendorId: string): boolean {
+  const status = order.vendorStatuses?.find((fulfillment) => fulfillment.vendorId === vendorId)?.status ?? order.status;
+  return order.payment === "Paid" && order.status !== "Cancelled" && status !== "Cancelled";
+}
+
+function shippedVendorLine(order: { status: string; vendorStatuses?: { vendorId: string; status: string }[] }, vendorId: string): boolean {
+  const status = order.vendorStatuses?.find((fulfillment) => fulfillment.vendorId === vendorId)?.status ?? order.status;
+  return ["Dispatched", "Out for Delivery", "Delivered"].includes(status);
+}
+
 function AdminReports() {
   const { orders, products, customers, vendors } = useApp();
   const [range, setRange] = useState("This Month");
@@ -129,13 +139,16 @@ function AdminReports() {
 
   const categoryData = useMemo(() => {
     const totals = new Map<string, number>();
-    for (const order of filteredOrders)
-      for (const item of order.items)
+    for (const order of filteredOrders) {
+      for (const item of order.items) {
+        if (!paidVendorLine(order, item.vendorId)) continue;
         totals.set(
           item.product.category,
           (totals.get(item.product.category) ?? 0) +
-            (item.unitPrice ?? item.product.price) * item.qty,
+            getOrderItemTotal(item),
         );
+      }
+    }
     const grandTotal = [...totals.values()].reduce((sum, amount) => sum + amount, 0);
     return [...totals].map(([name, value]) => ({
       name,
@@ -147,8 +160,10 @@ function AdminReports() {
     const live = filteredOrders.filter((o) => o.status !== "Cancelled");
     const revenue = live.reduce((s, o) => s + getOrderPaymentsReceived(o), 0);
     const gst = live.reduce((s, o) => s + (o.amount > 0 ? o.tax * getOrderPaymentsReceived(o) / o.amount : 0), 0);
-    const aov = live.length ? Math.round(revenue / live.length) : 0;
-    const units = live.reduce((s, o) => s + o.items.reduce((t, i) => t + i.qty, 0), 0);
+    const aov = live.length ? Math.round(live.reduce((sum, order) => sum + order.amount, 0) / live.length) : 0;
+    const units = live.reduce((sum, order) => sum + order.items
+      .filter((item) => shippedVendorLine(order, item.vendorId))
+      .reduce((itemSum, item) => itemSum + item.qty, 0), 0);
     return { revenue, gst, aov, units, count: live.length };
   }, [filteredOrders]);
 
@@ -160,7 +175,7 @@ function AdminReports() {
             (sum, order) =>
               sum +
               order.items
-                .filter((item) => item.product.id === product.id)
+                .filter((item) => item.product.id === product.id && paidVendorLine(order, item.vendorId))
                 .reduce((qty, item) => qty + item.qty, 0),
             0,
           );
@@ -302,17 +317,17 @@ function AdminReports() {
           label="Revenue Collected"
           value={inr(stats.revenue)}
           icon={IndianRupee}
-          delta="+14.2%"
+          delta="Recorded payments; cancelled and refunded orders excluded"
           highlight
         />
-        <StatCard label="GST Collected" value={inr(stats.gst)} icon={FileBarChart} delta="+11.8%" />
+        <StatCard label="GST Collected" value={inr(stats.gst)} icon={FileBarChart} delta="Estimated from recorded payments" />
         <StatCard
           label="Average Order Value"
           value={inr(stats.aov)}
           icon={ShoppingCart}
-          delta="+3.6%"
+          delta="Order value per non-cancelled order"
         />
-        <StatCard label="Units Shipped" value={String(stats.units)} icon={Package} delta="+8.4%" />
+        <StatCard label="Units Shipped" value={String(stats.units)} icon={Package} delta="Dispatched or later vendor shipments" />
       </div>
 
       <div className="mb-6 grid gap-6 xl:grid-cols-[1.6fr_1fr]">
