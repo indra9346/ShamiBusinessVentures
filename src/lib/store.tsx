@@ -667,6 +667,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === "SIGNED_IN" || event === "USER_UPDATED" || event === "TOKEN_REFRESHED") {
         void syncAuthSession(session?.user);
+      } else if (event === "SIGNED_OUT") {
+        setUser(null);
+        setAddresses([]);
+        setWishlist([]);
+        setCart([]);
+        try {
+          localStorage.removeItem(KEY);
+        } catch {
+          /* ignore */
+        }
       }
     });
 

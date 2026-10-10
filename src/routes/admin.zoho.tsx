@@ -12,6 +12,7 @@ import {
   Coins,
   ExternalLink,
   FileText,
+  Package,
   PackageCheck,
   RefreshCw,
   Search,
@@ -86,6 +87,30 @@ function first(payload: Record<string, unknown>, ...keys: string[]) {
   return undefined;
 }
 
+function nestedFirst(payload: Record<string, unknown>, ...keys: string[]): unknown {
+  const direct = first(payload, ...keys);
+  if (direct !== undefined) return direct;
+  const visit = (value: unknown, depth: number): unknown => {
+    if (depth > 5 || value === null || typeof value !== "object") return undefined;
+    const entries = Array.isArray(value)
+      ? value.map((entry, index) => [String(index), entry] as const)
+      : Object.entries(value as Record<string, unknown>);
+    for (const key of keys) {
+      const match = entries.find(
+        ([entryKey, candidate]) =>
+          entryKey === key && candidate !== null && candidate !== undefined && candidate !== "",
+      );
+      if (match) return match[1];
+    }
+    for (const [, child] of entries) {
+      const found = visit(child, depth + 1);
+      if (found !== undefined) return found;
+    }
+    return undefined;
+  };
+  return visit(payload, 0);
+}
+
 function displayValue(value: unknown): string {
   if (value === undefined || value === null || value === "") return "—";
   if (typeof value === "boolean") return value ? "Yes" : "No";
@@ -136,7 +161,7 @@ function recordTitle(resource: string, record: MirrorRecord) {
     );
   if (resource === "store_index")
     return displayValue(first(payload, "site_title", "store_name", "name") ?? record.external_id);
-  return displayValue(first(payload, "label", "name", "payment_mode") ?? record.external_id);
+  return displayValue(nestedFirst(payload, "label", "name", "payment_mode") ?? record.external_id);
 }
 
 function Field({ label, value }: { label: string; value: unknown }) {
@@ -156,23 +181,27 @@ function OrderFields({
   externalId: string;
 }) {
   const currency = first(payload, "currency_code", "currency");
+  const rawDate = first(payload, "date", "created_time");
+  const rawTotal = first(payload, "total", "bcy_total");
+  const rawBalance = first(payload, "balance");
+  const fields: [string, unknown][] = [
+    ["Order number", first(payload, "salesorder_number", "order_number", "number") ?? externalId],
+    ["Customer / business", first(payload, "customer_name", "company_name", "contact_name")],
+    ["Order date", rawDate ? prettyDate(rawDate) : undefined],
+    ["Order status", first(payload, "order_status", "status")],
+    ["Payment status", first(payload, "paid_status", "payment_status")],
+    ["Order total", rawTotal === undefined ? undefined : money(rawTotal, currency)],
+    ["Amount due", rawBalance === undefined ? undefined : money(rawBalance, currency)],
+    ["Items quantity", first(payload, "quantity")],
+    ["Currency", currency],
+  ];
   return (
     <dl className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-      <Field
-        label="Order number"
-        value={first(payload, "salesorder_number", "order_number", "number") ?? externalId}
-      />
-      <Field
-        label="Customer / business"
-        value={first(payload, "customer_name", "company_name", "contact_name")}
-      />
-      <Field label="Order date" value={prettyDate(first(payload, "date", "created_time"))} />
-      <Field label="Order status" value={first(payload, "order_status", "status")} />
-      <Field label="Payment status" value={first(payload, "paid_status", "payment_status")} />
-      <Field label="Order total" value={money(first(payload, "total", "bcy_total"), currency)} />
-      <Field label="Amount due" value={money(first(payload, "balance"), currency)} />
-      <Field label="Items quantity" value={first(payload, "quantity")} />
-      <Field label="Currency" value={currency} />
+      {fields
+        .filter(([, value]) => value !== undefined && value !== null && value !== "")
+        .map(([label, value]) => (
+          <Field key={label} label={label} value={value} />
+        ))}
     </dl>
   );
 }
@@ -187,25 +216,25 @@ function ResourceFields({
   let fields: [string, unknown][];
   if (resource === "categories") {
     fields = [
-      ["Category name", first(payload, "name", "category_name")],
-      ["Category ID", first(payload, "category_id")],
-      ["Parent category", first(payload, "parent_category_id")],
-      ["Visible in store", first(payload, "visibility", "is_visible")],
-      ["Shown in menu", first(payload, "show_in_menu")],
+      ["Category name", nestedFirst(payload, "name", "category_name")],
+      ["Category ID", nestedFirst(payload, "category_id")],
+      ["Parent category", nestedFirst(payload, "parent_category_id")],
+      ["Visible in store", nestedFirst(payload, "visibility", "is_visible")],
+      ["Shown in menu", nestedFirst(payload, "show_in_menu")],
     ];
   } else if (resource === "tax_rules") {
     fields = [
-      ["Tax name", first(payload, "tax_name", "name")],
+      ["Tax name", nestedFirst(payload, "tax_name", "name")],
       [
         "Rate",
-        first(payload, "tax_percentage") === undefined
+        nestedFirst(payload, "tax_percentage") === undefined
           ? undefined
-          : `${displayValue(first(payload, "tax_percentage"))}%`,
+          : `${displayValue(nestedFirst(payload, "tax_percentage"))}%`,
       ],
-      ["Country", first(payload, "country_name", "country_code")],
-      ["State", first(payload, "state_name", "state")],
-      ["Tax exempt", first(payload, "is_tax_exempt")],
-      ["Setting", first(payload, "_zoho_resource_type")],
+      ["Country", nestedFirst(payload, "country_name", "country_code")],
+      ["State", nestedFirst(payload, "state_name", "state")],
+      ["Tax exempt", nestedFirst(payload, "is_tax_exempt")],
+      ["Setting", nestedFirst(payload, "_zoho_resource_type")],
     ];
   } else if (resource === "store_index") {
     fields = [
@@ -216,8 +245,9 @@ function ResourceFields({
       ["Currency", first(payload, "store_currency_code")],
     ];
   } else {
-    const methods = Array.isArray(payload["payment_methods"])
-      ? payload["payment_methods"]
+    const rawMethods = nestedFirst(payload, "payment_methods", "offline_payment_methods");
+    const methods = Array.isArray(rawMethods)
+      ? rawMethods
           .map((method) => {
             if (!method || typeof method !== "object") return "";
             const item = method as Record<string, unknown>;
@@ -229,18 +259,26 @@ function ResourceFields({
           .join(", ")
       : undefined;
     fields = [
-      ["Available payment methods", methods || first(payload, "label", "payment_mode")],
-      ["Payment mode", first(payload, "payment_mode")],
-      ["Online payments", first(payload, "is_online_payment_configured")],
-      ["Offline payments", first(payload, "is_offline_payment_configured")],
-      ["Store currency", first(payload, "store_currency_code")],
+      ["Available payment methods", methods || nestedFirst(payload, "label", "payment_mode")],
+      ["Payment mode", nestedFirst(payload, "payment_mode")],
+      ["Online payments", nestedFirst(payload, "is_online_payment_configured")],
+      ["Offline payments", nestedFirst(payload, "is_offline_payment_configured")],
+      ["Store currency", nestedFirst(payload, "store_currency_code")],
     ];
   }
   return (
     <dl className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-      {fields.map(([label, value]) => (
-        <Field key={label} label={label} value={value} />
-      ))}
+      {fields.filter(([, value]) => value !== undefined && value !== null && value !== "")
+        .length ? (
+        fields
+          .filter(([, value]) => value !== undefined && value !== null && value !== "")
+          .map(([label, value]) => <Field key={label} label={label} value={value} />)
+      ) : (
+        <p className="text-sm text-slate sm:col-span-2 xl:col-span-3">
+          Zoho did not return these overview fields. Open the complete response below to review the
+          available information.
+        </p>
+      )}
     </dl>
   );
 }
@@ -250,6 +288,7 @@ function ZohoCommerceAdmin() {
   const [organizationId, setOrganizationId] = useState("");
   const [region, setRegion] = useState("in");
   const [busy, setBusy] = useState(false);
+  const [refreshBusy, setRefreshBusy] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [mirrorStates, setMirrorStates] = useState<MirrorState[]>([]);
   const [mirrorRecords, setMirrorRecords] = useState<Record<string, MirrorRecord[]>>({});
@@ -266,8 +305,10 @@ function ZohoCommerceAdmin() {
         setOrganizationId(status.organization_id);
         setRegion(status.region);
       }
+      return true;
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not load Zoho status");
+      return false;
     } finally {
       setLoaded(true);
     }
@@ -277,8 +318,23 @@ function ZohoCommerceAdmin() {
       const result = await getZohoCommerceReadMirror({ data: { salesOrdersPage: page } });
       setMirrorStates(result.resources as MirrorState[]);
       setMirrorRecords(result.snapshots as Record<string, MirrorRecord[]>);
+      return true;
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not load Zoho data mirror");
+      return false;
+    }
+  };
+  const refreshSavedData = async () => {
+    setRefreshBusy(true);
+    try {
+      const [statusLoaded, snapshotLoaded] = await Promise.all([reload(), reloadMirror()]);
+      if (statusLoaded && snapshotLoaded) {
+        toast.success("Loaded the latest saved Zoho snapshots", {
+          description: "To read new changes from Zoho, choose Sync account data.",
+        });
+      }
+    } finally {
+      setRefreshBusy(false);
     }
   };
   useEffect(() => {
@@ -372,13 +428,13 @@ function ZohoCommerceAdmin() {
       items={adminNav}
       tone="admin"
       title="Zoho Commerce"
-      subtitle="Connected store data, presented for ShamiBusiness administrators"
+      subtitle="Admin-only Zoho snapshots, refreshed when you sync"
     >
       <div className="space-y-5">
         <Panel className="overflow-hidden">
           <div className="-m-4 bg-gradient-to-r from-navy to-[#17375f] p-5 text-white sm:-m-5 sm:p-6">
-            <div className="flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between">
-              <div>
+            <div className="flex flex-col gap-4">
+              <div className="min-w-0">
                 <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-white/70">
                   <Store className="h-4 w-4" /> Zoho Commerce connection
                 </div>
@@ -404,36 +460,39 @@ function ZohoCommerceAdmin() {
               </div>
               <div className="flex flex-wrap gap-2">
                 <Button
-                  disabled={busy}
+                  disabled={busy || refreshBusy || mirrorBusy}
                   onClick={() => void connect()}
                   className="bg-white text-navy hover:bg-white/90"
                 >
                   {connection ? "Reauthorize Zoho" : "Connect Zoho"}
                 </Button>
                 <Button
-                  disabled={busy || !connection}
+                  disabled={busy || refreshBusy || mirrorBusy || !connection}
                   variant="outline"
                   onClick={() => void sync()}
                   className="border-white/25 bg-white/10 text-white hover:bg-white/20 hover:text-white"
                 >
-                  <CloudDownload className="mr-2 h-4 w-4" /> Sync catalog
+                  <CloudDownload className={`mr-2 h-4 w-4 ${busy ? "animate-bounce" : ""}`} />
+                  {busy ? "Syncing catalog…" : "Sync catalog"}
                 </Button>
                 <Button
-                  disabled={busy || mirrorBusy || !connection}
+                  disabled={busy || refreshBusy || mirrorBusy || !connection}
                   variant="outline"
                   onClick={() => void syncReadMirror()}
                   className="border-white/25 bg-white/10 text-white hover:bg-white/20 hover:text-white"
                 >
-                  <RefreshCw className={`mr-2 h-4 w-4 ${mirrorBusy ? "animate-spin" : ""}`} /> Sync
-                  account data
+                  <RefreshCw className={`mr-2 h-4 w-4 ${mirrorBusy ? "animate-spin" : ""}`} />
+                  {mirrorBusy ? "Syncing account data…" : "Sync account data"}
                 </Button>
                 <Button
-                  disabled={busy}
+                  disabled={busy || refreshBusy || mirrorBusy}
                   variant="ghost"
-                  onClick={() => void reload()}
+                  onClick={() => void refreshSavedData()}
                   className="text-white hover:bg-white/10 hover:text-white"
+                  title="Reload the last saved snapshot from the database; use either sync button to fetch new data from Zoho."
                 >
-                  <RefreshCw className="mr-2 h-4 w-4" /> Refresh
+                  <RefreshCw className={`mr-2 h-4 w-4 ${refreshBusy ? "animate-spin" : ""}`} />
+                  {refreshBusy ? "Refreshing saved data…" : "Refresh saved data"}
                 </Button>
               </div>
             </div>
@@ -476,7 +535,7 @@ function ZohoCommerceAdmin() {
                   </span>
                 </div>
                 <p className="mt-3 text-2xl font-bold text-navy">
-                  {(state?.record_count ?? 0).toLocaleString()}
+                  {state ? state.record_count.toLocaleString() : "Not synced"}
                 </p>
                 <p className="mt-1 text-xs text-slate">
                   {state
@@ -489,6 +548,11 @@ function ZohoCommerceAdmin() {
         </section>
 
         <Panel title="Synced Zoho data">
+          <p className="mb-4 rounded-md border border-blue-100 bg-blue-50/70 px-3 py-2.5 text-sm leading-relaxed text-slate">
+            This page shows the last data saved in ShamiBusiness from Zoho. It is not a live view;
+            use <strong>Sync account data</strong> to request a fresh read from Zoho, or{" "}
+            <strong>Refresh saved data</strong> to reload what is already stored.
+          </p>
           <div className="mb-4 flex flex-wrap items-center gap-2 border-b border-border pb-4">
             {Object.entries(RESOURCE_LABELS).map(([key, label]) => {
               const Icon = RESOURCE_ICONS[key] ?? FileText;

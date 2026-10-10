@@ -241,12 +241,13 @@ async function saveZohoSnapshot(
     const { error } = await db.from("zoho_commerce_sync_data").insert(records.slice(i, i + 100));
     if (error) throw new Error(`Could not stage Zoho ${resource} snapshot`);
   }
-  const { data: previous } = await db
+  const { data: previous, error: previousError } = await db
     .from("zoho_commerce_sync_state")
     .select("current_batch_id")
     .eq("organization_id", organizationId)
     .eq("resource", resource)
     .maybeSingle();
+  if (previousError) throw new Error(`Could not check the existing Zoho ${resource} snapshot`);
   const { error: stateError } = await db.from("zoho_commerce_sync_state").upsert(
     {
       organization_id: organizationId,
@@ -295,27 +296,31 @@ export const getZohoCommerceReadMirror = createServerFn({ method: "GET" })
       .select("organization_id,resource,current_batch_id,record_count,last_synced_at,last_error")
       .eq("organization_id", connection.organization_id);
     if (error) throw new Error("Could not load the Zoho data mirror");
-    const snapshots: Record<string, { external_id: string; payload: Json; captured_at: string }[]> =
-      {};
-    for (const state of resources ?? []) {
-      let query = db
-        .from("zoho_commerce_sync_data")
-        .select("external_id,payload,captured_at")
-        .eq("organization_id", connection.organization_id)
-        .eq("resource", state.resource)
-        .eq("batch_id", state.current_batch_id)
-        .order("external_id", { ascending: true });
-      if (state.resource === "sales_orders") {
-        const pageSize = 200;
-        const start = (data.salesOrdersPage - 1) * pageSize;
-        query = query.range(start, start + pageSize - 1);
-      } else {
-        query = query.limit(200);
-      }
-      const { data: rows, error: rowsError } = await query;
-      if (rowsError) throw new Error(`Could not load Zoho ${state.resource} records`);
-      snapshots[state.resource] = rows ?? [];
-    }
+    const entries = await Promise.all(
+      (resources ?? []).map(async (state) => {
+        let query = db
+          .from("zoho_commerce_sync_data")
+          .select("external_id,payload,captured_at")
+          .eq("organization_id", connection.organization_id)
+          .eq("resource", state.resource)
+          .eq("batch_id", state.current_batch_id)
+          .order("external_id", { ascending: true });
+        if (state.resource === "sales_orders") {
+          const pageSize = 200;
+          const start = (data.salesOrdersPage - 1) * pageSize;
+          query = query.range(start, start + pageSize - 1);
+        } else {
+          query = query.limit(200);
+        }
+        const { data: rows, error: rowsError } = await query;
+        if (rowsError) throw new Error(`Could not load Zoho ${state.resource} records`);
+        return [state.resource, rows ?? []] as const;
+      }),
+    );
+    const snapshots = Object.fromEntries(entries) as Record<
+      string,
+      { external_id: string; payload: Json; captured_at: string }[]
+    >;
     return { resources: resources ?? [], snapshots };
   });
 
@@ -358,78 +363,88 @@ export const syncZohoCommerceReadMirror = createServerFn({ method: "POST" })
       }
     };
 
-    await run(
-      "categories",
-      () => fetchZohoPages(region, organizationId, token, "/store/api/v1/categories", "categories"),
-      (row) => str(row["category_id"]),
-    );
-    await run(
-      "sales_orders",
-      () =>
-        fetchZohoPages(region, organizationId, token, "/store/api/v1/salesorders", "salesorders", {
-          filter_by: "Status.All",
-        }),
-      (row) => str(row["salesorder_id"]),
-    );
-    await run(
-      "tax_rules",
-      async () => {
-        const rules = await fetchZohoPages(
-          region,
-          organizationId,
-          token,
-          "/store/api/v1/settings/taxrules",
-          "taxrules",
-        );
-        const url = `${REGIONS[region][1]}/store/api/v1/settings/taxpreferences`;
-        const response = await fetch(url, {
-          headers: {
-            Authorization: `Zoho-oauthtoken ${token}`,
-            "X-com-zoho-store-organizationid": organizationId,
-          },
-        });
-        const data = (await response.json()) as {
-          code?: number;
-          message?: string;
-          tax_preferences?: Record<string, unknown>;
-        };
-        if (!response.ok || data.code !== 0)
-          throw new Error(
-            data.message ?? `Zoho tax preferences request failed (${response.status})`,
+    const [, , , sites] = await Promise.all([
+      run(
+        "categories",
+        () =>
+          fetchZohoPages(region, organizationId, token, "/store/api/v1/categories", "categories"),
+        (row) => str(row["category_id"]),
+      ),
+      run(
+        "sales_orders",
+        () =>
+          fetchZohoPages(
+            region,
+            organizationId,
+            token,
+            "/store/api/v1/salesorders",
+            "salesorders",
+            {
+              filter_by: "Status.All",
+            },
+          ),
+        (row) => str(row["salesorder_id"]),
+      ),
+      run(
+        "tax_rules",
+        async () => {
+          const rules = await fetchZohoPages(
+            region,
+            organizationId,
+            token,
+            "/store/api/v1/settings/taxrules",
+            "taxrules",
           );
-        return [
-          ...rules,
-          ...(data.tax_preferences
-            ? [{ ...data.tax_preferences, _zoho_resource_type: "tax_preferences" }]
-            : []),
-        ];
-      },
-      (row) =>
-        str(
-          row["rule_id"] ??
-            row["tax_id"] ??
-            (row["_zoho_resource_type"] === "tax_preferences" ? "tax_preferences" : ""),
-        ),
-    );
-    const sites = await run(
-      "store_index",
-      async () => {
-        const response = await fetch(`${REGIONS[region][1]}/zs-site/api/v1/index/sites`, {
-          headers: { Authorization: `Zoho-oauthtoken ${token}` },
-        });
-        const data = (await response.json()) as {
-          status_code?: string;
-          status_message?: string;
-          get_sites?: { my_sites?: Record<string, unknown>[] };
-        };
-        if (!response.ok || data.status_code !== "0")
-          throw new Error(
-            data.status_message ?? `Zoho store index request failed (${response.status})`,
-          );
-        return data.get_sites?.my_sites ?? [];
-      },
-      (row) => str(row["zsite_id"]),
-    );
+          const url = `${REGIONS[region][1]}/store/api/v1/settings/taxpreferences`;
+          const response = await fetch(url, {
+            headers: {
+              Authorization: `Zoho-oauthtoken ${token}`,
+              "X-com-zoho-store-organizationid": organizationId,
+            },
+          });
+          const data = (await response.json()) as {
+            code?: number;
+            message?: string;
+            tax_preferences?: Record<string, unknown>;
+          };
+          if (!response.ok || data.code !== 0)
+            throw new Error(
+              data.message ?? `Zoho tax preferences request failed (${response.status})`,
+            );
+          return [
+            ...rules,
+            ...(data.tax_preferences
+              ? [{ ...data.tax_preferences, _zoho_resource_type: "tax_preferences" }]
+              : []),
+          ];
+        },
+        (row) =>
+          str(
+            row["rule_id"] ??
+              row["tax_id"] ??
+              (row["_zoho_resource_type"] === "tax_preferences" ? "tax_preferences" : ""),
+          ),
+      ),
+      run(
+        "store_index",
+        async () => {
+          const response = await fetch(`${REGIONS[region][1]}/zs-site/api/v1/index/sites`, {
+            headers: { Authorization: `Zoho-oauthtoken ${token}` },
+          });
+          const data = (await response.json()) as {
+            status_code?: string;
+            status_message?: string;
+            get_sites?: { my_sites?: Record<string, unknown>[] };
+          };
+          if (!response.ok || data.status_code !== "0")
+            throw new Error(
+              data.status_message ?? `Zoho store index request failed (${response.status})`,
+            );
+          return data.get_sites?.my_sites ?? [];
+        },
+        (row) => str(row["zsite_id"]),
+      ),
+    ]);
     await run(
       "store_meta",
       async () => {
@@ -465,7 +480,7 @@ export const syncZohoCommerceReadMirror = createServerFn({ method: "POST" })
           .join("; ")
           .slice(0, 500)
       : null;
-    await db
+    const { error: statusError } = await db
       .from("zoho_commerce_connection")
       .update({
         status: summary ? "error" : "connected",
@@ -473,6 +488,8 @@ export const syncZohoCommerceReadMirror = createServerFn({ method: "POST" })
         updated_at: new Date().toISOString(),
       })
       .eq("id", true);
+    if (statusError)
+      throw new Error("Zoho data synced, but its connection status could not be saved");
     return { outcomes, failures: failures.length };
   });
 
@@ -815,10 +832,12 @@ export const syncZohoProducts = createServerFn({ method: "POST" })
           throw new Error("Zoho products could not be saved to the marketplace catalog");
       }
       // Hide stale imports only after every page completed successfully.
-      const { data: current } = await db
+      const { data: current, error: currentError } = await db
         .from("catalog_products")
         .select("id,payload")
         .like("id", "zoho-%");
+      if (currentError)
+        throw new Error("Could not verify the current Zoho catalog before reconciling it");
       const liveIds = new Set(rows.map((row) => row.id));
       for (const old of current ?? []) {
         if (liveIds.has(old.id)) continue;
@@ -833,7 +852,7 @@ export const syncZohoProducts = createServerFn({ method: "POST" })
         if (hideError) throw new Error("Could not hide products removed from Zoho Commerce");
       }
       const couponsSynced = await syncZohoCoupons(db, token, region, connection.organization_id);
-      await db
+      const { error: statusError } = await db
         .from("zoho_commerce_connection")
         .update({
           status: "connected",
@@ -842,6 +861,8 @@ export const syncZohoProducts = createServerFn({ method: "POST" })
           updated_at: new Date().toISOString(),
         })
         .eq("id", true);
+      if (statusError)
+        throw new Error("Catalog synced, but the last-sync status could not be saved");
       return { synced: rows.length, couponsSynced };
     } catch (cause) {
       const message =
