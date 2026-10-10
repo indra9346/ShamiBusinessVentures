@@ -11,9 +11,15 @@ export const Route = createFileRoute("/admin/login")({
   head: () => ({
     meta: [
       { title: "Admin Login | Shami Business Ventures" },
-      { name: "description", content: "Administrator sign-in with a provisioned email and password." },
+      {
+        name: "description",
+        content: "Administrator sign-in with a provisioned email and password.",
+      },
       { property: "og:title", content: "Admin Login | Shami" },
-      { property: "og:description", content: "Restricted access to the marketplace control centre." },
+      {
+        property: "og:description",
+        content: "Restricted access to the marketplace control centre.",
+      },
       { name: "robots", content: "noindex" },
     ],
   }),
@@ -34,7 +40,9 @@ function AdminLogin() {
       if (STATIC_DATA_MODE) {
         const cleanEmail = email.trim().toLowerCase();
         login({ name: cleanEmail.split("@")[0] || "Admin", email: cleanEmail, role: "admin" });
-        toast.info("Static preview sign-in", { description: "This preview does not authenticate against production." });
+        toast.info("Static preview sign-in", {
+          description: "This preview does not authenticate against production.",
+        });
         navigate({ to: "/admin/dashboard", replace: true });
         return;
       }
@@ -54,13 +62,15 @@ function AdminLogin() {
       title="Admin Login"
       subtitle="Use the administrator email and password provisioned for you. Public admin registration is disabled."
     >
-      <form onSubmit={(event) => void finish(event)} className="space-y-4">
+      <form autoComplete="off" onSubmit={(event) => void finish(event)} className="space-y-4">
         <label className="block">
-          <span className="mb-1.5 block text-xs font-semibold text-charcoal">Administrator email</span>
+          <span className="mb-1.5 block text-xs font-semibold text-charcoal">
+            Administrator email
+          </span>
           <Input
             required
             type="email"
-            autoComplete="username"
+            autoComplete="off"
             value={email}
             onChange={(event) => setEmail(event.target.value)}
           />
@@ -70,7 +80,7 @@ function AdminLogin() {
           <Input
             required
             type="password"
-            autoComplete="current-password"
+            autoComplete="off"
             value={password}
             onChange={(event) => setPassword(event.target.value)}
           />
@@ -83,9 +93,13 @@ function AdminLogin() {
           {submitting ? "Signing in…" : "Sign in to Admin Panel"}
         </button>
         <p className="text-xs text-slate">
-          Admin access requires an existing Supabase Auth account with an administrator role. No OTP is used for admin sign-in.
+          Admin access requires an existing Supabase Auth account with an administrator role. No OTP
+          is used for admin sign-in.
         </p>
-        <Link to="/reset-password" className="inline-block text-sm font-semibold text-gold hover:underline">
+        <Link
+          to="/reset-password"
+          className="inline-block text-sm font-semibold text-gold hover:underline"
+        >
           Set or reset password
         </Link>
       </form>

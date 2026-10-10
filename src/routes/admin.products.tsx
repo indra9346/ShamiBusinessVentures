@@ -1,7 +1,16 @@
 import { createFileRoute, Link, Outlet, useRouterState } from "@tanstack/react-router";
 import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import { toast } from "sonner";
-import { AlertTriangle, Boxes, Download, ImagePlus, Minus, Package, PackageX, Plus } from "lucide-react";
+import {
+  AlertTriangle,
+  Boxes,
+  Download,
+  ImagePlus,
+  Minus,
+  Package,
+  PackageX,
+  Plus,
+} from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { DataTable, Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { Pager } from "@/components/panel/pager";
@@ -60,7 +69,35 @@ export const Route = createFileRoute("/admin/products")({
 
 const PAGE_SIZE = 10;
 
-function emptyForm(defaultCategory = "Rice", defaultSubcategory = "Raw Rice", defaultVendorId = "") {
+function ProductThumbnail({ src, name }: { src?: string; name: string }) {
+  const [failed, setFailed] = useState(!src);
+  useEffect(() => setFailed(!src), [src]);
+  return (
+    <div
+      className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-md border border-border bg-ivory text-gold"
+      role="img"
+      aria-label={`${name} product image`}
+    >
+      {!failed && src ? (
+        <img
+          src={src}
+          alt=""
+          loading="lazy"
+          className="h-full w-full object-cover"
+          onError={() => setFailed(true)}
+        />
+      ) : (
+        <Package className="h-5 w-5" aria-hidden="true" />
+      )}
+    </div>
+  );
+}
+
+function emptyForm(
+  defaultCategory = "Rice",
+  defaultSubcategory = "Raw Rice",
+  defaultVendorId = "",
+) {
   return {
     name: "",
     category: defaultCategory,
@@ -88,8 +125,16 @@ function AdminProducts() {
 }
 
 function AdminProductsPanel() {
-  const { products, categories, vendors, addProduct, updateProduct, deleteProduct, duplicateProduct, getFIFOCost } =
-    useApp();
+  const {
+    products,
+    categories,
+    vendors,
+    addProduct,
+    updateProduct,
+    deleteProduct,
+    duplicateProduct,
+    getFIFOCost,
+  } = useApp();
   const categoryChoices = categories.map((c) => ({ name: c.name, subs: c.grades }));
   const [q, setQ] = useState("");
   const [category, setCategory] = useState("all");
@@ -99,9 +144,12 @@ function AdminProductsPanel() {
   const [page, setPage] = useState(1);
 
   const [addOpen, setAddOpen] = useState(false);
-  const [form, setForm] = useState(emptyForm(categoryChoices[0]?.name, categoryChoices[0]?.subs[0], vendors[0]?.id));
+  const [form, setForm] = useState(
+    emptyForm(categoryChoices[0]?.name, categoryChoices[0]?.subs[0], vendors[0]?.id),
+  );
   useEffect(() => {
-    if (!form.vendorId && vendors.length > 0) setForm((current) => ({ ...current, vendorId: vendors[0]!.id }));
+    if (!form.vendorId && vendors.length > 0)
+      setForm((current) => ({ ...current, vendorId: vendors[0]!.id }));
   }, [form.vendorId, vendors]);
 
   const [quickOpen, setQuickOpen] = useState(false);
@@ -124,7 +172,10 @@ function AdminProductsPanel() {
   const [imageUploading, setImageUploading] = useState(false);
   const [editImageUploading, setEditImageUploading] = useState(false);
 
-  const uploadProductImage = async (event: ChangeEvent<HTMLInputElement>, editingProduct = false) => {
+  const uploadProductImage = async (
+    event: ChangeEvent<HTMLInputElement>,
+    editingProduct = false,
+  ) => {
     const file = event.target.files?.[0];
     if (!file) return;
     const setUploading = editingProduct ? setEditImageUploading : setImageUploading;
@@ -135,7 +186,9 @@ function AdminProductsPanel() {
       else setForm((current) => ({ ...current, image }));
       toast.success("Product image uploaded");
     } catch (error) {
-      toast.error("Could not upload the product image", { description: error instanceof Error ? error.message : "Try again." });
+      toast.error("Could not upload the product image", {
+        description: error instanceof Error ? error.message : "Try again.",
+      });
     } finally {
       setUploading(false);
       event.target.value = "";
@@ -220,7 +273,7 @@ function AdminProductsPanel() {
       created: dateStr,
       updated: dateStr,
     };
-    if (!await addProduct(item)) return;
+    if (!(await addProduct(item))) return;
     toast.success(`${item.name} added with ${qty} units`);
     setQuickForm({ name: "", qty: "", price: "" });
     setQuickOpen(false);
@@ -275,7 +328,7 @@ function AdminProductsPanel() {
         year: "numeric",
       }),
     };
-    if (!await addProduct(product)) return;
+    if (!(await addProduct(product))) return;
     toast.success(`${product.name} added to catalogue`);
     setAddOpen(false);
     setForm(emptyForm(categoryChoices[0]?.name, categoryChoices[0]?.subs[0], vendors[0]?.id));
@@ -489,11 +542,26 @@ function AdminProductsPanel() {
                       <Select
                         value={form.category}
                         onValueChange={(v) => {
-                          setForm((current) => ({ ...current, category: v, subcategory: categoryChoices.find((c) => c.name === v)?.subs[0] ?? v }));
-                          void loadTaxSettings().then((settings) => {
-                            const gst = defaultGstForCategory(settings, v);
-                            setForm((current) => current.category === v ? { ...current, gst: String(gst) } : current);
-                          }).catch((error: unknown) => toast.error("Could not load GST defaults", { description: error instanceof Error ? error.message : "Using the current product rate." }));
+                          setForm((current) => ({
+                            ...current,
+                            category: v,
+                            subcategory: categoryChoices.find((c) => c.name === v)?.subs[0] ?? v,
+                          }));
+                          void loadTaxSettings()
+                            .then((settings) => {
+                              const gst = defaultGstForCategory(settings, v);
+                              setForm((current) =>
+                                current.category === v ? { ...current, gst: String(gst) } : current,
+                              );
+                            })
+                            .catch((error: unknown) =>
+                              toast.error("Could not load GST defaults", {
+                                description:
+                                  error instanceof Error
+                                    ? error.message
+                                    : "Using the current product rate.",
+                              }),
+                            );
                         }}
                       >
                         <SelectTrigger>
@@ -533,11 +601,17 @@ function AdminProductsPanel() {
                       value={form.subcategory}
                       onValueChange={(v) => setForm({ ...form, subcategory: v })}
                     >
-                      <SelectTrigger><SelectValue placeholder="Choose subcategory" /></SelectTrigger>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Choose subcategory" />
+                      </SelectTrigger>
                       <SelectContent>
-                        {(categoryChoices.find((c) => c.name === form.category)?.subs ?? []).map((subcategory) => (
-                          <SelectItem key={subcategory} value={subcategory}>{subcategory}</SelectItem>
-                        ))}
+                        {(categoryChoices.find((c) => c.name === form.category)?.subs ?? []).map(
+                          (subcategory) => (
+                            <SelectItem key={subcategory} value={subcategory}>
+                              {subcategory}
+                            </SelectItem>
+                          ),
+                        )}
                       </SelectContent>
                     </Select>
                   </div>
@@ -583,10 +657,23 @@ function AdminProductsPanel() {
                       placeholder="Paste image URL (optional)"
                     />
                     <label className="mt-2 inline-flex cursor-pointer items-center gap-2 text-sm font-medium text-navy hover:text-gold">
-                      <ImagePlus className="h-4 w-4" /> {imageUploading ? "Uploading…" : "Browse local files"}
-                      <input className="sr-only" type="file" accept="image/jpeg,image/png,image/webp,image/gif,image/avif" disabled={imageUploading} onChange={(event) => void uploadProductImage(event)} />
+                      <ImagePlus className="h-4 w-4" />{" "}
+                      {imageUploading ? "Uploading…" : "Browse local files"}
+                      <input
+                        className="sr-only"
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp,image/gif,image/avif"
+                        disabled={imageUploading}
+                        onChange={(event) => void uploadProductImage(event)}
+                      />
                     </label>
-                    {form.image && <img src={form.image} alt="Product preview" className="mt-2 h-24 w-24 rounded-md border object-cover" />}
+                    {form.image && (
+                      <img
+                        src={form.image}
+                        alt="Product preview"
+                        className="mt-2 h-24 w-24 rounded-md border object-cover"
+                      />
+                    )}
                   </div>
                   <div className="grid grid-cols-3 gap-3">
                     <div>
@@ -630,9 +717,13 @@ function AdminProductsPanel() {
                     <Label>Approval Status</Label>
                     <Select
                       value={form.status}
-                      onValueChange={(v) => setForm({ ...form, status: v as "approved" | "pending" | "rejected" })}
+                      onValueChange={(v) =>
+                        setForm({ ...form, status: v as "approved" | "pending" | "rejected" })
+                      }
                     >
-                      <SelectTrigger><SelectValue placeholder="Select status" /></SelectTrigger>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select status" />
+                      </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="approved">Approved (Live on storefront)</SelectItem>
                         <SelectItem value="pending">Pending review</SelectItem>
@@ -676,11 +767,7 @@ function AdminProductsPanel() {
           rows={rows.map((p) => {
             return [
               <div className="flex items-center gap-3">
-                <img
-                  src={p.image}
-                  alt={p.name}
-                  className="h-10 w-10 rounded-md border border-border object-cover"
-                />
+                <ProductThumbnail src={p.image} name={p.name} />
                 <Link
                   to="/admin/products/$id"
                   params={{ id: p.id }}
@@ -713,7 +800,9 @@ function AdminProductsPanel() {
               <Select
                 value={p.status}
                 onValueChange={async (v) => {
-                  if (await updateProduct(p.id, { status: v as "approved" | "pending" | "rejected" })) {
+                  if (
+                    await updateProduct(p.id, { status: v as "approved" | "pending" | "rejected" })
+                  ) {
                     toast.success(`${p.name} marked as ${v}`);
                   }
                 }}
@@ -729,7 +818,10 @@ function AdminProductsPanel() {
               </Select>,
               <Switch
                 checked={p.active}
-                onCheckedChange={async (v) => { if (await updateProduct(p.id, { active: v })) toast.success(`${p.name} ${v ? "enabled" : "disabled"}`); }}
+                onCheckedChange={async (v) => {
+                  if (await updateProduct(p.id, { active: v }))
+                    toast.success(`${p.name} ${v ? "enabled" : "disabled"}`);
+                }}
               />,
               p.created,
               <div className="flex flex-wrap items-center gap-1.5">
@@ -769,7 +861,9 @@ function AdminProductsPanel() {
                   variant="outline"
                   size="sm"
                   onClick={() => {
-                    void duplicateProduct(p.id).then((ok) => { if (ok) toast.success(`${p.name} duplicated`); });
+                    void duplicateProduct(p.id).then((ok) => {
+                      if (ok) toast.success(`${p.name} duplicated`);
+                    });
                   }}
                 >
                   Duplicate
@@ -790,7 +884,11 @@ function AdminProductsPanel() {
                     <AlertDialogFooter>
                       <AlertDialogCancel>Cancel</AlertDialogCancel>
                       <AlertDialogAction
-                        onClick={() => { void deleteProduct(p.id).then((ok) => { if (ok) toast.success(`${p.name} deleted`); }); }}
+                        onClick={() => {
+                          void deleteProduct(p.id).then((ok) => {
+                            if (ok) toast.success(`${p.name} deleted`);
+                          });
+                        }}
                       >
                         Delete
                       </AlertDialogAction>
@@ -858,10 +956,23 @@ function AdminProductsPanel() {
                   onChange={(e) => setEditForm({ ...editForm, image: e.target.value })}
                 />
                 <label className="mt-2 inline-flex cursor-pointer items-center gap-2 text-sm font-medium text-navy hover:text-gold">
-                  <ImagePlus className="h-4 w-4" /> {editImageUploading ? "Uploading…" : "Browse local files"}
-                  <input className="sr-only" type="file" accept="image/jpeg,image/png,image/webp,image/gif,image/avif" disabled={editImageUploading} onChange={(event) => void uploadProductImage(event, true)} />
+                  <ImagePlus className="h-4 w-4" />{" "}
+                  {editImageUploading ? "Uploading…" : "Browse local files"}
+                  <input
+                    className="sr-only"
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp,image/gif,image/avif"
+                    disabled={editImageUploading}
+                    onChange={(event) => void uploadProductImage(event, true)}
+                  />
                 </label>
-                {editForm.image && <img src={editForm.image} alt="Product preview" className="mt-2 h-24 w-24 rounded-md border object-cover" />}
+                {editForm.image && (
+                  <img
+                    src={editForm.image}
+                    alt="Product preview"
+                    className="mt-2 h-24 w-24 rounded-md border object-cover"
+                  />
+                )}
               </div>
             </div>
             <div className="grid grid-cols-2 gap-3">
@@ -905,9 +1016,13 @@ function AdminProductsPanel() {
                 <Label>Approval Status</Label>
                 <Select
                   value={editForm.status}
-                  onValueChange={(v) => setEditForm({ ...editForm, status: v as "approved" | "pending" | "rejected" })}
+                  onValueChange={(v) =>
+                    setEditForm({ ...editForm, status: v as "approved" | "pending" | "rejected" })
+                  }
                 >
-                  <SelectTrigger><SelectValue placeholder="Select status" /></SelectTrigger>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select status" />
+                  </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="approved">Approved (Live on storefront)</SelectItem>
                     <SelectItem value="pending">Pending review</SelectItem>
@@ -937,7 +1052,10 @@ function AdminProductsPanel() {
                   requiredStock: Number(editForm.requiredStock),
                   status: editForm.status,
                 });
-                if (saved) { toast.success(`${editForm.name} updated`); setEditing(null); }
+                if (saved) {
+                  toast.success(`${editForm.name} updated`);
+                  setEditing(null);
+                }
               }}
             >
               Save Changes
@@ -989,7 +1107,8 @@ function AdminProductsPanel() {
             <Button
               onClick={async () => {
                 if (!stockEditing) return;
-                if (!await updateProduct(stockEditing.id, { stock: Number(stockValue) || 0 })) return;
+                if (!(await updateProduct(stockEditing.id, { stock: Number(stockValue) || 0 })))
+                  return;
                 toast.success(`Stock for ${stockEditing.name} updated to ${stockValue}`);
                 setStockEditing(null);
               }}

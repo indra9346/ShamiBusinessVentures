@@ -1,5 +1,5 @@
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
-import { Bell, LogOut, Menu, Search, X } from "lucide-react";
+import { AlertTriangle, Bell, LogOut, Menu, RefreshCw, Search, X } from "lucide-react";
 import { useState, useMemo, useEffect, type ReactNode } from "react";
 import { LogoMark } from "@/components/brand/Logo";
 import { useApp } from "@/lib/store";
@@ -49,30 +49,42 @@ export function PanelLayout({
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const [verifiedRole, setVerifiedRole] = useState(false);
+  const [roleCheckError, setRoleCheckError] = useState("");
+  const [verificationAttempt, setVerificationAttempt] = useState(0);
   const [adminIdleTimeoutMinutes, setAdminIdleTimeoutMinutes] = useState(30);
 
   useEffect(() => {
     if (tone !== "admin" || STATIC_DATA_MODE) return;
     let active = true;
-    void supabase.from("settings").select("value").eq("key", "security_config").maybeSingle().then(({ data, error }) => {
-      if (!active || error) return;
-      const config = data?.value && typeof data.value === "object" && !Array.isArray(data.value)
-        ? data.value as Record<string, unknown>
-        : {};
-      const rawAutoLogout = config["autoLogout"];
-      const rawSessionHours = config["session_hours"];
-      let configured: number | null = null;
-      if (rawAutoLogout !== null && rawAutoLogout !== undefined && rawAutoLogout !== "") {
-        const num = Number(rawAutoLogout);
-        if (Number.isFinite(num)) configured = num;
-      } else if (rawSessionHours !== null && rawSessionHours !== undefined && rawSessionHours !== "") {
-        const hours = Number(rawSessionHours);
-        if (Number.isFinite(hours) && hours > 0) configured = hours * 60;
-      }
-      if (configured !== null && Number.isFinite(configured) && configured >= 5) {
-        setAdminIdleTimeoutMinutes(Math.min(1440, configured));
-      }
-    });
+    void supabase
+      .from("settings")
+      .select("value")
+      .eq("key", "security_config")
+      .maybeSingle()
+      .then(({ data, error }) => {
+        if (!active || error) return;
+        const config =
+          data?.value && typeof data.value === "object" && !Array.isArray(data.value)
+            ? (data.value as Record<string, unknown>)
+            : {};
+        const rawAutoLogout = config["autoLogout"];
+        const rawSessionHours = config["session_hours"];
+        let configured: number | null = null;
+        if (rawAutoLogout !== null && rawAutoLogout !== undefined && rawAutoLogout !== "") {
+          const num = Number(rawAutoLogout);
+          if (Number.isFinite(num)) configured = num;
+        } else if (
+          rawSessionHours !== null &&
+          rawSessionHours !== undefined &&
+          rawSessionHours !== ""
+        ) {
+          const hours = Number(rawSessionHours);
+          if (Number.isFinite(hours) && hours > 0) configured = hours * 60;
+        }
+        if (configured !== null && Number.isFinite(configured) && configured >= 5) {
+          setAdminIdleTimeoutMinutes(Math.min(1440, configured));
+        }
+      });
     const applySavedTimeout = (event: Event) => {
       const value = Number((event as CustomEvent<number>).detail);
       if (Number.isFinite(value) && value >= 5) setAdminIdleTimeoutMinutes(Math.min(1440, value));
@@ -104,17 +116,24 @@ export function PanelLayout({
       });
     };
     const activityEvents = ["pointerdown", "keydown", "scroll", "touchstart"] as const;
-    for (const eventName of activityEvents) window.addEventListener(eventName, recordActivity, { passive: true });
+    for (const eventName of activityEvents)
+      window.addEventListener(eventName, recordActivity, { passive: true });
     const storageListener = (event: StorageEvent) => {
       if (event.key === key) expireIfIdle();
     };
     window.addEventListener("storage", storageListener);
     const interval = window.setInterval(expireIfIdle, 15_000);
-    document.addEventListener("visibilitychange", expireIfIdle);
+    const handleVisibilityChange = () => {
+      // Switching to another browser tab is not activity in this tab. Reset the
+      // idle clock when the administrator returns so the tab switch itself
+      // cannot unexpectedly end an otherwise valid admin session.
+      if (document.visibilityState === "visible") recordActivity();
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
     expireIfIdle();
     return () => {
       window.clearInterval(interval);
-      document.removeEventListener("visibilitychange", expireIfIdle);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
       window.removeEventListener("storage", storageListener);
       for (const eventName of activityEvents) window.removeEventListener(eventName, recordActivity);
     };
@@ -123,39 +142,77 @@ export function PanelLayout({
   useEffect(() => {
     let active = true;
     setVerifiedRole(false);
-    if (!hydrated) return () => { active = false; };
+    setRoleCheckError("");
+    if (!hydrated)
+      return () => {
+        active = false;
+      };
     if (STATIC_DATA_MODE) {
       if (user?.role === tone) setVerifiedRole(true);
-      else navigate({ to: tone === "admin" ? "/admin/login" : tone === "vendor" ? "/vendor/login" : "/login", replace: true });
-      return () => { active = false; };
+      else
+        navigate({
+          to: tone === "admin" ? "/admin/login" : tone === "vendor" ? "/vendor/login" : "/login",
+          replace: true,
+        });
+      return () => {
+        active = false;
+      };
     }
     void (async () => {
-      const { data: { user: authUser } } = await supabase.auth.getUser();
-      if (!authUser || user?.role !== tone) {
+      const {
+        data: { user: authUser },
+        error: authError,
+      } = await supabase.auth.getUser();
+      if (authError) {
+        if (active)
+          setRoleCheckError(
+            "We could not verify your sign-in right now. Your session has been kept; try again when your connection is available.",
+          );
+        return;
+      }
+      if (!authUser) {
         if (active) {
-          if (authUser) await supabase.auth.signOut();
-          logout();
-          navigate({ to: tone === "admin" ? "/admin/login" : tone === "vendor" ? "/vendor/login" : "/login", replace: true });
+          navigate({
+            to: tone === "admin" ? "/admin/login" : tone === "vendor" ? "/vendor/login" : "/login",
+            replace: true,
+          });
         }
         return;
       }
-      const { data: roleRecord, error } = await supabase.from("user_roles").select("role").eq("user_id", authUser.id).eq("role", tone).maybeSingle();
+      const { data: roleRecord, error } = await supabase
+        .from("user_roles")
+        .select("role")
+        .eq("user_id", authUser.id)
+        .eq("role", tone)
+        .maybeSingle();
       if (!active) return;
-      if (error || !roleRecord) {
+      if (error) {
+        setRoleCheckError(
+          "We could not confirm this account’s panel access. Your sign-in has been kept; try again when your connection is available.",
+        );
+        return;
+      }
+      if (!roleRecord) {
         await supabase.auth.signOut();
         logout();
-        navigate({ to: tone === "admin" ? "/admin/login" : tone === "vendor" ? "/vendor/login" : "/login", replace: true });
+        navigate({
+          to: tone === "admin" ? "/admin/login" : tone === "vendor" ? "/vendor/login" : "/login",
+          replace: true,
+        });
         return;
       }
       setVerifiedRole(true);
     })().catch(() => {
       if (active) {
-        logout();
-        navigate({ to: tone === "admin" ? "/admin/login" : tone === "vendor" ? "/vendor/login" : "/login", replace: true });
+        setRoleCheckError(
+          "We could not verify your sign-in. Your session has been kept; retry the access check.",
+        );
       }
     });
-    return () => { active = false; };
-  }, [hydrated, user?.role, tone, logout, navigate]);
+    return () => {
+      active = false;
+    };
+  }, [hydrated, tone, logout, navigate, verificationAttempt]);
 
   const relevantNotifs = useMemo(() => {
     return notifications.filter((n) => {
@@ -217,8 +274,34 @@ export function PanelLayout({
 
   // Keep hooks above this guard. React requires the same hooks on the initial
   // loading render and on the later authenticated render.
-  if (!hydrated || user?.role !== tone || !verifiedRole) {
-    return <div className="grid min-h-screen place-items-center bg-panel text-sm text-slate">Redirecting to secure sign in…</div>;
+  if (!hydrated || !verifiedRole) {
+    return (
+      <div className="grid min-h-screen place-items-center bg-panel p-6 text-sm text-slate">
+        {roleCheckError ? (
+          <div
+            role="alert"
+            className="max-w-md rounded-lg border border-amber-200 bg-white p-6 text-center shadow-card"
+          >
+            <AlertTriangle className="mx-auto h-8 w-8 text-amber-600" />
+            <p className="mt-3 font-semibold text-navy">
+              Administrator access could not be checked
+            </p>
+            <p className="mt-2 leading-relaxed">{roleCheckError}</p>
+            <button
+              type="button"
+              onClick={() => setVerificationAttempt((attempt) => attempt + 1)}
+              className="mt-4 inline-flex items-center gap-2 rounded-md bg-navy px-4 py-2 font-medium text-white hover:bg-navy/90"
+            >
+              <RefreshCw className="h-4 w-4" /> Try again
+            </button>
+          </div>
+        ) : (
+          <div className="inline-flex items-center gap-2">
+            <RefreshCw className="h-4 w-4 animate-spin" /> Checking your secure sign-in…
+          </div>
+        )}
+      </div>
+    );
   }
 
   const sidebarBg =
