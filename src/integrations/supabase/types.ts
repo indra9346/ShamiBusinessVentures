@@ -14,6 +14,60 @@ export type Database = {
   }
   public: {
     Tables: {
+      zoho_commerce_sync_state: {
+        Row: {
+          organization_id: string
+          resource: string
+          current_batch_id: string
+          record_count: number
+          last_synced_at: string
+          last_error: string | null
+        }
+        Insert: {
+          organization_id: string
+          resource: string
+          current_batch_id: string
+          record_count?: number
+          last_synced_at?: string
+          last_error?: string | null
+        }
+        Update: {
+          organization_id?: string
+          resource?: string
+          current_batch_id?: string
+          record_count?: number
+          last_synced_at?: string
+          last_error?: string | null
+        }
+        Relationships: []
+      }
+      zoho_commerce_sync_data: {
+        Row: {
+          organization_id: string
+          resource: string
+          batch_id: string
+          external_id: string
+          payload: Json
+          captured_at: string
+        }
+        Insert: {
+          organization_id: string
+          resource: string
+          batch_id: string
+          external_id: string
+          payload: Json
+          captured_at?: string
+        }
+        Update: {
+          organization_id?: string
+          resource?: string
+          batch_id?: string
+          external_id?: string
+          payload?: Json
+          captured_at?: string
+        }
+        Relationships: []
+      }
       addresses: {
         Row: {
           city: string

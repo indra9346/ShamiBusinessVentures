@@ -17,7 +17,9 @@ import {
 } from "@/components/ui/select";
 import {
   getZohoConnectionStatus,
+  getZohoCommerceReadMirror,
   startZohoAuthorization,
+  syncZohoCommerceReadMirror,
   syncZohoProducts,
 } from "@/lib/zoho-commerce.functions";
 
@@ -32,12 +34,40 @@ type Connection = {
   updated_at: string;
 } | null;
 
+type MirrorState = {
+  organization_id: string;
+  resource: string;
+  current_batch_id: string;
+  record_count: number;
+  last_synced_at: string;
+  last_error: string | null;
+};
+type MirrorRecord = { external_id: string; payload: Record<string, unknown>; captured_at: string };
+const RESOURCE_LABELS: Record<string, string> = {
+  categories: "Categories",
+  sales_orders: "Sales orders (includes available package, shipment, payment, and return fields)",
+  tax_rules: "Tax rules and preferences",
+  store_index: "Zoho stores",
+  store_meta: "Published storefront settings",
+};
+
 function ZohoCommerceAdmin() {
   const [connection, setConnection] = useState<Connection>(null);
   const [organizationId, setOrganizationId] = useState("");
   const [region, setRegion] = useState("in");
   const [busy, setBusy] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [mirrorStates, setMirrorStates] = useState<MirrorState[]>([]);
+  const [mirrorRecords, setMirrorRecords] = useState<Record<string, MirrorRecord[]>>({});
+  const [mirrorBusy, setMirrorBusy] = useState(false);
+  const salesOrders = mirrorRecords["sales_orders"] ?? [];
+  const totalByCurrency = salesOrders.reduce<Record<string, number>>((totals, record) => {
+    const payload = record.payload;
+    const currency = String(payload["currency_code"] ?? "Unknown currency");
+    const total = Number(payload["total"]);
+    if (Number.isFinite(total)) totals[currency] = (totals[currency] ?? 0) + total;
+    return totals;
+  }, {});
   const reload = async () => {
     try {
       const status = await getZohoConnectionStatus();
@@ -52,8 +82,18 @@ function ZohoCommerceAdmin() {
       setLoaded(true);
     }
   };
+  const reloadMirror = async () => {
+    try {
+      const result = await getZohoCommerceReadMirror();
+      setMirrorStates(result.resources as MirrorState[]);
+      setMirrorRecords(result.snapshots as Record<string, MirrorRecord[]>);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not load Zoho data mirror");
+    }
+  };
   useEffect(() => {
     void reload();
+    void reloadMirror();
     const params = new URLSearchParams(window.location.search);
     if (params.has("connected")) toast.success("Zoho Commerce connected");
     if (params.has("error"))
@@ -91,12 +131,36 @@ function ZohoCommerceAdmin() {
       setBusy(false);
     }
   };
+  const syncReadMirror = async () => {
+    setMirrorBusy(true);
+    try {
+      const result = await syncZohoCommerceReadMirror();
+      await reloadMirror();
+      if (result.failures) {
+        const failed = Object.entries(result.outcomes)
+          .filter(([, outcome]) => outcome.error)
+          .map(([resource]) => RESOURCE_LABELS[resource] ?? resource)
+          .join(", ");
+        toast.error("Zoho data sync completed with some errors", { description: failed });
+      } else {
+        toast.success("Synced the available Zoho read-only data");
+      }
+      await reload();
+    } catch (error) {
+      toast.error("Zoho data sync failed", {
+        description:
+          error instanceof Error ? error.message : "Check the connection and requested scopes",
+      });
+    } finally {
+      setMirrorBusy(false);
+    }
+  };
   return (
     <PanelLayout
       items={adminNav}
       tone="admin"
       title="Zoho Commerce"
-      subtitle="Connect Zoho securely and sync its catalog and supported coupons into your storefront"
+      subtitle="Read supported Zoho Commerce catalog and account data securely"
     >
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
         <Panel title="Connection">
@@ -163,6 +227,14 @@ function ZohoCommerceAdmin() {
                 <CloudDownload className="mr-2 h-4 w-4" />
                 Sync products and coupons now
               </Button>
+              <Button
+                disabled={busy || mirrorBusy || !connection}
+                variant="outline"
+                onClick={() => void syncReadMirror()}
+              >
+                <CloudDownload className="mr-2 h-4 w-4" />
+                Sync Zoho account data
+              </Button>
               <Button disabled={busy} variant="ghost" onClick={() => void reload()}>
                 <RefreshCw className="mr-2 h-4 w-4" />
                 Refresh status
@@ -203,9 +275,19 @@ function ZohoCommerceAdmin() {
               general coupons intended for marketplace customers.
             </p>
             <p>
-              Orders/sales, marketing campaigns, reports, theme/site-builder components, payment
-              options, and other Zoho dashboard settings are not synced. Some product image URLs can
-              depend on Zoho’s response and may need separate media handling.
+              The separate admin-only data mirror can read categories, sales orders, tax rules and
+              preferences, the authorized account’s store index, and published storefront metadata.
+              Sales orders include the customer/order fields Zoho returns, plus shipment-package and
+              return/payment status fields where present. This data stays in an admin-only Zoho
+              snapshot area; it is not imported into marketplace orders or exposed to shoppers.
+            </p>
+            <p>
+              This is not full Zoho dashboard parity. The published API does not establish safe
+              account-wide read access for quotes, every customer, all carts, editable pages/files/
+              menus/themes, product filter or recommendation rules, blogs, or native report widgets.
+              A shopper cart API is tied to an individual cart ID. The app can calculate summaries
+              from synced sales orders, but those are marketplace summaries, not Zoho’s native
+              reports. Zoho Payments onboarding does not enable payment collection here.
             </p>
             <p>
               Products removed from Zoho are hidden from the storefront after a complete successful
@@ -215,6 +297,82 @@ function ZohoCommerceAdmin() {
           </div>
         </Panel>
       </div>
+      <Panel title="Available Zoho data (admin only)">
+        <p className="mb-4 text-sm text-slate">
+          Reauthorize Zoho after deploying this update so it can grant the additional verified
+          read-only scopes. Then select <strong>Sync Zoho account data</strong>. Failed resource
+          reads keep the previous complete snapshot available.
+        </p>
+        {!mirrorStates.length ? (
+          <p className="text-sm text-slate">No additional Zoho data has been synced yet.</p>
+        ) : (
+          <div className="space-y-3">
+            {mirrorStates.map((state) => {
+              const records = mirrorRecords[state.resource] ?? [];
+              return (
+                <details key={state.resource} className="rounded-lg border p-4">
+                  <summary className="cursor-pointer font-semibold text-navy">
+                    {RESOURCE_LABELS[state.resource] ?? state.resource} · {state.record_count}{" "}
+                    records · {new Date(state.last_synced_at).toLocaleString()}
+                  </summary>
+                  {state.record_count > records.length && (
+                    <p className="mt-2 text-xs text-slate">
+                      Showing {records.length} records here; all {state.record_count} synced records
+                      remain in the private mirror.
+                    </p>
+                  )}
+                  {state.last_error && (
+                    <p className="mt-3 text-sm text-red-700">Last sync error: {state.last_error}</p>
+                  )}
+                  <div className="mt-3 space-y-3">
+                    {records.map((record) => (
+                      <details key={record.external_id} className="rounded-md bg-slate-50 p-3">
+                        <summary className="cursor-pointer text-sm font-medium">
+                          {record.external_id}
+                          {state.resource === "sales_orders" && record.payload["customer_name"]
+                            ? ` · ${String(record.payload["customer_name"])}`
+                            : ""}
+                        </summary>
+                        <pre className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap break-words text-xs">
+                          {JSON.stringify(record.payload, null, 2)}
+                        </pre>
+                      </details>
+                    ))}
+                  </div>
+                </details>
+              );
+            })}
+          </div>
+        )}
+        {salesOrders.length > 0 && (
+          <div className="mt-5 rounded-lg border bg-slate-50 p-4">
+            <h3 className="font-semibold text-navy">Summary from displayed Sales Orders</h3>
+            <p className="mt-1 text-sm text-slate">
+              This quick total covers the sales-order records currently displayed above. It is not
+              an export of Zoho’s native Reports or a complete account-wide report.
+            </p>
+            <p className="mt-2 text-sm">
+              {salesOrders.length} orders ·{" "}
+              {Object.entries(totalByCurrency)
+                .map(([currency, total]) => `${currency} ${total.toLocaleString()}`)
+                .join(" · ")}
+            </p>
+          </div>
+        )}
+        <div className="mt-5 border-t pt-4">
+          <h3 className="font-semibold text-navy">
+            Zoho areas without verified account-wide read access in this integration
+          </h3>
+          <p className="mt-2 text-sm text-slate">
+            Quotes; a global cart list; a full customer directory; standalone shipment/return
+            listing; collection administration; Files; editable page bodies, menus, themes, and
+            site-builder content; filter/recommendation rules; blogs; native reports; payment
+            gateway credentials or payment actions. Zoho exposes some related information inside
+            sales-order or public storefront responses, but that does not provide the full admin
+            module shown in its dashboard.
+          </p>
+        </div>
+      </Panel>
     </PanelLayout>
   );
 }
