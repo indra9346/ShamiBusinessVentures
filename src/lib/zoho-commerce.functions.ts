@@ -2,7 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import type { Database } from "@/integrations/supabase/types";
+import type { Database, Json } from "@/integrations/supabase/types";
 
 const REGIONS = {
   com: ["https://accounts.zoho.com", "https://commerce.zoho.com"],
@@ -114,7 +114,8 @@ export const startZohoAuthorization = createServerFn({ method: "POST" })
     auth.search = new URLSearchParams({
       response_type: "code",
       client_id: reqEnv("ZOHO_CLIENT_ID"),
-      scope: "ZohoCommerce.items.READ,ZohoCommerce.coupons.READ",
+      scope:
+        "ZohoCommerce.items.READ,ZohoCommerce.coupons.READ,ZohoCommerce.salesorders.READ,ZohoCommerce.settings.READ,ZohoCommerce.sitesIndex.READ",
       redirect_uri: redirectUri,
       access_type: "offline",
       prompt: "consent",
@@ -169,6 +170,302 @@ export const getZohoConnectionStatus = createServerFn({ method: "GET" })
       .maybeSingle();
     if (error) throw new Error("Could not load Zoho connection status");
     return data ?? null;
+  });
+
+const ZOHO_READ_RESOURCES = [
+  "categories",
+  "sales_orders",
+  "tax_rules",
+  "store_index",
+  "store_meta",
+] as const;
+type ZohoReadResource = (typeof ZOHO_READ_RESOURCES)[number];
+
+async function fetchZohoPages(
+  region: Region,
+  organizationId: string,
+  token: string,
+  path: string,
+  property: string,
+  query: Record<string, string> = {},
+) {
+  const output: Record<string, unknown>[] = [];
+  for (let page = 1; page <= 25; page += 1) {
+    const url = new URL(`${REGIONS[region][1]}${path}`);
+    url.search = new URLSearchParams({ ...query, page: String(page), per_page: "200" }).toString();
+    const response = await fetch(url, {
+      headers: {
+        Authorization: `Zoho-oauthtoken ${token}`,
+        "X-com-zoho-store-organizationid": organizationId,
+      },
+    });
+    const data = (await response.json()) as {
+      code?: number;
+      message?: string;
+      page_context?: { has_more_page?: boolean };
+      [key: string]: unknown;
+    };
+    if (!response.ok || data.code !== 0)
+      throw new Error(data.message ?? `Zoho ${property} request failed (${response.status})`);
+    const rows = Array.isArray(data[property]) ? (data[property] as Record<string, unknown>[]) : [];
+    output.push(...rows);
+    if (data.page_context?.has_more_page === false) return output;
+    if (data.page_context?.has_more_page === undefined && rows.length < 200) return output;
+  }
+  throw new Error(`Zoho ${property} exceeded the 5,000-record safety limit`);
+}
+
+async function saveZohoSnapshot(
+  db: SupabaseClient<Database>,
+  organizationId: string,
+  resource: ZohoReadResource,
+  rows: Record<string, unknown>[],
+  getId: (row: Record<string, unknown>) => string,
+) {
+  const batchId = crypto.randomUUID();
+  const records = rows.flatMap((payload) => {
+    const externalId = getId(payload);
+    return externalId
+      ? [
+          {
+            organization_id: organizationId,
+            resource,
+            batch_id: batchId,
+            external_id: externalId,
+            payload: payload as Json,
+          },
+        ]
+      : [];
+  });
+  for (let i = 0; i < records.length; i += 100) {
+    const { error } = await db.from("zoho_commerce_sync_data").insert(records.slice(i, i + 100));
+    if (error) throw new Error(`Could not stage Zoho ${resource} snapshot`);
+  }
+  const { data: previous } = await db
+    .from("zoho_commerce_sync_state")
+    .select("current_batch_id")
+    .eq("organization_id", organizationId)
+    .eq("resource", resource)
+    .maybeSingle();
+  const { error: stateError } = await db.from("zoho_commerce_sync_state").upsert(
+    {
+      organization_id: organizationId,
+      resource,
+      current_batch_id: batchId,
+      record_count: records.length,
+      last_synced_at: new Date().toISOString(),
+      last_error: null,
+    },
+    { onConflict: "organization_id,resource" },
+  );
+  if (stateError) throw new Error(`Could not publish the Zoho ${resource} snapshot`);
+  if (previous?.current_batch_id && previous.current_batch_id !== batchId) {
+    await db
+      .from("zoho_commerce_sync_data")
+      .delete()
+      .eq("organization_id", organizationId)
+      .eq("resource", resource)
+      .eq("batch_id", previous.current_batch_id);
+  }
+  return records.length;
+}
+
+export const getZohoCommerceReadMirror = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    await ensureAdmin(context.supabase, context.userId);
+    const db = await dbAdmin();
+    const { data: connection, error: connectionError } = await db
+      .from("zoho_commerce_connection")
+      .select("organization_id")
+      .eq("id", true)
+      .maybeSingle();
+    if (connectionError) throw new Error("Could not load the Zoho connection");
+    if (!connection)
+      return {
+        resources: [],
+        snapshots: {} as Record<
+          string,
+          { external_id: string; payload: Json; captured_at: string }[]
+        >,
+      };
+    const { data: resources, error } = await db
+      .from("zoho_commerce_sync_state")
+      .select("organization_id,resource,current_batch_id,record_count,last_synced_at,last_error")
+      .eq("organization_id", connection.organization_id);
+    if (error) throw new Error("Could not load the Zoho data mirror");
+    const snapshots: Record<string, { external_id: string; payload: Json; captured_at: string }[]> =
+      {};
+    for (const state of resources ?? []) {
+      const { data: rows, error: rowsError } = await db
+        .from("zoho_commerce_sync_data")
+        .select("external_id,payload,captured_at")
+        .eq("organization_id", connection.organization_id)
+        .eq("resource", state.resource)
+        .eq("batch_id", state.current_batch_id)
+        .order("external_id", { ascending: true })
+        .limit(200);
+      if (rowsError) throw new Error(`Could not load Zoho ${state.resource} records`);
+      snapshots[state.resource] = rows ?? [];
+    }
+    return { resources: resources ?? [], snapshots };
+  });
+
+export const syncZohoCommerceReadMirror = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    await ensureAdmin(context.supabase, context.userId);
+    const db = await dbAdmin();
+    const { data: connection, error } = await db
+      .from("zoho_commerce_connection")
+      .select("organization_id,region,refresh_token_ciphertext,token_iv,token_tag")
+      .eq("id", true)
+      .maybeSingle();
+    if (error || !connection) throw new Error("Connect Zoho before syncing its data");
+    const region = connection.region as Region;
+    if (!(region in REGIONS)) throw new Error("The Zoho data center is not supported");
+    const organizationId = connection.organization_id;
+    const token = await accessToken(region, await decrypt(connection));
+    const outcomes: Record<string, { count: number; error?: string }> = {};
+    const run = async (
+      resource: ZohoReadResource,
+      fetchRows: () => Promise<Record<string, unknown>[]>,
+      id: (row: Record<string, unknown>) => string,
+    ) => {
+      try {
+        const rows = await fetchRows();
+        outcomes[resource] = {
+          count: await saveZohoSnapshot(db, organizationId, resource, rows, id),
+        };
+        return rows;
+      } catch (cause) {
+        const message = cause instanceof Error ? cause.message : `Could not sync ${resource}`;
+        outcomes[resource] = { count: 0, error: message.slice(0, 300) };
+        await db
+          .from("zoho_commerce_sync_state")
+          .update({ last_error: message.slice(0, 500) })
+          .eq("organization_id", organizationId)
+          .eq("resource", resource);
+        return [];
+      }
+    };
+
+    await run(
+      "categories",
+      () => fetchZohoPages(region, organizationId, token, "/store/api/v1/categories", "categories"),
+      (row) => str(row["category_id"]),
+    );
+    await run(
+      "sales_orders",
+      () =>
+        fetchZohoPages(region, organizationId, token, "/store/api/v1/salesorders", "salesorders", {
+          filter_by: "Status.All",
+        }),
+      (row) => str(row["salesorder_id"]),
+    );
+    await run(
+      "tax_rules",
+      async () => {
+        const rules = await fetchZohoPages(
+          region,
+          organizationId,
+          token,
+          "/store/api/v1/settings/taxrules",
+          "taxrules",
+        );
+        const url = `${REGIONS[region][1]}/store/api/v1/settings/taxpreferences`;
+        const response = await fetch(url, {
+          headers: {
+            Authorization: `Zoho-oauthtoken ${token}`,
+            "X-com-zoho-store-organizationid": organizationId,
+          },
+        });
+        const data = (await response.json()) as {
+          code?: number;
+          message?: string;
+          tax_preferences?: Record<string, unknown>;
+        };
+        if (!response.ok || data.code !== 0)
+          throw new Error(
+            data.message ?? `Zoho tax preferences request failed (${response.status})`,
+          );
+        return [
+          ...rules,
+          ...(data.tax_preferences
+            ? [{ ...data.tax_preferences, _zoho_resource_type: "tax_preferences" }]
+            : []),
+        ];
+      },
+      (row) =>
+        str(
+          row["rule_id"] ??
+            row["tax_id"] ??
+            (row["_zoho_resource_type"] === "tax_preferences" ? "tax_preferences" : ""),
+        ),
+    );
+    const sites = await run(
+      "store_index",
+      async () => {
+        const response = await fetch(`${REGIONS[region][1]}/zs-site/api/v1/index/sites`, {
+          headers: { Authorization: `Zoho-oauthtoken ${token}` },
+        });
+        const data = (await response.json()) as {
+          status_code?: string;
+          status_message?: string;
+          get_sites?: { my_sites?: Record<string, unknown>[] };
+        };
+        if (!response.ok || data.status_code !== "0")
+          throw new Error(
+            data.status_message ?? `Zoho store index request failed (${response.status})`,
+          );
+        return data.get_sites?.my_sites ?? [];
+      },
+      (row) => str(row["zsite_id"]),
+    );
+    await run(
+      "store_meta",
+      async () => {
+        const site = sites.find((item) => str(item["zohofinance_orgid"]) === organizationId);
+        if (!site)
+          throw new Error(
+            "The Zoho site index did not identify a published store for this organization",
+          );
+        const domain = str(site["primary_domain"]);
+        if (!domain || domain.length > 253 || /[^a-z0-9.-]/i.test(domain))
+          throw new Error("Zoho returned an invalid published store domain");
+        const response = await fetch(`${REGIONS[region][1]}/storefront/api/v1/store-meta`, {
+          headers: { "domain-name": domain },
+        });
+        const data = (await response.json()) as {
+          status_code?: string;
+          status_message?: string;
+          payload?: Record<string, unknown>;
+        };
+        if (!response.ok || data.status_code !== "0" || !data.payload)
+          throw new Error(
+            data.status_message ?? `Zoho storefront settings request failed (${response.status})`,
+          );
+        return [{ site_id: str(site["zsite_id"]), primary_domain: domain, ...data.payload }];
+      },
+      (row) => str(row["site_id"]),
+    );
+
+    const failures = Object.entries(outcomes).filter(([, value]) => value.error);
+    const summary = failures.length
+      ? failures
+          .map(([resource, value]) => `${resource}: ${value.error}`)
+          .join("; ")
+          .slice(0, 500)
+      : null;
+    await db
+      .from("zoho_commerce_connection")
+      .update({
+        status: summary ? "error" : "connected",
+        last_error: summary,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", true);
+    return { outcomes, failures: failures.length };
   });
 
 const str = (value: unknown) =>
