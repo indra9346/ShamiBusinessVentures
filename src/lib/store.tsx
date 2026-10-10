@@ -31,6 +31,12 @@ import {
 } from "./data";
 
 export type Role = "customer" | "vendor" | "admin";
+const ROLE_PRIORITY: readonly Role[] = ["admin", "vendor", "customer"];
+
+function preferredRole(roles: readonly string[]): Role | undefined {
+  return ROLE_PRIORITY.find((role) => roles.includes(role));
+}
+
 export type SessionUser = { id?: string | undefined; name: string; email: string; role: Role; phone?: string | undefined; avatar?: string | undefined; addressKey?: string | undefined };
 export type CartLine = { id: string; qty: number };
 export type Address = (typeof seedAddresses)[number];
@@ -390,7 +396,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
           })));
         } else console.error("Could not load coupons", couponError);
         if (!profilesError && !rolesError) {
-          const rolesByUser = new Map(roleRows.map((row) => [row.user_id, row.role]));
+          const rolesByUser = new Map<string, Role>();
+          for (const row of roleRows) {
+            const current = rolesByUser.get(row.user_id);
+            const next = preferredRole([...(current ? [current] : []), row.role]);
+            if (next) rolesByUser.set(row.user_id, next);
+          }
           setVendors(profiles.filter((profile) => rolesByUser.get(profile.id) === "vendor").map((profile) => ({
             id: profile.vendor_id || profile.id,
             business: profile.company || profile.full_name,
@@ -679,15 +690,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }
         if (!active || !authUser) return;
 
-        const [{ data: profile }, { data: roleRow }] = await Promise.all([
+        const [{ data: profile }, { data: roleRows }] = await Promise.all([
           supabase.from("profiles").select("id, full_name, email, phone, company, gstin, avatar_url, vendor_id, status").eq("id", authUser.id).maybeSingle(),
-          supabase.from("user_roles").select("role").eq("user_id", authUser.id).maybeSingle(),
+          supabase.from("user_roles").select("role").eq("user_id", authUser.id),
         ]);
 
         if (!active) return;
 
         const meta = (authUser.user_metadata ?? {}) as Record<string, unknown>;
-        const role: Role = (roleRow?.role as Role) || (meta["role"] as Role) || "customer";
+        const role: Role = preferredRole((roleRows ?? []).map((row) => row.role)) || (meta["role"] as Role) || "customer";
         const name = profile?.full_name || (meta["full_name"] as string) || (authUser.email ? authUser.email.split("@")[0] : "Customer") || "Customer";
         const email = profile?.email || authUser.email || "";
         const phone = profile?.phone || authUser.phone || (meta["phone"] as string) || "";
