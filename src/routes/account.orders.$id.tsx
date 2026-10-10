@@ -5,7 +5,7 @@ import { CheckCircle2, Circle, Download } from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { Panel, StatusBadge } from "@/components/panel/widgets";
 import { accountNav } from "@/lib/account-nav";
-import { inr, orderStages } from "@/lib/data";
+import { canCancelOrder, inr, orderStages } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import {
@@ -85,6 +85,7 @@ function AccountOrderDetail() {
   }
 
   const isCancelled = order.status === "Cancelled";
+  const canCancel = canCancelOrder(order, "customer");
   const currentIdx = orderStages.indexOf(order.status);
 
   return (
@@ -104,7 +105,13 @@ function AccountOrderDetail() {
           </Button>
           <AlertDialog>
             <AlertDialogTrigger asChild>
-              <Button variant="outline" disabled={isCancelled || order.status === "Delivered"}>
+              <Button
+                variant="outline"
+                disabled={!canCancel}
+                title={!canCancel && ((order.paidAmount ?? 0) > 0 || order.payment === "Paid" || order.payment === "Partially Paid")
+                  ? "A verified refund must be completed before cancellation."
+                  : undefined}
+              >
                 Cancel Order
               </Button>
             </AlertDialogTrigger>
@@ -112,7 +119,9 @@ function AccountOrderDetail() {
               <AlertDialogHeader>
                 <AlertDialogTitle>Cancel order {order.id}?</AlertDialogTitle>
                 <AlertDialogDescription>
-                  This will mark the order as cancelled.
+                  {canCancel
+                    ? "This will mark the order as cancelled and restore its available inventory."
+                    : "Paid orders cannot be cancelled until a verified refund is completed. Contact support if you need help."}
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
