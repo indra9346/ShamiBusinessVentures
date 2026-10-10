@@ -416,7 +416,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             ...(profile.business_address ? { businessAddress: profile.business_address } : {}),
             city: profile.business_city || "",
             commission: Number(profile.commission_rate),
-            status: profile.status,
+            status: profile.status.trim().toLowerCase(),
             gst: profile.gstin || "",
             rating: 0,
             joined: asDate(profile.created_at),

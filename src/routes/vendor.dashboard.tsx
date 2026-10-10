@@ -135,7 +135,7 @@ function VendorDashboard() {
           <DataTable
             columns={["Order", "Date", "Customer", "Amount", "Payment", "Status"]}
             rows={periodOrders.slice(0, 8).map((o) => {
-              const amt = o.items.filter((i) => i.vendorId === vendorId).reduce((t, i) => t + i.product.price * i.qty, 0);
+              const amt = o.items.filter((i) => i.vendorId === vendorId).reduce((t, i) => t + getOrderItemTotal(i), 0);
               return [
                 <Link to="/vendor/orders/$id" params={{ id: o.id }} className="font-semibold text-navy hover:text-gold">
                   {o.id}

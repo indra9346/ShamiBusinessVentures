@@ -56,6 +56,10 @@ the signed-in Supabase role.
   status and payout/KYC screens also refresh from their own scoped channels.
   Migrations add these tables and the operational tables to the
   `supabase_realtime` publication where supported.
+- Vendor profile statuses are normalized for consistent admin filtering and
+  metrics across legacy `Active` and new `approved` values. Vendor revenue
+  summaries use captured order-line prices, so later catalog edits do not
+  rewrite historical sales.
 - Order lines and payment transaction details follow the vendor/customer/admin
   scopes in `20261010180000_vendor_order_data_scope.sql`. Profile insertion is
   restricted to trusted signup/profile functions by

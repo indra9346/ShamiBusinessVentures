@@ -5,7 +5,7 @@ import { Boxes, IndianRupee, Package, Percent } from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { DataTable, Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { adminNav } from "@/lib/panel-nav";
-import { inr } from "@/lib/data";
+import { getOrderItemTotal, inr } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -105,7 +105,7 @@ function AdminVendorDetail() {
   const vOrders = orders.filter((o) => o.items.some((it) => it.vendorId === vendor.id));
   const vReviews = reviews.filter((r) => r.vendorId === vendor.id && r.status === "Published");
   const vPayouts = payoutRows;
-  const vendorSales = vOrders.filter((order) => order.status !== "Cancelled").reduce((sum, order) => sum + order.items.filter((item) => item.vendorId === vendor.id).reduce((amount, item) => amount + item.product.price * item.qty, 0), 0);
+  const vendorSales = vOrders.filter((order) => order.status !== "Cancelled").reduce((sum, order) => sum + order.items.filter((item) => item.vendorId === vendor.id).reduce((amount, item) => amount + getOrderItemTotal(item), 0), 0);
   const vendorRating = vReviews.length ? vReviews.reduce((sum, review) => sum + review.rating, 0) / vReviews.length : 0;
 
   return (
@@ -127,7 +127,7 @@ function AdminVendorDetail() {
             <Button
               variant="outline"
               size="sm"
-              disabled={vendor.status === "approved"}
+              disabled={vendor.status === "approved" || vendor.status === "active"}
               onClick={() => {
                 void setVendorStatus(vendor.id, "approved").then((ok) => { if (ok) toast.success(`${vendor.business} approved`); });
               }}
