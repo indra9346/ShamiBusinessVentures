@@ -118,7 +118,7 @@ function VendorInventory() {
                   return;
                 }
                 if (!await updateProduct(stockDialog.id, { stock: val })) return;
-                toast.success(`Stock for ${stockDialog.name} updated to ${val}`);
+                toast.success(`Stock for ${stockDialog.name} updated; product submitted for admin review`);
                 setStockDialog(null);
               }}
             >

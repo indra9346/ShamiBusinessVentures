@@ -1054,7 +1054,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (!existing) return false;
         const updated = { ...existing, ...patch, updated: today() };
         setProducts((list) => list.map((p) => (p.id === id ? updated : p)));
-        const ok = await saveProduct(updated);
+        const ok = await saveProduct(updated, user?.role === "vendor");
         if (!ok) setProducts((list) => list.map((item) => item.id === id ? existing : item));
         return ok;
       },
