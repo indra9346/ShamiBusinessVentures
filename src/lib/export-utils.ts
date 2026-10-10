@@ -13,8 +13,10 @@ export type CustomerInvoiceInfo = {
  * Converts a numeric amount to Indian Rupee words (e.g. 2668 -> "Two Thousand Six Hundred Sixty-Eight Rupees Only")
  */
 export function numberToIndianWords(amount: number): string {
-  const num = Math.round(Math.abs(amount));
-  if (num === 0) return "Zero Rupees Only";
+  const absolute = Math.abs(amount);
+  let num = Math.floor(absolute);
+  let paise = Math.round((absolute - num) * 100);
+  if (paise === 100) { num += 1; paise = 0; }
 
   const a = [
     "", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten",
@@ -52,7 +54,9 @@ export function numberToIndianWords(amount: number): string {
   if (thousand > 0) words += convertTwoDigits(thousand) + "Thousand ";
   if (hundred > 0) words += convertThreeDigits(hundred);
 
-  return (words.trim() + " Rupees Only").replace(/\s+/g, " ");
+  const rupeesInWords = words.trim() || "Zero";
+  const paiseInWords = paise ? ` and ${convertTwoDigits(paise).trim()} Paise` : "";
+  return `${rupeesInWords} Rupees${paiseInWords} Only`.replace(/\s+/g, " ");
 }
 
 /**
@@ -97,399 +101,248 @@ export function downloadCSV(filename: string, headers: string[], rows: (string |
   }
 }
 
-/**
- * Generates an official, print-ready, government GST Tax Invoice HTML document
- */
-export function generateInvoiceHTML(order: Order, customerInfo?: CustomerInvoiceInfo, invoicePrefix = "INV-"): string {
-  const safePrefix = invoicePrefix.slice(0, 40).replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]!);
-  const invoiceNumber = `${safePrefix}${order.id.replace(/[^0-9]/g, "") || order.id}`;
-  const cgst = Math.round((order.tax / 2) * 100) / 100;
-  const sgst = Math.round((order.tax / 2) * 100) / 100;
-  const words = numberToIndianWords(order.amount);
-
-  // Guess HSN based on product category
-  const getHSN = (category: string) => {
-    switch (category?.toLowerCase()) {
-      case "sugar":
-        return "1701";
-      case "rice":
-        return "1006";
-      case "oil":
-        return "1512";
-      case "pulses":
-        return "0713";
-      case "flours":
-        return "1101";
-      case "spices":
-        return "0910";
-      default:
-        return "1001";
-    }
-  };
-
-  const itemRows = order.items
-    .map((it, idx) => {
-      const lineTotal = it.product.price * it.qty;
-      const gstRate = it.product.gst;
-      const taxable = Math.round(lineTotal * 100) / 100;
-      const taxAmt = Math.round(taxable * gstRate) / 100;
-      const cgstAmt = Math.round((taxAmt / 2) * 100) / 100;
-      const sgstAmt = Math.round((taxAmt / 2) * 100) / 100;
-
-      return `
-        <tr>
-          <td style="padding: 10px 8px; border-bottom: 1px solid #e2e8f0; text-align: center;">${idx + 1}</td>
-          <td style="padding: 10px 8px; border-bottom: 1px solid #e2e8f0;">
-            <strong style="color: #0b2341; display: block;">${it.product.name}</strong>
-            <span style="font-size: 11px; color: #64748b;">SKU: ${it.product.sku} | Vendor: ${it.vendor}</span>
-          </td>
-          <td style="padding: 10px 8px; border-bottom: 1px solid #e2e8f0; text-align: center; font-family: monospace;">${getHSN(it.product.category)}</td>
-          <td style="padding: 10px 8px; border-bottom: 1px solid #e2e8f0; text-align: center;">${it.qty} (${it.product.weight || "1 unit"})</td>
-          <td style="padding: 10px 8px; border-bottom: 1px solid #e2e8f0; text-align: right;">₹${it.product.price.toLocaleString("en-IN")}</td>
-          <td style="padding: 10px 8px; border-bottom: 1px solid #e2e8f0; text-align: right;">₹${taxable.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
-          <td style="padding: 10px 8px; border-bottom: 1px solid #e2e8f0; text-align: right;">
-            ${(gstRate / 2).toFixed(1)}%<br><span style="font-size: 11px; color: #64748b;">₹${cgstAmt.toFixed(2)}</span>
-          </td>
-          <td style="padding: 10px 8px; border-bottom: 1px solid #e2e8f0; text-align: right;">
-            ${(gstRate / 2).toFixed(1)}%<br><span style="font-size: 11px; color: #64748b;">₹${sgstAmt.toFixed(2)}</span>
-          </td>
-          <td style="padding: 10px 8px; border-bottom: 1px solid #e2e8f0; text-align: right; font-weight: 600; color: #0b2341;">₹${lineTotal.toLocaleString("en-IN")}</td>
-        </tr>
-      `;
-    })
-    .join("");
-
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Tax Invoice - ${invoiceNumber}</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      color: #1e293b;
-      background: #f8fafc;
-      padding: 24px;
-      font-size: 13px;
-      line-height: 1.5;
-    }
-    .invoice-card {
-      max-width: 900px;
-      margin: 0 auto;
-      background: #ffffff;
-      border: 1px solid #e2e8f0;
-      border-radius: 8px;
-      padding: 36px 40px;
-      box-shadow: 0 4px 16px rgba(0,0,0,0.06);
-    }
-    .header-bar {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      border-bottom: 2px solid #0b2341;
-      padding-bottom: 20px;
-      margin-bottom: 24px;
-    }
-    .brand-title {
-      font-size: 24px;
-      font-weight: 800;
-      color: #0b2341;
-      letter-spacing: -0.5px;
-    }
-    .brand-subtitle {
-      font-size: 12px;
-      color: #c99a2e;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      margin-top: 2px;
-    }
-    .badge-invoice {
-      display: inline-block;
-      background: #0b2341;
-      color: #ffffff;
-      padding: 6px 14px;
-      border-radius: 4px;
-      font-size: 14px;
-      font-weight: 700;
-      letter-spacing: 0.5px;
-      text-transform: uppercase;
-    }
-    .details-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 24px;
-      margin-bottom: 24px;
-    }
-    .info-box {
-      background: #f8fafc;
-      border: 1px solid #e2e8f0;
-      border-radius: 6px;
-      padding: 16px;
-    }
-    .info-box h3 {
-      font-size: 12px;
-      color: #64748b;
-      text-transform: uppercase;
-      font-weight: 700;
-      letter-spacing: 0.5px;
-      margin-bottom: 8px;
-      border-bottom: 1px solid #cbd5e1;
-      padding-bottom: 4px;
-    }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-bottom: 24px;
-    }
-    th {
-      background: #0b2341;
-      color: #ffffff;
-      padding: 10px 8px;
-      font-size: 12px;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      text-align: left;
-    }
-    .summary-section {
-      display: grid;
-      grid-template-columns: 1.4fr 1fr;
-      gap: 24px;
-      margin-bottom: 28px;
-    }
-    .totals-table td {
-      padding: 6px 10px;
-    }
-    .totals-table tr.grand-total {
-      background: #0b2341;
-      color: #ffffff;
-      font-size: 15px;
-      font-weight: 700;
-    }
-    .totals-table tr.grand-total td {
-      padding: 10px 12px;
-    }
-    .footer-note {
-      border-top: 1px dashed #cbd5e1;
-      padding-top: 16px;
-      font-size: 11px;
-      color: #64748b;
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-end;
-    }
-    .actions-bar {
-      max-width: 900px;
-      margin: 0 auto 16px auto;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    }
-    .btn-print {
-      background: #0b2341;
-      color: #ffffff;
-      border: none;
-      padding: 10px 18px;
-      border-radius: 6px;
-      font-weight: 600;
-      font-size: 13px;
-      cursor: pointer;
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-    }
-    .btn-print:hover { background: #16365c; }
-    @media print {
-      body { background: #ffffff; padding: 0; font-size: 12px; }
-      .invoice-card { border: none; box-shadow: none; padding: 0; max-width: 100%; }
-      .actions-bar { display: none !important; }
-    }
-  </style>
-</head>
-<body>
-  <div class="actions-bar">
-    <div style="font-size: 14px; font-weight: 600; color: #0b2341;">
-      GST Tax Invoice Preview
-    </div>
-    <button class="btn-print" onclick="window.print()">
-      🖨️ Print / Save as PDF
-    </button>
-  </div>
-
-  <div class="invoice-card">
-    <div class="header-bar">
-      <div>
-        <div class="brand-title">SHAMI BUSINESS VENTURES</div>
-        <div class="brand-subtitle">Wholesale Grains, Pulses & Staples Marketplace</div>
-        <div style="margin-top: 8px; color: #475569; font-size: 12px;">
-          APMC Yard, Commercial Complex, Sector 4<br>
-          Yeshwanthpur, Bengaluru, Karnataka - 560022<br>
-          <strong>GSTIN:</strong> 29AAACB2026D1Z5 | <strong>PAN:</strong> AAACB2026D<br>
-          <strong>State:</strong> Karnataka (Code 29) | <strong>Email:</strong> billing@shamibusiness.com
-        </div>
-      </div>
-      <div style="text-align: right;">
-        <span class="badge-invoice">Tax Invoice</span>
-        <div style="margin-top: 10px; font-size: 13px;">
-          <div><strong>Invoice No:</strong> <span style="color: #0b2341; font-weight: 700;">${invoiceNumber}</span></div>
-          <div><strong>Invoice Date:</strong> ${order.date}</div>
-          <div><strong>Order Ref:</strong> ${order.id}</div>
-          <div><strong>Place of Supply:</strong> ${order.state || "Karnataka"} (Code 29)</div>
-          <div><strong>Original for Recipient</strong></div>
-        </div>
-      </div>
-    </div>
-
-    <div class="details-grid">
-      <div class="info-box">
-        <h3>Billed & Shipped To</h3>
-        <strong style="color: #0b2341; font-size: 14px;">${order.customer}</strong>
-        <div style="color: #475569; margin-top: 4px;">
-          ${order.address}<br>
-          ${order.city}, ${order.state} - ${order.pin}<br>
-          <strong>Phone:</strong> ${order.phone}<br>
-          <strong>Email:</strong> ${order.email}<br>
-          <strong>Customer GSTIN:</strong> ${order.gstin || customerInfo?.gst || "URP (Unregistered Person)"}
-        </div>
-      </div>
-
-      <div class="info-box">
-        <h3>Payment & Dispatch Details</h3>
-        <table style="width: 100%; margin: 0; font-size: 12px;">
-          <tr>
-            <td style="color: #64748b; padding: 3px 0;">Payment Method:</td>
-            <td style="font-weight: 600; text-align: right;">${order.method}</td>
-          </tr>
-          <tr>
-            <td style="color: #64748b; padding: 3px 0;">Payment Status:</td>
-            <td style="font-weight: 600; text-align: right; color: ${order.payment === "Paid" ? "#16a34a" : "#ca8a04"};">${order.payment.toUpperCase()}</td>
-          </tr>
-          <tr>
-            <td style="color: #64748b; padding: 3px 0;">Transaction ID:</td>
-            <td style="font-family: monospace; font-size: 11px; text-align: right;">${order.txn}</td>
-          </tr>
-          <tr>
-            <td style="color: #64748b; padding: 3px 0;">Delivery Mode:</td>
-            <td style="font-weight: 600; text-align: right;">${order.delivery || "Standard B2B Freight"}</td>
-          </tr>
-          <tr>
-            <td style="color: #64748b; padding: 3px 0;">Order Status:</td>
-            <td style="font-weight: 600; text-align: right;">${order.status}</td>
-          </tr>
-        </table>
-      </div>
-    </div>
-
-    <table>
-      <thead>
-        <tr>
-          <th style="text-align: center; width: 36px;">#</th>
-          <th>Description of Goods</th>
-          <th style="text-align: center; width: 70px;">HSN</th>
-          <th style="text-align: center; width: 90px;">Qty</th>
-          <th style="text-align: right; width: 90px;">Rate</th>
-          <th style="text-align: right; width: 100px;">Taxable (₹)</th>
-          <th style="text-align: right; width: 85px;">CGST</th>
-          <th style="text-align: right; width: 85px;">SGST</th>
-          <th style="text-align: right; width: 100px;">Total (₹)</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${itemRows}
-      </tbody>
-    </table>
-
-    <div class="summary-section">
-      <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 14px;">
-        <div style="font-size: 11px; color: #64748b; text-transform: uppercase; font-weight: 700; margin-bottom: 4px;">
-          Amount Chargeable (in words):
-        </div>
-        <div style="font-weight: 700; color: #0b2341; font-size: 13px; line-height: 1.4;">
-          ${words}
-        </div>
-
-        <div style="margin-top: 16px; font-size: 11px; color: #475569;">
-          <strong>Bank Details for Direct RTGS/NEFT:</strong><br>
-          Bank: HDFC Bank Ltd | A/C No: 50200089234120<br>
-          IFSC: HDFC0001234 | Branch: Yeshwanthpur APMC
-        </div>
-      </div>
-
-      <div>
-        <table class="totals-table" style="width: 100%; border: 1px solid #e2e8f0; border-radius: 6px; overflow: hidden;">
-          <tr>
-            <td style="color: #64748b;">Subtotal (Taxable):</td>
-            <td style="text-align: right; font-weight: 600;">₹${order.subtotal.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
-          </tr>
-          ${
-            order.discount > 0
-              ? `<tr>
-                  <td style="color: #16a34a;">Discount / Coupon:</td>
-                  <td style="text-align: right; font-weight: 600; color: #16a34a;">-₹${order.discount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
-                </tr>`
-              : ""
-          }
-          <tr>
-            <td style="color: #64748b;">CGST (Central Tax):</td>
-            <td style="text-align: right; font-weight: 600;">₹${cgst.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
-          </tr>
-          <tr>
-            <td style="color: #64748b;">SGST (State Tax):</td>
-            <td style="text-align: right; font-weight: 600;">₹${sgst.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
-          </tr>
-          <tr>
-            <td style="color: #64748b;">Shipping / Freight:</td>
-            <td style="text-align: right; font-weight: 600;">${order.shipping > 0 ? "₹" + order.shipping.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "FREE"}</td>
-          </tr>
-          <tr class="grand-total">
-            <td>Grand Total (INR):</td>
-            <td style="text-align: right;">₹${order.amount.toLocaleString("en-IN")}</td>
-          </tr>
-        </table>
-      </div>
-    </div>
-
-    <div class="footer-note">
-      <div>
-        <strong>Terms & Conditions:</strong><br>
-        1. All disputes are subject to Bengaluru jurisdiction.<br>
-        2. Covered under Shami B2B wholesale grain quality guarantee.<br>
-        3. This is a computer-generated tax invoice and requires no physical signature.
-      </div>
-      <div style="text-align: right;">
-        <div style="margin-bottom: 24px; color: #64748b; font-size: 11px;">For Shami Business Ventures Pvt Ltd</div>
-        <div style="font-weight: 700; color: #0b2341; border-top: 1px solid #cbd5e1; padding-top: 4px; display: inline-block;">
-          Authorized Signatory
-        </div>
-      </div>
-    </div>
-  </div>
-</body>
-</html>`;
+async function loadInvoiceLogo(): Promise<string | null> {
+  try {
+    const response = await fetch("/grainbazar-logo.png");
+    if (!response.ok) return null;
+    const blob = await response.blob();
+    return await new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : null);
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
+  }
 }
 
-/**
- * Directly downloads the GST Tax Invoice file to the user's computer (.html format ready to view or print)
- */
-export function downloadInvoice(order: Order, customerInfo?: CustomerInvoiceInfo, invoicePrefix = "INV-"): void {
-  try {
-    const htmlContent = generateInvoiceHTML(order, customerInfo, invoicePrefix);
-    const invoiceNumber = `Invoice-${invoicePrefix}${order.id.replace(/[^0-9]/g, "") || order.id}`.replace(/[^A-Za-z0-9._-]+/g, "-");
-    const blob = new Blob([htmlContent], { type: "text/html;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `${invoiceNumber}.html`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+const invoiceMoney = (value: number) => `Rs. ${Number(value || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-    toast.success(`Invoice for ${order.id} downloaded (${link.download})`);
-  } catch (err) {
-    console.error("Failed to download invoice:", err);
-    toast.error("Failed to download invoice");
+/** Downloads a branded A4 PDF invoice with a Grain Bazar watermark. */
+export async function downloadInvoice(order: Order, customerInfo?: CustomerInvoiceInfo, invoicePrefix = "INV-"): Promise<void> {
+  const toastId = toast.loading("Preparing your PDF invoice...");
+  try {
+    const { GState, jsPDF } = await import("jspdf");
+    const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+    const pageWidth = pdf.internal.pageSize.getWidth();
+    const pageHeight = pdf.internal.pageSize.getHeight();
+    const margin = 16;
+    const right = pageWidth - margin;
+    const usableWidth = pageWidth - margin * 2;
+    const safePrefix = invoicePrefix.slice(0, 40).replace(/[^A-Za-z0-9._/-]/g, "");
+    const invoiceNumber = `${safePrefix}${order.id.replace(/[^0-9]/g, "") || order.id}`;
+    const parsedDate = new Date(order.createdAt || order.date);
+    const dateLabel = Number.isNaN(parsedDate.getTime())
+      ? order.date
+      : parsedDate.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+    const logo = await loadInvoiceLogo();
+    const navy: [number, number, number] = [12, 35, 65];
+    const gold: [number, number, number] = [194, 145, 45];
+    const ink: [number, number, number] = [34, 48, 66];
+    const muted: [number, number, number] = [103, 119, 139];
+    const line: [number, number, number] = [222, 229, 236];
+    let page = 1;
+
+    const watermark = () => {
+      if (!logo) return;
+      try {
+        pdf.setGState(new GState({ opacity: 0.07 }));
+        pdf.addImage(logo, "PNG", (pageWidth - 78) / 2, (pageHeight - 78) / 2, 78, 78);
+      } catch (error) {
+        console.warn("Could not add invoice watermark", error);
+      } finally {
+        pdf.setGState(new GState({ opacity: 1 }));
+      }
+    };
+
+    const footer = () => {
+      pdf.setDrawColor(...line);
+      pdf.line(margin, pageHeight - 15, right, pageHeight - 15);
+      pdf.setFont("helvetica", "normal");
+      pdf.setFontSize(8);
+      pdf.setTextColor(...muted);
+      pdf.text("Grain Bazar  |  A computer-generated invoice", margin, pageHeight - 9);
+      pdf.text(`Page ${page}`, right, pageHeight - 9, { align: "right" });
+    };
+
+    const startPage = (continued: boolean) => {
+      if (page > 1) pdf.addPage();
+      watermark();
+      pdf.setFillColor(...navy);
+      pdf.rect(0, 0, pageWidth, 48, "F");
+      if (logo) pdf.addImage(logo, "PNG", margin, 10, 25, 25);
+      pdf.setTextColor(255, 255, 255);
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(18);
+      pdf.text("GRAIN BAZAR", margin + (logo ? 31 : 0), 20);
+      pdf.setFont("helvetica", "normal");
+      pdf.setFontSize(9);
+      pdf.text("Shami Business Ventures", margin + (logo ? 31 : 0), 27);
+      pdf.setFont("helvetica", "bold");
+      pdf.text(continued ? "INVOICE - CONTINUED" : "INVOICE", right, 18, { align: "right" });
+      pdf.setFont("helvetica", "normal");
+      pdf.text(`Invoice  ${invoiceNumber}`, right, 26, { align: "right" });
+      pdf.text(`Date  ${dateLabel}`, right, 33, { align: "right" });
+      if (continued) {
+        pdf.setFont("helvetica", "bold");
+        pdf.setFontSize(11);
+        pdf.setTextColor(...ink);
+        pdf.text("Order items (continued)", margin, 61);
+      }
+      return continued ? 71 : 61;
+    };
+
+    let y = startPage(false);
+    const customerName = customerInfo?.name || order.customer || "Customer";
+    const customerAddress = customerInfo?.address || order.address;
+    const drawInfoCard = (x: number, title: string, rows: string[], width: number) => {
+      pdf.setFillColor(248, 250, 252);
+      pdf.roundedRect(x, y, width, 34, 2, 2, "F");
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(8);
+      pdf.setTextColor(...muted);
+      pdf.text(title.toUpperCase(), x + 4, y + 7);
+      pdf.setFont("helvetica", "normal");
+      pdf.setFontSize(9);
+      pdf.setTextColor(...ink);
+      pdf.text(rows.filter(Boolean).slice(0, 3), x + 4, y + 14, { maxWidth: width - 8, lineHeightFactor: 1.35 });
+    };
+    const cardGap = 5;
+    const cardWidth = (usableWidth - cardGap) / 2;
+    drawInfoCard(margin, "Billed by", ["Shami Business Ventures", "Grain Bazar", "India"], cardWidth);
+    drawInfoCard(margin + cardWidth + cardGap, "Bill to", [customerName, customerInfo?.gst || order.gstin || "", customerAddress || order.email || order.phone], cardWidth);
+    y += 42;
+
+    pdf.setFillColor(255, 250, 239);
+    pdf.roundedRect(margin, y, usableWidth, 16, 2, 2, "F");
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(8);
+    pdf.setTextColor(...muted);
+    pdf.text("ORDER", margin + 4, y + 6);
+    pdf.text("PAYMENT", margin + 62, y + 6);
+    pdf.text("FULFILMENT", margin + 112, y + 6);
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(9);
+    pdf.setTextColor(...ink);
+    pdf.text(order.id, margin + 4, y + 12);
+    pdf.text(order.payment || "Pending", margin + 62, y + 12);
+    pdf.text(order.status || "Placed", margin + 112, y + 12);
+    y += 25;
+
+    const columns = { number: margin + 2, item: margin + 12, sku: margin + 94, qty: margin + 130, price: right - 32, total: right - 2 };
+    const drawTableHeader = () => {
+      pdf.setFillColor(...navy);
+      pdf.roundedRect(margin, y, usableWidth, 10, 1.5, 1.5, "F");
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(7.5);
+      pdf.setTextColor(255, 255, 255);
+      pdf.text("#", columns.number, y + 6.5);
+      pdf.text("ITEM DESCRIPTION", columns.item, y + 6.5);
+      pdf.text("SKU", columns.sku, y + 6.5);
+      pdf.text("QTY", columns.qty, y + 6.5, { align: "right" });
+      pdf.text("UNIT PRICE", columns.price, y + 6.5, { align: "right" });
+      pdf.text("AMOUNT", columns.total, y + 6.5, { align: "right" });
+      y += 10;
+    };
+    drawTableHeader();
+
+    order.items.forEach((item, index) => {
+      const description = pdf.splitTextToSize(item.product.name || "Item", 79) as string[];
+      const sku = pdf.splitTextToSize(item.product.sku || "—", 31) as string[];
+      const rowHeight = Math.max(12, Math.max(description.length, sku.length) * 4.2 + 5);
+      if (y + rowHeight > pageHeight - 34) {
+        footer();
+        page += 1;
+        y = startPage(true);
+        drawTableHeader();
+      }
+      pdf.setFont("helvetica", "normal");
+      pdf.setFontSize(8.5);
+      pdf.setTextColor(...muted);
+      pdf.text(String(index + 1), columns.number, y + 7);
+      pdf.setFont("helvetica", "bold");
+      pdf.setTextColor(...ink);
+      pdf.text(description, columns.item, y + 5, { lineHeightFactor: 1.2 });
+      pdf.setFont("helvetica", "normal");
+      pdf.setFontSize(7.5);
+      pdf.setTextColor(...muted);
+      pdf.text(sku, columns.sku, y + 5, { lineHeightFactor: 1.2 });
+      pdf.setFontSize(8.5);
+      pdf.setTextColor(...ink);
+      pdf.text(String(item.qty), columns.qty, y + 7, { align: "right" });
+      const unitPrice = item.unitPrice ?? item.product.price;
+      pdf.text(invoiceMoney(unitPrice), columns.price, y + 7, { align: "right" });
+      pdf.setFont("helvetica", "bold");
+      pdf.text(invoiceMoney(unitPrice * item.qty), columns.total, y + 7, { align: "right" });
+      y += rowHeight;
+      pdf.setDrawColor(...line);
+      pdf.line(margin, y, right, y);
+    });
+
+    if (y + 67 > pageHeight - 25) {
+      footer();
+      page += 1;
+      y = startPage(true);
+    }
+    y += 7;
+    const summaryWidth = 82;
+    const summaryX = right - summaryWidth;
+    const summaryRows: [string, number][] = [
+      ["Subtotal", order.subtotal],
+      ["Discount", -Math.abs(order.discount)],
+      ["Tax", order.tax],
+      ["Shipping", order.shipping],
+    ];
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(9);
+    summaryRows.forEach(([label, value]) => {
+      pdf.setTextColor(...muted);
+      pdf.text(label, summaryX, y);
+      pdf.setTextColor(...ink);
+      pdf.text(invoiceMoney(value), right, y, { align: "right" });
+      y += 6;
+    });
+    pdf.setDrawColor(...gold);
+    pdf.setLineWidth(0.6);
+    pdf.line(summaryX, y - 2, right, y - 2);
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(12);
+    pdf.setTextColor(...navy);
+    pdf.text("TOTAL DUE", summaryX, y + 4);
+    pdf.text(invoiceMoney(order.amount), right, y + 4, { align: "right" });
+    y += 15;
+
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(8.5);
+    pdf.setTextColor(...muted);
+    pdf.text(`Amount in words: ${numberToIndianWords(order.amount)}`, margin, y, { maxWidth: usableWidth });
+    y += 9;
+    if (order.txn || order.utr) {
+      pdf.setFont("helvetica", "bold");
+      pdf.setTextColor(...ink);
+      pdf.text("Payment reference:", margin, y);
+      pdf.setFont("helvetica", "normal");
+      pdf.text(order.utr || order.txn, margin + 31, y, { maxWidth: usableWidth - 31 });
+      y += 8;
+    }
+    pdf.setDrawColor(...line);
+    pdf.line(margin, y, right, y);
+    y += 6;
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(8);
+    pdf.setTextColor(...navy);
+    pdf.text("Thank you for your business.", margin, y);
+    pdf.setFont("helvetica", "normal");
+    pdf.setTextColor(...muted);
+    pdf.text("Please contact Grain Bazar support if you have questions about this order.", margin, y + 5, { maxWidth: usableWidth });
+    footer();
+
+    const safeInvoiceName = `Invoice-${invoiceNumber}`.replace(/[^A-Za-z0-9._-]+/g, "-");
+    pdf.save(`${safeInvoiceName}.pdf`);
+    toast.success(`PDF invoice for ${order.id} downloaded`, { id: toastId });
+  } catch (error) {
+    console.error("Failed to download invoice PDF:", error);
+    toast.error("Failed to download invoice PDF", { id: toastId });
   }
 }
