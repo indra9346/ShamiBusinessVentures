@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { Panel, StatusBadge } from "@/components/panel/widgets";
 import { vendorNav } from "@/lib/panel-nav";
-import { getOrderItemTotal, inr, orderStages, type OrderStatus } from "@/lib/data";
+import { getOrderItemTotal, inr, orderStages, vendorOrderStatusOptions, type OrderStatus } from "@/lib/data";
 import { useApp, useVendorScope } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -123,7 +123,7 @@ function VendorOrderDetail() {
               <div className="grid gap-1.5">
                 <span className="text-xs font-semibold text-slate">Update Status</span>
                 <Select
-                  disabled={order.status === "Cancelled"}
+                  disabled={vendorOrderStatusOptions(order).length === 1}
                   value={order.status}
                   onValueChange={async (v) => {
                     if (await updateOrderStatus(order.id, v as OrderStatus)) toast.success(`Order ${order.id} updated to ${v}`);
@@ -131,11 +131,14 @@ function VendorOrderDetail() {
                 >
                   <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {[...new Set([order.status, ...orderStages.slice(2)])].map((s) => (
+                    {vendorOrderStatusOptions(order).map((s) => (
                       <SelectItem key={s} value={s}>{s}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
+                {order.status === "Packed" && order.payment !== "Paid" && (
+                  <p className="text-xs text-slate">Full payment is required before dispatch.</p>
+                )}
               </div>
               <Button
                 variant="outline"

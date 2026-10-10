@@ -6,7 +6,7 @@ import { PanelLayout } from "@/components/panel/PanelLayout";
 import { DataTable, Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { Pager } from "@/components/panel/pager";
 import { vendorNav } from "@/lib/panel-nav";
-import { getOrderItemTotal, inr, orderStages, type OrderStatus } from "@/lib/data";
+import { getOrderItemTotal, inr, orderStages, vendorOrderStatusOptions, type OrderStatus } from "@/lib/data";
 import { useApp, useVendorScope } from "@/lib/store";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -140,9 +140,9 @@ function VendorOrdersPanel() {
             items.length,
             inr(amount),
             <StatusBadge status={o.payment} />,
-            <StatusBadge status={o.status} />,
+          <StatusBadge status={o.status} />,
             <Select
-              disabled={o.status === "Cancelled"}
+              disabled={vendorOrderStatusOptions(o).length === 1}
               value={o.status}
               onValueChange={async (v) => {
                 if (await updateOrderStatus(o.id, v as OrderStatus)) toast.success(`Order ${o.id} updated to ${v}`);
@@ -150,7 +150,7 @@ function VendorOrdersPanel() {
             >
               <SelectTrigger className="h-8 w-36 text-xs"><SelectValue /></SelectTrigger>
               <SelectContent>
-                {[...new Set([o.status, ...orderStages.slice(2)])].map((s) => (
+                {vendorOrderStatusOptions(o).map((s) => (
                   <SelectItem key={s} value={s}>{s}</SelectItem>
                 ))}
               </SelectContent>
