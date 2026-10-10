@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { Panel } from "@/components/panel/widgets";
 import { vendorNav } from "@/lib/panel-nav";
-import { products as seedProducts, type Product } from "@/lib/data";
+import { type Product } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -45,6 +45,7 @@ function VendorAddProduct() {
   const [status, setStatus] = useState<Product["status"]>("pending");
   const [image, setImage] = useState("");
   const [imageUploading, setImageUploading] = useState(false);
+  const [skuToken] = useState(() => crypto.randomUUID().replaceAll("-", "").slice(0, 8).toUpperCase());
 
   const chooseImage = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -62,9 +63,9 @@ function VendorAddProduct() {
   };
 
   const cat = categories.find((c) => c.name === category);
-  const sku = category ? `SBV-${category.slice(0, 2).toUpperCase()}-${1000 + Math.floor(Math.random() * 8999)}` : "";
+  const sku = category ? `SBV-${category.slice(0, 2).toUpperCase()}-${skuToken}` : "";
 
-  const handleSubmit = (): void => {
+  const handleSubmit = async (): Promise<void> => {
     if (!name.trim()) { toast.error("Product name is required"); return; }
     if (!category) { toast.error("Please select a category"); return; }
     if (!subcategory) { toast.error("Please select a subcategory"); return; }
@@ -75,11 +76,12 @@ function VendorAddProduct() {
     if (!mrpNum || mrpNum <= 0) { toast.error("Enter a valid MRP"); return; }
     if (!priceNum || priceNum <= 0) { toast.error("Enter a valid selling price"); return; }
     if (priceNum > mrpNum) { toast.error("Selling price cannot exceed MRP"); return; }
-    if (!stock || stockNum < 0) { toast.error("Enter a valid stock quantity"); return; }
+    if (!stock.trim() || !Number.isFinite(stockNum) || stockNum < 0) { toast.error("Enter a valid stock quantity"); return; }
     if (!description.trim()) { toast.error("Description is required"); return; }
+    if (!image.trim()) { toast.error("Choose a product image before submitting"); return; }
+    if (imageUploading) { toast.error("Wait for the product image upload to finish"); return; }
 
-    const sampleImage = image || (seedProducts.find((p) => p.category === category)?.image ?? "");
-    const id = `P${Date.now().toString().slice(-6)}`;
+    const id = `P-${crypto.randomUUID()}`;
     const today = new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
 
     const product: Product = {
@@ -91,7 +93,7 @@ function VendorAddProduct() {
       vendorId: "",
       category,
       subcategory,
-      image: sampleImage,
+      image: image.trim(),
       mrp: mrpNum,
       price: priceNum,
       gst: Number(gst),
@@ -110,11 +112,16 @@ function VendorAddProduct() {
       updated: today,
     };
 
-    void addProduct(product).then((saved) => {
+    try {
+      const saved = await addProduct(product);
       if (!saved) return;
       toast.success(`${product.name} submitted for approval`);
-      navigate({ to: "/vendor/products" });
-    });
+      void navigate({ to: "/vendor/products" });
+    } catch (error) {
+      toast.error("Could not submit this product", {
+        description: error instanceof Error ? error.message : "Try again.",
+      });
+    }
   };
 
   return (
@@ -216,7 +223,7 @@ function VendorAddProduct() {
         </div>
         <div className="mt-6 flex justify-end gap-2">
           <Button variant="outline" onClick={() => navigate({ to: "/vendor/products" })}>Cancel</Button>
-          <Button className="bg-navy text-white hover:bg-navy/90" onClick={handleSubmit}>Add Product</Button>
+          <Button className="bg-navy text-white hover:bg-navy/90" disabled={imageUploading} onClick={() => void handleSubmit()}>Add Product</Button>
         </div>
       </Panel>
     </PanelLayout>

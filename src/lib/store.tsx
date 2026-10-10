@@ -963,7 +963,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
       categories,
       addCategory: async (c) => {
-        const category = { ...c, id: `C${Date.now().toString().slice(-6)}`, order: categories.length + 1 };
+        const category = { ...c, id: `C-${crypto.randomUUID()}`, order: categories.length + 1 };
         if (!await saveCategory(category)) return false;
         setCategories((list) => [...list, category]);
         return true;

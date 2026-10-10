@@ -61,6 +61,10 @@ function AdminCategories() {
       if (!saved) return;
       toast.success(`Category “${name}” ${editing ? "updated" : "created"}`);
       setOpen(false);
+    } catch (error) {
+      toast.error("Could not save this category", {
+        description: error instanceof Error ? error.message : "Please retry.",
+      });
     } finally {
       setSaving(false);
     }

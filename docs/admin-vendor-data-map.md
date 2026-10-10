@@ -16,7 +16,7 @@ the signed-in Supabase role.
 | `/admin/customers` and `/admin/customers/$id` | `profiles`, `user_roles`, customer addresses/orders, and `admin_set_profile_status` |
 | `/admin/products` and `/admin/products/$id` | `catalog_products`, `store_categories`, vendor profiles, and `catalog-images` Storage uploads |
 | `/admin/categories` | `store_categories`, product/category counts, and `catalog-images` Storage uploads |
-| `/admin/inventory` | `catalog_products`, `batches`, and `admin_receive_inventory_batch` |
+| `/admin/inventory` | `catalog_products`, admin-only FIFO `batches`, and `admin_receive_inventory_batch` |
 | `/admin/orders` and `/admin/orders/$id` | `orders`, `order_items`, `payments`; order creation and status changes use protected store/RPC paths |
 | `/admin/payments` | `orders`, `payments`, and `admin_confirm_manual_payment`; refunds require an external payment provider and are not enabled |
 | `/admin/commissions` | Vendor sales from `orders`/`order_items`; `profiles.commission_rate` through `admin_set_vendor_commission` |
@@ -63,10 +63,16 @@ the signed-in Supabase role.
 - Public catalog reads require an approved, active vendor profile; suspension
   hides its listings while retaining admin and vendor access in
   `20261010220000_hide_suspended_vendor_catalog.sql`.
+- FIFO purchase batches, including internal unit cost layers, are admin-only;
+  vendors manage their sellable stock through their own catalog products after
+  `20261010230000_admin_only_inventory_batch_reads.sql`.
+- Customer accounts marked blocked by an administrator are signed out and
+  prevented from writing orders, addresses, returns, reviews, settings, or
+  vendor applications by `20261010233000_enforce_blocked_customer_status.sql`.
 - External payment collection/refunds and outbound SMS/WhatsApp/email are not
   connected. Manual payment reconciliation and in-app notifications remain the
   supported workflows until provider setup is completed.
 - This map documents current code-to-schema wiring. On 2026-10-10, the linked
   production project migration history was verified against local migrations
-  through `20261010220000`. Route behavior still needs a live acceptance pass
+  through `20261010233000`. Route behavior still needs a live acceptance pass
   with separate admin, vendor, and customer accounts.
