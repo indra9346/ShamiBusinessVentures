@@ -106,6 +106,7 @@ export function PanelLayout({
       localStorage.setItem(key, String(Date.now()));
     };
     const expireIfIdle = () => {
+      if (document.visibilityState !== "visible") return;
       const lastActivity = Number(localStorage.getItem(key) ?? 0);
       if (signingOut || !lastActivity || Date.now() - lastActivity < timeoutMs) return;
       signingOut = true;
