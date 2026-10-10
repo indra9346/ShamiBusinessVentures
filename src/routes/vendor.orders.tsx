@@ -1,5 +1,5 @@
 import { createFileRoute, Link, Outlet, useRouterState } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { IndianRupee, PackageCheck, PackageX, ShoppingCart } from "lucide-react";
 import { toast } from "sonner";
 import { PanelLayout } from "@/components/panel/PanelLayout";
@@ -12,6 +12,9 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 export const Route = createFileRoute("/vendor/orders")({
+  validateSearch: (search: Record<string, unknown>) => ({
+    ...(typeof search["q"] === "string" ? { q: search["q"] } : {}),
+  }),
   head: () => ({
     meta: [
       { title: "Orders | Shami Vendor Panel" },
@@ -35,12 +38,18 @@ function VendorOrders() {
 }
 
 function VendorOrdersPanel() {
+  const routeSearch = Route.useSearch();
   const { updateOrderStatus } = useApp();
   const { vendorOrders, vendorId } = useVendorScope();
-  const [q, setQ] = useState("");
+  const [q, setQ] = useState(routeSearch.q ?? "");
   const [status, setStatus] = useState("all");
   const [sort, setSort] = useState("date-desc");
   const [page, setPage] = useState(1);
+
+  useEffect(() => {
+    setQ(routeSearch.q ?? "");
+    setPage(1);
+  }, [routeSearch.q]);
 
   const withAmounts = useMemo(
     () =>
@@ -55,7 +64,7 @@ function VendorOrdersPanel() {
   const filtered = useMemo(() => {
     let list = withAmounts.filter(({ order: o }) => {
       const s = q.trim().toLowerCase();
-      const matchesQ = !s || o.id.toLowerCase().includes(s) || o.customer.toLowerCase().includes(s);
+      const matchesQ = !s || `${o.id} ${o.customer} ${o.status} ${o.items.map((line) => `${line.product.name} ${line.product.sku}`).join(" ")}`.toLowerCase().includes(s);
       const matchesStatus = status === "all" || o.status === status;
       return matchesQ && matchesStatus;
     });

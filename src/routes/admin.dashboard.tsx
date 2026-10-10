@@ -238,7 +238,10 @@ function AdminDashboard() {
   const pendingOrders = filteredOrders.filter(
     (o) => o.status !== "Delivered" && o.status !== "Cancelled",
   ).length;
-  const lowStockCount = products.filter((p) => p.stock < (p.minimumStock ?? 30)).length;
+  const lowStockProducts = products
+    .filter((product) => product.stock <= 0 || product.stock < (product.minimumStock ?? 30))
+    .sort((a, b) => a.stock - b.stock || a.name.localeCompare(b.name));
+  const lowStockCount = lowStockProducts.length;
 
   const activeCustomerCount = useMemo(() => {
     const set = new Set(filteredOrders.map((o) => o.customer));
@@ -526,12 +529,11 @@ function AdminDashboard() {
 
       <div className="mt-6">
         <Panel title="LOW STOCK ALERTS">
-          <DataTable
-            columns={["Product", "Current Stock", "Minimum Stock", "Required Stock", "Shortage"]}
-            rows={products
-              .filter((product) => product.stock < (product.minimumStock ?? 30))
-              .slice(0, 10)
-              .map((product) => {
+          {lowStockProducts.length ? (
+            <div className="max-h-[34rem] overflow-auto">
+              <DataTable
+                columns={["Product", "Current Stock", "Minimum Stock", "Required Stock", "Shortage"]}
+                rows={lowStockProducts.map((product) => {
                 const minimum = product.minimumStock ?? 30;
                 const required = Math.max(product.requiredStock ?? 0, minimum);
                 return [
@@ -543,12 +545,16 @@ function AdminDashboard() {
                     {Math.max(0, required - product.stock)}
                   </span>,
                 ];
-              })}
-          />
-          {lowStockCount === 0 && (
-            <p className="mt-3 text-sm text-slate">
-              No products are below their minimum stock level.
-            </p>
+                })}
+              />
+            </div>
+          ) : (
+            <div className="grid min-h-36 place-items-center text-center">
+              <div>
+                <p className="font-semibold text-navy">Stock levels look healthy</p>
+                <p className="mt-1 text-sm text-slate">No products are out of stock or below their reorder level.</p>
+              </div>
+            </div>
           )}
         </Panel>
       </div>

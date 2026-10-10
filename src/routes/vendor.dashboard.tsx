@@ -71,7 +71,9 @@ function VendorDashboard() {
   }
 
   const pendingOrders = periodOrders.filter((o) => o.status !== "Delivered" && o.status !== "Cancelled").length;
-  const lowStock = vendorProducts.filter((p) => p.stock < (p.minimumStock ?? 30));
+  const lowStock = vendorProducts
+    .filter((p) => p.stock <= 0 || p.stock < (p.minimumStock ?? 30))
+    .sort((a, b) => a.stock - b.stock || a.name.localeCompare(b.name));
   const uniqueCustomers = new Set(periodOrders.map((o) => o.customerId)).size;
   const publishedReviews = vendorReviews.filter((review) => review.status === "Published");
   const avgRating = publishedReviews.length
