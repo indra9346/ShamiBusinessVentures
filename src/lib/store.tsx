@@ -7,6 +7,7 @@ import {
   addresses as seedAddresses,
   batches as seedBatches,
   buildOrder,
+  canCancelOrder,
   calculateFIFOCost,
   calculateInventoryValuation,
   coupons as seedCoupons,
@@ -1266,6 +1267,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
       updateOrderStatus: async (id, status) => {
         const existing = orders.find((order) => order.id === id);
         if (!existing) return false;
+        if (existing.status === "Cancelled" && status !== "Cancelled") {
+          toast.error("Cancelled orders cannot be reopened", { description: "Create a new order to fulfil this purchase." });
+          return false;
+        }
+        if (status === "Cancelled") {
+          const actor = user?.role === "customer" ? "customer" : user?.role === "admin" ? "admin" : null;
+          if (!actor || !canCancelOrder(existing, actor)) {
+            toast.error("This order cannot be cancelled", {
+              description: existing.paidAmount || existing.payment === "Paid" || existing.payment === "Partially Paid"
+                ? "A verified refund must be completed before a paid order can be cancelled. Refund processing is not configured yet."
+                : "This order has passed the cancellation stage for your account.",
+            });
+            return false;
+          }
+        }
         setOrders((list) => list.map((order) => order.id === id ? { ...order, status } : order));
         if (!STATIC_DATA_MODE) {
           const result = status === "Cancelled"

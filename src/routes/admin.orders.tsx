@@ -14,7 +14,7 @@ import { PanelLayout } from "@/components/panel/PanelLayout";
 import { DataTable, Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { Pager } from "@/components/panel/pager";
 import { adminNav } from "@/lib/panel-nav";
-import { inr, orderStages, type OrderStatus } from "@/lib/data";
+import { canCancelOrder, inr, orderStages, type OrderStatus } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { Input } from "@/components/ui/input";
 import {
@@ -342,6 +342,8 @@ function AdminOrders() {
           ]}
           rows={rows.map((o) => {
             const vendorSet = Array.from(new Set(o.items.map((i) => i.vendor)));
+            const canCancel = canCancelOrder(o, "admin");
+            const needsRefund = (o.paidAmount ?? 0) > 0 || o.payment === "Paid" || o.payment === "Partially Paid";
             return [
               <Link
                 to="/admin/orders/$id"
@@ -381,6 +383,7 @@ function AdminOrders() {
                 </Button>
                 <Select
                   value={o.status}
+                  disabled={o.status === "Cancelled"}
                   onValueChange={async (v) => {
                     if (await updateOrderStatus(o.id, v as OrderStatus)) toast.success(`Order ${o.id} updated to ${v}`);
                   }}
@@ -389,7 +392,7 @@ function AdminOrders() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {[...orderStages, "Cancelled"].map((s) => (
+                    {[...orderStages, ...(o.status === "Cancelled" ? ["Cancelled" as const] : [])].map((s) => (
                       <SelectItem key={s} value={s}>
                         {s}
                       </SelectItem>
@@ -398,7 +401,14 @@ function AdminOrders() {
                 </Select>
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
-                    <Button variant="outline" size="sm" disabled={o.status === "Cancelled"}>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={!canCancel}
+                      title={!canCancel && needsRefund
+                        ? "A verified refund must be completed before cancellation."
+                        : undefined}
+                    >
                       Cancel
                     </Button>
                   </AlertDialogTrigger>
@@ -406,7 +416,11 @@ function AdminOrders() {
                     <AlertDialogHeader>
                       <AlertDialogTitle>Cancel order {o.id}?</AlertDialogTitle>
                       <AlertDialogDescription>
-                        This will mark the order as cancelled. This action cannot be undone.
+                        {canCancel
+                          ? "This will mark the order as cancelled and restore its available inventory."
+                          : needsRefund
+                            ? "Paid orders cannot be cancelled until a verified refund is completed. Refund processing is not configured yet."
+                            : "Orders cannot be cancelled after dispatch. Contact support if this order needs intervention."}
                       </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>

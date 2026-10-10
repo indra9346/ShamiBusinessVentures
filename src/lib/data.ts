@@ -562,6 +562,15 @@ export type Order = {
   coupon?: string;
 };
 
+/** Whether an order can be cancelled without stranding captured customer funds. */
+export function canCancelOrder(order: Pick<Order, "status" | "payment" | "paidAmount">, actor: "admin" | "customer" = "admin"): boolean {
+  const allowedStatuses: OrderStatus[] = actor === "customer"
+    ? ["Placed", "Payment Confirmed"]
+    : ["Placed", "Payment Confirmed", "Accepted", "Packed"];
+  const hasUnrefundedPayment = (order.paidAmount ?? 0) > 0 || order.payment === "Paid" || order.payment === "Partially Paid";
+  return allowedStatuses.includes(order.status) && !hasUnrefundedPayment;
+}
+
 const vendorOrderNextStatus: Partial<Record<OrderStatus, OrderStatus>> = {
   "Payment Confirmed": "Accepted",
   Accepted: "Packed",

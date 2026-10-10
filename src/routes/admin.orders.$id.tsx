@@ -18,7 +18,7 @@ import {
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { Panel, StatusBadge } from "@/components/panel/widgets";
 import { adminNav } from "@/lib/panel-nav";
-import { inr, orderStages, type OrderStatus } from "@/lib/data";
+import { canCancelOrder, inr, orderStages, type OrderStatus } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { Button } from "@/components/ui/button";
@@ -107,7 +107,8 @@ function AdminOrderDetail() {
   }
 
   const isCancelled = order.status === "Cancelled";
-  const canCancel = !["Dispatched", "Out for Delivery", "Delivered", "Cancelled"].includes(order.status);
+  const canCancel = canCancelOrder(order, "admin");
+  const hasUnrefundedPayment = (order.paidAmount ?? 0) > 0 || order.payment === "Paid" || order.payment === "Partially Paid";
   const canEditItems = !isCancelled && (STATIC_DATA_MODE || (
     order.status === "Placed" && order.payment === "Pending" &&
     (order.paidAmount ?? 0) === 0 && (order.discount ?? 0) === 0 && !order.coupon
@@ -186,7 +187,11 @@ function AdminOrderDetail() {
               <AlertDialogHeader>
                 <AlertDialogTitle>Cancel order {order.id}?</AlertDialogTitle>
                 <AlertDialogDescription>
-                  This will mark the order as cancelled and stop fulfilment.
+                  {canCancel
+                    ? "This will mark the order as cancelled, stop fulfilment, and restore its available inventory."
+                    : hasUnrefundedPayment
+                      ? "Paid orders cannot be cancelled until a verified refund is completed. Refund processing is not configured yet."
+                      : "Orders cannot be cancelled after dispatch."}
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
@@ -202,6 +207,13 @@ function AdminOrderDetail() {
               </AlertDialogFooter>
             </AlertDialogContent>
           </AlertDialog>
+          {!canCancel && !isCancelled && (
+            <span className="max-w-56 text-xs text-slate">
+              {hasUnrefundedPayment
+                ? "Complete a verified refund before cancelling this paid order."
+                : "Orders cannot be cancelled after dispatch."}
+            </span>
+          )}
 
           <Button
             variant="outline"

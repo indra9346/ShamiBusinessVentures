@@ -6,7 +6,7 @@ import { PanelLayout } from "@/components/panel/PanelLayout";
 import { DataTable, Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { Pager } from "@/components/panel/pager";
 import { accountNav } from "@/lib/account-nav";
-import { inr, orderStages, type OrderStatus } from "@/lib/data";
+import { canCancelOrder, inr, orderStages, type OrderStatus } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { Input } from "@/components/ui/input";
 import {
@@ -208,7 +208,10 @@ function AccountOrders() {
                     <Button
                       variant="outline"
                       size="sm"
-                      disabled={o.status === "Cancelled" || o.status === "Delivered"}
+                      disabled={!canCancelOrder(o, "customer")}
+                      title={!canCancelOrder(o, "customer") && ((o.paidAmount ?? 0) > 0 || o.payment === "Paid" || o.payment === "Partially Paid")
+                        ? "A verified refund must be completed before cancellation."
+                        : undefined}
                     >
                       Cancel
                     </Button>
@@ -217,7 +220,9 @@ function AccountOrders() {
                     <AlertDialogHeader>
                       <AlertDialogTitle>Cancel order {o.id}?</AlertDialogTitle>
                       <AlertDialogDescription>
-                        This will mark the order as cancelled. This action cannot be undone.
+                        {canCancelOrder(o, "customer")
+                          ? "This will mark the order as cancelled and restore its available inventory."
+                          : "Paid orders cannot be cancelled until a verified refund is completed. Contact support if you need help."}
                       </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
