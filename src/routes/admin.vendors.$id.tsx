@@ -37,24 +37,42 @@ function AdminVendorDetail() {
 
   useEffect(() => {
     let active = true;
+    let revision = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let connectedOnce = false;
     const load = async () => {
+      const requestRevision = ++revision;
       const [kyc, payouts] = await Promise.all([
         supabase.from("vendor_kyc_documents").select("id,document_type,object_path,status,admin_notes,created_at").eq("vendor_id", id).order("created_at", { ascending: false }),
         supabase.from("vendor_payout_requests").select("id,requested_at,amount,method,status").eq("vendor_id", id).order("requested_at", { ascending: false }),
       ]);
-      if (!active) return;
+      if (!active || requestRevision !== revision) return;
       if (kyc.error) toast.error("Could not load vendor verification documents", { description: kyc.error.message });
       else setKycDocuments(kyc.data ?? []);
       if (payouts.error) toast.error("Could not load vendor payouts", { description: payouts.error.message });
       else setPayoutRows((payouts.data ?? []).map((row) => ({ id: row.id, date: new Date(row.requested_at).toLocaleDateString("en-IN"), amount: Number(row.amount), method: row.method, status: row.status })));
       setKycLoading(false);
     };
+    const refreshSoon = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => void load(), 100);
+    };
     void load();
     const channel = supabase.channel(`admin-vendor-detail-${id}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "vendor_kyc_documents", filter: `vendor_id=eq.${id}` }, () => void load())
-      .on("postgres_changes", { event: "*", schema: "public", table: "vendor_payout_requests", filter: `vendor_id=eq.${id}` }, () => void load())
-      .subscribe();
-    return () => { active = false; void supabase.removeChannel(channel); };
+      .on("postgres_changes", { event: "*", schema: "public", table: "vendor_kyc_documents", filter: `vendor_id=eq.${id}` }, refreshSoon)
+      .on("postgres_changes", { event: "*", schema: "public", table: "vendor_payout_requests", filter: `vendor_id=eq.${id}` }, refreshSoon)
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") {
+          if (connectedOnce) refreshSoon();
+          connectedOnce = true;
+        }
+      });
+    return () => {
+      active = false;
+      ++revision;
+      if (timer) clearTimeout(timer);
+      void supabase.removeChannel(channel);
+    };
   }, [id]);
 
   const reviewDocument = async (documentId: string, status: "Approved" | "Rejected") => {

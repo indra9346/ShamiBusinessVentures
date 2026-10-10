@@ -42,12 +42,16 @@ function VendorEarnings() {
   useEffect(() => {
     if (!vendorId) { setReservedPayouts(null); return; }
     let active = true;
+    let revision = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let connectedOnce = false;
     const loadReservedPayouts = async () => {
+      const requestRevision = ++revision;
       const { data, error } = await supabase.from("vendor_payout_requests")
         .select("amount")
         .eq("vendor_id", vendorId)
         .in("status", ["Pending", "Processing", "Paid"]);
-      if (!active) return;
+      if (!active || requestRevision !== revision) return;
       if (error) {
         setReservedPayouts(null);
         toast.error("Could not load your payout reservations", { description: error.message });
@@ -55,11 +59,25 @@ function VendorEarnings() {
       }
       setReservedPayouts((data ?? []).reduce((sum, payout) => sum + Number(payout.amount), 0));
     };
+    const refreshSoon = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => void loadReservedPayouts(), 100);
+    };
     void loadReservedPayouts();
     const channel = supabase.channel(`vendor-earnings-payouts-${vendorId}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "vendor_payout_requests", filter: `vendor_id=eq.${vendorId}` }, () => void loadReservedPayouts())
-      .subscribe();
-    return () => { active = false; void supabase.removeChannel(channel); };
+      .on("postgres_changes", { event: "*", schema: "public", table: "vendor_payout_requests", filter: `vendor_id=eq.${vendorId}` }, refreshSoon)
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") {
+          if (connectedOnce) refreshSoon();
+          connectedOnce = true;
+        }
+      });
+    return () => {
+      active = false;
+      ++revision;
+      if (timer) clearTimeout(timer);
+      void supabase.removeChannel(channel);
+    };
   }, [vendorId, payoutRefreshKey]);
 
   const commissionAmt = Math.round(revenue * (commission / 100) * 100) / 100;

@@ -54,15 +54,35 @@ function AdminVendorsPanel() {
 
   useEffect(() => {
     let active = true;
+    let revision = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let connectedOnce = false;
     const load = async () => {
+      const requestRevision = ++revision;
       const { data, error } = await supabase.from("vendor_applications").select("id,applicant_id,business_name,owner_name,email,phone,gstin,city,address,status,admin_notes,created_at").order("created_at", { ascending: false });
-      if (!active) return;
+      if (!active || requestRevision !== revision) return;
       if (error) toast.error("Could not load vendor applications", { description: error.message });
       else setApplications(data ?? []);
     };
+    const refreshSoon = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => void load(), 100);
+    };
     void load();
-    const channel = supabase.channel("admin-vendor-applications").on("postgres_changes", { event: "*", schema: "public", table: "vendor_applications" }, () => void load()).subscribe();
-    return () => { active = false; void supabase.removeChannel(channel); };
+    const channel = supabase.channel("admin-vendor-applications")
+      .on("postgres_changes", { event: "*", schema: "public", table: "vendor_applications" }, refreshSoon)
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") {
+          if (connectedOnce) refreshSoon();
+          connectedOnce = true;
+        }
+      });
+    return () => {
+      active = false;
+      ++revision;
+      if (timer) clearTimeout(timer);
+      void supabase.removeChannel(channel);
+    };
   }, []);
 
   const reviewApplication = async (applicationId: string, status: "Approved" | "Rejected") => {

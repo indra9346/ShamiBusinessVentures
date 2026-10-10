@@ -11,7 +11,7 @@ the signed-in Supabase role.
 | Route | Supabase data and actions |
 | --- | --- |
 | `/admin/dashboard` | `orders`, `order_items`, `payments`, `profiles`, `user_roles`, and live `vendor_payout_requests` |
-| `/admin/vendors` | `vendor_applications`; `admin_review_vendor_application` approves or rejects applications and provisions the vendor role/profile |
+| `/admin/vendors` | `vendor_applications`; `admin_review_vendor_application` approves or rejects applications and provisions the vendor role/profile; suspending a vendor hides their public listings through catalog RLS |
 | `/admin/vendors/$id` | `profiles`, `catalog_products`, `orders`/`order_items`, `product_reviews`, `vendor_kyc_documents`, `vendor_payout_requests`; `admin_review_vendor_kyc` |
 | `/admin/customers` and `/admin/customers/$id` | `profiles`, `user_roles`, customer addresses/orders, and `admin_set_profile_status` |
 | `/admin/products` and `/admin/products/$id` | `catalog_products`, `store_categories`, vendor profiles, and `catalog-images` Storage uploads |
@@ -60,11 +60,13 @@ the signed-in Supabase role.
   scopes in `20261010180000_vendor_order_data_scope.sql`. Profile insertion is
   restricted to trusted signup/profile functions by
   `20261010190000_restore_profile_insert_lock.sql`.
+- Public catalog reads require an approved, active vendor profile; suspension
+  hides its listings while retaining admin and vendor access in
+  `20261010220000_hide_suspended_vendor_catalog.sql`.
 - External payment collection/refunds and outbound SMS/WhatsApp/email are not
   connected. Manual payment reconciliation and in-app notifications remain the
   supported workflows until provider setup is completed.
-- This map documents current code-to-schema wiring; the production Supabase
-  project must still be checked for migration parity and exercised with real
-  admin/vendor/customer accounts. The current CLI identity receives HTTP 403
-  from Supabase project-status/migration endpoints, so live parity is not
-  confirmed from this workspace.
+- This map documents current code-to-schema wiring. On 2026-10-10, the linked
+  production project migration history was verified against local migrations
+  through `20261010220000`. Route behavior still needs a live acceptance pass
+  with separate admin, vendor, and customer accounts.
