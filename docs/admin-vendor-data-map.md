@@ -77,7 +77,7 @@ the signed-in Supabase role.
   connected. Manual payment reconciliation and in-app notifications remain the
   supported workflows until provider setup is completed.
 - This map documents current code-to-schema wiring. The authenticated
-  production migration check confirmed history through `20261011030000`,
+  production migration check confirmed history through `20261011040000`,
   including the admin order-item and protected cancellation workflows. Route
   behavior still needs a live acceptance pass with separate admin, vendor, and
   customer accounts.
