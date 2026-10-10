@@ -525,6 +525,10 @@ export const orderStages: OrderStatus[] = [
 ];
 
 export type OrderItem = { product: Product; qty: number; vendor: string; vendorId: string; capacity?: string; unitPrice?: number; dbItemId?: string };
+/** Uses the price captured on the order line, falling back to the catalog for local preview orders. */
+export function getOrderItemTotal(item: OrderItem): number {
+  return Math.round((item.unitPrice ?? item.product.price) * item.qty * 100) / 100;
+}
 export type Order = {
   id: string;
   date: string;

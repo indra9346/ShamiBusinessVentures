@@ -14,6 +14,7 @@ import {
   inr,
   getCurrentFIFOCost,
   getProductAverageSellingPrice,
+  getOrderItemTotal,
   notifications as seedNotifications,
   orders as seedOrders,
   products as seedProducts,
@@ -1606,7 +1607,9 @@ export function useVendorScope() {
   const vendorReviews = reviews.filter((r) => r.vendorId === vendorId);
   const vendor = vendors.find((item) => item.id === vendorId) ?? null;
   const revenue = vendorOrders.reduce(
-    (s, o) => s + o.items.filter((i) => i.vendorId === vendorId).reduce((t, i) => t + i.product.price * i.qty, 0),
+    (s, o) => s + (o.payment === "Paid" && o.status !== "Cancelled"
+      ? o.items.filter((i) => i.vendorId === vendorId).reduce((t, i) => t + getOrderItemTotal(i), 0)
+      : 0),
     0,
   );
   return { vendorId, vendor, vendorProducts, vendorOrders, vendorReviews, revenue, user };

@@ -21,6 +21,8 @@ Phone OTP needs a supported SMS provider configured in Supabase Auth (provider c
 
 The repository’s linked production database was checked on 2026-10-08. `npx supabase migration list` showed every local migration through `20261008300000` applied remotely. The catalog/category tables, operational tables, private `vendor-kyc` storage bucket, RLS policies, and application/KYC review functions are included by those migrations. For later schema changes, review the SQL and migration history, then apply via the normal reviewed deployment process. Do not mark a migration as applied unless its SQL effects are already present.
 
+A later migration-history check returned HTTP 403 for the current Supabase CLI account. The remote status of migrations added after `20261008300000` (including the Zoho and live-notification migrations through `20261010170000`) is unverified. Have a project owner check `npx supabase migration list` and apply any pending migrations before enabling those features.
+
 ## Admin and vendor access
 
 - Admin access requires a Supabase Auth account with the `admin` row in `public.user_roles` and a complete profile. Public admin registration is disabled. Provision the first administrator using the secured Supabase dashboard/SQL process already used by the project owner; never expose a service-role credential to the browser.
@@ -76,6 +78,6 @@ Until that integration is deployed and verified, treat “Pending” as unpaid a
 
 ## Verification evidence and limitations
 
-On 2026-10-08, local TypeScript checking (`npx tsc --noEmit --pretty false`) and the production build (`npm run build`, including the Nitro Cloudflare module output) completed successfully. Targeted ESLint completed with zero errors and two existing Fast Refresh warnings in `src/lib/store.tsx`. The remote Supabase migration history matched all local migration versions through `20261008300000`.
+On 2026-10-08, local TypeScript checking (`npx tsc --noEmit --pretty false`) and the production build (`npm run build`, including the Nitro Cloudflare module output) completed successfully. Targeted ESLint completed with zero errors and two existing Fast Refresh warnings in `src/lib/store.tsx`. The last successful remote Supabase migration history check matched local versions through `20261008300000`; a later check received HTTP 403, so subsequent remote migration status remains unverified.
 
 These checks verify compilation and schema migration history; they do not prove every workflow by exercising live customer/admin/vendor sessions. A complete live acceptance pass still requires access to the deployed production URL and test identities for each role. Payment execution/refunds and outbound SMS/WhatsApp/email delivery remain provider-dependent as described above.

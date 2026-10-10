@@ -5,7 +5,7 @@ import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Too
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { DataTable, Filters, Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { vendorNav } from "@/lib/panel-nav";
-import { inr } from "@/lib/data";
+import { getOrderItemTotal, inr } from "@/lib/data";
 import { useVendorScope } from "@/lib/store";
 
 export const Route = createFileRoute("/vendor/dashboard")({
@@ -24,6 +24,7 @@ export const Route = createFileRoute("/vendor/dashboard")({
 function VendorDashboard() {
   const { vendor, vendorProducts, vendorOrders, vendorReviews, vendorId } = useVendorScope();
   const [period, setPeriod] = useState("This Month");
+  const commission = vendor?.commission ?? 8;
 
   const now = new Date();
   const start = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -32,12 +33,12 @@ function VendorDashboard() {
   if (period === "This Year") start.setMonth(0, 1);
   const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
   const periodOrders = vendorOrders.filter((order) => {
-    const date = new Date(order.date);
+    const date = new Date(order.createdAt ?? order.date);
     return !Number.isNaN(date.getTime()) && date >= start && date <= end;
   });
-  const periodRevenue = periodOrders.filter((order) => order.status !== "Cancelled").reduce((sum, order) => sum + order.items
+  const periodRevenue = periodOrders.filter((order) => order.payment === "Paid" && order.status !== "Cancelled").reduce((sum, order) => sum + order.items
     .filter((item) => item.vendorId === vendorId)
-    .reduce((subtotal, item) => subtotal + item.product.price * item.qty, 0), 0);
+    .reduce((subtotal, item) => subtotal + getOrderItemTotal(item), 0), 0);
 
   const bucketStarts: Date[] = [];
   if (period === "This Year") {
@@ -62,12 +63,12 @@ function VendorDashboard() {
         : period === "This Week" ? bucketStart.toLocaleDateString("en-IN", { weekday: "short" }) : "Today", revenue: 0, orders: 0 };
   });
   for (const order of periodOrders) {
-    const parsedDate = new Date(order.date);
+    const parsedDate = new Date(order.createdAt ?? order.date);
     if (Number.isNaN(parsedDate.getTime())) continue;
     const bucket = salesSeries.find((item) => parsedDate >= item.start && parsedDate <= item.end);
     if (!bucket) continue;
     bucket.orders += 1;
-    if (order.status !== "Cancelled") bucket.revenue += order.items.filter((item) => item.vendorId === vendorId).reduce((sum, item) => sum + item.product.price * item.qty, 0);
+    if (order.payment === "Paid" && order.status !== "Cancelled") bucket.revenue += order.items.filter((item) => item.vendorId === vendorId).reduce((sum, item) => sum + getOrderItemTotal(item), 0);
   }
 
   const pendingOrders = periodOrders.filter((o) => o.status !== "Delivered" && o.status !== "Cancelled").length;
@@ -80,8 +81,8 @@ function VendorDashboard() {
     ? Math.round((publishedReviews.reduce((s, r) => s + r.rating, 0) / publishedReviews.length) * 10) / 10
     : 0;
   const pendingEarnings = periodOrders
-    .filter((o) => o.status !== "Delivered" && o.status !== "Cancelled")
-    .reduce((s, o) => s + o.items.filter((i) => i.vendorId === vendorId).reduce((t, i) => t + i.product.price * i.qty, 0), 0);
+    .filter((o) => o.payment === "Paid" && o.status !== "Delivered" && o.status !== "Cancelled")
+    .reduce((s, o) => s + o.items.filter((i) => i.vendorId === vendorId).reduce((t, i) => t + getOrderItemTotal(i), 0) * (1 - commission / 100), 0);
 
   const topProducts = [...vendorProducts].sort((a, b) => b.sold - a.sold).slice(0, 5);
 
@@ -90,7 +91,7 @@ function VendorDashboard() {
       <Filters options={["Today", "This Week", "This Month", "This Year"]} value={period} onChange={setPeriod} />
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label={`${period} Sales`} value={inr(periodRevenue)} icon={IndianRupee} highlight />
+        <StatCard label={`${period} Paid Sales`} value={inr(periodRevenue)} icon={IndianRupee} highlight />
         <StatCard label={`${period} Orders`} value={String(periodOrders.length)} icon={ShoppingCart} />
         <StatCard label="Pending Orders" value={String(pendingOrders)} icon={ShoppingCart} />
         <StatCard label="Total Products" value={String(vendorProducts.length)} icon={Package} />
