@@ -19,6 +19,7 @@ browser acceptance.
 | Admin/vendor Realtime tables are published | VERIFIED (configuration) | Production `supabase_realtime` publication includes catalog, categories, orders, order items, per-vendor fulfillments, payments, payouts, notifications, and reviews. Actual browser socket delivery was not observed in this pass. |
 | Production build and TypeScript checks pass | VERIFIED | `npm run build` and `npx tsc --noEmit --pretty false` both exited successfully after the current code changes. |
 | Security settings do not claim unimplemented controls are active | VERIFIED (code/UI) | Admin MFA is labeled `Not enforced`; the disabled password-strength selector was replaced with the actual 8-character app-level password minimum. The vendor MFA preference toggle was removed because it only saved unused metadata and did not affect authentication. |
+| Production signed-out admin/vendor routes and vendor application entry | VERIFIED (browser smoke) | `/admin/dashboard` redirected to `/admin/login`; `/vendor/dashboard` redirected to `/vendor/login`; `/vendor/register` stated that application requires a signed-in customer and administrator review. No production form was submitted. |
 
 Additional live metadata checks found no public tables without RLS, confirmed the `catalog-images` bucket is public with a 5 MiB cap and `vendor-kyc` is private with a 15 MiB cap, and verified the upload/ownership policies and Realtime publication entries described above.
 
