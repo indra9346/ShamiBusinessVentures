@@ -166,6 +166,26 @@ export function PanelLayout({
     }
     void (async () => {
       const {
+        data: { session },
+        error: sessionError,
+      } = await supabase.auth.getSession();
+      if (sessionError) {
+        if (active)
+          setRoleCheckError(
+            "We could not verify your sign-in right now. Your session has been kept; try again when your connection is available.",
+          );
+        return;
+      }
+      if (!session?.user) {
+        if (active) {
+          navigate({
+            to: tone === "admin" ? "/admin/login" : tone === "vendor" ? "/vendor/login" : "/login",
+            replace: true,
+          });
+        }
+        return;
+      }
+      const {
         data: { user: authUser },
         error: authError,
       } = await supabase.auth.getUser();
@@ -356,7 +376,11 @@ export function PanelLayout({
           >
             <AlertTriangle className="mx-auto h-8 w-8 text-amber-600" />
             <p className="mt-3 font-semibold text-navy">
-              Administrator access could not be checked
+              {tone === "admin"
+                ? "Administrator access could not be checked"
+                : tone === "vendor"
+                  ? "Vendor access could not be checked"
+                  : "Account access could not be checked"}
             </p>
             <p className="mt-2 leading-relaxed">{roleCheckError}</p>
             <button
