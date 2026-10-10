@@ -19,6 +19,7 @@ import {
   Cell,
   Pie,
   PieChart,
+  Legend,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -95,6 +96,66 @@ function paymentsReceived(order: { amount: number; paidAmount?: number; payment:
 
 function orderValue(order: { amount: number; status: string }): number {
   return order.status === "Cancelled" ? 0 : order.amount;
+}
+
+type ChartBucketMode = "day" | "week" | "month-week" | "month" | "year";
+
+function chartBucketStart(date: Date, mode: ChartBucketMode): Date {
+  if (mode === "year") return new Date(date.getFullYear(), 0, 1);
+  if (mode === "month") return new Date(date.getFullYear(), date.getMonth(), 1);
+  if (mode === "month-week") {
+    return new Date(date.getFullYear(), date.getMonth(), Math.floor((date.getDate() - 1) / 7) * 7 + 1);
+  }
+  const start = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  if (mode === "week") start.setDate(start.getDate() - ((start.getDay() + 6) % 7));
+  return start;
+}
+
+function chartBucketLabel(start: Date, mode: ChartBucketMode): string {
+  if (mode === "year") return String(start.getFullYear());
+  if (mode === "month") return start.toLocaleDateString("en-IN", { month: "short", year: "2-digit" });
+  if (mode === "month-week") {
+    const end = new Date(start.getFullYear(), start.getMonth(), Math.min(start.getDate() + 6, new Date(start.getFullYear(), start.getMonth() + 1, 0).getDate()));
+    return `${start.getDate()}–${end.getDate()} ${start.toLocaleDateString("en-IN", { month: "short" })}`;
+  }
+  if (mode === "week") {
+    const end = new Date(start);
+    end.setDate(end.getDate() + 6);
+    return `${start.toLocaleDateString("en-IN", { day: "numeric", month: "short" })}–${end.toLocaleDateString("en-IN", { day: "numeric", month: "short" })}`;
+  }
+  return start.toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" });
+}
+
+function chartBuckets(start: Date, end: Date, timeFilter: TimeFilterOption) {
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start > end) return [];
+  const firstDay = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+  const lastDay = new Date(end.getFullYear(), end.getMonth(), end.getDate());
+  const days = Math.floor((lastDay.getTime() - firstDay.getTime()) / 86_400_000) + 1;
+  const mode: ChartBucketMode = timeFilter === "Month"
+    ? "month-week"
+    : timeFilter === "Year"
+      ? "month"
+      : timeFilter === "Today" || timeFilter === "Yesterday" || timeFilter === "Week"
+        ? "day"
+        : days <= 31
+          ? "day"
+          : days <= 180
+            ? "week"
+            : days <= 730
+              ? "month"
+              : "year";
+
+  const buckets: { key: number; label: string }[] = [];
+  let cursor = chartBucketStart(firstDay, mode);
+  while (cursor <= lastDay) {
+    buckets.push({ key: cursor.getTime(), label: chartBucketLabel(cursor, mode) });
+    if (mode === "year") cursor = new Date(cursor.getFullYear() + 1, 0, 1);
+    else if (mode === "month") cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
+    else if (mode === "month-week") cursor = new Date(cursor.getFullYear(), cursor.getMonth(), cursor.getDate() + 7);
+    else if (mode === "week") cursor.setDate(cursor.getDate() + 7);
+    else cursor.setDate(cursor.getDate() + 1);
+  }
+  return { mode, buckets };
 }
 
 function AdminDashboard() {
@@ -235,51 +296,32 @@ function AdminDashboard() {
   }, [filteredOrders]);
 
   const activeVendorCount = useMemo(() => {
-    const set = new Set(filteredOrders.flatMap((o) => o.items.map((i) => i.vendorId).filter(Boolean)));
+    const set = new Set(filteredOrders.flatMap((o) => o.items.map((i) => i.vendorId || i.vendor).filter(Boolean)));
     return set.size;
   }, [filteredOrders]);
 
-  // Dynamic Revenue Analytics Chart Data
+  // Keep calendar buckets even when there were no orders; older years remain visible.
   const dynamicSalesSeries = useMemo(() => {
-    const groups = new Map<string, { revenue: number; customers: Set<string>; sortKey: number }>();
+    const calendar = chartBuckets(dateRange.start, dateRange.end, timeFilter);
+    if (Array.isArray(calendar)) return [];
+    const groups = new Map<number, { revenue: number; customers: Set<string> }>();
     for (const order of filteredOrders) {
       const date = orderTimestamp(order);
       if (Number.isNaN(date.getTime())) continue;
-      const key =
-        timeFilter === "Month"
-          ? `${Math.floor((date.getDate() - 1) / 7) * 7 + 1}–${Math.min(Math.floor((date.getDate() - 1) / 7) * 7 + 7, new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate())} ${date.toLocaleDateString("en-IN", { month: "short" })}`
-          : timeFilter === "Year" || timeFilter === "Custom Range"
-            ? date.toLocaleDateString("en-IN", { month: "short", year: "2-digit" })
-            : date.toLocaleDateString("en-IN", { weekday: "short", day: "numeric" });
-      const keyDate =
-        timeFilter === "Month"
-          ? new Date(
-              date.getFullYear(),
-              date.getMonth(),
-              Math.floor((date.getDate() - 1) / 7) * 7 + 1,
-            )
-          : timeFilter === "Year" || timeFilter === "Custom Range"
-            ? new Date(date.getFullYear(), date.getMonth(), 1)
-            : new Date(date.getFullYear(), date.getMonth(), date.getDate());
-      const group = groups.get(key) ?? {
-        revenue: 0,
-        customers: new Set<string>(),
-        sortKey: keyDate.getTime(),
-      };
+      const key = chartBucketStart(date, calendar.mode).getTime();
+      const group = groups.get(key) ?? { revenue: 0, customers: new Set<string>() };
       group.revenue += paymentsReceived(order);
       if (order.customerId || order.email || order.customer) {
         group.customers.add(order.customerId || order.email || order.customer);
       }
       groups.set(key, group);
     }
-    return Array.from(groups.entries())
-      .sort((a, b) => a[1].sortKey - b[1].sortKey)
-      .map(([month, value]) => ({
-        month,
-        revenue: value.revenue,
-        customers: value.customers.size,
-      }));
-  }, [timeFilter, filteredOrders]);
+    return calendar.buckets.map(({ key, label }) => ({
+      month: label,
+      revenue: groups.get(key)?.revenue ?? 0,
+      customers: groups.get(key)?.customers.size ?? 0,
+    }));
+  }, [timeFilter, dateRange, filteredOrders]);
 
   // Dynamic Category Sales
   const dynamicCategorySales = useMemo(() => {
@@ -298,25 +340,37 @@ function AdminDashboard() {
       .sort((a, b) => b.value - a.value);
   }, [filteredOrders]);
 
-  // Dynamic Vendor Performance based on filtered period
+  // Aggregate vendor activity from the matched order lines so a missing profile row
+  // cannot hide real sales from this report.
   const dynamicVendorPerf = useMemo(() => {
-    return vendors
-      .map((v) => {
-        const vOrders = filteredOrders.filter((o) => o.status !== "Cancelled" && o.items.some((i) => i.vendorId === v.id));
-        const vSales = vOrders.reduce(
-          (s, o) =>
-            s +
-            o.items
-              .filter((i) => i.vendorId === v.id)
-              .reduce((sum, item) => sum + (item.unitPrice ?? item.product.price) * item.qty, 0),
-          0,
-        );
-        return {
-          ...v,
-          periodOrders: vOrders.length,
-          periodSales: vSales,
+    const stats = new Map<string, {
+      business: string;
+      orderIds: Set<string>;
+      periodSales: number;
+      commission: number | null;
+      status: string;
+    }>();
+    for (const order of filteredOrders) {
+      if (order.status === "Cancelled") continue;
+      for (const item of order.items) {
+        const key = item.vendorId || item.vendor.trim().toLowerCase();
+        if (!key) continue;
+        const vendor = vendors.find((candidate) => candidate.id === item.vendorId)
+          ?? vendors.find((candidate) => candidate.business.toLowerCase() === item.vendor.toLowerCase());
+        const current = stats.get(key) ?? {
+          business: vendor?.business || item.vendor || "Vendor",
+          orderIds: new Set<string>(),
+          periodSales: 0,
+          commission: vendor?.commission ?? null,
+          status: vendor?.status ?? "Unknown",
         };
-      })
+        current.orderIds.add(order.id);
+        current.periodSales += (item.unitPrice ?? item.product.price) * item.qty;
+        stats.set(key, current);
+      }
+    }
+    return Array.from(stats.values())
+      .map((vendor) => ({ ...vendor, periodOrders: vendor.orderIds.size }))
       .sort((a, b) => b.periodSales - a.periodSales);
   }, [vendors, filteredOrders]);
 
@@ -439,21 +493,26 @@ function AdminDashboard() {
         <Panel title={`Category Order Value (${dateRange.label})`}>
           <div className="h-72">
             <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={dynamicCategorySales}
-                  dataKey="value"
-                  nameKey="name"
-                  innerRadius={60}
-                  outerRadius={95}
-                  paddingAngle={3}
-                >
-                  {dynamicCategorySales.map((_, i) => (
-                    <Cell key={i} fill={pieColors[i % pieColors.length]} />
-                  ))}
-                </Pie>
-                <Tooltip formatter={(v: number) => `${v}%`} />
-              </PieChart>
+              {dynamicCategorySales.length ? (
+                <PieChart>
+                  <Pie
+                    data={dynamicCategorySales}
+                    dataKey="value"
+                    nameKey="name"
+                    innerRadius={60}
+                    outerRadius={95}
+                    paddingAngle={3}
+                  >
+                    {dynamicCategorySales.map((_, i) => (
+                      <Cell key={i} fill={pieColors[i % pieColors.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip formatter={(value: number) => `${value}%`} />
+                  <Legend />
+                </PieChart>
+              ) : (
+                <div className="grid h-full place-items-center text-sm text-slate">No order value in this date range.</div>
+              )}
             </ResponsiveContainer>
           </div>
         </Panel>
@@ -480,7 +539,7 @@ function AdminDashboard() {
               <span className="font-semibold text-navy">{v.business}</span>,
               v.periodOrders,
               inr(v.periodSales),
-              `${v.commission}%`,
+              v.commission === null ? "—" : `${v.commission}%`,
               <StatusBadge status={v.status} />,
             ])}
           />

@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import type { Database } from "@/integrations/supabase/types";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import {
   addresses as seedAddresses,
@@ -39,6 +40,38 @@ export type Coupon = (typeof seedCoupons)[number] & {
   source?: "zoho";
   maxPerUser?: number;
 };
+
+type OrderRow = Database["public"]["Tables"]["orders"]["Row"];
+type OrderItemRow = Database["public"]["Tables"]["order_items"]["Row"];
+type PaymentRow = Database["public"]["Tables"]["payments"]["Row"];
+type NotificationRow = Database["public"]["Tables"]["notifications"]["Row"];
+
+const DB_PAGE_SIZE = 500;
+
+async function fetchAllRows<T>(
+  fetchPage: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: unknown | null }>,
+) {
+  const rows: T[] = [];
+  for (let from = 0; ; from += DB_PAGE_SIZE) {
+    const { data, error } = await fetchPage(from, from + DB_PAGE_SIZE - 1);
+    if (error) return { data: null, error };
+    rows.push(...(data ?? []));
+    if ((data?.length ?? 0) < DB_PAGE_SIZE) return { data: rows, error: null };
+  }
+}
+
+async function fetchOrderRowsInChunks<T>(
+  ids: string[],
+  fetchPage: (ids: string[], from: number, to: number) => PromiseLike<{ data: T[] | null; error: unknown | null }>,
+) {
+  const rows: T[] = [];
+  for (let index = 0; index < ids.length; index += 100) {
+    const result = await fetchAllRows<T>((from, to) => fetchPage(ids.slice(index, index + 100), from, to));
+    if (result.error) return result;
+    rows.push(...(result.data ?? []));
+  }
+  return { data: rows, error: null };
+}
 export type Notif = (typeof seedNotifications)[number] & { source?: "seed" | "live"; databaseId?: string };
 
 
@@ -219,20 +252,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
           { data: profiles, error: profilesError },
           { data: roleRows, error: rolesError },
           { data: batchRows, error: batchError },
-          { data: orderRows, error: orderError },
           { data: reviewRows, error: reviewError },
           { data: returnRows, error: returnError },
           { data: couponRows, error: couponError },
+          ordersResult,
         ] = await Promise.all([
           supabase.from("profiles").select("id, full_name, email, phone, company, gstin, avatar_url, business_city, business_address, vendor_id, commission_rate, status, created_at"),
           supabase.from("user_roles").select("user_id, role"),
           supabase.from("batches").select("*").order("purchase_date", { ascending: true }),
-          supabase.from("orders").select("*").order("created_at", { ascending: false }),
           supabase.from("product_reviews").select("*").order("created_at", { ascending: false }),
           supabase.from("return_requests").select("*").order("created_at", { ascending: false }),
           supabase.from("coupons").select("*").order("created_at", { ascending: false }),
+          fetchAllRows<OrderRow>((from, to) => supabase.from("orders").select("*")
+            .order("created_at", { ascending: false }).order("id", { ascending: false }).range(from, to)),
         ]);
         if (!active) return;
+        const orderRows = ordersResult.data;
+        const orderError = ordersResult.error;
         if (!batchError) {
           setBatches(batchRows.map((row) => ({
             id: row.id,
@@ -252,11 +288,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
           console.error("Could not load inventory batches", batchError);
         }
         if (!orderError) {
-          const ids = orderRows.map((order) => order.id);
+          const ids = (orderRows ?? []).map((order) => order.id);
           const [{ data: itemRows, error: itemError }, { data: paymentRows, error: paymentError }] = ids.length
             ? await Promise.all([
-              supabase.from("order_items").select("*").in("order_id", ids),
-              supabase.from("payments").select("*").in("order_id", ids).order("created_at", { ascending: false }),
+              fetchOrderRowsInChunks<OrderItemRow>(ids, (orderIds, from, to) => supabase.from("order_items").select("*")
+                .in("order_id", orderIds).order("id", { ascending: true }).range(from, to)),
+              fetchOrderRowsInChunks<PaymentRow>(ids, (orderIds, from, to) => supabase.from("payments").select("*")
+                .in("order_id", orderIds).order("created_at", { ascending: false }).order("id", { ascending: false }).range(from, to)),
             ])
             : [{ data: [], error: null }, { data: [], error: null }];
           if (!active) return;
@@ -272,7 +310,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             const latestPaymentByOrder = new Map<string, NonNullable<typeof paymentRows>[number]>();
             for (const payment of paymentRows ?? []) if (payment.order_id && !latestPaymentByOrder.has(payment.order_id)) latestPaymentByOrder.set(payment.order_id, payment);
             const allowedStatuses: OrderStatus[] = ["Placed", "Payment Confirmed", "Accepted", "Packed", "Dispatched", "Out for Delivery", "Delivered", "Cancelled"];
-            setOrders(orderRows.map((row) => {
+            setOrders((orderRows ?? []).map((row) => {
               const orderDate = new Date(row.created_at);
               const shippingAddress = row.shipping_address && typeof row.shipping_address === "object" && !Array.isArray(row.shipping_address)
                 ? row.shipping_address as Record<string, unknown>
@@ -304,7 +342,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
               };
             }));
           }
-          if (paymentError) console.error("Could not load payment references", paymentError.message);
+          if (paymentError) console.error("Could not load payment references", paymentError);
         } else {
           console.error("Could not load orders", orderError);
         }
@@ -464,10 +502,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (STATIC_DATA_MODE || !user?.id) return;
     const recipientId = user.id;
     let active = true;
+    let loadRevision = 0;
+    let refreshTimer: ReturnType<typeof setTimeout> | undefined;
     const load = async () => {
-      const { data, error } = await supabase.from("notifications").select("*").eq("recipient_id", recipientId).order("created_at", { ascending: false }).limit(100);
-      if (!active) return;
-      if (error) { console.error("Could not load account notifications", error.message); return; }
+      const revision = ++loadRevision;
+      const { data, error } = await fetchAllRows<NotificationRow>((from, to) => supabase.from("notifications")
+        .select("*").eq("recipient_id", recipientId).order("created_at", { ascending: false })
+        .order("id", { ascending: false }).range(from, to));
+      if (!active || revision !== loadRevision) return;
+      if (error) { console.error("Could not load account notifications", error); return; }
       const persisted: Notif[] = (data ?? []).map((row) => ({
         id: Number.parseInt(row.id.replaceAll("-", "").slice(0, 12), 16), databaseId: row.id, source: "live",
         role: row.recipient_role === "admin" || row.recipient_role === "vendor" ? row.recipient_role : "customer",
@@ -476,9 +519,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }));
       setNotifications(persisted);
     };
+    const scheduleLoad = () => {
+      if (refreshTimer) clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(() => void load(), 100);
+    };
     void load();
-    const channel = supabase.channel(`notifications-${recipientId}`).on("postgres_changes", { event: "*", schema: "public", table: "notifications", filter: `recipient_id=eq.${recipientId}` }, () => void load()).subscribe();
-    return () => { active = false; void supabase.removeChannel(channel); };
+    const channel = supabase.channel(`notifications-${recipientId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "notifications", filter: `recipient_id=eq.${recipientId}` }, scheduleLoad)
+      .subscribe((status) => { if (status === "SUBSCRIBED") scheduleLoad(); });
+    return () => {
+      active = false;
+      if (refreshTimer) clearTimeout(refreshTimer);
+      void supabase.removeChannel(channel);
+    };
   }, [user?.id]);
 
   const saveProduct = useCallback(async (product: Product, newVendorSubmission = false) => {
