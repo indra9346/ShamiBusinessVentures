@@ -19,9 +19,7 @@ Configure Supabase Auth **Site URL** and **Redirect URLs** for the production do
 
 Phone OTP needs a supported SMS provider configured in Supabase Auth (provider credentials, sender/number, and any required regional settings). Without it, customer phone login/verification cannot deliver codes. Test the real email and phone flows on the production domain; static preview OTPs are not real authentication.
 
-The repository’s linked production database was checked on 2026-10-08. `npx supabase migration list` showed every local migration through `20261008300000` applied remotely. The catalog/category tables, operational tables, private `vendor-kyc` storage bucket, RLS policies, and application/KYC review functions are included by those migrations. For later schema changes, review the SQL and migration history, then apply via the normal reviewed deployment process. Do not mark a migration as applied unless its SQL effects are already present.
-
-A later migration-history check returned HTTP 403 for the current Supabase CLI account. The remote status of migrations added after `20261008300000` (including the Zoho and live-notification migrations through `20261010170000`) is unverified. Have a project owner check `npx supabase migration list` and apply any pending migrations before enabling those features.
+On 2026-10-10, the linked production project migration history was verified against the local migration files through `20261010220000`. This includes the catalog/category tables, operational tables, private `vendor-kyc` storage bucket, RLS policies, application/KYC review functions, Zoho integration, live notifications, and suspended-vendor catalog visibility. The earlier CLI HTTP 403 is resolved after the project owner authenticated the Supabase CLI. For future schema changes, review the SQL and migration history, then apply through the reviewed deployment process. Do not mark a migration as applied unless its SQL effects are already present.
 
 ## Admin and vendor access
 
