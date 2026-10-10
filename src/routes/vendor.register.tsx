@@ -33,18 +33,41 @@ function VendorRegistration() {
     if (!user?.id || user.role !== "customer") return;
     const userId = user.id;
     let active = true;
-    void (async () => {
+    let loadRevision = 0;
+    let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+    let hasConnectedOnce = false;
+    const load = async () => {
+      const revision = ++loadRevision;
       const { data, error } = await supabase.from("vendor_applications").select("id,status,admin_notes,vendor_id,created_at,business_name,owner_name,phone,gstin,city,address").eq("applicant_id", userId).maybeSingle();
-      if (!active) return;
+      if (!active || revision !== loadRevision) return;
       if (error) { setLoading(false); toast.error("Could not load your vendor application", { description: error.message }); return; }
       if (data) {
         setApplication({ id: data.id, status: data.status, admin_notes: data.admin_notes, vendor_id: data.vendor_id, created_at: data.created_at });
         setBusiness(data.business_name); setOwner(data.owner_name); setPhone(data.phone); setGstin(data.gstin); setCity(data.city); setAddress(data.address);
+      } else {
+        setApplication(null);
       }
       setLoading(false);
-    })();
+    };
+    const scheduleLoad = () => {
+      if (refreshTimer) clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(() => void load(), 100);
+    };
     setLoading(true);
-    return () => { active = false; };
+    void load();
+    const channel = supabase.channel(`vendor-application-${userId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "vendor_applications", filter: `applicant_id=eq.${userId}` }, scheduleLoad)
+      .subscribe((status) => {
+        if (status !== "SUBSCRIBED") return;
+        if (hasConnectedOnce) scheduleLoad();
+        hasConnectedOnce = true;
+      });
+    return () => {
+      active = false;
+      loadRevision += 1;
+      if (refreshTimer) clearTimeout(refreshTimer);
+      void supabase.removeChannel(channel);
+    };
   }, [user?.id, user?.role]);
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {

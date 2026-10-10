@@ -14,6 +14,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { uploadCatalogImage } from "@/lib/catalog-images";
+import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 
 export const Route = createFileRoute("/admin/categories")({
   head: () => ({ meta: [{ title: "Categories | Shami Business Ventures Admin" }, { name: "description", content: "Manage marketplace categories, images and subcategories." }, { name: "robots", content: "noindex" }] }),
@@ -24,6 +25,8 @@ function AdminCategories() {
   const { categories, products, addCategory, updateCategory, deleteCategory } = useApp();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<StoreCategory | null>(null);
+  const [imageUploading, setImageUploading] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({ name: "", tagline: "", subs: "", image: "", enabled: true });
   const ordered = useMemo(() => [...categories].sort((a, b) => a.order - b.order), [categories]);
   const counts = useMemo(() => products.reduce<Record<string, number>>((m, p) => ({ ...m, [p.category]: (m[p.category] ?? 0) + 1 }), {}), [products]);
@@ -33,12 +36,14 @@ function AdminCategories() {
   const chooseImage = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
+    setImageUploading(true);
     try {
       const url = await uploadCatalogImage(file, "categories");
       setForm((current) => ({ ...current, image: url }));
     } catch (error) {
       toast.error("Could not upload this category image", { description: error instanceof Error ? error.message : "Try again." });
     } finally {
+      setImageUploading(false);
       event.target.value = "";
     }
   };
@@ -47,11 +52,18 @@ function AdminCategories() {
     if (!name) { toast.error("Category name is required"); return; }
     const grades = [...new Set(form.subs.split(",").map((s) => s.trim()).filter(Boolean))];
     if (!grades.length) { toast.error("Add at least one subcategory"); return; }
-    const patch = { name, tagline: form.tagline.trim() || `${name} products`, grades, image: form.image || storeCategorySeed[0]!.image, enabled: form.enabled };
-    const saved = editing ? await updateCategory(editing.id, patch) : await addCategory(patch);
-    if (!saved) return;
-    toast.success(`Category “${name}” ${editing ? "updated" : "created"}`);
-    setOpen(false);
+    const image = form.image || (STATIC_DATA_MODE ? storeCategorySeed[0]!.image : "");
+    if (!image) { toast.error("Choose an image for this category"); return; }
+    setSaving(true);
+    try {
+      const patch = { name, tagline: form.tagline.trim() || `${name} products`, grades, image, enabled: form.enabled };
+      const saved = editing ? await updateCategory(editing.id, patch) : await addCategory(patch);
+      if (!saved) return;
+      toast.success(`Category “${name}” ${editing ? "updated" : "created"}`);
+      setOpen(false);
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -70,10 +82,10 @@ function AdminCategories() {
               <div className="grid gap-1.5"><Label>Category Name</Label><Input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} /></div>
               <div className="grid gap-1.5"><Label>Description</Label><Input value={form.tagline} onChange={(e) => setForm((f) => ({ ...f, tagline: e.target.value }))} /></div>
               <div className="grid gap-1.5"><Label>Subcategories (comma separated)</Label><Textarea placeholder="Raw Rice, Steam Rice" value={form.subs} onChange={(e) => setForm((f) => ({ ...f, subs: e.target.value }))} /></div>
-              <div className="grid gap-2"><Label>Category image</Label><label className="flex cursor-pointer items-center justify-center gap-2 rounded-md border border-dashed border-gold/70 p-3 text-sm font-semibold text-navy hover:bg-ivory"><ImagePlus className="h-4 w-4" /> {form.image ? "Change image" : "Add image"}<input className="sr-only" type="file" accept="image/*" onChange={chooseImage} /></label>{form.image && <img src={form.image} alt="Category preview" className="h-36 w-full rounded-md border object-cover" />}</div>
+              <div className="grid gap-2"><Label>Category image</Label><label className={`flex items-center justify-center gap-2 rounded-md border border-dashed border-gold/70 p-3 text-sm font-semibold text-navy ${imageUploading ? "cursor-wait opacity-60" : "cursor-pointer hover:bg-ivory"}`}><ImagePlus className="h-4 w-4" /> {imageUploading ? "Uploading…" : form.image ? "Change image" : "Browse local files"}<input className="sr-only" type="file" accept="image/jpeg,image/png,image/webp,image/gif,image/avif" disabled={imageUploading || saving} onChange={(event) => void chooseImage(event)} /></label>{form.image && <img src={form.image} alt="Category preview" className="h-36 w-full rounded-md border object-cover" />}</div>
               <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.enabled} onChange={(e) => setForm((f) => ({ ...f, enabled: e.target.checked }))} /> Show on storefront</label>
             </div>
-            <DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button><Button className="bg-navy text-white hover:bg-navy/90" onClick={save}>Save Category</Button></DialogFooter>
+            <DialogFooter><Button variant="outline" disabled={saving || imageUploading} onClick={() => setOpen(false)}>Cancel</Button><Button className="bg-navy text-white hover:bg-navy/90" disabled={saving || imageUploading} onClick={() => void save()}>{saving ? "Saving…" : "Save Category"}</Button></DialogFooter>
           </DialogContent>
         </Dialog>
       </div>

@@ -20,7 +20,7 @@ the signed-in Supabase role.
 | `/admin/orders` and `/admin/orders/$id` | `orders`, `order_items`, `payments`; order creation and status changes use protected store/RPC paths |
 | `/admin/payments` | `orders`, `payments`, and `admin_confirm_manual_payment`; refunds require an external payment provider and are not enabled |
 | `/admin/commissions` | Vendor sales from `orders`/`order_items`; `profiles.commission_rate` through `admin_set_vendor_commission` |
-| `/admin/payouts` | `vendor_payout_requests`, vendor `profiles`, and `admin_update_payout` |
+| `/admin/payouts` | `vendor_payout_requests`, vendor `profiles`, `admin_update_payout`, and Realtime refresh |
 | `/admin/coupons` | `coupons` |
 | `/admin/reports` | Derived views from orders, items, products, profiles, payouts, and reviews |
 | `/admin/returns` | `return_requests`, orders/items, and `admin_update_return` |
@@ -50,8 +50,11 @@ the signed-in Supabase role.
 ## Shared behavior and external dependencies
 
 - Common records are loaded in `src/lib/store.tsx`; its Realtime channel listens
-  for catalog, category, profile/role, order, payment, review, return, and coupon
-  changes. Migrations add these tables and the operational tables to the
+  for catalog, category, profile/role, order, payment, review, return, batch,
+  and coupon changes. Refreshes are debounced, stale overlapping reads are
+  discarded, and a Realtime reconnect triggers a fresh read. Vendor application
+  status and payout/KYC screens also refresh from their own scoped channels.
+  Migrations add these tables and the operational tables to the
   `supabase_realtime` publication where supported.
 - Order lines and payment transaction details follow the vendor/customer/admin
   scopes in `20261010180000_vendor_order_data_scope.sql`. Profile insertion is

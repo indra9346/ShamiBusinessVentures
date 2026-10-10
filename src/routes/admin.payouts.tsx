@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { CheckCircle2, Clock, IndianRupee, Loader } from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
@@ -22,16 +22,43 @@ function AdminPayouts() {
   const [view, setView] = useState<Payout | null>(null);
   const [reference, setReference] = useState("");
   const [busy, setBusy] = useState(false);
-  const load = async () => {
+  const loadRevision = useRef(0);
+  const load = useCallback(async () => {
+    const revision = ++loadRevision.current;
     const [{ data, error }, { data: profiles }] = await Promise.all([
       supabase.from("vendor_payout_requests").select("*").order("requested_at", { ascending: false }),
       supabase.from("profiles").select("vendor_id,company,full_name").not("vendor_id", "is", null),
     ]);
     if (error) { toast.error(error.message); return; }
     const names = new Map((profiles ?? []).map((p) => [p.vendor_id!, p.company || p.full_name]));
-    setPayouts((data ?? []).map((p) => ({ id: p.id, vendorId: p.vendor_id, vendor: names.get(p.vendor_id) ?? p.vendor_id, date: new Date(p.requested_at).toLocaleDateString("en-IN"), amount: Number(p.amount), method: p.method, status: p.status, reference: p.reference })));
-  };
-  useEffect(() => { void load(); }, []);
+    if (revision === loadRevision.current) {
+      setPayouts((data ?? []).map((p) => ({ id: p.id, vendorId: p.vendor_id, vendor: names.get(p.vendor_id) ?? p.vendor_id, date: new Date(p.requested_at).toLocaleDateString("en-IN"), amount: Number(p.amount), method: p.method, status: p.status, reference: p.reference })));
+    }
+  }, []);
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let connectedOnce = false;
+    const revisionRef = loadRevision;
+    const refreshSoon = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => void load(), 100);
+    };
+    const channel = supabase.channel(`admin-payouts-${crypto.randomUUID()}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "vendor_payout_requests" }, refreshSoon)
+      .on("postgres_changes", { event: "*", schema: "public", table: "profiles" }, refreshSoon)
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") {
+          if (connectedOnce) refreshSoon();
+          connectedOnce = true;
+        }
+      });
+    void load();
+    return () => {
+      ++revisionRef.current;
+      if (timer) clearTimeout(timer);
+      void supabase.removeChannel(channel);
+    };
+  }, [load]);
   const stats = useMemo(() => ({ paid: payouts.filter(p => p.status === "Paid").reduce((s,p)=>s+p.amount,0), processing: payouts.filter(p=>p.status === "Processing").reduce((s,p)=>s+p.amount,0), pending: payouts.filter(p=>p.status === "Pending").reduce((s,p)=>s+p.amount,0), total: payouts.reduce((s,p)=>s+p.amount,0) }), [payouts]);
   const filtered = payouts.filter(p => [p.id,p.vendor].some(v=>v.toLowerCase().includes(search.toLowerCase())) && (status === "All" || p.status === status));
   const update = async (p: Payout, next: "Processing" | "Paid" | "Rejected") => {

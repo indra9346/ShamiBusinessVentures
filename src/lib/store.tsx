@@ -211,14 +211,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return;
     }
     let active = true;
+    let loadRevision = 0;
+    let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+    let hasConnectedOnce = false;
     const reloadCatalog = async () => {
+      const revision = ++loadRevision;
       setProductCatalogStatus("loading");
       setCategoryCatalogStatus("loading");
       const [productResult, categoryResult] = await Promise.all([
         supabase.from("catalog_products").select("payload"),
         supabase.from("store_categories").select("payload").order("sort_order"),
       ]);
-      if (!active) return;
+      if (!active || revision !== loadRevision) return;
       if (productResult.error) {
         console.error("Could not load the Supabase product catalog:", productResult.error.message);
         setProductCatalogStatus("unavailable");
@@ -238,8 +242,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (categoryResult.error) {
         console.error("Could not load Supabase store categories:", categoryResult.error.message);
         setCategoryCatalogStatus("unavailable");
-        // Seed labels keep navigation available; they are not live category records.
-        setCategories(storeCategorySeed);
+        setCategories([]);
       } else {
         setCategoryCatalogStatus("ready");
         const persistedCategories = categoryResult.data.map((row) => {
@@ -252,7 +255,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
             image: payload.image || seed?.image || `/categories/${payload.name.toLowerCase()}.jpg`,
           };
         });
-        setCategories(persistedCategories.length > 0 ? persistedCategories : storeCategorySeed);
+        // In live mode an empty table is a real empty catalog, not demo content.
+        setCategories(persistedCategories);
       }
       if (user?.role) {
         const [
@@ -273,7 +277,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           fetchAllRows<OrderRow>((from, to) => supabase.from("orders").select("*")
             .order("created_at", { ascending: false }).order("id", { ascending: false }).range(from, to)),
         ]);
-        if (!active) return;
+        if (!active || revision !== loadRevision) return;
         const orderRows = ordersResult.data;
         const orderError = ordersResult.error;
         if (!batchError) {
@@ -304,7 +308,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
                 .in("order_id", orderIds).order("created_at", { ascending: false }).order("id", { ascending: false }).range(from, to)),
             ])
             : [{ data: [], error: null }, { data: [], error: null }];
-          if (!active) return;
+          if (!active || revision !== loadRevision) return;
           if (itemError) {
             console.error("Could not load order lines", itemError);
           } else {
@@ -475,7 +479,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           if (authUser) {
             const { data: addressRows, error: addressError } = await supabase.from("addresses")
               .select("*").eq("user_id", authUser.id).order("created_at", { ascending: true });
-            if (!active) return;
+            if (!active || revision !== loadRevision) return;
             if (addressError) {
               console.error("Could not load saved addresses", addressError);
             } else {
@@ -491,21 +495,32 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }
       }
     };
+    const scheduleReload = () => {
+      if (refreshTimer) clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(() => void reloadCatalog(), 100);
+    };
     void reloadCatalog();
     const channel = supabase.channel(`catalog-${user?.role ?? "public"}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "catalog_products" }, () => { void reloadCatalog(); })
-      .on("postgres_changes", { event: "*", schema: "public", table: "store_categories" }, () => { void reloadCatalog(); })
-      .on("postgres_changes", { event: "*", schema: "public", table: "profiles" }, () => { void reloadCatalog(); })
-      .on("postgres_changes", { event: "*", schema: "public", table: "user_roles" }, () => { void reloadCatalog(); })
-      .on("postgres_changes", { event: "*", schema: "public", table: "orders" }, () => { void reloadCatalog(); })
-      .on("postgres_changes", { event: "*", schema: "public", table: "order_items" }, () => { void reloadCatalog(); })
-      .on("postgres_changes", { event: "*", schema: "public", table: "payments" }, () => { void reloadCatalog(); })
-      .on("postgres_changes", { event: "*", schema: "public", table: "product_reviews" }, () => { void reloadCatalog(); })
-      .on("postgres_changes", { event: "*", schema: "public", table: "return_requests" }, () => { void reloadCatalog(); })
-      .on("postgres_changes", { event: "*", schema: "public", table: "coupons" }, () => { void reloadCatalog(); })
-      .subscribe();
+      .on("postgres_changes", { event: "*", schema: "public", table: "catalog_products" }, scheduleReload)
+      .on("postgres_changes", { event: "*", schema: "public", table: "store_categories" }, scheduleReload)
+      .on("postgres_changes", { event: "*", schema: "public", table: "profiles" }, scheduleReload)
+      .on("postgres_changes", { event: "*", schema: "public", table: "user_roles" }, scheduleReload)
+      .on("postgres_changes", { event: "*", schema: "public", table: "orders" }, scheduleReload)
+      .on("postgres_changes", { event: "*", schema: "public", table: "order_items" }, scheduleReload)
+      .on("postgres_changes", { event: "*", schema: "public", table: "payments" }, scheduleReload)
+      .on("postgres_changes", { event: "*", schema: "public", table: "product_reviews" }, scheduleReload)
+      .on("postgres_changes", { event: "*", schema: "public", table: "return_requests" }, scheduleReload)
+      .on("postgres_changes", { event: "*", schema: "public", table: "batches" }, scheduleReload)
+      .on("postgres_changes", { event: "*", schema: "public", table: "coupons" }, scheduleReload)
+      .subscribe((status) => {
+        if (status !== "SUBSCRIBED") return;
+        if (hasConnectedOnce) scheduleReload();
+        hasConnectedOnce = true;
+      });
     return () => {
       active = false;
+      loadRevision += 1;
+      if (refreshTimer) clearTimeout(refreshTimer);
       void supabase.removeChannel(channel);
     };
   }, [user]);
