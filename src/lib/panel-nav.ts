@@ -24,6 +24,7 @@ export const vendorNav = [
   { label: "Products", to: "/vendor/products", icon: Package },
   { label: "Add Product", to: "/vendor/products/add", icon: PackagePlus },
   { label: "Orders", to: "/vendor/orders", icon: ShoppingCart },
+  { label: "Notifications", to: "/vendor/notifications", icon: Bell },
   { label: "Inventory", to: "/vendor/inventory", icon: Boxes },
   { label: "Earnings", to: "/vendor/earnings", icon: Wallet },
   { label: "Payouts", to: "/vendor/payouts", icon: CreditCard },

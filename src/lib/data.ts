@@ -528,6 +528,8 @@ export type OrderItem = { product: Product; qty: number; vendor: string; vendorI
 export type Order = {
   id: string;
   date: string;
+  /** Original database timestamp used for exact dashboard date-range filtering. */
+  createdAt?: string;
   customer: string;
   customerId: string;
   email: string;

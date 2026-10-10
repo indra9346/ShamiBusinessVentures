@@ -291,7 +291,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
               const latestPayment = latestPaymentByOrder.get(row.id);
               const payment: Order["payment"] = paymentStatus === "paid" ? "Paid" : paymentStatus.includes("partial") ? "Partially Paid" : paymentStatus === "refunded" ? "Refunded" : paymentStatus === "failed" ? "Failed" : "Pending";
               return {
-                id: row.order_no, date: Number.isNaN(orderDate.getTime()) ? row.created_at : orderDate.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }),
+                id: row.order_no, date: Number.isNaN(orderDate.getTime()) ? row.created_at : orderDate.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }), createdAt: row.created_at,
                 customer: row.customer_name, customerId: row.user_id || "", email: row.customer_email, phone: row.customer_phone || "",
                 ...(row.customer_gstin ? { gstin: row.customer_gstin } : {}), items: orderItems, subtotal: Number(row.subtotal), discount: Number(row.discount),
                 tax: Number(row.gst_amount), shipping: Number(row.shipping), amount: Number(row.total), payment,
@@ -471,10 +471,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const persisted: Notif[] = (data ?? []).map((row) => ({
         id: Number.parseInt(row.id.replaceAll("-", "").slice(0, 12), 16), databaseId: row.id, source: "live",
         role: row.recipient_role === "admin" || row.recipient_role === "vendor" ? row.recipient_role : "customer",
-        title: row.title, type: row.status || "info", body: row.message,
+        title: row.title, type: ["success", "warning", "error"].includes(row.status ?? "") ? row.status! : "info", body: row.message,
         time: new Date(row.created_at).toLocaleString("en-IN"), read: row.read,
       }));
-      setNotifications((current) => [...persisted, ...current.filter((item) => !item.databaseId)]);
+      setNotifications(persisted);
     };
     void load();
     const channel = supabase.channel(`notifications-${recipientId}`).on("postgres_changes", { event: "*", schema: "public", table: "notifications", filter: `recipient_id=eq.${recipientId}` }, () => void load()).subscribe();
@@ -718,11 +718,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
       .map((line) => ({ product: products.find((p) => p.id === line.id), qty: line.qty }))
       .filter((line): line is { product: Product; qty: number } => Boolean(line.product));
 
-    const pushNotif = (title: string, body: string, type: string, role: Notif["role"] = "admin") =>
+    const pushNotif = (title: string, body: string, type: string, role: Notif["role"] = "admin") => {
+      if (!STATIC_DATA_MODE) return;
       setNotifications((n) => [
         { id: Date.now() + Math.floor(Math.random() * 999), role, title, body, type, time: "just now", read: false, source: "live" },
         ...n,
       ]);
+    };
 
     return {
       hydrated,

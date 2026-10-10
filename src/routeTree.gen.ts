@@ -56,6 +56,7 @@ import { Route as VendorDashboardRouteImport } from './routes/vendor.dashboard'
 import { Route as VendorEarningsRouteImport } from './routes/vendor.earnings'
 import { Route as VendorInventoryRouteImport } from './routes/vendor.inventory'
 import { Route as VendorLoginRouteImport } from './routes/vendor.login'
+import { Route as VendorNotificationsRouteImport } from './routes/vendor.notifications'
 import { Route as VendorOrdersRouteImport } from './routes/vendor.orders'
 import { Route as VendorPayoutsRouteImport } from './routes/vendor.payouts'
 import { Route as VendorProductsRouteImport } from './routes/vendor.products'
@@ -308,6 +309,11 @@ const VendorLoginRoute = VendorLoginRouteImport.update({
   path: '/vendor/login',
   getParentRoute: () => rootRouteImport,
 } as any)
+const VendorNotificationsRoute = VendorNotificationsRouteImport.update({
+  id: '/vendor/notifications',
+  path: '/vendor/notifications',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const VendorOrdersRoute = VendorOrdersRouteImport.update({
   id: '/vendor/orders',
   path: '/vendor/orders',
@@ -434,6 +440,7 @@ export interface FileRoutesByFullPath {
   '/vendor/earnings': typeof VendorEarningsRoute
   '/vendor/inventory': typeof VendorInventoryRoute
   '/vendor/login': typeof VendorLoginRoute
+  '/vendor/notifications': typeof VendorNotificationsRoute
   '/vendor/orders': typeof VendorOrdersRouteWithChildren
   '/vendor/payouts': typeof VendorPayoutsRoute
   '/vendor/products': typeof VendorProductsRouteWithChildren
@@ -498,6 +505,7 @@ export interface FileRoutesByTo {
   '/vendor/earnings': typeof VendorEarningsRoute
   '/vendor/inventory': typeof VendorInventoryRoute
   '/vendor/login': typeof VendorLoginRoute
+  '/vendor/notifications': typeof VendorNotificationsRoute
   '/vendor/orders': typeof VendorOrdersRouteWithChildren
   '/vendor/payouts': typeof VendorPayoutsRoute
   '/vendor/products': typeof VendorProductsRouteWithChildren
@@ -564,6 +572,7 @@ export interface FileRoutesById {
   '/vendor/earnings': typeof VendorEarningsRoute
   '/vendor/inventory': typeof VendorInventoryRoute
   '/vendor/login': typeof VendorLoginRoute
+  '/vendor/notifications': typeof VendorNotificationsRoute
   '/vendor/orders': typeof VendorOrdersRouteWithChildren
   '/vendor/payouts': typeof VendorPayoutsRoute
   '/vendor/products': typeof VendorProductsRouteWithChildren
@@ -631,6 +640,7 @@ export interface FileRouteTypes {
     | '/vendor/earnings'
     | '/vendor/inventory'
     | '/vendor/login'
+    | '/vendor/notifications'
     | '/vendor/orders'
     | '/vendor/payouts'
     | '/vendor/products'
@@ -695,6 +705,7 @@ export interface FileRouteTypes {
     | '/vendor/earnings'
     | '/vendor/inventory'
     | '/vendor/login'
+    | '/vendor/notifications'
     | '/vendor/orders'
     | '/vendor/payouts'
     | '/vendor/products'
@@ -760,6 +771,7 @@ export interface FileRouteTypes {
     | '/vendor/earnings'
     | '/vendor/inventory'
     | '/vendor/login'
+    | '/vendor/notifications'
     | '/vendor/orders'
     | '/vendor/payouts'
     | '/vendor/products'
@@ -817,6 +829,7 @@ export interface RootRouteChildren {
   VendorEarningsRoute: typeof VendorEarningsRoute
   VendorInventoryRoute: typeof VendorInventoryRoute
   VendorLoginRoute: typeof VendorLoginRoute
+  VendorNotificationsRoute: typeof VendorNotificationsRoute
   VendorOrdersRoute: typeof VendorOrdersRouteWithChildren
   VendorPayoutsRoute: typeof VendorPayoutsRoute
   VendorProductsRoute: typeof VendorProductsRouteWithChildren
@@ -1160,6 +1173,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof VendorLoginRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/vendor/notifications': {
+      id: '/vendor/notifications'
+      path: '/vendor/notifications'
+      fullPath: '/vendor/notifications'
+      preLoaderRoute: typeof VendorNotificationsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/vendor/orders': {
       id: '/vendor/orders'
       path: '/vendor/orders'
@@ -1446,6 +1466,7 @@ const rootRouteChildren: RootRouteChildren = {
   VendorEarningsRoute: VendorEarningsRoute,
   VendorInventoryRoute: VendorInventoryRoute,
   VendorLoginRoute: VendorLoginRoute,
+  VendorNotificationsRoute: VendorNotificationsRoute,
   VendorOrdersRoute: VendorOrdersRouteWithChildren,
   VendorPayoutsRoute: VendorPayoutsRoute,
   VendorProductsRoute: VendorProductsRouteWithChildren,

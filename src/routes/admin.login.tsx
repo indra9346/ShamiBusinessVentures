@@ -31,6 +31,7 @@ function AdminLogin() {
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [credentialEntryEnabled, setCredentialEntryEnabled] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   const finish = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -70,7 +71,10 @@ function AdminLogin() {
           <Input
             required
             type="email"
+            name="admin_login_identifier"
             autoComplete="off"
+            readOnly={!credentialEntryEnabled}
+            onFocus={() => setCredentialEntryEnabled(true)}
             value={email}
             onChange={(event) => setEmail(event.target.value)}
           />
@@ -80,7 +84,10 @@ function AdminLogin() {
           <Input
             required
             type="password"
-            autoComplete="off"
+            name="admin_login_secret"
+            autoComplete="new-password"
+            readOnly={!credentialEntryEnabled}
+            onFocus={() => setCredentialEntryEnabled(true)}
             value={password}
             onChange={(event) => setPassword(event.target.value)}
           />

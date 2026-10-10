@@ -18,6 +18,7 @@ export function notificationTarget(
   }
 
   if (role === "vendor") {
+    if (notification.title.toLowerCase().includes("stock")) return "/vendor/inventory";
     return order ? `/vendor/orders/${order.id}` : "/vendor/orders";
   }
 

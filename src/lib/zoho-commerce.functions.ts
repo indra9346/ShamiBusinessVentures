@@ -273,7 +273,10 @@ async function saveZohoSnapshot(
 
 export const getZohoCommerceReadMirror = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
-  .validator(z.object({ salesOrdersPage: z.number().int().min(1).max(999).default(1) }))
+  .validator(z.object({
+    salesOrdersPage: z.number().int().min(1).max(999).default(1),
+    resource: z.enum(["categories", "sales_orders", "tax_rules", "store_index", "store_meta"]).optional(),
+  }))
   .handler(async ({ data, context }) => {
     await ensureAdmin(context.supabase, context.userId);
     const db = await dbAdmin();
@@ -291,10 +294,12 @@ export const getZohoCommerceReadMirror = createServerFn({ method: "GET" })
           { external_id: string; payload: Json; captured_at: string }[]
         >,
       };
-    const { data: resources, error } = await db
+    let resourcesQuery = db
       .from("zoho_commerce_sync_state")
       .select("organization_id,resource,current_batch_id,record_count,last_synced_at,last_error")
       .eq("organization_id", connection.organization_id);
+    if (data.resource) resourcesQuery = resourcesQuery.eq("resource", data.resource);
+    const { data: resources, error } = await resourcesQuery;
     if (error) throw new Error("Could not load the Zoho data mirror");
     const entries = await Promise.all(
       (resources ?? []).map(async (state) => {

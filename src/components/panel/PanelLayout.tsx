@@ -3,6 +3,8 @@ import { AlertTriangle, Bell, LogOut, Menu, RefreshCw, Search, X } from "lucide-
 import { useState, useMemo, useEffect, type ReactNode } from "react";
 import { LogoMark } from "@/components/brand/Logo";
 import { useApp } from "@/lib/store";
+import { isStorefrontProduct } from "@/lib/data";
+import { orderBelongsToUser } from "@/lib/account-identity";
 import { cn } from "@/lib/utils";
 import { notificationTarget } from "@/lib/notification-target";
 import { notificationBelongsToUser } from "@/lib/account-identity";
@@ -219,7 +221,7 @@ export function PanelLayout({
     return notifications.filter((n) => {
       if (tone === "admin") return n.role === "admin" || !n.role;
       if (tone === "vendor") return n.role === "vendor" || !n.role;
-      return (n.role === "customer" || !n.role) && notificationBelongsToUser(n, user, orders);
+      return (n.role === "customer" || !n.role) && (Boolean(n.databaseId) || notificationBelongsToUser(n, user, orders));
     });
   }, [notifications, tone, user, orders]);
 
@@ -230,25 +232,34 @@ export function PanelLayout({
   const searchResults = useMemo(() => {
     const query = globalQuery.trim().toLowerCase();
     if (!query) return [];
+    const vendor = vendors.find((item) => item.email.toLowerCase() === user?.email.toLowerCase());
+    const availableProducts = tone === "vendor"
+      ? products.filter((item) => item.vendorId === vendor?.id || item.vendor === vendor?.business)
+      : tone === "customer" ? products.filter(isStorefrontProduct) : products;
+    const availableOrders = tone === "admin"
+      ? orders
+      : tone === "vendor"
+        ? orders.filter((item) => item.items.some((line) => line.vendorId === vendor?.id))
+        : orders.filter((item) => orderBelongsToUser(item, user));
     return [
-      ...products
-        .filter((item) => `${item.name} ${item.sku} ${item.category}`.toLowerCase().includes(query))
+      ...availableProducts
+        .filter((item) => `${item.name} ${item.sku} ${item.category} ${item.vendor}`.toLowerCase().includes(query))
         .map((item) => ({
           label: item.name,
           detail: `${item.sku} · Product`,
-          to: `/admin/products/${item.id}`,
+          to: tone === "admin" ? `/admin/products/${item.id}` : tone === "vendor" ? `/vendor/products?q=${encodeURIComponent(query)}` : `/shop?q=${encodeURIComponent(query)}`,
         })),
-      ...categories
+      ...(tone === "admin" ? categories : [])
         .filter((item) => item.name.toLowerCase().includes(query))
         .map((item) => ({ label: item.name, detail: "Category", to: "/admin/categories" })),
-      ...customers
+      ...(tone === "admin" ? customers : [])
         .filter((item) => `${item.name} ${item.email} ${item.phone}`.toLowerCase().includes(query))
         .map((item) => ({
           label: item.name,
           detail: `${item.phone} · Customer`,
           to: `/admin/customers/${item.id}`,
         })),
-      ...vendors
+      ...(tone === "admin" ? vendors : [])
         .filter((item) =>
           `${item.business} ${item.owner} ${item.email} ${item.phone}`
             .toLowerCase()
@@ -259,19 +270,20 @@ export function PanelLayout({
           detail: `${item.phone} · Vendor`,
           to: `/admin/vendors/${item.id}`,
         })),
-      ...orders
-        .filter((item) =>
-          `${item.id} ${item.customer} ${item.phone} ${item.txn} ${item.utr ?? ""}`
-            .toLowerCase()
-            .includes(query),
-        )
+      ...availableOrders
+        .filter((item) => {
+          const searchable = tone === "admin"
+            ? `${item.id} ${item.customer} ${item.phone} ${item.txn} ${item.utr ?? ""} ${item.status} ${item.payment}`
+            : `${item.id} ${item.customer} ${item.status} ${item.items.filter((line) => tone !== "vendor" || line.vendorId === vendor?.id).map((line) => `${line.product.name} ${line.product.sku}`).join(" ")}`;
+          return searchable.toLowerCase().includes(query);
+        })
         .map((item) => ({
           label: item.id,
           detail: `${item.customer} · Order`,
-          to: `/admin/orders/${item.id}`,
+          to: tone === "admin" ? `/admin/orders/${item.id}` : tone === "vendor" ? `/vendor/orders?q=${encodeURIComponent(query)}` : `/account/orders?q=${encodeURIComponent(query)}`,
         })),
     ].slice(0, 8);
-  }, [globalQuery, products, categories, customers, vendors, orders]);
+  }, [globalQuery, products, categories, customers, vendors, orders, tone, user]);
 
   // Keep hooks above this guard. React requires the same hooks on the initial
   // loading render and on the later authenticated render.
@@ -396,7 +408,7 @@ export function PanelLayout({
               <div className="relative hidden md:block">
                 <Search className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-slate" />
                 <Input
-                  placeholder="Search products, people, orders…"
+                  placeholder={tone === "admin" ? "Search products, people, orders…" : tone === "vendor" ? "Search my products and orders…" : "Search products and my orders…"}
                   value={globalQuery}
                   onChange={(event) => setGlobalQuery(event.target.value)}
                   onKeyDown={(event) => {
@@ -536,7 +548,7 @@ export function PanelLayout({
                             tone === "admin"
                               ? "/admin/notifications"
                               : tone === "vendor"
-                                ? "/vendor/dashboard"
+                                ? "/vendor/notifications"
                                 : "/account/notifications"
                           }
                           onClick={() => setNotifOpen(false)}

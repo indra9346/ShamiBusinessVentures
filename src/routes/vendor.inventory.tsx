@@ -35,19 +35,15 @@ function VendorInventory() {
   const [stockValue, setStockValue] = useState("");
 
   const filtered = useMemo(
-    () => vendorProducts.filter((p) => p.name.toLowerCase().includes(q.trim().toLowerCase())),
+    () => vendorProducts.filter((p) => `${p.name} ${p.sku} ${p.category}`.toLowerCase().includes(q.trim().toLowerCase())),
     [vendorProducts, q],
   );
 
   const outOfStock = vendorProducts.filter((p) => p.stock === 0);
-  const lowStock = vendorProducts.filter((p) => p.stock > 0 && p.stock < REORDER_LEVEL);
-  const healthy = vendorProducts.filter((p) => p.stock >= REORDER_LEVEL);
-
-  const restockAll = async () => {
-    const results = await Promise.all(lowStock.map((p) => updateProduct(p.id, { stock: REORDER_LEVEL + 100 })));
-    if (results.some((ok) => !ok)) return;
-    toast.success(`Restocked ${lowStock.length} low-stock product${lowStock.length === 1 ? "" : "s"}`);
-  };
+  const lowStock = vendorProducts
+    .filter((p) => p.stock <= 0 || p.stock < (p.minimumStock ?? REORDER_LEVEL))
+    .sort((a, b) => a.stock - b.stock || a.name.localeCompare(b.name));
+  const healthy = vendorProducts.filter((p) => p.stock > 0 && p.stock >= (p.minimumStock ?? REORDER_LEVEL));
 
   return (
     <PanelLayout items={vendorNav} tone="vendor" title="Inventory" subtitle="Stock levels and reorder alerts">
@@ -60,19 +56,14 @@ function VendorInventory() {
 
       {lowStock.length > 0 && (
         <Panel title="Reorder Alerts" className="mt-6">
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-            <p className="text-sm text-slate">{lowStock.length} product{lowStock.length === 1 ? "" : "s"} below the {REORDER_LEVEL}-unit reorder level.</p>
-            <Button size="sm" className="bg-navy text-white hover:bg-navy/90" onClick={restockAll}>
-              Restock All Low Stock
-            </Button>
-          </div>
+          <p className="mb-4 text-sm text-slate">{lowStock.length} product{lowStock.length === 1 ? "" : "s"} are out of stock or below their individual reorder level. Update each item with a verified stock count.</p>
           <DataTable
             columns={["Product", "SKU", "Stock", "Status"]}
             rows={lowStock.map((p) => [
               <span className="font-semibold text-navy">{p.name}</span>,
               p.sku,
-              p.stock,
-              <StatusBadge status="Low Stock" />,
+              `${p.stock} / ${p.minimumStock ?? REORDER_LEVEL}`,
+              <StatusBadge status={p.stock <= 0 ? "Out of Stock" : "Low Stock"} />,
             ])}
           />
         </Panel>
@@ -81,7 +72,7 @@ function VendorInventory() {
       <Panel
         title="All Stock"
         className="mt-6"
-        action={<Input placeholder="Search product" value={q} onChange={(e) => setQ(e.target.value)} className="h-9 w-56" />}
+        action={<Input placeholder="Search name, SKU, or category" aria-label="Search inventory by product name, SKU, or category" value={q} onChange={(e) => setQ(e.target.value)} className="h-9 w-56" />}
       >
         <DataTable
           columns={["Product", "SKU", "Category", "Stock", "Reserved", "Status", "Actions"]}
@@ -91,7 +82,7 @@ function VendorInventory() {
             p.category,
             p.stock,
             p.reserved,
-            <StatusBadge status={p.stock === 0 ? "Cancelled" : p.stock < REORDER_LEVEL ? "Low Stock" : "active"} />,
+            <StatusBadge status={p.stock <= 0 ? "Out of Stock" : p.stock < (p.minimumStock ?? REORDER_LEVEL) ? "Low Stock" : "active"} />,
             <Button
               variant="outline"
               size="sm"

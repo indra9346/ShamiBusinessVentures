@@ -1,5 +1,5 @@
 import { createFileRoute, Link, Outlet, useRouterState } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Package, PackagePlus, PackageX, TrendingUp } from "lucide-react";
 import { toast } from "sonner";
 import { PanelLayout } from "@/components/panel/PanelLayout";
@@ -29,6 +29,9 @@ import {
 import type { Product } from "@/lib/data";
 
 export const Route = createFileRoute("/vendor/products")({
+  validateSearch: (search: Record<string, unknown>) => ({
+    ...(typeof search["q"] === "string" ? { q: search["q"] } : {}),
+  }),
   head: () => ({
     meta: [
       { title: "My Products | Shami Vendor Panel" },
@@ -52,13 +55,19 @@ function VendorProducts() {
 }
 
 function VendorProductsPanel() {
+  const routeSearch = Route.useSearch();
   const { updateProduct, deleteProduct, duplicateProduct, categories } = useApp();
   const { vendorProducts } = useVendorScope();
-  const [q, setQ] = useState("");
+  const [q, setQ] = useState(routeSearch.q ?? "");
   const [category, setCategory] = useState("all");
   const [status, setStatus] = useState("all");
   const [sort, setSort] = useState("created-desc");
   const [page, setPage] = useState(1);
+
+  useEffect(() => {
+    setQ(routeSearch.q ?? "");
+    setPage(1);
+  }, [routeSearch.q]);
 
   const [editing, setEditing] = useState<Product | null>(null);
   const [editForm, setEditForm] = useState<Partial<Product>>({});
@@ -68,7 +77,7 @@ function VendorProductsPanel() {
   const filtered = useMemo(() => {
     let list = vendorProducts.filter((p) => {
       const s = q.trim().toLowerCase();
-      const matchesQ = !s || p.name.toLowerCase().includes(s) || p.sku.toLowerCase().includes(s);
+      const matchesQ = !s || `${p.name} ${p.sku} ${p.category}`.toLowerCase().includes(s);
       const matchesCat = category === "all" || p.category === category;
       const matchesStatus = status === "all" || p.status === status;
       return matchesQ && matchesCat && matchesStatus;

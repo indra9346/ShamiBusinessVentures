@@ -1,5 +1,5 @@
 import { createFileRoute, Link, Outlet, useRouterState } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Package } from "lucide-react";
 import { toast } from "sonner";
 import { PanelLayout } from "@/components/panel/PanelLayout";
@@ -32,6 +32,9 @@ import {
 } from "@/components/ui/alert-dialog";
 
 export const Route = createFileRoute("/account/orders")({
+  validateSearch: (search: Record<string, unknown>) => ({
+    ...(typeof search["q"] === "string" ? { q: search["q"] } : {}),
+  }),
   head: () => ({
     meta: [
       { title: "My Orders | Shami Business Ventures" },
@@ -48,11 +51,17 @@ const PAGE_SIZE = 10;
 
 function AccountOrders() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const routeSearch = Route.useSearch();
   const { user, orders, updateOrderStatus, addToCart } = useApp();
-  const [q, setQ] = useState("");
+  const [q, setQ] = useState(routeSearch.q ?? "");
   const [status, setStatus] = useState("all");
   const [sort, setSort] = useState("date-desc");
   const [page, setPage] = useState(1);
+
+  useEffect(() => {
+    setQ(routeSearch.q ?? "");
+    setPage(1);
+  }, [routeSearch.q]);
 
   const myOrders = useMemo(
     () => orders.filter((order) => orderBelongsToUser(order, user)),
@@ -64,8 +73,7 @@ function AccountOrders() {
       const s = q.trim().toLowerCase();
       const matchesQ =
         !s ||
-        o.id.toLowerCase().includes(s) ||
-        o.items.some((i) => i.product.name.toLowerCase().includes(s));
+        `${o.id} ${o.status} ${o.items.map((i) => `${i.product.name} ${i.product.sku}`).join(" ")}`.toLowerCase().includes(s);
       const matchesStatus = status === "all" || o.status === status;
       return matchesQ && matchesStatus;
     });

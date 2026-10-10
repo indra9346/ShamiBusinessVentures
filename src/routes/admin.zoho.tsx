@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   BadgeCheck,
@@ -294,6 +294,8 @@ function ZohoCommerceAdmin() {
   const [mirrorRecords, setMirrorRecords] = useState<Record<string, MirrorRecord[]>>({});
   const [mirrorBusy, setMirrorBusy] = useState(false);
   const [salesOrdersPage, setSalesOrdersPage] = useState(1);
+  const [salesOrdersLoading, setSalesOrdersLoading] = useState(false);
+  const mirrorRequestId = useRef(0);
   const [selectedResource, setSelectedResource] = useState("sales_orders");
   const [search, setSearch] = useState("");
 
@@ -313,15 +315,37 @@ function ZohoCommerceAdmin() {
       setLoaded(true);
     }
   };
-  const reloadMirror = async (page = salesOrdersPage) => {
+  const reloadMirror = async (page = salesOrdersPage, resource?: string) => {
+    const requestId = ++mirrorRequestId.current;
+    if (resource === "sales_orders") setSalesOrdersLoading(true);
     try {
-      const result = await getZohoCommerceReadMirror({ data: { salesOrdersPage: page } });
-      setMirrorStates(result.resources as MirrorState[]);
-      setMirrorRecords(result.snapshots as Record<string, MirrorRecord[]>);
+      const result = await getZohoCommerceReadMirror({
+        data: {
+          salesOrdersPage: page,
+          ...(resource ? { resource: resource as "categories" | "sales_orders" | "tax_rules" | "store_index" | "store_meta" } : {}),
+        },
+      });
+      if (requestId !== mirrorRequestId.current) return false;
+      const returnedOrderState = (result.resources as MirrorState[]).find((item) => item.resource === "sales_orders");
+      const lastPage = Math.max(1, Math.ceil((returnedOrderState?.record_count ?? 0) / PAGE_SIZE));
+      if (page > lastPage) {
+        setSalesOrdersPage(lastPage);
+        return await reloadMirror(lastPage, resource);
+      }
+      if (resource) {
+        const receivedStates = result.resources as MirrorState[];
+        setMirrorStates((current) => [...current.filter((item) => item.resource !== resource), ...receivedStates]);
+        setMirrorRecords((current) => ({ ...current, ...(result.snapshots as Record<string, MirrorRecord[]>) }));
+      } else {
+        setMirrorStates(result.resources as MirrorState[]);
+        setMirrorRecords(result.snapshots as Record<string, MirrorRecord[]>);
+      }
       return true;
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not load Zoho data mirror");
       return false;
+    } finally {
+      if (requestId === mirrorRequestId.current) setSalesOrdersLoading(false);
     }
   };
   const refreshSavedData = async () => {
@@ -747,27 +771,29 @@ function ZohoCommerceAdmin() {
                     <Button
                       variant="outline"
                       size="sm"
-                      disabled={salesOrdersPage <= 1}
+                      disabled={salesOrdersPage <= 1 || salesOrdersLoading}
                       onClick={() => {
                         const page = salesOrdersPage - 1;
-                        setSalesOrdersPage(page);
-                        void reloadMirror(page);
+                        void reloadMirror(page, "sales_orders").then((loadedPage) => {
+                          if (loadedPage) setSalesOrdersPage(page);
+                        });
                       }}
                     >
                       <ChevronLeft className="mr-1 h-4 w-4" />
-                      Previous
+                      {salesOrdersLoading ? "Loading…" : "Previous"}
                     </Button>
                     <Button
                       variant="outline"
                       size="sm"
-                      disabled={salesOrdersPage >= totalPages}
+                      disabled={salesOrdersPage >= totalPages || salesOrdersLoading}
                       onClick={() => {
                         const page = salesOrdersPage + 1;
-                        setSalesOrdersPage(page);
-                        void reloadMirror(page);
+                        void reloadMirror(page, "sales_orders").then((loadedPage) => {
+                          if (loadedPage) setSalesOrdersPage(page);
+                        });
                       }}
                     >
-                      Next
+                      {salesOrdersLoading ? "Loading…" : "Next"}
                       <ChevronRight className="ml-1 h-4 w-4" />
                     </Button>
                   </div>
