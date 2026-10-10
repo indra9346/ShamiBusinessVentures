@@ -42,7 +42,7 @@ the signed-in Supabase role.
 | `/vendor/payouts` | Own `vendor_payout_requests`; create requests through `request_vendor_payout` |
 | `/vendor/reviews` | Vendor-scoped `product_reviews`; `vendor_reply_to_review` and `vendor_report_review` |
 | `/vendor/profile` | Own `profiles`, `vendor_kyc_documents`, private `vendor-kyc` Storage, and public `catalog-images` profile uploads |
-| `/vendor/settings` | Own `vendor_settings`; password changes through Supabase Auth |
+| `/vendor/settings` | Own `vendor_settings` for store, shipping, payment, and notification preferences; password changes through Supabase Auth. The panel does not save an MFA preference because it has no MFA enrollment/challenge flow. |
 | `/vendor/notifications` | Current recipient's rows in `notifications` |
 | `/vendor/register` | Customer-owned `vendor_applications`; submit/resubmit through `customer_submit_vendor_application` |
 | `/vendor/login` | Supabase Auth plus an exact vendor role and assigned profile/vendor ID |

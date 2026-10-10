@@ -50,7 +50,7 @@ function AdminSettings() {
     shippingFlat: "250",
     codEnabled: false,
   });
-  const [security, setSecurity] = useState({ twoFactor: true, vendorKyc: true, autoLogout: "30", passwordPolicy: "Strong" });
+  const [security, setSecurity] = useState({ vendorKyc: true, autoLogout: "30" });
   useEffect(() => {
     let active = true;
     void supabase.from("settings").select("key,value").in("key", [...settingKeys]).then(({ data, error }) => {
@@ -69,14 +69,12 @@ function AdminSettings() {
         const rawHours = savedSecurity["session_hours"];
         setSecurity((old) => ({
           ...old,
-          twoFactor: Boolean(savedSecurity["twoFactor"] ?? old.twoFactor),
           vendorKyc: Boolean(savedSecurity["vendorKyc"] ?? old.vendorKyc),
           autoLogout: rawSec !== null && rawSec !== undefined && rawSec !== ""
             ? String(rawSec)
             : Number(rawHours)
             ? String(Number(rawHours) * 60)
             : old.autoLogout,
-          passwordPolicy: String(savedSecurity["passwordPolicy"] ?? old.passwordPolicy),
         }));
       }
     });
@@ -219,13 +217,13 @@ function AdminSettings() {
         <TabsContent value="security">
           <Panel title="Security & Access">
             <div className="grid gap-4 xl:max-w-3xl">
-              <p className="rounded-md border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">The inactivity timeout is enforced in admin browser sessions. Admin MFA and selectable password-strength rules are not enforced by this app yet.</p>
+              <p className="rounded-md border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">The inactivity timeout is enforced in admin browser sessions. Password reset and change forms require at least 8 characters. Admin MFA and additional password-strength rules are not enforced by this app.</p>
               <div className="flex items-center justify-between gap-4 rounded-md border border-border p-4">
                 <div>
                   <p className="text-sm font-bold text-navy">Two-factor authentication for admins</p>
-                  <p className="text-xs text-slate">Policy target only; an MFA enrollment and challenge flow is not connected.</p>
+                  <p className="text-xs text-slate">An MFA enrollment and challenge flow is not connected, so this app does not require a second factor.</p>
                 </div>
-                <Switch checked={security.twoFactor} disabled aria-label="Admin MFA enforcement is not implemented" />
+                <span className="shrink-0 rounded-full border border-amber-300 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-900">Not enforced</span>
               </div>
               <div className="flex items-center justify-between gap-4 rounded-md border border-border p-4">
                 <div>
@@ -240,15 +238,8 @@ function AdminSettings() {
                   <Input type="number" min={5} max={1440} value={security.autoLogout} onChange={(event) => setSecurity((current) => ({ ...current, autoLogout: event.target.value }))} />
                 </div>
                 <div className="grid gap-1.5">
-                  <Label>Password policy</Label>
-                  <Select value={security.passwordPolicy} disabled>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {["Standard", "Strong", "Enterprise"].map((p) => (
-                        <SelectItem key={p} value={p}>{p}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <Label>Password minimum</Label>
+                  <div className="flex min-h-9 items-center rounded-md border border-border bg-muted/40 px-3 text-sm text-slate">8 characters in reset and password-change forms</div>
                 </div>
               </div>
               <Button className="bg-navy text-white hover:bg-navy/90 sm:w-fit" onClick={() => void saveSetting("security_config", security, "Security settings")}><Save className="mr-1 h-4 w-4" /> Save Security Settings</Button>
