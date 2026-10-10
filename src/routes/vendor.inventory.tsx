@@ -104,7 +104,7 @@ function VendorInventory() {
           </DialogHeader>
           <div className="grid gap-1.5">
             <Label>New stock quantity</Label>
-            <Input type="number" value={stockValue} onChange={(e) => setStockValue(e.target.value)} />
+            <Input type="number" min="0" step="1" value={stockValue} onChange={(e) => setStockValue(e.target.value)} />
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setStockDialog(null)}>Cancel</Button>
@@ -113,8 +113,8 @@ function VendorInventory() {
               onClick={async () => {
                 if (!stockDialog) return;
                 const val = Number(stockValue);
-                if (Number.isNaN(val) || val < 0) {
-                  toast.error("Enter a valid stock quantity");
+                if (!Number.isInteger(val) || val < 0) {
+                  toast.error("Enter a whole-number stock quantity of zero or more");
                   return;
                 }
                 if (!await updateProduct(stockDialog.id, { stock: val })) return;

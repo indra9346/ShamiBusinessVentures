@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CreditCard, IndianRupee, Wallet } from "lucide-react";
 import { toast } from "sonner";
 import { PanelLayout } from "@/components/panel/PanelLayout";
@@ -21,8 +21,39 @@ function VendorPayouts() {
   const [open, setOpen] = useState(false);
   const [amount, setAmount] = useState("");
   const [busy, setBusy] = useState(false);
-  const load = async () => { const { data, error } = await supabase.from("vendor_payout_requests").select("*").eq("vendor_id", vendorId).order("requested_at", { ascending: false }); if(error){toast.error(error.message);return;} setRows((data??[]).map(p=>({...p,amount:Number(p.amount)}))); };
-  useEffect(()=>{void load();},[vendorId]);
+  const loadRevision = useRef(0);
+  const load = useCallback(async () => {
+    if (!vendorId) { setRows([]); return; }
+    const revision = ++loadRevision.current;
+    const { data, error } = await supabase.from("vendor_payout_requests").select("*").eq("vendor_id", vendorId).order("requested_at", { ascending: false });
+    if (revision !== loadRevision.current) return;
+    if (error) { toast.error("Could not load payout history", { description: error.message }); return; }
+    setRows((data ?? []).map((payout) => ({ ...payout, amount: Number(payout.amount) })));
+  }, [vendorId]);
+  useEffect(() => {
+    void load();
+    if (!vendorId) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let connectedOnce = false;
+    const revisionRef = loadRevision;
+    const refreshSoon = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => void load(), 100);
+    };
+    const channel = supabase.channel(`vendor-payout-history-${vendorId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "vendor_payout_requests", filter: `vendor_id=eq.${vendorId}` }, refreshSoon)
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") {
+          if (connectedOnce) refreshSoon();
+          connectedOnce = true;
+        }
+      });
+    return () => {
+      ++revisionRef.current;
+      if (timer) clearTimeout(timer);
+      void supabase.removeChannel(channel);
+    };
+  }, [vendorId, load]);
   const totals = useMemo(()=>({total:rows.reduce((s,p)=>s+p.amount,0),paid:rows.filter(p=>p.status==="Paid").reduce((s,p)=>s+p.amount,0),pending:rows.filter(p=>p.status!=="Paid"&&p.status!=="Rejected").reduce((s,p)=>s+p.amount,0)}),[rows]);
   const request = async () => { const value=Number(amount); if(!Number.isFinite(value)||value<=0){toast.error("Enter a valid payout amount");return;} setBusy(true); const {error}=await supabase.rpc("request_vendor_payout",{_amount:value,_method:"NEFT"}); setBusy(false); if(error){toast.error(error.message);return;} toast.success("Payout request submitted for review");setAmount("");setOpen(false);await load(); };
   return <PanelLayout items={vendorNav} tone="vendor" title="Payouts" subtitle="Your settlement history and payout requests">

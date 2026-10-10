@@ -25,7 +25,7 @@ export const Route = createFileRoute("/vendor/reviews")({
 });
 
 function VendorReviews() {
-  const { vendorReviews } = useVendorScope();
+  const { vendor, vendorReviews } = useVendorScope();
   const { replyReview, reportReview } = useApp();
   const [rating, setRating] = useState("all");
   const [replying, setReplying] = useState<(typeof vendorReviews)[number] | null>(null);
@@ -37,19 +37,20 @@ function VendorReviews() {
     [vendorReviews, rating],
   );
 
-  const avg = vendorReviews.length ? vendorReviews.reduce((s, r) => s + r.rating, 0) / vendorReviews.length : 0;
+  const publishedReviews = vendorReviews.filter((review) => review.status === "Published");
+  const avg = publishedReviews.length ? publishedReviews.reduce((s, r) => s + r.rating, 0) / publishedReviews.length : 0;
   const distribution = [5, 4, 3, 2, 1].map((star) => ({
     star,
-    count: vendorReviews.filter((r) => r.rating === star).length,
+    count: publishedReviews.filter((r) => r.rating === star).length,
   }));
 
   return (
-    <PanelLayout items={vendorNav} tone="vendor" title="Reviews" subtitle="Customer feedback on Shami Sugar Mills products">
+    <PanelLayout items={vendorNav} tone="vendor" title="Reviews" subtitle={`Customer feedback on ${vendor?.business ?? "your store"} products`}>
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard label="Total Reviews" value={String(vendorReviews.length)} icon={MessageSquare} highlight />
-        <StatCard label="Average Rating" value={vendorReviews.length ? `${Math.round(avg * 10) / 10} / 5` : "—"} icon={Star} />
-        <StatCard label="5-Star Reviews" value={String(distribution[0]!.count)} icon={Star} />
-        <StatCard label="Low Ratings (≤2★)" value={String(distribution[3]!.count + distribution[4]!.count)} icon={Flag} />
+        <StatCard label="Published Average Rating" value={publishedReviews.length ? `${Math.round(avg * 10) / 10} / 5` : "—"} icon={Star} />
+        <StatCard label="Published 5-Star Reviews" value={String(distribution[0]!.count)} icon={Star} />
+        <StatCard label="Published Low Ratings (≤2★)" value={String(distribution[3]!.count + distribution[4]!.count)} icon={Flag} />
       </div>
 
       <Panel title="Rating Distribution" className="mt-6">
@@ -60,7 +61,7 @@ function VendorReviews() {
               <div className="h-2 flex-1 overflow-hidden rounded-full bg-navy/8">
                 <div
                   className="h-full rounded-full bg-gold"
-                  style={{ width: `${vendorReviews.length ? (d.count / vendorReviews.length) * 100 : 0}%` }}
+                  style={{ width: `${publishedReviews.length ? (d.count / publishedReviews.length) * 100 : 0}%` }}
                 />
               </div>
               <span className="w-8 text-right text-xs text-slate">{d.count}</span>

@@ -21,7 +21,7 @@ import { PanelLayout } from "@/components/panel/PanelLayout";
 import { DataTable, Panel, StatCard } from "@/components/panel/widgets";
 import { adminNav } from "@/lib/panel-nav";
 import { useApp } from "@/lib/store";
-import { inr } from "@/lib/data";
+import { getOrderItemTotal, inr } from "@/lib/data";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -182,7 +182,7 @@ function AdminReports() {
               s +
               o.items
                 .filter((i) => i.vendorId === v.id)
-                .reduce((t, i) => t + i.product.price * i.qty, 0),
+                .reduce((t, i) => t + getOrderItemTotal(i), 0),
             0,
           );
           return {
@@ -456,7 +456,7 @@ function AdminReports() {
         <StatCard
           label="Active Vendors"
           value={String(
-            vendors.filter((v) => v.status === "active" || v.status === "Active").length,
+            vendors.filter((v) => v.status === "active" || v.status === "approved").length,
           )}
           icon={Users}
         />

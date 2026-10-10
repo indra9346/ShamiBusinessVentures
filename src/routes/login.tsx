@@ -55,17 +55,30 @@ function LoginPage() {
     let userEmail = otp.channel === "email" ? clean : (authUser?.email ?? "");
 
     if (authUser?.id) {
-      const { data: profile } = await supabase
+      const { data: profile, error: profileError } = await supabase
         .from("profiles")
-        .select("full_name, phone, email")
+        .select("full_name, phone, email, status")
         .eq("id", authUser.id)
         .maybeSingle();
 
-      if (profile) {
-        if (profile.full_name) name = profile.full_name;
-        if (profile.phone) userPhone = profile.phone;
-        if (profile.email) userEmail = profile.email;
+      if (profileError || !profile) {
+        await supabase.auth.signOut();
+        toast.error("Could not verify your customer profile", {
+          description: profileError?.message ?? "Contact Shami support to restore your account profile.",
+        });
+        return;
       }
+      if (!["active", "approved"].includes((profile.status ?? "").trim().toLowerCase())) {
+        await supabase.auth.signOut();
+        toast.error("This customer account is not active", {
+          description: "Contact Shami support if you think this is a mistake.",
+        });
+        return;
+      }
+
+      if (profile.full_name) name = profile.full_name;
+      if (profile.phone) userPhone = profile.phone;
+      if (profile.email) userEmail = profile.email;
       const meta = (authUser.user_metadata ?? {}) as Record<string, unknown>;
       if (!userPhone) {
         userPhone = authUser.phone || (meta["phone"] as string) || "";

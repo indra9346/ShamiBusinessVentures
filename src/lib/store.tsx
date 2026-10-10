@@ -14,6 +14,7 @@ import {
   inr,
   getCurrentFIFOCost,
   getProductAverageSellingPrice,
+  getOrderItemTotal,
   notifications as seedNotifications,
   orders as seedOrders,
   products as seedProducts,
@@ -30,6 +31,12 @@ import {
 } from "./data";
 
 export type Role = "customer" | "vendor" | "admin";
+const ROLE_PRIORITY: readonly Role[] = ["admin", "vendor", "customer"];
+
+function preferredRole(roles: readonly string[]): Role | undefined {
+  return ROLE_PRIORITY.find((role) => roles.includes(role));
+}
+
 export type SessionUser = { id?: string | undefined; name: string; email: string; role: Role; phone?: string | undefined; avatar?: string | undefined; addressKey?: string | undefined };
 export type CartLine = { id: string; qty: number };
 export type Address = (typeof seedAddresses)[number];
@@ -134,7 +141,7 @@ type AppState = {
     paymentDueDate?: string;
   }) => Promise<Order>;
   updateOrderStatus: (id: string, status: OrderStatus) => Promise<boolean>;
-  updateOrderItem: (orderId: string, index: number, patch: { qty?: number; capacity?: string; unitPrice?: number }) => boolean;
+  updateOrderItem: (orderId: string, index: number, patch: { qty?: number; capacity?: string; unitPrice?: number }) => Promise<boolean>;
   updateOrderDelivery: (orderId: string, delivery: string) => void;
   confirmPayment: (id: string, amount: number, utr: string, advancePercent?: number) => Promise<boolean>;
   refundOrder: (id: string) => Promise<boolean>;
@@ -204,14 +211,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return;
     }
     let active = true;
+    let loadRevision = 0;
+    let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+    let hasConnectedOnce = false;
     const reloadCatalog = async () => {
+      const revision = ++loadRevision;
       setProductCatalogStatus("loading");
       setCategoryCatalogStatus("loading");
       const [productResult, categoryResult] = await Promise.all([
         supabase.from("catalog_products").select("payload"),
         supabase.from("store_categories").select("payload").order("sort_order"),
       ]);
-      if (!active) return;
+      if (!active || revision !== loadRevision) return;
       if (productResult.error) {
         console.error("Could not load the Supabase product catalog:", productResult.error.message);
         setProductCatalogStatus("unavailable");
@@ -231,8 +242,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (categoryResult.error) {
         console.error("Could not load Supabase store categories:", categoryResult.error.message);
         setCategoryCatalogStatus("unavailable");
-        // Seed labels keep navigation available; they are not live category records.
-        setCategories(storeCategorySeed);
+        setCategories([]);
       } else {
         setCategoryCatalogStatus("ready");
         const persistedCategories = categoryResult.data.map((row) => {
@@ -245,7 +255,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
             image: payload.image || seed?.image || `/categories/${payload.name.toLowerCase()}.jpg`,
           };
         });
-        setCategories(persistedCategories.length > 0 ? persistedCategories : storeCategorySeed);
+        // In live mode an empty table is a real empty catalog, not demo content.
+        setCategories(persistedCategories);
       }
       if (user?.role) {
         const [
@@ -266,7 +277,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           fetchAllRows<OrderRow>((from, to) => supabase.from("orders").select("*")
             .order("created_at", { ascending: false }).order("id", { ascending: false }).range(from, to)),
         ]);
-        if (!active) return;
+        if (!active || revision !== loadRevision) return;
         const orderRows = ordersResult.data;
         const orderError = ordersResult.error;
         if (!batchError) {
@@ -297,7 +308,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
                 .in("order_id", orderIds).order("created_at", { ascending: false }).order("id", { ascending: false }).range(from, to)),
             ])
             : [{ data: [], error: null }, { data: [], error: null }];
-          if (!active) return;
+          if (!active || revision !== loadRevision) return;
           if (itemError) {
             console.error("Could not load order lines", itemError);
           } else {
@@ -323,7 +334,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
                   sold: 0, weight: "", status: "approved" as const, active: true, tags: [], description: "", specs: [],
                   created: "", updated: "",
                 };
-                return { product, qty: Number(item.qty), vendor: item.vendor || "", vendorId: item.vendor_id || "", capacity: product.weight, unitPrice: Number(item.unit_price), dbItemId: item.id };
+                return { product, qty: Number(item.qty), vendor: item.vendor || "", vendorId: item.vendor_id || "", capacity: item.capacity || product.weight, unitPrice: Number(item.unit_price), dbItemId: item.id };
               });
               const paymentStatus = row.payment_status.toLowerCase();
               const latestPayment = latestPaymentByOrder.get(row.id);
@@ -389,7 +400,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
           })));
         } else console.error("Could not load coupons", couponError);
         if (!profilesError && !rolesError) {
-          const rolesByUser = new Map(roleRows.map((row) => [row.user_id, row.role]));
+          const rolesByUser = new Map<string, Role>();
+          for (const row of roleRows) {
+            const current = rolesByUser.get(row.user_id);
+            const next = preferredRole([...(current ? [current] : []), row.role]);
+            if (next) rolesByUser.set(row.user_id, next);
+          }
           setVendors(profiles.filter((profile) => rolesByUser.get(profile.id) === "vendor").map((profile) => ({
             id: profile.vendor_id || profile.id,
             business: profile.company || profile.full_name,
@@ -400,7 +416,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             ...(profile.business_address ? { businessAddress: profile.business_address } : {}),
             city: profile.business_city || "",
             commission: Number(profile.commission_rate),
-            status: profile.status,
+            status: profile.status.trim().toLowerCase(),
             gst: profile.gstin || "",
             rating: 0,
             joined: asDate(profile.created_at),
@@ -463,7 +479,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           if (authUser) {
             const { data: addressRows, error: addressError } = await supabase.from("addresses")
               .select("*").eq("user_id", authUser.id).order("created_at", { ascending: true });
-            if (!active) return;
+            if (!active || revision !== loadRevision) return;
             if (addressError) {
               console.error("Could not load saved addresses", addressError);
             } else {
@@ -479,21 +495,32 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }
       }
     };
+    const scheduleReload = () => {
+      if (refreshTimer) clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(() => void reloadCatalog(), 100);
+    };
     void reloadCatalog();
     const channel = supabase.channel(`catalog-${user?.role ?? "public"}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "catalog_products" }, () => { void reloadCatalog(); })
-      .on("postgres_changes", { event: "*", schema: "public", table: "store_categories" }, () => { void reloadCatalog(); })
-      .on("postgres_changes", { event: "*", schema: "public", table: "profiles" }, () => { void reloadCatalog(); })
-      .on("postgres_changes", { event: "*", schema: "public", table: "user_roles" }, () => { void reloadCatalog(); })
-      .on("postgres_changes", { event: "*", schema: "public", table: "orders" }, () => { void reloadCatalog(); })
-      .on("postgres_changes", { event: "*", schema: "public", table: "order_items" }, () => { void reloadCatalog(); })
-      .on("postgres_changes", { event: "*", schema: "public", table: "payments" }, () => { void reloadCatalog(); })
-      .on("postgres_changes", { event: "*", schema: "public", table: "product_reviews" }, () => { void reloadCatalog(); })
-      .on("postgres_changes", { event: "*", schema: "public", table: "return_requests" }, () => { void reloadCatalog(); })
-      .on("postgres_changes", { event: "*", schema: "public", table: "coupons" }, () => { void reloadCatalog(); })
-      .subscribe();
+      .on("postgres_changes", { event: "*", schema: "public", table: "catalog_products" }, scheduleReload)
+      .on("postgres_changes", { event: "*", schema: "public", table: "store_categories" }, scheduleReload)
+      .on("postgres_changes", { event: "*", schema: "public", table: "profiles" }, scheduleReload)
+      .on("postgres_changes", { event: "*", schema: "public", table: "user_roles" }, scheduleReload)
+      .on("postgres_changes", { event: "*", schema: "public", table: "orders" }, scheduleReload)
+      .on("postgres_changes", { event: "*", schema: "public", table: "order_items" }, scheduleReload)
+      .on("postgres_changes", { event: "*", schema: "public", table: "payments" }, scheduleReload)
+      .on("postgres_changes", { event: "*", schema: "public", table: "product_reviews" }, scheduleReload)
+      .on("postgres_changes", { event: "*", schema: "public", table: "return_requests" }, scheduleReload)
+      .on("postgres_changes", { event: "*", schema: "public", table: "batches" }, scheduleReload)
+      .on("postgres_changes", { event: "*", schema: "public", table: "coupons" }, scheduleReload)
+      .subscribe((status) => {
+        if (status !== "SUBSCRIBED") return;
+        if (hasConnectedOnce) scheduleReload();
+        hasConnectedOnce = true;
+      });
     return () => {
       active = false;
+      loadRevision += 1;
+      if (refreshTimer) clearTimeout(refreshTimer);
       void supabase.removeChannel(channel);
     };
   }, [user]);
@@ -678,15 +705,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }
         if (!active || !authUser) return;
 
-        const [{ data: profile }, { data: roleRow }] = await Promise.all([
+        const [{ data: profile }, { data: roleRows }] = await Promise.all([
           supabase.from("profiles").select("id, full_name, email, phone, company, gstin, avatar_url, vendor_id, status").eq("id", authUser.id).maybeSingle(),
-          supabase.from("user_roles").select("role").eq("user_id", authUser.id).maybeSingle(),
+          supabase.from("user_roles").select("role").eq("user_id", authUser.id),
         ]);
 
         if (!active) return;
 
         const meta = (authUser.user_metadata ?? {}) as Record<string, unknown>;
-        const role: Role = (roleRow?.role as Role) || (meta["role"] as Role) || "customer";
+        const role: Role = preferredRole((roleRows ?? []).map((row) => row.role)) || (meta["role"] as Role) || "customer";
         const name = profile?.full_name || (meta["full_name"] as string) || (authUser.email ? authUser.email.split("@")[0] : "Customer") || "Customer";
         const email = profile?.email || authUser.email || "";
         const phone = profile?.phone || authUser.phone || (meta["phone"] as string) || "";
@@ -936,7 +963,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
       categories,
       addCategory: async (c) => {
-        const category = { ...c, id: `C${Date.now().toString().slice(-6)}`, order: categories.length + 1 };
+        const category = { ...c, id: `C-${crypto.randomUUID()}`, order: categories.length + 1 };
         if (!await saveCategory(category)) return false;
         setCategories((list) => [...list, category]);
         return true;
@@ -1241,7 +1268,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (!existing) return false;
         setOrders((list) => list.map((order) => order.id === id ? { ...order, status } : order));
         if (!STATIC_DATA_MODE) {
-          const { error } = await supabase.from("orders").update({ order_status: status }).eq("order_no", id);
+          const result = status === "Cancelled"
+            ? await supabase.rpc("cancel_marketplace_order", { _order_no: id })
+            : await supabase.from("orders").update({ order_status: status }).eq("order_no", id);
+          const { error } = result;
           if (error) {
             toast.error("Could not update order status", { description: error.message });
             setOrders((list) => list.map((order) => order.id === id ? existing : order));
@@ -1262,16 +1292,46 @@ export function AppProvider({ children }: { children: ReactNode }) {
           }
         });
       },
-      updateOrderItem: (orderId, index, patch) => {
-        if (!STATIC_DATA_MODE) {
-          toast.error("Order item editing is unavailable until the protected order-edit workflow is configured");
-          return false;
-        }
+      updateOrderItem: async (orderId, index, patch) => {
         const order = orders.find((candidate) => candidate.id === orderId);
         const item = order?.items[index];
         if (!order || !item || order.status === "Cancelled") return false;
         const nextQty = patch.qty ?? item.qty;
         if (!Number.isInteger(nextQty) || nextQty < 1) return false;
+        const nextCapacity = (patch.capacity ?? item.capacity ?? item.product.weight).trim();
+        const nextUnitPrice = patch.unitPrice ?? item.unitPrice ?? item.product.price;
+        if (!nextCapacity || !Number.isFinite(nextUnitPrice) || nextUnitPrice < 0) return false;
+        if (!STATIC_DATA_MODE) {
+          if (user?.role !== "admin" || !item.dbItemId) {
+            toast.error("This order line cannot be edited from the current account");
+            return false;
+          }
+          const { data, error } = await supabase.rpc("admin_update_order_item", {
+            _order_no: orderId,
+            _order_item_id: item.dbItemId,
+            _qty: nextQty,
+            _capacity: nextCapacity,
+            _unit_price: nextUnitPrice,
+          });
+          if (error || !data || typeof data !== "object" || Array.isArray(data)) {
+            toast.error("Could not update this order item", { description: error?.message ?? "The server returned an invalid order update." });
+            return false;
+          }
+          const result = data as { qty?: number; capacity?: string; unit_price?: number; line_total?: number; subtotal?: number; gst_amount?: number; total?: number };
+          setOrders((list) => list.map((candidate) => candidate.id !== orderId ? candidate : {
+            ...candidate,
+            items: candidate.items.map((line, lineIndex) => lineIndex === index ? {
+              ...line,
+              qty: Number(result.qty ?? nextQty),
+              capacity: result.capacity ?? nextCapacity,
+              unitPrice: Number(result.unit_price ?? nextUnitPrice),
+            } : line),
+            subtotal: Number(result.subtotal ?? candidate.subtotal),
+            tax: Number(result.gst_amount ?? candidate.tax),
+            amount: Number(result.total ?? candidate.amount),
+          }));
+          return true;
+        }
         const delta = nextQty - item.qty;
         const product = products.find((candidate) => candidate.id === item.product.id);
         if (delta > 0 && product && product.stock < delta) return false;
@@ -1301,7 +1361,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             return next;
           });
         }
-        const items = order.items.map((line, lineIndex) => lineIndex === index ? { ...line, ...patch, qty: nextQty } : line);
+        const items = order.items.map((line, lineIndex) => lineIndex === index ? { ...line, qty: nextQty, capacity: nextCapacity, unitPrice: nextUnitPrice } : line);
         const subtotal = items.reduce((sum, line) => sum + (line.unitPrice ?? line.product.price) * line.qty, 0);
         const tax = Math.round(Math.max(0, subtotal - order.discount) * 0.05);
         const amount = subtotal - order.discount + tax + order.shipping;
@@ -1606,7 +1666,9 @@ export function useVendorScope() {
   const vendorReviews = reviews.filter((r) => r.vendorId === vendorId);
   const vendor = vendors.find((item) => item.id === vendorId) ?? null;
   const revenue = vendorOrders.reduce(
-    (s, o) => s + o.items.filter((i) => i.vendorId === vendorId).reduce((t, i) => t + i.product.price * i.qty, 0),
+    (s, o) => s + (o.payment === "Paid" && o.status !== "Cancelled"
+      ? o.items.filter((i) => i.vendorId === vendorId).reduce((t, i) => t + getOrderItemTotal(i), 0)
+      : 0),
     0,
   );
   return { vendorId, vendor, vendorProducts, vendorOrders, vendorReviews, revenue, user };

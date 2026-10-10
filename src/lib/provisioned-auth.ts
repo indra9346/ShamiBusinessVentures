@@ -46,7 +46,7 @@ export async function signInProvisionedAccount(email: string, password: string, 
       return null;
     }
 
-    if (role === "vendor" && ["pending", "suspended", "inactive", "rejected"].includes((profile.status ?? "").trim().toLowerCase())) {
+    if (role === "vendor" && !["active", "approved"].includes((profile.status ?? "").trim().toLowerCase())) {
       await supabase.auth.signOut();
       authenticated = false;
       toast.error("This vendor account is not active");

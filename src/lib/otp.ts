@@ -185,33 +185,23 @@ export function useEmailOtp({ shouldCreateUser = true, requiredRole }: OtpOption
     }
 
     if (requiredRole) {
-      let roleRecord = null;
+      let hasAuthorizedRole = false;
       for (let attempt = 0; attempt < 3; attempt++) {
-        const query = supabase
+        const { data: roleRows } = await supabase
           .from("user_roles")
           .select("role")
           .eq("user_id", result.data.user.id);
-        const { data } = requiredRole === "customer"
-          ? await query.in("role", ["customer", "vendor", "admin"]).maybeSingle()
-          : await query.eq("role", requiredRole).maybeSingle();
-        if (data) {
-          roleRecord = data;
+        const roles = (roleRows ?? []).map((row) => row.role);
+        if (requiredRole === "customer" ? roles.length > 0 : roles.includes(requiredRole)) {
+          hasAuthorizedRole = true;
           break;
         }
         await new Promise((resolve) => setTimeout(resolve, 350));
       }
-      if (!roleRecord) {
-        if (requiredRole === "customer") {
-          await supabase.from("user_roles").insert({
-            user_id: result.data.user.id,
-            role: "customer",
-          });
-          roleRecord = { role: "customer" };
-        } else {
-          await supabase.auth.signOut();
-          toast.error(`This account is not authorized for ${requiredRole} access`);
-          return false;
-        }
+      if (!hasAuthorizedRole) {
+        await supabase.auth.signOut();
+        toast.error(`This account is not authorized for ${requiredRole} access`);
+        return false;
       }
     }
 

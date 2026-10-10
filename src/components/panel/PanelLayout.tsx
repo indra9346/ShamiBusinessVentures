@@ -1,6 +1,7 @@
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { AlertTriangle, Bell, LogOut, Menu, RefreshCw, Search, X } from "lucide-react";
 import { useState, useMemo, useEffect, type ReactNode } from "react";
+import { toast } from "sonner";
 import { LogoMark } from "@/components/brand/Logo";
 import { useApp } from "@/lib/store";
 import { isStorefrontProduct } from "@/lib/data";
@@ -144,6 +145,8 @@ export function PanelLayout({
 
   useEffect(() => {
     let active = true;
+    let profileChannel: ReturnType<typeof supabase.channel> | undefined;
+    let accountBlocked = false;
     setVerifiedRole(false);
     setRoleCheckError("");
     if (!hydrated)
@@ -162,6 +165,26 @@ export function PanelLayout({
       };
     }
     void (async () => {
+      const {
+        data: { session },
+        error: sessionError,
+      } = await supabase.auth.getSession();
+      if (sessionError) {
+        if (active)
+          setRoleCheckError(
+            "We could not verify your sign-in right now. Your session has been kept; try again when your connection is available.",
+          );
+        return;
+      }
+      if (!session?.user) {
+        if (active) {
+          navigate({
+            to: tone === "admin" ? "/admin/login" : tone === "vendor" ? "/vendor/login" : "/login",
+            replace: true,
+          });
+        }
+        return;
+      }
       const {
         data: { user: authUser },
         error: authError,
@@ -204,6 +227,61 @@ export function PanelLayout({
         });
         return;
       }
+      const signOutBlockedAccount = (message: string) => {
+        if (!active || accountBlocked) return;
+        accountBlocked = true;
+        void supabase.auth.signOut().catch(() => undefined).then(() => {
+          if (!active) return;
+          logout();
+          toast.error(message, {
+            description: "Contact Shami support if you think this is a mistake.",
+          });
+          navigate({ to: "/login", replace: true });
+        });
+      };
+      if (tone === "customer") {
+        const { data: profile, error: profileError } = await supabase
+          .from("profiles")
+          .select("status")
+          .eq("id", authUser.id)
+          .maybeSingle();
+        if (!active) return;
+        if (profileError) {
+          setRoleCheckError(
+            "We could not verify that this customer account is active. Your sign-in has been kept; try again when your connection is available.",
+          );
+          return;
+        }
+        const allowedStatuses = ["active", "approved"];
+        const status = (profile?.status ?? "").trim().toLowerCase();
+        if (!profile || !allowedStatuses.includes(status)) {
+          signOutBlockedAccount("This customer account is not active");
+          return;
+        }
+        profileChannel = supabase
+          .channel(`customer-account-status-${authUser.id}`)
+          .on("postgres_changes", {
+            event: "UPDATE",
+            schema: "public",
+            table: "profiles",
+            filter: `id=eq.${authUser.id}`,
+          }, (payload) => {
+            const updated = payload.new as { status?: string };
+            if (!allowedStatuses.includes((updated.status ?? "").trim().toLowerCase())) {
+              signOutBlockedAccount("This customer account is no longer active");
+            }
+          })
+          .subscribe((status) => {
+            if (status !== "SUBSCRIBED") return;
+            void supabase.from("profiles").select("status").eq("id", authUser.id).maybeSingle()
+              .then(({ data: latest, error: latestError }) => {
+                if (latestError || !active) return;
+                if (!allowedStatuses.includes((latest?.status ?? "").trim().toLowerCase())) {
+                  signOutBlockedAccount("This customer account is no longer active");
+                }
+              });
+          });
+      }
       setVerifiedRole(true);
     })().catch(() => {
       if (active) {
@@ -214,8 +292,9 @@ export function PanelLayout({
     });
     return () => {
       active = false;
+      if (profileChannel) void supabase.removeChannel(profileChannel);
     };
-  }, [hydrated, tone, logout, navigate, verificationAttempt]);
+  }, [hydrated, tone, logout, navigate, user?.role, verificationAttempt]);
 
   const relevantNotifs = useMemo(() => {
     return notifications.filter((n) => {
@@ -297,7 +376,11 @@ export function PanelLayout({
           >
             <AlertTriangle className="mx-auto h-8 w-8 text-amber-600" />
             <p className="mt-3 font-semibold text-navy">
-              Administrator access could not be checked
+              {tone === "admin"
+                ? "Administrator access could not be checked"
+                : tone === "vendor"
+                  ? "Vendor access could not be checked"
+                  : "Account access could not be checked"}
             </p>
             <p className="mt-2 leading-relaxed">{roleCheckError}</p>
             <button

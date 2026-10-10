@@ -153,7 +153,8 @@ function AdminProductsPanel() {
   }, [form.vendorId, vendors]);
 
   const [quickOpen, setQuickOpen] = useState(false);
-  const [quickForm, setQuickForm] = useState({ name: "", qty: "", price: "" });
+  const [quickForm, setQuickForm] = useState({ name: "", qty: "", price: "", image: "" });
+  const [quickImageUploading, setQuickImageUploading] = useState(false);
 
   const [editing, setEditing] = useState<Product | null>(null);
   const [editForm, setEditForm] = useState({
@@ -195,6 +196,24 @@ function AdminProductsPanel() {
     }
   };
 
+  const uploadQuickProductImage = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setQuickImageUploading(true);
+    try {
+      const image = await uploadCatalogImage(file, "products");
+      setQuickForm((current) => ({ ...current, image }));
+      toast.success("Product image uploaded");
+    } catch (error) {
+      toast.error("Could not upload the product image", {
+        description: error instanceof Error ? error.message : "Try again.",
+      });
+    } finally {
+      setQuickImageUploading(false);
+      event.target.value = "";
+    }
+  };
+
   const [stockEditing, setStockEditing] = useState<Product | null>(null);
   const [stockValue, setStockValue] = useState("");
 
@@ -230,32 +249,35 @@ function AdminProductsPanel() {
       return;
     }
     const qty = Number(quickForm.qty);
-    if (Number.isNaN(qty) || qty < 0) {
+    if (!Number.isFinite(qty) || qty < 0) {
       toast.error("Enter a valid quantity");
       return;
     }
-    const price = Number(quickForm.price) || 0;
+    const price = quickForm.price.trim() ? Number(quickForm.price) : 0;
+    if (!Number.isFinite(price) || price < 0) {
+      toast.error("Enter a valid non-negative price");
+      return;
+    }
     const vendor = vendors[0];
     if (!vendor) {
       toast.error("Create or approve a vendor profile before assigning products");
       return;
     }
-    const stamp = Date.now().toString().slice(-6);
     const dateStr = new Date().toLocaleDateString("en-IN", {
       day: "2-digit",
       month: "short",
       year: "numeric",
     });
     const item: Product = {
-      id: `P${stamp}`,
+      id: `P-${crypto.randomUUID()}`,
       name: quickForm.name.trim(),
-      sku: `SBV-SU-${stamp}`,
+      sku: `SBV-SU-${crypto.randomUUID().replaceAll("-", "").slice(0, 8).toUpperCase()}`,
       brand: "Shami Select",
       vendor: vendor.business,
       vendorId: vendor.id,
       category: "Sugar",
       subcategory: "S1 Sugar",
-      image: products[0]?.image ?? "",
+      image: quickForm.image.trim(),
       mrp: price,
       price,
       gst: 5,
@@ -265,8 +287,8 @@ function AdminProductsPanel() {
       reserved: 0,
       sold: 0,
       weight: "1 unit",
-      status: "approved",
-      active: true,
+      status: price > 0 && quickForm.image.trim() ? "approved" : "pending",
+      active: price > 0 && Boolean(quickForm.image.trim()),
       tags: [],
       description: "Manually added by admin.",
       specs: [{ label: "Brand", value: "Shami Select" }],
@@ -274,8 +296,9 @@ function AdminProductsPanel() {
       updated: dateStr,
     };
     if (!(await addProduct(item))) return;
-    toast.success(`${item.name} added with ${qty} units`);
-    setQuickForm({ name: "", qty: "", price: "" });
+    if (item.active) toast.success(`${item.name} added with ${qty} units`);
+    else toast.success(`${item.name} saved as a draft; add an image and price before publishing`);
+    setQuickForm({ name: "", qty: "", price: "", image: "" });
     setQuickOpen(false);
   };
 
@@ -284,28 +307,47 @@ function AdminProductsPanel() {
       toast.error("Please fill product name, MRP and price");
       return;
     }
+    if (!form.image.trim()) {
+      toast.error("Choose a product image before saving");
+      return;
+    }
+    if (imageUploading) {
+      toast.error("Wait for the product image upload to finish");
+      return;
+    }
+    const mrp = Number(form.mrp);
+    const price = Number(form.price);
+    const stock = Number(form.stock || 0);
+    if (!Number.isFinite(mrp) || mrp <= 0 || !Number.isFinite(price) || price <= 0 || price > mrp) {
+      toast.error("Enter valid prices; selling price must not exceed MRP");
+      return;
+    }
+    if (!Number.isFinite(stock) || stock < 0) {
+      toast.error("Enter a valid non-negative stock quantity");
+      return;
+    }
     const vendor = vendors.find((v) => v.id === form.vendorId);
     if (!vendor) {
       toast.error("Choose an existing vendor profile before creating this product");
       return;
     }
-    const id = `P${Date.now().toString().slice(-6)}`;
+    const id = `P-${crypto.randomUUID()}`;
     const product: Product = {
       id,
       name: form.name,
-      sku: `SBV-${form.category.slice(0, 2).toUpperCase()}-${Date.now().toString().slice(-4)}`,
+      sku: `SBV-${form.category.slice(0, 2).toUpperCase()}-${crypto.randomUUID().replaceAll("-", "").slice(0, 8).toUpperCase()}`,
       brand: "Shami Select",
       vendor: vendor.business,
       vendorId: vendor.id,
       category: form.category,
       subcategory: form.subcategory || form.category,
-      image: form.image.trim() || products[0]?.image || "",
-      mrp: Number(form.mrp),
-      price: Number(form.price),
+      image: form.image.trim(),
+      mrp,
+      price,
       gst: Number(form.gst),
       rating: 4.2,
       reviews: 0,
-      stock: Number(form.stock) || 0,
+      stock,
       warehouseStock: Number(form.warehouseStock || form.stock) || 0,
       requiredStock: Number(form.requiredStock) || 0,
       minimumStock: Number(form.minimumStock) || 0,
@@ -511,12 +553,27 @@ function AdminProductsPanel() {
                       />
                     </div>
                   </div>
+                  <div>
+                    <Label>Product image</Label>
+                    <label className="mt-1 inline-flex cursor-pointer items-center gap-2 rounded-md border border-dashed p-3 text-sm font-medium text-navy hover:bg-ivory">
+                      <ImagePlus className="h-4 w-4" />
+                      {quickImageUploading ? "Uploading…" : quickForm.image ? "Choose a different image" : "Browse local files"}
+                      <input
+                        className="sr-only"
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp,image/gif,image/avif"
+                        disabled={quickImageUploading}
+                        onChange={(event) => void uploadQuickProductImage(event)}
+                      />
+                    </label>
+                    {quickForm.image && <img src={quickForm.image} alt="Product preview" className="mt-2 h-20 w-20 rounded-md border object-cover" />}
+                  </div>
                 </div>
                 <DialogFooter>
                   <Button variant="outline" onClick={() => setQuickOpen(false)}>
                     Cancel
                   </Button>
-                  <Button onClick={submitQuickAdd}>Save Item</Button>
+                  <Button disabled={quickImageUploading} onClick={submitQuickAdd}>Save Item</Button>
                 </DialogFooter>
               </DialogContent>
             </Dialog>
@@ -650,11 +707,11 @@ function AdminProductsPanel() {
                     />
                   </div>
                   <div>
-                    <Label>Product Image URL</Label>
+                    <Label>Product Image</Label>
                     <Input
                       value={form.image}
                       onChange={(e) => setForm({ ...form, image: e.target.value })}
-                      placeholder="Paste image URL (optional)"
+                      placeholder="Paste an image URL or browse local files"
                     />
                     <label className="mt-2 inline-flex cursor-pointer items-center gap-2 text-sm font-medium text-navy hover:text-gold">
                       <ImagePlus className="h-4 w-4" />{" "}
@@ -736,7 +793,7 @@ function AdminProductsPanel() {
                   <Button variant="outline" onClick={() => setAddOpen(false)}>
                     Cancel
                   </Button>
-                  <Button onClick={submitAdd}>Save Product</Button>
+                  <Button disabled={imageUploading} onClick={submitAdd}>Save Product</Button>
                 </DialogFooter>
               </DialogContent>
             </Dialog>

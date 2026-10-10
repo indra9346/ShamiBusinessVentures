@@ -20,6 +20,7 @@ import { Panel, StatusBadge } from "@/components/panel/widgets";
 import { adminNav } from "@/lib/panel-nav";
 import { inr, orderStages, type OrderStatus } from "@/lib/data";
 import { useApp } from "@/lib/store";
+import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -106,6 +107,11 @@ function AdminOrderDetail() {
   }
 
   const isCancelled = order.status === "Cancelled";
+  const canCancel = !["Dispatched", "Out for Delivery", "Delivered", "Cancelled"].includes(order.status);
+  const canEditItems = !isCancelled && (STATIC_DATA_MODE || (
+    order.status === "Placed" && order.payment === "Pending" &&
+    (order.paidAmount ?? 0) === 0 && (order.discount ?? 0) === 0 && !order.coupon
+  ));
   const currentIdx = orderStages.indexOf(order.status);
 
   // Retrieve customer details including GSTIN
@@ -147,6 +153,7 @@ function AdminOrderDetail() {
 
           <Select
             value={order.status}
+            disabled={isCancelled}
             onValueChange={async (v) => {
               if (await updateOrderStatus(order.id, v as OrderStatus)) toast.success(`Order ${order.id} updated to ${v}`);
             }}
@@ -155,11 +162,12 @@ function AdminOrderDetail() {
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {[...orderStages, "Cancelled"].map((s) => (
+              {orderStages.map((s) => (
                 <SelectItem key={s} value={s}>
                   {s}
                 </SelectItem>
               ))}
+              {isCancelled && <SelectItem value="Cancelled">Cancelled</SelectItem>}
             </SelectContent>
           </Select>
 
@@ -168,7 +176,7 @@ function AdminOrderDetail() {
               <Button
                 variant="outline"
                 size="sm"
-                disabled={isCancelled}
+                disabled={!canCancel}
                 className="text-danger hover:border-danger"
               >
                 Cancel Order
@@ -243,6 +251,12 @@ function AdminOrderDetail() {
         )}
       </Panel>
 
+      {!canEditItems && !isCancelled && (
+        <p className="mb-3 rounded-md border border-border bg-muted/20 px-3 py-2 text-xs text-slate">
+          Order lines can be edited only while the order is unpaid, undiscounted, and still in Placed status.
+        </p>
+      )}
+
       {/* Information Cards: Customer, Delivery, Payment, and Summary */}
       <div className="mt-6 grid gap-6 sm:grid-cols-2 xl:grid-cols-4">
         {/* 1. Customer Information */}
@@ -308,7 +322,7 @@ function AdminOrderDetail() {
                 <Input
                   aria-label="Delivery requirement"
                   defaultValue={order.delivery}
-                  disabled={isCancelled}
+                  disabled={!canCancel}
                   className="h-8 text-xs"
                   onBlur={(event) => updateOrderDelivery(order.id, event.target.value)}
                 />
@@ -431,11 +445,16 @@ function AdminOrderDetail() {
                             <Input
                               aria-label={`${it.product.name} bag capacity`}
                               defaultValue={it.capacity ?? it.product.weight}
-                              disabled={isCancelled}
+                              disabled={!canEditItems}
                               className="mt-1 h-8 w-32 text-xs"
-                              onBlur={(event) =>
-                                updateOrderItem(order.id, i, { capacity: event.target.value })
-                              }
+                              onBlur={async (event) => {
+                                const value = event.target.value.trim();
+                                if (value && value !== (it.capacity ?? it.product.weight) &&
+                                  !(await updateOrderItem(order.id, i, { capacity: value }))) {
+                                  toast.error("Could not update product capacity");
+                                  event.target.value = it.capacity ?? it.product.weight;
+                                }
+                              }}
                             />
                           </div>
                         </div>
@@ -452,9 +471,9 @@ function AdminOrderDetail() {
                             variant="outline"
                             className="h-8 w-8"
                             aria-label={`Remove one ${it.product.name} bag`}
-                            disabled={isCancelled || it.qty <= 1}
-                            onClick={() => {
-                              if (!updateOrderItem(order.id, i, { qty: it.qty - 1 }))
+                            disabled={!canEditItems || it.qty <= 1}
+                            onClick={async () => {
+                              if (!(await updateOrderItem(order.id, i, { qty: it.qty - 1 })))
                                 toast.error("Could not update this order quantity");
                             }}
                           >
@@ -463,18 +482,19 @@ function AdminOrderDetail() {
                           <Input
                             type="number"
                             min={1}
-                            value={it.qty}
-                            disabled={isCancelled}
+                            key={`${it.dbItemId ?? i}-${it.qty}`}
+                            defaultValue={it.qty}
+                            disabled={!canEditItems}
                             aria-label={`${it.product.name} bag quantity`}
                             className="h-8 w-16 text-center"
-                            onChange={(event) => {
+                            onBlur={async (event) => {
                               const quantity = Number(event.target.value);
-                              if (
-                                Number.isInteger(quantity) &&
-                                quantity > 0 &&
-                                !updateOrderItem(order.id, i, { qty: quantity })
-                              )
-                                toast.error("Not enough stock available for that quantity");
+                              if (Number.isInteger(quantity) && quantity > 0 && quantity !== it.qty) {
+                                if (!(await updateOrderItem(order.id, i, { qty: quantity }))) {
+                                  toast.error("Could not update quantity. Check available stock.");
+                                  event.target.value = String(it.qty);
+                                }
+                              } else event.target.value = String(it.qty);
                             }}
                           />
                           <Button
@@ -483,9 +503,9 @@ function AdminOrderDetail() {
                             variant="outline"
                             className="h-8 w-8"
                             aria-label={`Add one ${it.product.name} bag`}
-                            disabled={isCancelled}
-                            onClick={() => {
-                              if (!updateOrderItem(order.id, i, { qty: it.qty + 1 }))
+                            disabled={!canEditItems}
+                            onClick={async () => {
+                              if (!(await updateOrderItem(order.id, i, { qty: it.qty + 1 })))
                                 toast.error("Not enough stock available for another bag");
                             }}
                           >
@@ -500,14 +520,20 @@ function AdminOrderDetail() {
                         <Input
                           type="number"
                           min={0}
-                          value={unitPrice}
-                          disabled={isCancelled}
+                          key={`${it.dbItemId ?? i}-${unitPrice}`}
+                          defaultValue={unitPrice}
+                          disabled={!canEditItems}
+                          step="0.01"
                           aria-label={`${it.product.name} unit price`}
                           className="h-8 w-24 text-right"
-                          onChange={(event) => {
+                          onBlur={async (event) => {
                             const price = Number(event.target.value);
-                            if (Number.isFinite(price) && price >= 0)
-                              updateOrderItem(order.id, i, { unitPrice: price });
+                            if (Number.isFinite(price) && price >= 0 && price !== unitPrice) {
+                              if (!(await updateOrderItem(order.id, i, { unitPrice: price }))) {
+                                toast.error("Could not update this order price");
+                                event.target.value = String(unitPrice);
+                              }
+                            } else event.target.value = String(unitPrice);
                           }}
                         />
                       </td>

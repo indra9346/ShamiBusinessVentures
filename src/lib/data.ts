@@ -525,6 +525,10 @@ export const orderStages: OrderStatus[] = [
 ];
 
 export type OrderItem = { product: Product; qty: number; vendor: string; vendorId: string; capacity?: string; unitPrice?: number; dbItemId?: string };
+/** Uses the price captured on the order line, falling back to the catalog for local preview orders. */
+export function getOrderItemTotal(item: OrderItem): number {
+  return Math.round((item.unitPrice ?? item.product.price) * item.qty * 100) / 100;
+}
 export type Order = {
   id: string;
   date: string;
@@ -557,6 +561,20 @@ export type Order = {
   delivery: string;
   coupon?: string;
 };
+
+const vendorOrderNextStatus: Partial<Record<OrderStatus, OrderStatus>> = {
+  "Payment Confirmed": "Accepted",
+  Accepted: "Packed",
+  Packed: "Dispatched",
+  Dispatched: "Out for Delivery",
+  "Out for Delivery": "Delivered",
+};
+
+export function vendorOrderStatusOptions(order: Pick<Order, "status" | "payment">): OrderStatus[] {
+  const next = vendorOrderNextStatus[order.status];
+  if (!next || (order.status === "Packed" && order.payment !== "Paid")) return [order.status];
+  return [order.status, next];
+}
 
 const methods = ["UPI", "Credit Card", "Debit Card", "Net Banking"];
 const statusCycle: OrderStatus[] = ["Delivered", "Out for Delivery", "Dispatched", "Packed", "Accepted", "Placed", "Delivered", "Payment Confirmed", "Cancelled", "Delivered"];

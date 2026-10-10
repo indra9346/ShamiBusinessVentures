@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { Panel, StatusBadge } from "@/components/panel/widgets";
 import { vendorNav } from "@/lib/panel-nav";
-import { inr, orderStages, type OrderStatus } from "@/lib/data";
+import { getOrderItemTotal, inr, orderStages, vendorOrderStatusOptions, type OrderStatus } from "@/lib/data";
 import { useApp, useVendorScope } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -53,7 +53,7 @@ function VendorOrderDetail() {
   }
 
   const myItems = order.items.filter((i) => i.vendorId === vendorId);
-  const subtotal = myItems.reduce((s, i) => s + i.product.price * i.qty, 0);
+  const subtotal = myItems.reduce((s, i) => s + getOrderItemTotal(i), 0);
   const currentIndex = orderStages.indexOf(order.status);
 
   return (
@@ -67,9 +67,9 @@ function VendorOrderDetail() {
                   <img src={it.product.image} alt={it.product.name} loading="lazy" width={800} height={800} className="h-12 w-12 rounded-md object-cover" />
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-semibold text-navy">{it.product.name}</p>
-                    <p className="text-xs text-slate">Qty {it.qty} × {inr(it.product.price)}</p>
+                    <p className="text-xs text-slate">Qty {it.qty} × {inr(it.unitPrice ?? it.product.price)}</p>
                   </div>
-                  <p className="text-sm font-bold text-navy">{inr(it.product.price * it.qty)}</p>
+                  <p className="text-sm font-bold text-navy">{inr(getOrderItemTotal(it))}</p>
                 </div>
               ))}
             </div>
@@ -123,6 +123,7 @@ function VendorOrderDetail() {
               <div className="grid gap-1.5">
                 <span className="text-xs font-semibold text-slate">Update Status</span>
                 <Select
+                  disabled={vendorOrderStatusOptions(order).length === 1}
                   value={order.status}
                   onValueChange={async (v) => {
                     if (await updateOrderStatus(order.id, v as OrderStatus)) toast.success(`Order ${order.id} updated to ${v}`);
@@ -130,11 +131,14 @@ function VendorOrderDetail() {
                 >
                   <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {[...orderStages, "Cancelled"].map((s) => (
+                    {vendorOrderStatusOptions(order).map((s) => (
                       <SelectItem key={s} value={s}>{s}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
+                {order.status === "Packed" && order.payment !== "Paid" && (
+                  <p className="text-xs text-slate">Full payment is required before dispatch.</p>
+                )}
               </div>
               <Button
                 variant="outline"

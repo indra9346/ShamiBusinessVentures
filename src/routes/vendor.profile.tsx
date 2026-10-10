@@ -60,15 +60,35 @@ function VendorProfile() {
     if (!user?.id) return;
     const userId = user.id;
     let active = true;
+    let revision = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let connectedOnce = false;
     const load = async () => {
+      const requestRevision = ++revision;
       const { data, error } = await supabase.from("vendor_kyc_documents").select("id,document_type,object_path,status,admin_notes,created_at").eq("user_id", userId).order("created_at", { ascending: false });
-      if (!active) return;
+      if (!active || requestRevision !== revision) return;
       if (error) { toast.error("Could not load verification documents", { description: error.message }); return; }
       setKycDocuments(data ?? []);
     };
+    const refreshSoon = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => void load(), 100);
+    };
     void load();
-    const channel = supabase.channel(`vendor-kyc-${userId}`).on("postgres_changes", { event: "*", schema: "public", table: "vendor_kyc_documents", filter: `user_id=eq.${userId}` }, () => void load()).subscribe();
-    return () => { active = false; void supabase.removeChannel(channel); };
+    const channel = supabase.channel(`vendor-kyc-${userId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "vendor_kyc_documents", filter: `user_id=eq.${userId}` }, refreshSoon)
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") {
+          if (connectedOnce) refreshSoon();
+          connectedOnce = true;
+        }
+      });
+    return () => {
+      active = false;
+      ++revision;
+      if (timer) clearTimeout(timer);
+      void supabase.removeChannel(channel);
+    };
   }, [user?.id]);
   const uploadKycDocument = async (file?: File) => {
     if (!file || !user?.id || !vendorId) return;

@@ -167,14 +167,35 @@ function AdminDashboard() {
   const [customEnd, setCustomEnd] = useState(todayISO);
   const [payouts, setPayouts] = useState<{ id: string; date: string; amount: number; status: string }[]>([]);
   useEffect(() => {
+    let active = true;
+    let revision = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let connectedOnce = false;
     const load = async () => {
+      const requestRevision = ++revision;
       const { data, error } = await supabase.from("vendor_payout_requests").select("id,requested_at,processed_at,amount,status");
-      if (error) return;
+      if (!active || requestRevision !== revision || error) return;
       setPayouts((data ?? []).map((p) => ({ id: p.id, date: p.status === "Paid" && p.processed_at ? p.processed_at : p.requested_at, amount: Number(p.amount), status: p.status })));
     };
+    const refreshSoon = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => void load(), 100);
+    };
     void load();
-    const channel = supabase.channel("admin-dashboard-payouts").on("postgres_changes", { event: "*", schema: "public", table: "vendor_payout_requests" }, () => void load()).subscribe();
-    return () => { void supabase.removeChannel(channel); };
+    const channel = supabase.channel("admin-dashboard-payouts")
+      .on("postgres_changes", { event: "*", schema: "public", table: "vendor_payout_requests" }, refreshSoon)
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") {
+          if (connectedOnce) refreshSoon();
+          connectedOnce = true;
+        }
+      });
+    return () => {
+      active = false;
+      ++revision;
+      if (timer) clearTimeout(timer);
+      void supabase.removeChannel(channel);
+    };
   }, []);
 
   // Determine active date boundaries based on business logic

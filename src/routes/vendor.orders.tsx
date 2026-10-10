@@ -6,7 +6,7 @@ import { PanelLayout } from "@/components/panel/PanelLayout";
 import { DataTable, Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { Pager } from "@/components/panel/pager";
 import { vendorNav } from "@/lib/panel-nav";
-import { inr, orderStages, type OrderStatus } from "@/lib/data";
+import { getOrderItemTotal, inr, orderStages, vendorOrderStatusOptions, type OrderStatus } from "@/lib/data";
 import { useApp, useVendorScope } from "@/lib/store";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -40,7 +40,7 @@ function VendorOrders() {
 function VendorOrdersPanel() {
   const routeSearch = Route.useSearch();
   const { updateOrderStatus } = useApp();
-  const { vendorOrders, vendorId } = useVendorScope();
+  const { vendor, vendorOrders, vendorId } = useVendorScope();
   const [q, setQ] = useState(routeSearch.q ?? "");
   const [status, setStatus] = useState("all");
   const [sort, setSort] = useState("date-desc");
@@ -56,7 +56,7 @@ function VendorOrdersPanel() {
       vendorOrders.map((o) => ({
         order: o,
         items: o.items.filter((i) => i.vendorId === vendorId),
-        amount: o.items.filter((i) => i.vendorId === vendorId).reduce((s, i) => s + i.product.price * i.qty, 0),
+        amount: o.items.filter((i) => i.vendorId === vendorId).reduce((s, i) => s + getOrderItemTotal(i), 0),
       })),
     [vendorOrders, vendorId],
   );
@@ -69,8 +69,9 @@ function VendorOrdersPanel() {
       return matchesQ && matchesStatus;
     });
     list = [...list].sort((a, b) => {
-      if (sort === "date-desc") return b.order.id.localeCompare(a.order.id);
-      if (sort === "date-asc") return a.order.id.localeCompare(b.order.id);
+      const createdAt = (order: typeof a.order) => Date.parse(order.createdAt ?? order.date) || 0;
+      if (sort === "date-desc") return createdAt(b.order) - createdAt(a.order);
+      if (sort === "date-asc") return createdAt(a.order) - createdAt(b.order);
       if (sort === "amount-desc") return b.amount - a.amount;
       if (sort === "amount-asc") return a.amount - b.amount;
       return 0;
@@ -85,10 +86,10 @@ function VendorOrdersPanel() {
   const total = vendorOrders.length;
   const pending = vendorOrders.filter((o) => o.status !== "Delivered" && o.status !== "Cancelled").length;
   const delivered = vendorOrders.filter((o) => o.status === "Delivered").length;
-  const revenue = withAmounts.filter((w) => w.order.payment === "Paid").reduce((s, w) => s + w.amount, 0);
+  const revenue = withAmounts.filter((w) => w.order.payment === "Paid" && w.order.status !== "Cancelled").reduce((s, w) => s + w.amount, 0);
 
   return (
-    <PanelLayout items={vendorNav} tone="vendor" title="Orders" subtitle="Orders containing Shami Sugar Mills items">
+    <PanelLayout items={vendorNav} tone="vendor" title="Orders" subtitle={`Orders containing ${vendor?.business ?? "your store"} items`}>
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard label="Total Orders" value={String(total)} icon={ShoppingCart} highlight />
         <StatCard label="Pending" value={String(pending)} icon={PackageX} />
@@ -139,8 +140,9 @@ function VendorOrdersPanel() {
             items.length,
             inr(amount),
             <StatusBadge status={o.payment} />,
-            <StatusBadge status={o.status} />,
+          <StatusBadge status={o.status} />,
             <Select
+              disabled={vendorOrderStatusOptions(o).length === 1}
               value={o.status}
               onValueChange={async (v) => {
                 if (await updateOrderStatus(o.id, v as OrderStatus)) toast.success(`Order ${o.id} updated to ${v}`);
@@ -148,7 +150,7 @@ function VendorOrdersPanel() {
             >
               <SelectTrigger className="h-8 w-36 text-xs"><SelectValue /></SelectTrigger>
               <SelectContent>
-                {[...orderStages, "Cancelled"].map((s) => (
+                {vendorOrderStatusOptions(o).map((s) => (
                   <SelectItem key={s} value={s}>{s}</SelectItem>
                 ))}
               </SelectContent>

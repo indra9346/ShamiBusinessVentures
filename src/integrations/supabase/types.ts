@@ -345,6 +345,7 @@ export type Database = {
       order_items: {
         Row: {
           batch_code: string | null
+          capacity: string | null
           created_at: string
           gst_rate: number
           id: string
@@ -360,6 +361,7 @@ export type Database = {
         }
         Insert: {
           batch_code?: string | null
+          capacity?: string | null
           created_at?: string
           gst_rate?: number
           id?: string
@@ -375,6 +377,7 @@ export type Database = {
         }
         Update: {
           batch_code?: string | null
+          capacity?: string | null
           created_at?: string
           gst_rate?: number
           id?: string
@@ -872,6 +875,8 @@ export type Database = {
         Returns: Json
       }
       request_vendor_payout: { Args: { _amount: number; _method?: string }; Returns: string }
+      admin_update_order_item: { Args: { _order_no: string; _order_item_id: string; _qty: number; _capacity: string; _unit_price: number }; Returns: Json }
+      cancel_marketplace_order: { Args: { _order_no: string }; Returns: boolean }
       admin_broadcast_notification: { Args: { _audience: string; _title: string; _message: string }; Returns: number }
       admin_confirm_manual_payment: { Args: { _order_no: string; _amount: number; _utr: string }; Returns: boolean }
       admin_receive_inventory_batch: { Args: { _batch_code: string; _product_id: string; _quantity: number; _unit_cost: number; _purchase_date: string | null; _warehouse: string }; Returns: string }

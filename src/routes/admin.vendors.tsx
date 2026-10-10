@@ -6,7 +6,7 @@ import { PanelLayout } from "@/components/panel/PanelLayout";
 import { DataTable, Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { Pager } from "@/components/panel/pager";
 import { adminNav } from "@/lib/panel-nav";
-import { inr } from "@/lib/data";
+import { getOrderItemTotal, inr } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -54,15 +54,35 @@ function AdminVendorsPanel() {
 
   useEffect(() => {
     let active = true;
+    let revision = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let connectedOnce = false;
     const load = async () => {
+      const requestRevision = ++revision;
       const { data, error } = await supabase.from("vendor_applications").select("id,applicant_id,business_name,owner_name,email,phone,gstin,city,address,status,admin_notes,created_at").order("created_at", { ascending: false });
-      if (!active) return;
+      if (!active || requestRevision !== revision) return;
       if (error) toast.error("Could not load vendor applications", { description: error.message });
       else setApplications(data ?? []);
     };
+    const refreshSoon = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => void load(), 100);
+    };
     void load();
-    const channel = supabase.channel("admin-vendor-applications").on("postgres_changes", { event: "*", schema: "public", table: "vendor_applications" }, () => void load()).subscribe();
-    return () => { active = false; void supabase.removeChannel(channel); };
+    const channel = supabase.channel("admin-vendor-applications")
+      .on("postgres_changes", { event: "*", schema: "public", table: "vendor_applications" }, refreshSoon)
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") {
+          if (connectedOnce) refreshSoon();
+          connectedOnce = true;
+        }
+      });
+    return () => {
+      active = false;
+      ++revision;
+      if (timer) clearTimeout(timer);
+      void supabase.removeChannel(channel);
+    };
   }, []);
 
   const reviewApplication = async (applicationId: string, status: "Approved" | "Rejected") => {
@@ -82,7 +102,7 @@ function AdminVendorsPanel() {
       ...vendor,
       products: productsForVendor.length,
       orders: ordersForVendor.length,
-      sales: ordersForVendor.filter((order) => order.status !== "Cancelled").reduce((sum, order) => sum + order.items.filter((item) => item.vendorId === vendor.id).reduce((amount, item) => amount + item.product.price * item.qty, 0), 0),
+      sales: ordersForVendor.filter((order) => order.status !== "Cancelled").reduce((sum, order) => sum + order.items.filter((item) => item.vendorId === vendor.id).reduce((amount, item) => amount + getOrderItemTotal(item), 0), 0),
       rating: reviewsForVendor.length ? reviewsForVendor.reduce((sum, review) => sum + review.rating, 0) / reviewsForVendor.length : 0,
     };
   }), [vendors, products, orders, reviews]);
@@ -107,7 +127,7 @@ function AdminVendorsPanel() {
   const pageSafe = Math.min(page, pages);
   const rows = filtered.slice((pageSafe - 1) * PAGE_SIZE, pageSafe * PAGE_SIZE);
 
-  const approved = vendors.filter((v) => v.status === "approved").length;
+  const approved = vendors.filter((v) => v.status === "approved" || v.status === "active").length;
   const pending = vendors.filter((v) => v.status === "pending").length;
   const totalSales = enrichedVendors.reduce((s, v) => s + v.sales, 0);
 
@@ -179,6 +199,7 @@ function AdminVendorsPanel() {
               <SelectContent>
                 <SelectItem value="all">All Status</SelectItem>
                 <SelectItem value="approved">Approved</SelectItem>
+                <SelectItem value="active">Active</SelectItem>
                 <SelectItem value="pending">Pending</SelectItem>
                 <SelectItem value="suspended">Suspended</SelectItem>
               </SelectContent>
@@ -221,7 +242,7 @@ function AdminVendorsPanel() {
               <Button
                 variant="outline"
                 size="sm"
-                disabled={v.status === "approved"}
+                disabled={v.status === "approved" || v.status === "active"}
                 onClick={() => { void setVendorStatus(v.id, "approved").then((ok) => { if (ok) toast.success(`${v.business} approved`); }); }}
               >
                 Approve
@@ -230,9 +251,9 @@ function AdminVendorsPanel() {
                 variant="outline"
                 size="sm"
                 disabled={v.status === "pending"}
-                onClick={() => { void setVendorStatus(v.id, "pending").then((ok) => { if (ok) toast.success(`${v.business} marked pending / rejected`); }); }}
+                onClick={() => { void setVendorStatus(v.id, "pending").then((ok) => { if (ok) toast.success(`${v.business} moved to pending review`); }); }}
               >
-                Reject
+                Mark Pending
               </Button>
               <AlertDialog>
                 <AlertDialogTrigger asChild>
