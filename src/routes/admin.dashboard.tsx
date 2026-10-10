@@ -52,6 +52,9 @@ const pieColors = ["var(--navy)", "var(--gold)", "var(--gold-light)", "var(--sla
 type TimeFilterOption = "Today" | "Yesterday" | "Week" | "Month" | "Year" | "Custom Range";
 
 function parseDate(dateStr: string): Date {
+  // Date-only values should be interpreted in local time, matching the date inputs.
+  const isoDate = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (isoDate) return new Date(Number(isoDate[1]), Number(isoDate[2]) - 1, Number(isoDate[3]));
   const d = new Date(dateStr);
   if (!isNaN(d.getTime())) return d;
   const m = dateStr.match(/^(\d{1,2})\s+([A-Za-z]{3})\s+(\d{4})/);
@@ -80,18 +83,33 @@ function parseDate(dateStr: string): Date {
   return new Date(Number.NaN);
 }
 
+function orderTimestamp(order: { createdAt?: string; date: string }): Date {
+  return parseDate(order.createdAt || order.date);
+}
+
+function paymentsReceived(order: { amount: number; paidAmount?: number; payment: string; status: string }): number {
+  if (order.status === "Cancelled") return 0;
+  if (order.paidAmount !== undefined) return Math.max(0, order.paidAmount);
+  return order.payment === "Paid" ? order.amount : 0;
+}
+
+function orderValue(order: { amount: number; status: string }): number {
+  return order.status === "Cancelled" ? 0 : order.amount;
+}
+
 function AdminDashboard() {
   const { orders, products, customers, vendors } = useApp();
   const [timeFilter, setTimeFilter] = useState<TimeFilterOption>("Month");
-  const todayISO = new Date().toISOString().slice(0, 10);
+  const today = new Date();
+  const todayISO = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
   const [customStart, setCustomStart] = useState(todayISO);
   const [customEnd, setCustomEnd] = useState(todayISO);
   const [payouts, setPayouts] = useState<{ id: string; date: string; amount: number; status: string }[]>([]);
   useEffect(() => {
     const load = async () => {
-      const { data, error } = await supabase.from("vendor_payout_requests").select("id,requested_at,amount,status");
+      const { data, error } = await supabase.from("vendor_payout_requests").select("id,requested_at,processed_at,amount,status");
       if (error) return;
-      setPayouts((data ?? []).map((p) => ({ id: p.id, date: p.requested_at, amount: Number(p.amount), status: p.status })));
+      setPayouts((data ?? []).map((p) => ({ id: p.id, date: p.status === "Paid" && p.processed_at ? p.processed_at : p.requested_at, amount: Number(p.amount), status: p.status })));
     };
     void load();
     const channel = supabase.channel("admin-dashboard-payouts").on("postgres_changes", { event: "*", schema: "public", table: "vendor_payout_requests" }, () => void load()).subscribe();
@@ -141,14 +159,12 @@ function AdminDashboard() {
     }
     // Custom Range
     const start = new Date(`${customStart}T00:00:00`);
-    const end = new Date(`${customEnd}T23:59:59`);
+    const end = new Date(`${customEnd}T23:59:59.999`);
+    const valid = !isNaN(start.getTime()) && !isNaN(end.getTime()) && start <= end;
     return {
-      start: isNaN(start.getTime())
-        ? new Date(now.getFullYear(), now.getMonth(), now.getDate())
-        : start,
-      end: isNaN(end.getTime())
-        ? new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999)
-        : end,
+      start: valid ? start : new Date(Number.NaN),
+      end: valid ? end : new Date(Number.NaN),
+      valid,
       label: `Custom Range: ${customStart} to ${customEnd}`,
     };
   }, [timeFilter, customStart, customEnd]);
@@ -156,7 +172,7 @@ function AdminDashboard() {
   // Precise filtering of orders and payouts
   const filteredOrders = useMemo(() => {
     return orders.filter((o) => {
-      const od = parseDate(o.date);
+      const od = orderTimestamp(o);
       return od >= dateRange.start && od <= dateRange.end;
     });
   }, [orders, dateRange]);
@@ -170,13 +186,8 @@ function AdminDashboard() {
 
   // Financial statistics with 100% precision
   const financialStats = useMemo(() => {
-    const periodInflow = filteredOrders
-      .filter((o) => o.status !== "Cancelled")
-      .reduce(
-        (s, o) =>
-          s + (o.paidAmount ?? (o.payment === "Paid" || o.payment === "COD" ? o.amount : 0)),
-        0,
-      );
+    const periodInflow = filteredOrders.reduce((sum, order) => sum + paymentsReceived(order), 0);
+    const periodOrderValue = filteredOrders.reduce((sum, order) => sum + orderValue(order), 0);
 
     const periodRefunds = filteredOrders
       .filter((o) => o.payment === "Refunded")
@@ -186,37 +197,10 @@ function AdminDashboard() {
       .filter((p) => p.status === "Paid")
       .reduce((s, p) => s + p.amount, 0);
 
-    // Today's actual paid revenue
-    const today = new Date();
-    const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-    const todayEnd = new Date(
-      today.getFullYear(),
-      today.getMonth(),
-      today.getDate(),
-      23,
-      59,
-      59,
-      999,
-    );
-    const todayRevenue = orders
-      .filter((o) => {
-        const od = parseDate(o.date);
-        return od >= todayStart && od <= todayEnd && o.status !== "Cancelled";
-      })
-      .reduce(
-        (s, o) =>
-          s + (o.paidAmount ?? (o.payment === "Paid" || o.payment === "COD" ? o.amount : 0)),
-        0,
-      );
-
-    // Cumulative platform bank balance
+    // This is derived from marketplace records, not a direct bank feed.
     const totalInflow = orders
       .filter((o) => o.status !== "Cancelled")
-      .reduce(
-        (s, o) =>
-          s + (o.paidAmount ?? (o.payment === "Paid" || o.payment === "COD" ? o.amount : 0)),
-        0,
-      );
+      .reduce((sum, order) => sum + paymentsReceived(order), 0);
     const totalRefunds = orders
       .filter((o) => o.payment === "Refunded")
       .reduce((s, o) => s + o.amount, 0);
@@ -227,9 +211,9 @@ function AdminDashboard() {
 
     return {
       periodInflow,
+      periodOrderValue,
       periodRefunds,
       periodPaidPayouts,
-      todayRevenue,
       bankBalance,
     };
   }, [filteredOrders, filteredPayouts, orders, payouts]);
@@ -244,12 +228,14 @@ function AdminDashboard() {
   const lowStockCount = lowStockProducts.length;
 
   const activeCustomerCount = useMemo(() => {
-    const set = new Set(filteredOrders.map((o) => o.customer));
+    const set = new Set(filteredOrders
+      .filter((order) => order.customerId || order.email || order.customer)
+      .map((order) => order.customerId || order.email || order.customer));
     return set.size;
   }, [filteredOrders]);
 
   const activeVendorCount = useMemo(() => {
-    const set = new Set(filteredOrders.flatMap((o) => o.items.map((i) => i.vendorId)));
+    const set = new Set(filteredOrders.flatMap((o) => o.items.map((i) => i.vendorId).filter(Boolean)));
     return set.size;
   }, [filteredOrders]);
 
@@ -257,7 +243,7 @@ function AdminDashboard() {
   const dynamicSalesSeries = useMemo(() => {
     const groups = new Map<string, { revenue: number; customers: Set<string>; sortKey: number }>();
     for (const order of filteredOrders) {
-      const date = parseDate(order.date);
+      const date = orderTimestamp(order);
       if (Number.isNaN(date.getTime())) continue;
       const key =
         timeFilter === "Month"
@@ -280,11 +266,10 @@ function AdminDashboard() {
         customers: new Set<string>(),
         sortKey: keyDate.getTime(),
       };
-      if (order.status !== "Cancelled")
-        group.revenue +=
-          order.paidAmount ??
-          (order.payment === "Paid" || order.payment === "COD" ? order.amount : 0);
-      group.customers.add(order.customerId);
+      group.revenue += paymentsReceived(order);
+      if (order.customerId || order.email || order.customer) {
+        group.customers.add(order.customerId || order.email || order.customer);
+      }
       groups.set(key, group);
     }
     return Array.from(groups.entries())
@@ -300,9 +285,10 @@ function AdminDashboard() {
   const dynamicCategorySales = useMemo(() => {
     const map: Record<string, number> = {};
     for (const o of filteredOrders) {
+      if (o.status === "Cancelled") continue;
       for (const item of o.items) {
         const cat = item.product.category || "General";
-        map[cat] = (map[cat] || 0) + item.product.price * item.qty;
+        map[cat] = (map[cat] || 0) + (item.unitPrice ?? item.product.price) * item.qty;
       }
     }
     const total = Object.values(map).reduce((s, v) => s + v, 0);
@@ -316,13 +302,13 @@ function AdminDashboard() {
   const dynamicVendorPerf = useMemo(() => {
     return vendors
       .map((v) => {
-        const vOrders = filteredOrders.filter((o) => o.items.some((i) => i.vendorId === v.id));
+        const vOrders = filteredOrders.filter((o) => o.status !== "Cancelled" && o.items.some((i) => i.vendorId === v.id));
         const vSales = vOrders.reduce(
           (s, o) =>
             s +
             o.items
               .filter((i) => i.vendorId === v.id)
-              .reduce((sum, item) => sum + item.product.price * item.qty, 0),
+              .reduce((sum, item) => sum + (item.unitPrice ?? item.product.price) * item.qty, 0),
           0,
         );
         return {
@@ -373,7 +359,9 @@ function AdminDashboard() {
               />
             </div>
             <span className="text-xs font-semibold text-gold">
-              {filteredOrders.length} orders matched ({inr(financialStats.periodInflow)})
+              {dateRange.valid === false
+                ? "Choose an end date on or after the start date."
+                : `${filteredOrders.length} orders · ${inr(financialStats.periodOrderValue)} order value · ${inr(financialStats.periodInflow)} received`}
             </span>
           </div>
         )}
@@ -381,52 +369,43 @@ function AdminDashboard() {
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
-          label="Bank Balance"
+          label="Lifetime Net Receipts"
           value={inr(financialStats.bankBalance)}
-          delta={`In: ${inr(financialStats.periodInflow)} · Out: ${inr(financialStats.periodRefunds + financialStats.periodPaidPayouts)}`}
+          delta="Recorded payments less refunds and paid payouts · not a bank feed"
           icon={Landmark}
           highlight
         />
         <StatCard
-          label={
-            timeFilter === "Today"
-              ? "Today's Revenue"
-              : timeFilter === "Week"
-                ? "Weekly Revenue"
-                : timeFilter === "Month"
-                  ? "Monthly Revenue"
-                  : timeFilter === "Year"
-                    ? "Annual Revenue"
-                    : "Range Revenue"
-          }
+          label="Payments Received"
           value={inr(financialStats.periodInflow)}
           icon={IndianRupee}
         />
-        <StatCard label="Today's Payments" value={inr(financialStats.todayRevenue)} icon={Wallet} />
-        <StatCard label="Total Orders" value={String(filteredOrders.length)} icon={ShoppingCart} />
-        <StatCard label="Pending Orders" value={String(pendingOrders)} icon={ShoppingCart} />
+        <StatCard label="Order Value" value={inr(financialStats.periodOrderValue)} delta="Non-cancelled orders in selected range" icon={Wallet} />
+        <StatCard label="Orders in Range" value={String(filteredOrders.length)} icon={ShoppingCart} />
+        <StatCard label="Pending Orders in Range" value={String(pendingOrders)} icon={ShoppingCart} />
         <StatCard
-          label="Total Customers"
+          label="Customers in Range"
           value={String(activeCustomerCount)}
-          delta="Customers with orders in range"
+          delta="Unique customers with orders in range"
           icon={Users}
         />
         <StatCard
-          label="Total Vendors"
+          label="Vendors in Range"
           value={String(activeVendorCount)}
-          delta="Vendors with orders in range"
+          delta="Unique vendors with orders in range"
           icon={Building2}
         />
         <StatCard
           label="Low Stock Products"
           value={String(lowStockCount)}
+          delta="Current inventory · independent of date range"
           icon={Package}
           highlight={lowStockCount > 0}
         />
       </div>
 
       <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">
-        <Panel title={`Revenue Analytics (${dateRange.label})`}>
+        <Panel title={`Payments Received (${dateRange.label})`}>
           <div className="h-72">
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={dynamicSalesSeries}>
@@ -457,7 +436,7 @@ function AdminDashboard() {
             </ResponsiveContainer>
           </div>
         </Panel>
-        <Panel title={`Category Sales (${dateRange.label})`}>
+        <Panel title={`Category Order Value (${dateRange.label})`}>
           <div className="h-72">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
@@ -481,7 +460,7 @@ function AdminDashboard() {
       </div>
 
       <div className="mt-6 grid gap-6 xl:grid-cols-2">
-        <Panel title={`Customer Growth (${dateRange.label})`}>
+        <Panel title={`Customers with Orders (${dateRange.label})`}>
           <div className="h-60">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={dynamicSalesSeries}>
@@ -494,7 +473,7 @@ function AdminDashboard() {
             </ResponsiveContainer>
           </div>
         </Panel>
-        <Panel title={`Vendor Performance (${dateRange.label})`}>
+        <Panel title={`Vendor Performance · Order Value (${dateRange.label})`}>
           <DataTable
             columns={["Vendor", "Period Orders", "Period Sales", "Commission", "Status"]}
             rows={dynamicVendorPerf.map((v) => [
@@ -512,7 +491,8 @@ function AdminDashboard() {
         <Panel title={`Latest Orders (${dateRange.label})`}>
           <DataTable
             columns={["Order", "Date", "Customer", "Vendor", "Amount", "Payment", "Status"]}
-            rows={filteredOrders
+            rows={[...filteredOrders]
+              .sort((a, b) => orderTimestamp(b).getTime() - orderTimestamp(a).getTime())
               .slice(0, 10)
               .map((o) => [
                 <span className="font-semibold text-navy">{o.id}</span>,

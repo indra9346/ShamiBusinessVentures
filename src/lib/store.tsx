@@ -291,7 +291,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
               const latestPayment = latestPaymentByOrder.get(row.id);
               const payment: Order["payment"] = paymentStatus === "paid" ? "Paid" : paymentStatus.includes("partial") ? "Partially Paid" : paymentStatus === "refunded" ? "Refunded" : paymentStatus === "failed" ? "Failed" : "Pending";
               return {
-                id: row.order_no, date: Number.isNaN(orderDate.getTime()) ? row.created_at : orderDate.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }),
+                id: row.order_no, date: Number.isNaN(orderDate.getTime()) ? row.created_at : orderDate.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }), createdAt: row.created_at,
                 customer: row.customer_name, customerId: row.user_id || "", email: row.customer_email, phone: row.customer_phone || "",
                 ...(row.customer_gstin ? { gstin: row.customer_gstin } : {}), items: orderItems, subtotal: Number(row.subtotal), discount: Number(row.discount),
                 tax: Number(row.gst_amount), shipping: Number(row.shipping), amount: Number(row.total), payment,
