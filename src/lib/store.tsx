@@ -141,7 +141,7 @@ type AppState = {
     paymentDueDate?: string;
   }) => Promise<Order>;
   updateOrderStatus: (id: string, status: OrderStatus) => Promise<boolean>;
-  updateOrderItem: (orderId: string, index: number, patch: { qty?: number; capacity?: string; unitPrice?: number }) => boolean;
+  updateOrderItem: (orderId: string, index: number, patch: { qty?: number; capacity?: string; unitPrice?: number }) => Promise<boolean>;
   updateOrderDelivery: (orderId: string, delivery: string) => void;
   confirmPayment: (id: string, amount: number, utr: string, advancePercent?: number) => Promise<boolean>;
   refundOrder: (id: string) => Promise<boolean>;
@@ -334,7 +334,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
                   sold: 0, weight: "", status: "approved" as const, active: true, tags: [], description: "", specs: [],
                   created: "", updated: "",
                 };
-                return { product, qty: Number(item.qty), vendor: item.vendor || "", vendorId: item.vendor_id || "", capacity: product.weight, unitPrice: Number(item.unit_price), dbItemId: item.id };
+                return { product, qty: Number(item.qty), vendor: item.vendor || "", vendorId: item.vendor_id || "", capacity: item.capacity || product.weight, unitPrice: Number(item.unit_price), dbItemId: item.id };
               });
               const paymentStatus = row.payment_status.toLowerCase();
               const latestPayment = latestPaymentByOrder.get(row.id);
@@ -1268,7 +1268,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (!existing) return false;
         setOrders((list) => list.map((order) => order.id === id ? { ...order, status } : order));
         if (!STATIC_DATA_MODE) {
-          const { error } = await supabase.from("orders").update({ order_status: status }).eq("order_no", id);
+          const result = status === "Cancelled"
+            ? await supabase.rpc("cancel_marketplace_order", { _order_no: id })
+            : await supabase.from("orders").update({ order_status: status }).eq("order_no", id);
+          const { error } = result;
           if (error) {
             toast.error("Could not update order status", { description: error.message });
             setOrders((list) => list.map((order) => order.id === id ? existing : order));
@@ -1289,16 +1292,46 @@ export function AppProvider({ children }: { children: ReactNode }) {
           }
         });
       },
-      updateOrderItem: (orderId, index, patch) => {
-        if (!STATIC_DATA_MODE) {
-          toast.error("Order item editing is unavailable until the protected order-edit workflow is configured");
-          return false;
-        }
+      updateOrderItem: async (orderId, index, patch) => {
         const order = orders.find((candidate) => candidate.id === orderId);
         const item = order?.items[index];
         if (!order || !item || order.status === "Cancelled") return false;
         const nextQty = patch.qty ?? item.qty;
         if (!Number.isInteger(nextQty) || nextQty < 1) return false;
+        const nextCapacity = (patch.capacity ?? item.capacity ?? item.product.weight).trim();
+        const nextUnitPrice = patch.unitPrice ?? item.unitPrice ?? item.product.price;
+        if (!nextCapacity || !Number.isFinite(nextUnitPrice) || nextUnitPrice < 0) return false;
+        if (!STATIC_DATA_MODE) {
+          if (user?.role !== "admin" || !item.dbItemId) {
+            toast.error("This order line cannot be edited from the current account");
+            return false;
+          }
+          const { data, error } = await supabase.rpc("admin_update_order_item", {
+            _order_no: orderId,
+            _order_item_id: item.dbItemId,
+            _qty: nextQty,
+            _capacity: nextCapacity,
+            _unit_price: nextUnitPrice,
+          });
+          if (error || !data || typeof data !== "object" || Array.isArray(data)) {
+            toast.error("Could not update this order item", { description: error?.message ?? "The server returned an invalid order update." });
+            return false;
+          }
+          const result = data as { qty?: number; capacity?: string; unit_price?: number; line_total?: number; subtotal?: number; gst_amount?: number; total?: number };
+          setOrders((list) => list.map((candidate) => candidate.id !== orderId ? candidate : {
+            ...candidate,
+            items: candidate.items.map((line, lineIndex) => lineIndex === index ? {
+              ...line,
+              qty: Number(result.qty ?? nextQty),
+              capacity: result.capacity ?? nextCapacity,
+              unitPrice: Number(result.unit_price ?? nextUnitPrice),
+            } : line),
+            subtotal: Number(result.subtotal ?? candidate.subtotal),
+            tax: Number(result.gst_amount ?? candidate.tax),
+            amount: Number(result.total ?? candidate.amount),
+          }));
+          return true;
+        }
         const delta = nextQty - item.qty;
         const product = products.find((candidate) => candidate.id === item.product.id);
         if (delta > 0 && product && product.stock < delta) return false;
@@ -1328,7 +1361,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             return next;
           });
         }
-        const items = order.items.map((line, lineIndex) => lineIndex === index ? { ...line, ...patch, qty: nextQty } : line);
+        const items = order.items.map((line, lineIndex) => lineIndex === index ? { ...line, qty: nextQty, capacity: nextCapacity, unitPrice: nextUnitPrice } : line);
         const subtotal = items.reduce((sum, line) => sum + (line.unitPrice ?? line.product.price) * line.qty, 0);
         const tax = Math.round(Math.max(0, subtotal - order.discount) * 0.05);
         const amount = subtotal - order.discount + tax + order.shipping;
