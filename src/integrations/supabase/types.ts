@@ -588,9 +588,9 @@ export type Database = {
         ]
       }
       coupons: {
-        Row: { code: string; discount_type: string; discount_value: number; minimum_order: number; maximum_discount: number; starts_on: string; ends_on: string; usage_limit: number; used_count: number; active: boolean; created_by: string | null; created_at: string }
-        Insert: { code: string; discount_type: string; discount_value: number; minimum_order?: number; maximum_discount: number; starts_on: string; ends_on: string; usage_limit: number; used_count?: number; active?: boolean; created_by?: string | null; created_at?: string }
-        Update: { code?: string; discount_type?: string; discount_value?: number; minimum_order?: number; maximum_discount?: number; starts_on?: string; ends_on?: string; usage_limit?: number; used_count?: number; active?: boolean; created_by?: string | null; created_at?: string }
+        Row: { code: string; discount_type: string; discount_value: number; minimum_order: number; maximum_discount: number; starts_on: string; ends_on: string; usage_limit: number; used_count: number; active: boolean; created_by: string | null; created_at: string; zoho_coupon_id: string | null; zoho_redemption_count: number; zoho_usage_limit_per_user: number | null; zoho_notice_fingerprint: string | null }
+        Insert: { code: string; discount_type: string; discount_value: number; minimum_order?: number; maximum_discount: number; starts_on: string; ends_on: string; usage_limit: number; used_count?: number; active?: boolean; created_by?: string | null; created_at?: string; zoho_coupon_id?: string | null; zoho_redemption_count?: number; zoho_usage_limit_per_user?: number | null; zoho_notice_fingerprint?: string | null }
+        Update: { code?: string; discount_type?: string; discount_value?: number; minimum_order?: number; maximum_discount?: number; starts_on?: string; ends_on?: string; usage_limit?: number; used_count?: number; active?: boolean; created_by?: string | null; created_at?: string; zoho_coupon_id?: string | null; zoho_redemption_count?: number; zoho_usage_limit_per_user?: number | null; zoho_notice_fingerprint?: string | null }
         Relationships: []
       }
       product_reviews: {
@@ -798,6 +798,22 @@ export type Database = {
           _shipping_method: string
           _payment_method: string
           _items: Json
+        }
+        Returns: Json
+      }
+      place_marketplace_order_with_coupon: {
+        Args: {
+          _order_no: string
+          _target_user_id: string
+          _customer_name: string
+          _customer_email: string
+          _customer_phone: string | null
+          _customer_gstin: string | null
+          _shipping_address: Json
+          _shipping_method: string
+          _payment_method: string
+          _items: Json
+          _coupon?: string | null
         }
         Returns: Json
       }

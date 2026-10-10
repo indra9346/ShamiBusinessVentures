@@ -7,6 +7,7 @@ import {
   CreditCard,
   FileBarChart,
   LayoutDashboard,
+  Link2,
   Package,
   PackagePlus,
   Percent,
@@ -45,5 +46,6 @@ export const adminNav = [
   { label: "Coupons", to: "/admin/coupons", icon: BadgePercent },
   { label: "Reports", to: "/admin/reports", icon: FileBarChart },
   { label: "Notifications", to: "/admin/notifications", icon: Bell },
+  { label: "Zoho Commerce", to: "/admin/zoho", icon: Link2 },
   { label: "Settings", to: "/admin/settings", icon: Settings },
 ];

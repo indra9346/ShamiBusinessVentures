@@ -47,6 +47,7 @@ import { Route as AdminReturnsRouteImport } from './routes/admin.returns'
 import { Route as AdminReviewsRouteImport } from './routes/admin.reviews'
 import { Route as AdminSettingsRouteImport } from './routes/admin.settings'
 import { Route as AdminVendorsRouteImport } from './routes/admin.vendors'
+import { Route as AdminZohoRouteImport } from './routes/admin.zoho'
 import { Route as CategoriesIndexRouteImport } from './routes/categories.index'
 import { Route as CategoriesSlugRouteImport } from './routes/categories.$slug'
 import { Route as ProductIdRouteImport } from './routes/product.$id'
@@ -67,6 +68,7 @@ import { Route as AdminCustomersIdRouteImport } from './routes/admin.customers.$
 import { Route as AdminOrdersIdRouteImport } from './routes/admin.orders.$id'
 import { Route as AdminProductsIdRouteImport } from './routes/admin.products.$id'
 import { Route as AdminVendorsIdRouteImport } from './routes/admin.vendors.$id'
+import { Route as ApiZohoCallbackRouteImport } from './routes/api.zoho.callback'
 import { Route as CategoriesSlugChildRouteImport } from './routes/categories.$slug.$child'
 import { Route as VendorOrdersIdRouteImport } from './routes/vendor.orders.$id'
 import { Route as VendorProductsAddRouteImport } from './routes/vendor.products.add'
@@ -261,6 +263,11 @@ const AdminVendorsRoute = AdminVendorsRouteImport.update({
   path: '/admin/vendors',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdminZohoRoute = AdminZohoRouteImport.update({
+  id: '/admin/zoho',
+  path: '/admin/zoho',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const CategoriesIndexRoute = CategoriesIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -361,6 +368,11 @@ const AdminVendorsIdRoute = AdminVendorsIdRouteImport.update({
   path: '/$id',
   getParentRoute: () => AdminVendorsRoute,
 } as any)
+const ApiZohoCallbackRoute = ApiZohoCallbackRouteImport.update({
+  id: '/api/zoho/callback',
+  path: '/api/zoho/callback',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const CategoriesSlugChildRoute = CategoriesSlugChildRouteImport.update({
   id: '/$child',
   path: '/$child',
@@ -415,6 +427,7 @@ export interface FileRoutesByFullPath {
   '/admin/reviews': typeof AdminReviewsRoute
   '/admin/settings': typeof AdminSettingsRoute
   '/admin/vendors': typeof AdminVendorsRouteWithChildren
+  '/admin/zoho': typeof AdminZohoRoute
   '/categories/$slug': typeof CategoriesSlugRouteWithChildren
   '/product/$id': typeof ProductIdRoute
   '/vendor/dashboard': typeof VendorDashboardRoute
@@ -436,6 +449,7 @@ export interface FileRoutesByFullPath {
   '/admin/orders/$id': typeof AdminOrdersIdRoute
   '/admin/products/$id': typeof AdminProductsIdRoute
   '/admin/vendors/$id': typeof AdminVendorsIdRoute
+  '/api/zoho/callback': typeof ApiZohoCallbackRoute
   '/categories/$slug/$child': typeof CategoriesSlugChildRoute
   '/vendor/orders/$id': typeof VendorOrdersIdRoute
   '/vendor/products/add': typeof VendorProductsAddRoute
@@ -477,6 +491,7 @@ export interface FileRoutesByTo {
   '/admin/reviews': typeof AdminReviewsRoute
   '/admin/settings': typeof AdminSettingsRoute
   '/admin/vendors': typeof AdminVendorsRouteWithChildren
+  '/admin/zoho': typeof AdminZohoRoute
   '/categories/$slug': typeof CategoriesSlugRouteWithChildren
   '/product/$id': typeof ProductIdRoute
   '/vendor/dashboard': typeof VendorDashboardRoute
@@ -498,6 +513,7 @@ export interface FileRoutesByTo {
   '/admin/orders/$id': typeof AdminOrdersIdRoute
   '/admin/products/$id': typeof AdminProductsIdRoute
   '/admin/vendors/$id': typeof AdminVendorsIdRoute
+  '/api/zoho/callback': typeof ApiZohoCallbackRoute
   '/categories/$slug/$child': typeof CategoriesSlugChildRoute
   '/vendor/orders/$id': typeof VendorOrdersIdRoute
   '/vendor/products/add': typeof VendorProductsAddRoute
@@ -541,6 +557,7 @@ export interface FileRoutesById {
   '/admin/reviews': typeof AdminReviewsRoute
   '/admin/settings': typeof AdminSettingsRoute
   '/admin/vendors': typeof AdminVendorsRouteWithChildren
+  '/admin/zoho': typeof AdminZohoRoute
   '/categories/$slug': typeof CategoriesSlugRouteWithChildren
   '/product/$id': typeof ProductIdRoute
   '/vendor/dashboard': typeof VendorDashboardRoute
@@ -562,6 +579,7 @@ export interface FileRoutesById {
   '/admin/orders/$id': typeof AdminOrdersIdRoute
   '/admin/products/$id': typeof AdminProductsIdRoute
   '/admin/vendors/$id': typeof AdminVendorsIdRoute
+  '/api/zoho/callback': typeof ApiZohoCallbackRoute
   '/categories/$slug/$child': typeof CategoriesSlugChildRoute
   '/vendor/orders/$id': typeof VendorOrdersIdRoute
   '/vendor/products/add': typeof VendorProductsAddRoute
@@ -606,6 +624,7 @@ export interface FileRouteTypes {
     | '/admin/reviews'
     | '/admin/settings'
     | '/admin/vendors'
+    | '/admin/zoho'
     | '/categories/$slug'
     | '/product/$id'
     | '/vendor/dashboard'
@@ -627,6 +646,7 @@ export interface FileRouteTypes {
     | '/admin/orders/$id'
     | '/admin/products/$id'
     | '/admin/vendors/$id'
+    | '/api/zoho/callback'
     | '/categories/$slug/$child'
     | '/vendor/orders/$id'
     | '/vendor/products/add'
@@ -668,6 +688,7 @@ export interface FileRouteTypes {
     | '/admin/reviews'
     | '/admin/settings'
     | '/admin/vendors'
+    | '/admin/zoho'
     | '/categories/$slug'
     | '/product/$id'
     | '/vendor/dashboard'
@@ -689,6 +710,7 @@ export interface FileRouteTypes {
     | '/admin/orders/$id'
     | '/admin/products/$id'
     | '/admin/vendors/$id'
+    | '/api/zoho/callback'
     | '/categories/$slug/$child'
     | '/vendor/orders/$id'
     | '/vendor/products/add'
@@ -731,6 +753,7 @@ export interface FileRouteTypes {
     | '/admin/reviews'
     | '/admin/settings'
     | '/admin/vendors'
+    | '/admin/zoho'
     | '/categories/$slug'
     | '/product/$id'
     | '/vendor/dashboard'
@@ -752,6 +775,7 @@ export interface FileRouteTypes {
     | '/admin/orders/$id'
     | '/admin/products/$id'
     | '/admin/vendors/$id'
+    | '/api/zoho/callback'
     | '/categories/$slug/$child'
     | '/vendor/orders/$id'
     | '/vendor/products/add'
@@ -787,6 +811,7 @@ export interface RootRouteChildren {
   AdminReviewsRoute: typeof AdminReviewsRoute
   AdminSettingsRoute: typeof AdminSettingsRoute
   AdminVendorsRoute: typeof AdminVendorsRouteWithChildren
+  AdminZohoRoute: typeof AdminZohoRoute
   ProductIdRoute: typeof ProductIdRoute
   VendorDashboardRoute: typeof VendorDashboardRoute
   VendorEarningsRoute: typeof VendorEarningsRoute
@@ -801,6 +826,7 @@ export interface RootRouteChildren {
   VendorSettingsRoute: typeof VendorSettingsRoute
   AdminIndexRoute: typeof AdminIndexRoute
   VendorIndexRoute: typeof VendorIndexRoute
+  ApiZohoCallbackRoute: typeof ApiZohoCallbackRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -1071,6 +1097,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminVendorsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/admin/zoho': {
+      id: '/admin/zoho'
+      path: '/admin/zoho'
+      fullPath: '/admin/zoho'
+      preLoaderRoute: typeof AdminZohoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/categories/': {
       id: '/categories/'
       path: '/'
@@ -1210,6 +1243,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/admin/vendors/$id'
       preLoaderRoute: typeof AdminVendorsIdRouteImport
       parentRoute: typeof AdminVendorsRoute
+    }
+    '/api/zoho/callback': {
+      id: '/api/zoho/callback'
+      path: '/api/zoho/callback'
+      fullPath: '/api/zoho/callback'
+      preLoaderRoute: typeof ApiZohoCallbackRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/categories/$slug/$child': {
       id: '/categories/$slug/$child'
@@ -1400,6 +1440,7 @@ const rootRouteChildren: RootRouteChildren = {
   AdminReviewsRoute: AdminReviewsRoute,
   AdminSettingsRoute: AdminSettingsRoute,
   AdminVendorsRoute: AdminVendorsRouteWithChildren,
+  AdminZohoRoute: AdminZohoRoute,
   ProductIdRoute: ProductIdRoute,
   VendorDashboardRoute: VendorDashboardRoute,
   VendorEarningsRoute: VendorEarningsRoute,
@@ -1414,6 +1455,7 @@ const rootRouteChildren: RootRouteChildren = {
   VendorSettingsRoute: VendorSettingsRoute,
   AdminIndexRoute: AdminIndexRoute,
   VendorIndexRoute: VendorIndexRoute,
+  ApiZohoCallbackRoute: ApiZohoCallbackRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
