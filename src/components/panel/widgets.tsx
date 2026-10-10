@@ -6,12 +6,14 @@ export function StatCard({
   label,
   value,
   delta,
+  description,
   icon: Icon,
   highlight,
 }: {
   label: string;
   value: string;
   delta?: string;
+  description?: string;
   icon: React.ComponentType<{ className?: string }>;
   highlight?: boolean;
 }) {
@@ -41,6 +43,7 @@ export function StatCard({
           {delta} vs last month
         </p>
       )}
+      {description && <p className="mt-1 text-xs text-slate">{description}</p>}
     </div>
   );
 }

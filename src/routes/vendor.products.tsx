@@ -176,7 +176,7 @@ function VendorProductsPanel() {
               <StatusBadge status={p.status} />,
               <Switch
                 checked={p.active}
-                onCheckedChange={async (v) => { if (await updateProduct(p.id, { active: v })) toast.success(`${p.name} ${v ? "enabled" : "disabled"}`); }}
+                onCheckedChange={async (v) => { if (await updateProduct(p.id, { active: v })) toast.success(v ? `${p.name} saved and submitted for admin review` : `${p.name} disabled and submitted for admin review`); }}
               />,
               p.created,
               <div className="flex flex-wrap items-center gap-1.5">
@@ -295,7 +295,7 @@ function VendorProductsPanel() {
                 }
                 // Do not allow vendor to overwrite price or mrp
                 const { price: _p, mrp: _m, purchasePrice: _cost, ...safeVendorPatch } = editForm;
-                if (await updateProduct(editing.id, safeVendorPatch)) { toast.success(`${editForm.name} updated`); setEditing(null); }
+                if (await updateProduct(editing.id, safeVendorPatch)) { toast.success(`${editForm.name} saved and submitted for admin review`); setEditing(null); }
               }}
             >
               Save Changes
@@ -325,7 +325,7 @@ function VendorProductsPanel() {
                   return;
                 }
                 if (!await updateProduct(stockDialog.id, { stock: val })) return;
-                toast.success(`Stock for ${stockDialog.name} updated to ${val}`);
+                toast.success(`Stock for ${stockDialog.name} updated; product submitted for admin review`);
                 setStockDialog(null);
               }}
             >

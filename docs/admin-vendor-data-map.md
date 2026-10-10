@@ -35,7 +35,7 @@ the signed-in Supabase role.
 | Route | Supabase data and actions |
 | --- | --- |
 | `/vendor/dashboard` | Vendor-scoped `catalog_products`, `orders`/`order_items`, published reviews, and payout data; live refresh uses Supabase Realtime |
-| `/vendor/products` and `/vendor/products/add` | Vendor-owned `catalog_products`, enabled `store_categories`, and product image uploads to `catalog-images` |
+| `/vendor/products` and `/vendor/products/add` | Vendor-owned `catalog_products`, enabled `store_categories`, and product image uploads to `catalog-images`; vendor edits and stock changes require completed KYC and return the listing to admin review |
 | `/vendor/orders` and `/vendor/orders/$id` | Vendor-owned order lines from `order_items` and that vendor's `order_vendor_fulfillments` row; vendor updates advance only their shipment one stage at a time and require full payment before dispatch |
 | `/vendor/inventory` | Vendor-owned products in `catalog_products`; stock changes are persisted through the product update path |
 | `/vendor/earnings` | Paid/delivered `orders`/`order_items`, vendor commission from `profiles`, and reserved rows in `vendor_payout_requests` |

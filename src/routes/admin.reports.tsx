@@ -105,7 +105,7 @@ function AdminReports() {
           ? end.getTime()
           : now.getTime();
     return orders.filter((order) => {
-      const date = new Date(order.date).getTime();
+      const date = new Date(order.createdAt ?? order.date).getTime();
       return Number.isFinite(date) && date >= lower && date <= upper;
     });
   }, [orders, range, customStart, customEnd]);
@@ -116,10 +116,10 @@ function AdminReports() {
       { month: string; revenue: number; orders: number; customers: Set<string> }
     >();
     for (const order of filteredOrders) {
-      const date = new Date(order.date);
-      const key = date.toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
+      const date = new Date(order.createdAt ?? order.date);
+      const key = `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
       const point = byDay.get(key) ?? {
-        month: key,
+        month: date.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "2-digit" }),
         revenue: 0,
         orders: 0,
         customers: new Set<string>(),
@@ -317,17 +317,17 @@ function AdminReports() {
           label="Revenue Collected"
           value={inr(stats.revenue)}
           icon={IndianRupee}
-          delta="Recorded payments; cancelled and refunded orders excluded"
+          description="Recorded payments; cancelled and refunded orders excluded"
           highlight
         />
-        <StatCard label="GST Collected" value={inr(stats.gst)} icon={FileBarChart} delta="Estimated from recorded payments" />
+        <StatCard label="GST Collected" value={inr(stats.gst)} icon={FileBarChart} description="Estimated from recorded payments" />
         <StatCard
           label="Average Order Value"
           value={inr(stats.aov)}
           icon={ShoppingCart}
-          delta="Order value per non-cancelled order"
+          description="Order value per non-cancelled order"
         />
-        <StatCard label="Units Shipped" value={String(stats.units)} icon={Package} delta="Dispatched or later vendor shipments" />
+        <StatCard label="Units Shipped" value={String(stats.units)} icon={Package} description="Dispatched or later vendor shipments" />
       </div>
 
       <div className="mb-6 grid gap-6 xl:grid-cols-[1.6fr_1fr]">

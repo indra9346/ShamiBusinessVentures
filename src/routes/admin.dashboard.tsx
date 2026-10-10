@@ -446,7 +446,7 @@ function AdminDashboard() {
         <StatCard
           label="Lifetime Net Receipts"
           value={inr(financialStats.bankBalance)}
-          delta="Recorded payments less refunds and paid payouts · not a bank feed"
+          description="Recorded payments less refunds and paid payouts · not a bank feed"
           icon={Landmark}
           highlight
         />
@@ -455,25 +455,25 @@ function AdminDashboard() {
           value={inr(financialStats.periodInflow)}
           icon={IndianRupee}
         />
-        <StatCard label="Order Value" value={inr(financialStats.periodOrderValue)} delta="Non-cancelled orders in selected range" icon={Wallet} />
+        <StatCard label="Order Value" value={inr(financialStats.periodOrderValue)} description="Non-cancelled orders in selected range" icon={Wallet} />
         <StatCard label="Orders in Range" value={String(filteredOrders.length)} icon={ShoppingCart} />
         <StatCard label="Pending Orders in Range" value={String(pendingOrders)} icon={ShoppingCart} />
         <StatCard
           label="Customers in Range"
           value={String(activeCustomerCount)}
-          delta="Unique customers with orders in range"
+          description="Unique customers with orders in range"
           icon={Users}
         />
         <StatCard
           label="Vendors in Range"
           value={String(activeVendorCount)}
-          delta="Unique vendors with orders in range"
+          description="Unique vendors with orders in range"
           icon={Building2}
         />
         <StatCard
           label="Low Stock Products"
           value={String(lowStockCount)}
-          delta="Current inventory · independent of date range"
+          description="Current inventory · independent of date range"
           icon={Package}
           highlight={lowStockCount > 0}
         />
