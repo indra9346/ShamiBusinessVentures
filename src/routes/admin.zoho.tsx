@@ -1,9 +1,27 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
-import { AlertCircle, CheckCircle2, CloudDownload, Link2, RefreshCw } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import {
+  AlertCircle,
+  BadgeCheck,
+  Boxes,
+  CalendarDays,
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  CloudDownload,
+  Coins,
+  ExternalLink,
+  FileText,
+  PackageCheck,
+  RefreshCw,
+  Search,
+  Settings2,
+  Shapes,
+  Store,
+} from "lucide-react";
 import { toast } from "sonner";
 import { PanelLayout } from "@/components/panel/PanelLayout";
-import { Panel } from "@/components/panel/widgets";
+import { Panel, StatusBadge } from "@/components/panel/widgets";
 import { adminNav } from "@/lib/panel-nav";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -43,13 +61,189 @@ type MirrorState = {
   last_error: string | null;
 };
 type MirrorRecord = { external_id: string; payload: Record<string, unknown>; captured_at: string };
+
+const PAGE_SIZE = 200;
 const RESOURCE_LABELS: Record<string, string> = {
   categories: "Categories",
-  sales_orders: "Sales orders (includes available package, shipment, payment, and return fields)",
-  tax_rules: "Tax rules and preferences",
+  sales_orders: "Sales orders",
+  tax_rules: "Tax rules & preferences",
   store_index: "Zoho stores",
-  store_meta: "Published storefront settings",
+  store_meta: "Published store settings",
 };
+const RESOURCE_ICONS: Record<string, typeof FileText> = {
+  sales_orders: FileText,
+  categories: Shapes,
+  tax_rules: Coins,
+  store_index: Store,
+  store_meta: Settings2,
+};
+
+function first(payload: Record<string, unknown>, ...keys: string[]) {
+  for (const key of keys) {
+    const value = payload[key];
+    if (value !== undefined && value !== null && value !== "") return value;
+  }
+  return undefined;
+}
+
+function displayValue(value: unknown): string {
+  if (value === undefined || value === null || value === "") return "—";
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  if (Array.isArray(value)) return value.length ? `${value.length} items` : "None";
+  if (typeof value === "object") return "Available";
+  return String(value);
+}
+
+function prettyDate(value: unknown) {
+  if (typeof value !== "string" || !value) return "—";
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime())
+    ? value
+    : parsed.toLocaleDateString(undefined, {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+      });
+}
+
+function money(value: unknown, currency: unknown) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return "—";
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency: typeof currency === "string" && currency.length === 3 ? currency : "INR",
+      maximumFractionDigits: 2,
+    }).format(amount);
+  } catch {
+    return `${displayValue(currency)} ${amount.toLocaleString()}`;
+  }
+}
+
+function recordTitle(resource: string, record: MirrorRecord) {
+  const payload = record.payload;
+  if (resource === "sales_orders") {
+    return displayValue(
+      first(payload, "salesorder_number", "order_number", "number", "reference_number") ??
+        record.external_id,
+    );
+  }
+  if (resource === "categories")
+    return displayValue(first(payload, "name", "category_name") ?? record.external_id);
+  if (resource === "tax_rules")
+    return displayValue(
+      first(payload, "tax_name", "name", "_zoho_resource_type") ?? record.external_id,
+    );
+  if (resource === "store_index")
+    return displayValue(first(payload, "site_title", "store_name", "name") ?? record.external_id);
+  return displayValue(first(payload, "label", "name", "payment_mode") ?? record.external_id);
+}
+
+function Field({ label, value }: { label: string; value: unknown }) {
+  return (
+    <div className="min-w-0 rounded-md border border-border/70 bg-white/80 px-3 py-2.5">
+      <dt className="text-[11px] font-medium uppercase tracking-wide text-slate">{label}</dt>
+      <dd className="mt-1 break-words text-sm font-medium text-navy">{displayValue(value)}</dd>
+    </div>
+  );
+}
+
+function OrderFields({
+  payload,
+  externalId,
+}: {
+  payload: Record<string, unknown>;
+  externalId: string;
+}) {
+  const currency = first(payload, "currency_code", "currency");
+  return (
+    <dl className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+      <Field
+        label="Order number"
+        value={first(payload, "salesorder_number", "order_number", "number") ?? externalId}
+      />
+      <Field
+        label="Customer / business"
+        value={first(payload, "customer_name", "company_name", "contact_name")}
+      />
+      <Field label="Order date" value={prettyDate(first(payload, "date", "created_time"))} />
+      <Field label="Order status" value={first(payload, "order_status", "status")} />
+      <Field label="Payment status" value={first(payload, "paid_status", "payment_status")} />
+      <Field label="Order total" value={money(first(payload, "total", "bcy_total"), currency)} />
+      <Field label="Amount due" value={money(first(payload, "balance"), currency)} />
+      <Field label="Items quantity" value={first(payload, "quantity")} />
+      <Field label="Currency" value={currency} />
+    </dl>
+  );
+}
+
+function ResourceFields({
+  resource,
+  payload,
+}: {
+  resource: string;
+  payload: Record<string, unknown>;
+}) {
+  let fields: [string, unknown][];
+  if (resource === "categories") {
+    fields = [
+      ["Category name", first(payload, "name", "category_name")],
+      ["Category ID", first(payload, "category_id")],
+      ["Parent category", first(payload, "parent_category_id")],
+      ["Visible in store", first(payload, "visibility", "is_visible")],
+      ["Shown in menu", first(payload, "show_in_menu")],
+    ];
+  } else if (resource === "tax_rules") {
+    fields = [
+      ["Tax name", first(payload, "tax_name", "name")],
+      [
+        "Rate",
+        first(payload, "tax_percentage") === undefined
+          ? undefined
+          : `${displayValue(first(payload, "tax_percentage"))}%`,
+      ],
+      ["Country", first(payload, "country_name", "country_code")],
+      ["State", first(payload, "state_name", "state")],
+      ["Tax exempt", first(payload, "is_tax_exempt")],
+      ["Setting", first(payload, "_zoho_resource_type")],
+    ];
+  } else if (resource === "store_index") {
+    fields = [
+      ["Store name", first(payload, "site_title", "store_name")],
+      ["Store ID", first(payload, "zsite_id", "site_id", "zsiteid")],
+      ["Primary domain", first(payload, "primary_domain")],
+      ["Store status", first(payload, "store_enabled")],
+      ["Currency", first(payload, "store_currency_code")],
+    ];
+  } else {
+    const methods = Array.isArray(payload["payment_methods"])
+      ? payload["payment_methods"]
+          .map((method) => {
+            if (!method || typeof method !== "object") return "";
+            const item = method as Record<string, unknown>;
+            const label = first(item, "label", "name");
+            const mode = first(item, "payment_mode", "mode");
+            return [label, mode].filter(Boolean).map(displayValue).join(" · ");
+          })
+          .filter(Boolean)
+          .join(", ")
+      : undefined;
+    fields = [
+      ["Available payment methods", methods || first(payload, "label", "payment_mode")],
+      ["Payment mode", first(payload, "payment_mode")],
+      ["Online payments", first(payload, "is_online_payment_configured")],
+      ["Offline payments", first(payload, "is_offline_payment_configured")],
+      ["Store currency", first(payload, "store_currency_code")],
+    ];
+  }
+  return (
+    <dl className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+      {fields.map(([label, value]) => (
+        <Field key={label} label={label} value={value} />
+      ))}
+    </dl>
+  );
+}
 
 function ZohoCommerceAdmin() {
   const [connection, setConnection] = useState<Connection>(null);
@@ -60,14 +254,10 @@ function ZohoCommerceAdmin() {
   const [mirrorStates, setMirrorStates] = useState<MirrorState[]>([]);
   const [mirrorRecords, setMirrorRecords] = useState<Record<string, MirrorRecord[]>>({});
   const [mirrorBusy, setMirrorBusy] = useState(false);
-  const salesOrders = mirrorRecords["sales_orders"] ?? [];
-  const totalByCurrency = salesOrders.reduce<Record<string, number>>((totals, record) => {
-    const payload = record.payload;
-    const currency = String(payload["currency_code"] ?? "Unknown currency");
-    const total = Number(payload["total"]);
-    if (Number.isFinite(total)) totals[currency] = (totals[currency] ?? 0) + total;
-    return totals;
-  }, {});
+  const [salesOrdersPage, setSalesOrdersPage] = useState(1);
+  const [selectedResource, setSelectedResource] = useState("sales_orders");
+  const [search, setSearch] = useState("");
+
   const reload = async () => {
     try {
       const status = await getZohoConnectionStatus();
@@ -82,9 +272,9 @@ function ZohoCommerceAdmin() {
       setLoaded(true);
     }
   };
-  const reloadMirror = async () => {
+  const reloadMirror = async (page = salesOrdersPage) => {
     try {
-      const result = await getZohoCommerceReadMirror();
+      const result = await getZohoCommerceReadMirror({ data: { salesOrdersPage: page } });
       setMirrorStates(result.resources as MirrorState[]);
       setMirrorRecords(result.snapshots as Record<string, MirrorRecord[]>);
     } catch (error) {
@@ -93,7 +283,7 @@ function ZohoCommerceAdmin() {
   };
   useEffect(() => {
     void reload();
-    void reloadMirror();
+    void reloadMirror(1);
     const params = new URLSearchParams(window.location.search);
     if (params.has("connected")) toast.success("Zoho Commerce connected");
     if (params.has("error"))
@@ -101,6 +291,7 @@ function ZohoCommerceAdmin() {
         description: "Review Zoho app settings and server configuration, then try again.",
       });
   }, []);
+
   const connect = async () => {
     setBusy(true);
     try {
@@ -135,7 +326,8 @@ function ZohoCommerceAdmin() {
     setMirrorBusy(true);
     try {
       const result = await syncZohoCommerceReadMirror();
-      await reloadMirror();
+      setSalesOrdersPage(1);
+      await reloadMirror(1);
       if (result.failures) {
         const failed = Object.entries(result.outcomes)
           .filter(([, outcome]) => outcome.error)
@@ -155,224 +347,439 @@ function ZohoCommerceAdmin() {
       setMirrorBusy(false);
     }
   };
+
+  const statesByResource = useMemo(
+    () => Object.fromEntries(mirrorStates.map((item) => [item.resource, item])),
+    [mirrorStates],
+  );
+  const selectedState = statesByResource[selectedResource] as MirrorState | undefined;
+  const selectedRecords = mirrorRecords[selectedResource] ?? [];
+  const normalizedSearch = search.trim().toLocaleLowerCase();
+  const visibleRecords = normalizedSearch
+    ? selectedRecords.filter((record) =>
+        `${record.external_id} ${recordTitle(selectedResource, record)} ${JSON.stringify(record.payload)}`
+          .toLocaleLowerCase()
+          .includes(normalizedSearch),
+      )
+    : selectedRecords;
+  const orderState = statesByResource["sales_orders"] as MirrorState | undefined;
+  const totalPages = Math.max(1, Math.ceil((orderState?.record_count ?? 0) / PAGE_SIZE));
+  const pageStart = orderState?.record_count ? (salesOrdersPage - 1) * PAGE_SIZE + 1 : 0;
+  const pageEnd = Math.min(salesOrdersPage * PAGE_SIZE, orderState?.record_count ?? 0);
+
   return (
     <PanelLayout
       items={adminNav}
       tone="admin"
       title="Zoho Commerce"
-      subtitle="Read supported Zoho Commerce catalog and account data securely"
+      subtitle="Connected store data, presented for ShamiBusiness administrators"
     >
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
-        <Panel title="Connection">
-          <div className="mb-5 flex items-center gap-3 rounded-lg border p-4">
-            {connection?.status === "connected" ? (
-              <CheckCircle2 className="h-5 w-5 text-emerald-600" />
-            ) : connection?.status === "error" ? (
-              <AlertCircle className="h-5 w-5 text-red-600" />
-            ) : (
-              <Link2 className="h-5 w-5 text-slate-500" />
-            )}
-            <div>
-              <p className="font-semibold text-navy">
-                {!loaded
-                  ? "Checking connection…"
-                  : connection?.status === "connected"
-                    ? "Connected"
-                    : connection?.status === "error"
-                      ? "Sync needs attention"
-                      : "Not connected"}
-              </p>
-              <p className="text-sm text-slate">
-                {connection
-                  ? `Organization ${connection.organization_id} · Zoho ${connection.region.toUpperCase()}`
-                  : "Authorize using Zoho OAuth. Your Zoho password is never entered here."}
-              </p>
+      <div className="space-y-5">
+        <Panel className="overflow-hidden">
+          <div className="-m-4 bg-gradient-to-r from-navy to-[#17375f] p-5 text-white sm:-m-5 sm:p-6">
+            <div className="flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between">
+              <div>
+                <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-white/70">
+                  <Store className="h-4 w-4" /> Zoho Commerce connection
+                </div>
+                <div className="flex flex-wrap items-center gap-3">
+                  <h2 className="text-xl font-semibold">
+                    {connection?.status === "connected"
+                      ? "Your store is connected"
+                      : loaded
+                        ? "Connect your Zoho store"
+                        : "Checking your connection…"}
+                  </h2>
+                  {connection?.status === "connected" && (
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-400/15 px-3 py-1 text-xs font-semibold text-emerald-100">
+                      <BadgeCheck className="h-4 w-4" /> Connected
+                    </span>
+                  )}
+                </div>
+                <p className="mt-1 text-sm text-white/70">
+                  {connection
+                    ? `Organization ${connection.organization_id} · Zoho ${connection.region.toUpperCase()}`
+                    : "Authorize securely using Zoho OAuth. Your Zoho password is never entered here."}
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  disabled={busy}
+                  onClick={() => void connect()}
+                  className="bg-white text-navy hover:bg-white/90"
+                >
+                  {connection ? "Reauthorize Zoho" : "Connect Zoho"}
+                </Button>
+                <Button
+                  disabled={busy || !connection}
+                  variant="outline"
+                  onClick={() => void sync()}
+                  className="border-white/25 bg-white/10 text-white hover:bg-white/20 hover:text-white"
+                >
+                  <CloudDownload className="mr-2 h-4 w-4" /> Sync catalog
+                </Button>
+                <Button
+                  disabled={busy || mirrorBusy || !connection}
+                  variant="outline"
+                  onClick={() => void syncReadMirror()}
+                  className="border-white/25 bg-white/10 text-white hover:bg-white/20 hover:text-white"
+                >
+                  <RefreshCw className={`mr-2 h-4 w-4 ${mirrorBusy ? "animate-spin" : ""}`} /> Sync
+                  account data
+                </Button>
+                <Button
+                  disabled={busy}
+                  variant="ghost"
+                  onClick={() => void reload()}
+                  className="text-white hover:bg-white/10 hover:text-white"
+                >
+                  <RefreshCw className="mr-2 h-4 w-4" /> Refresh
+                </Button>
+              </div>
             </div>
-          </div>
-          <div className="grid gap-4">
-            <div className="grid gap-1.5">
-              <Label htmlFor="zoho-org">Zoho Commerce organization ID</Label>
-              <Input
-                id="zoho-org"
-                value={organizationId}
-                onChange={(e) => setOrganizationId(e.target.value)}
-                placeholder="Organization ID from Zoho Commerce"
-              />
-            </div>
-            <div className="grid gap-1.5">
-              <Label>Zoho data center</Label>
-              <Select value={region} onValueChange={(value) => setRegion(value ?? "in")}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="in">India (.in)</SelectItem>
-                  <SelectItem value="com">United States (.com)</SelectItem>
-                  <SelectItem value="eu">Europe (.eu)</SelectItem>
-                  <SelectItem value="com_au">Australia (.com.au)</SelectItem>
-                  <SelectItem value="jp">Japan (.jp)</SelectItem>
-                  <SelectItem value="ca">Canada (.ca)</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                disabled={busy}
-                onClick={() => void connect()}
-                className="bg-navy text-white hover:bg-navy/90"
-              >
-                {connection ? "Reauthorize Zoho" : "Connect Zoho"}
-              </Button>
-              <Button disabled={busy || !connection} variant="outline" onClick={() => void sync()}>
-                <CloudDownload className="mr-2 h-4 w-4" />
-                Sync products and coupons now
-              </Button>
-              <Button
-                disabled={busy || mirrorBusy || !connection}
-                variant="outline"
-                onClick={() => void syncReadMirror()}
-              >
-                <CloudDownload className="mr-2 h-4 w-4" />
-                Sync Zoho account data
-              </Button>
-              <Button disabled={busy} variant="ghost" onClick={() => void reload()}>
-                <RefreshCw className="mr-2 h-4 w-4" />
-                Refresh status
-              </Button>
-            </div>
-            {connection?.last_synced_at && (
-              <p className="text-xs text-slate">
-                Last successful sync: {new Date(connection.last_synced_at).toLocaleString()}
-              </p>
-            )}
             {connection?.last_error && (
-              <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-800">
+              <p role="alert" className="mt-4 rounded-md bg-red-100 p-3 text-sm text-red-900">
                 {connection.last_error}
               </p>
             )}
           </div>
         </Panel>
-        <Panel title="What syncs to the customer catalog">
-          <div className="space-y-3 text-sm text-slate">
-            <p>
-              Zoho product name, SKU, brand, category, storefront visibility, price, list price,
-              stock, reorder level, package weight, descriptions, product tags, returnability,
-              featured flag, and SEO metadata are copied to Supabase. Existing storefront approval
-              and customer access rules still apply. Zoho catalog updates are reflected in the
-              marketplace after a successful sync.
-            </p>
-            <p>
-              Product variants are retained in the imported Zoho source record; marketplace price
-              and stock display use the first Zoho variant. Tax is set to 0 until the administrator
-              configures the marketplace GST rate in the product editor.
-            </p>
-            <p>
-              General Zoho coupons also sync, appear in customer in-app notifications, and are
-              validated again by the server during checkout. Coupon sync runs with this manual sync;
-              it is not instant. Product-, customer-, or shipping-restricted coupons are disabled
-              because this checkout cannot yet reproduce those eligibility rules. Zoho does not
-              expose its coupon “Show in Store” flag through the coupon API, so only create active
-              general coupons intended for marketplace customers.
-            </p>
-            <p>
-              The separate admin-only data mirror can read categories, sales orders, tax rules and
-              preferences, the authorized account’s store index, and published storefront metadata.
-              Sales orders include the customer/order fields Zoho returns, plus shipment-package and
-              return/payment status fields where present. This data stays in an admin-only Zoho
-              snapshot area; it is not imported into marketplace orders or exposed to shoppers.
-            </p>
-            <p>
-              This is not full Zoho dashboard parity. The published API does not establish safe
-              account-wide read access for quotes, every customer, all carts, editable pages/files/
-              menus/themes, product filter or recommendation rules, blogs, or native report widgets.
-              A shopper cart API is tied to an individual cart ID. The app can calculate summaries
-              from synced sales orders, but those are marketplace summaries, not Zoho’s native
-              reports. Zoho Payments onboarding does not enable payment collection here.
-            </p>
-            <p>
-              Products removed from Zoho are hidden from the storefront after a complete successful
-              catalog read. A failed or incomplete sync leaves the existing marketplace catalog in
-              place.
-            </p>
-          </div>
-        </Panel>
-      </div>
-      <Panel title="Available Zoho data (admin only)">
-        <p className="mb-4 text-sm text-slate">
-          Reauthorize Zoho after deploying this update so it can grant the additional verified
-          read-only scopes. Then select <strong>Sync Zoho account data</strong>. Failed resource
-          reads keep the previous complete snapshot available.
-        </p>
-        {!mirrorStates.length ? (
-          <p className="text-sm text-slate">No additional Zoho data has been synced yet.</p>
-        ) : (
-          <div className="space-y-3">
-            {mirrorStates.map((state) => {
-              const records = mirrorRecords[state.resource] ?? [];
+
+        <section
+          aria-label="Zoho data overview"
+          className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5"
+        >
+          {[
+            { key: "sales_orders", label: "Sales orders", icon: FileText },
+            { key: "categories", label: "Categories", icon: Shapes },
+            { key: "tax_rules", label: "Tax records", icon: Coins },
+            { key: "store_index", label: "Zoho stores", icon: Store },
+            { key: "store_meta", label: "Store settings", icon: Settings2 },
+          ].map(({ key, label, icon: Icon }) => {
+            const state = statesByResource[key] as MirrorState | undefined;
+            return (
+              <button
+                key={key}
+                type="button"
+                onClick={() => {
+                  setSelectedResource(key);
+                  setSearch("");
+                }}
+                className={`rounded-lg border bg-card p-4 text-left shadow-card transition hover:border-gold/60 hover:shadow-md ${selectedResource === key ? "border-gold ring-1 ring-gold/30" : "border-border"}`}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate">
+                    {label}
+                  </span>
+                  <span className="grid h-9 w-9 place-items-center rounded-lg bg-navy/5 text-navy">
+                    <Icon className="h-4 w-4" />
+                  </span>
+                </div>
+                <p className="mt-3 text-2xl font-bold text-navy">
+                  {(state?.record_count ?? 0).toLocaleString()}
+                </p>
+                <p className="mt-1 text-xs text-slate">
+                  {state
+                    ? `Updated ${new Date(state.last_synced_at).toLocaleString()}`
+                    : "Not synced yet"}
+                </p>
+              </button>
+            );
+          })}
+        </section>
+
+        <Panel title="Synced Zoho data">
+          <div className="mb-4 flex flex-wrap items-center gap-2 border-b border-border pb-4">
+            {Object.entries(RESOURCE_LABELS).map(([key, label]) => {
+              const Icon = RESOURCE_ICONS[key] ?? FileText;
+              const active = selectedResource === key;
               return (
-                <details key={state.resource} className="rounded-lg border p-4">
-                  <summary className="cursor-pointer font-semibold text-navy">
-                    {RESOURCE_LABELS[state.resource] ?? state.resource} · {state.record_count}{" "}
-                    records · {new Date(state.last_synced_at).toLocaleString()}
-                  </summary>
-                  {state.record_count > records.length && (
-                    <p className="mt-2 text-xs text-slate">
-                      Showing {records.length} records here; all {state.record_count} synced records
-                      remain in the private mirror.
-                    </p>
-                  )}
-                  {state.last_error && (
-                    <p className="mt-3 text-sm text-red-700">Last sync error: {state.last_error}</p>
-                  )}
-                  <div className="mt-3 space-y-3">
-                    {records.map((record) => (
-                      <details key={record.external_id} className="rounded-md bg-slate-50 p-3">
-                        <summary className="cursor-pointer text-sm font-medium">
-                          {record.external_id}
-                          {state.resource === "sales_orders" && record.payload["customer_name"]
-                            ? ` · ${String(record.payload["customer_name"])}`
-                            : ""}
-                        </summary>
-                        <pre className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap break-words text-xs">
-                          {JSON.stringify(record.payload, null, 2)}
-                        </pre>
-                      </details>
-                    ))}
-                  </div>
-                </details>
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => {
+                    setSelectedResource(key);
+                    setSearch("");
+                  }}
+                  className={`inline-flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition ${active ? "bg-navy text-white" : "text-slate hover:bg-navy/5 hover:text-navy"}`}
+                >
+                  <Icon className="h-4 w-4" />
+                  {label}
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-xs ${active ? "bg-white/15 text-white" : "bg-slate-100 text-slate"}`}
+                  >
+                    {(statesByResource[key] as MirrorState | undefined)?.record_count ?? 0}
+                  </span>
+                </button>
               );
             })}
           </div>
-        )}
-        {salesOrders.length > 0 && (
-          <div className="mt-5 rounded-lg border bg-slate-50 p-4">
-            <h3 className="font-semibold text-navy">Summary from displayed Sales Orders</h3>
-            <p className="mt-1 text-sm text-slate">
-              This quick total covers the sales-order records currently displayed above. It is not
-              an export of Zoho’s native Reports or a complete account-wide report.
-            </p>
-            <p className="mt-2 text-sm">
-              {salesOrders.length} orders ·{" "}
-              {Object.entries(totalByCurrency)
-                .map(([currency, total]) => `${currency} ${total.toLocaleString()}`)
-                .join(" · ")}
-            </p>
+
+          {selectedState ? (
+            <>
+              <div className="mb-4 flex flex-col gap-3 rounded-lg bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h3 className="font-semibold text-navy">
+                    {RESOURCE_LABELS[selectedResource]} from Zoho
+                  </h3>
+                  <p className="mt-1 text-sm text-slate">
+                    {selectedState.record_count.toLocaleString()} records · Last updated{" "}
+                    {new Date(selectedState.last_synced_at).toLocaleString()}
+                  </p>
+                </div>
+                {selectedState.last_error && (
+                  <p className="inline-flex items-center gap-2 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                    <AlertCircle className="h-4 w-4 shrink-0" />
+                    Most recent sync reported an issue; the last complete data is shown.
+                  </p>
+                )}
+                <div className="relative w-full sm:max-w-xs">
+                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate" />
+                  <Input
+                    value={search}
+                    onChange={(event) => setSearch(event.target.value)}
+                    placeholder={`Search ${(RESOURCE_LABELS[selectedResource] ?? "records").toLocaleLowerCase()}`}
+                    className="pl-9"
+                    aria-label={`Search ${RESOURCE_LABELS[selectedResource] ?? "records"}`}
+                  />
+                </div>
+              </div>
+              {selectedResource === "sales_orders" && (
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-sm text-slate">
+                  <span>
+                    Showing {pageStart.toLocaleString()}–{pageEnd.toLocaleString()} of{" "}
+                    {orderState?.record_count.toLocaleString()} sales orders
+                    {normalizedSearch ? " · search applies to this page" : ""}
+                  </span>
+                  <span>These are Zoho records. They do not create ShamiBusiness orders.</span>
+                </div>
+              )}
+              {visibleRecords.length ? (
+                selectedResource === "sales_orders" ? (
+                  <div className="overflow-hidden rounded-lg border border-border">
+                    <div className="hidden grid-cols-[1.05fr_1.3fr_.8fr_.8fr_.8fr_.9fr] gap-3 bg-slate-50 px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-slate lg:grid">
+                      <span>Order</span>
+                      <span>Customer / business</span>
+                      <span>Date</span>
+                      <span>Payment</span>
+                      <span>Status</span>
+                      <span className="text-right">Total</span>
+                    </div>
+                    <div className="divide-y divide-border">
+                      {visibleRecords.map((record) => {
+                        const p = record.payload;
+                        const orderNumber = recordTitle(selectedResource, record);
+                        const customer = first(p, "customer_name", "company_name", "contact_name");
+                        const orderStatus = first(p, "order_status", "status");
+                        const paymentStatus = first(p, "paid_status", "payment_status");
+                        const date = first(p, "date", "created_time");
+                        return (
+                          <details
+                            key={record.external_id}
+                            className="group bg-white open:bg-slate-50/60"
+                          >
+                            <summary className="grid cursor-pointer list-none grid-cols-1 items-center gap-2 px-4 py-3.5 transition hover:bg-slate-50 lg:grid-cols-[1.05fr_1.3fr_.8fr_.8fr_.8fr_.9fr] lg:gap-3">
+                              <span className="flex items-center gap-2 font-semibold text-navy">
+                                <ChevronRight className="h-4 w-4 shrink-0 text-slate transition-transform group-open:rotate-90" />
+                                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-md bg-navy/5 text-navy">
+                                  <FileText className="h-4 w-4" />
+                                </span>
+                                {orderNumber}
+                              </span>
+                              <span className="text-sm text-slate">{displayValue(customer)}</span>
+                              <span className="text-sm text-slate lg:text-charcoal">
+                                {prettyDate(date)}
+                              </span>
+                              <span className="text-sm text-slate lg:text-charcoal">
+                                {displayValue(paymentStatus)}
+                              </span>
+                              <span>
+                                {orderStatus ? (
+                                  <StatusBadge status={displayValue(orderStatus)} />
+                                ) : (
+                                  "—"
+                                )}
+                              </span>
+                              <span className="text-left text-sm font-semibold text-navy lg:text-right">
+                                {money(
+                                  first(p, "total", "bcy_total"),
+                                  first(p, "currency_code", "currency"),
+                                )}
+                              </span>
+                            </summary>
+                            <div className="space-y-3 border-t border-border px-4 py-4">
+                              <OrderFields payload={p} externalId={record.external_id} />
+                              <details className="rounded-md border border-border bg-white">
+                                <summary className="cursor-pointer px-3 py-2.5 text-sm font-medium text-slate">
+                                  View complete Zoho response
+                                </summary>
+                                <pre className="max-h-80 overflow-auto border-t border-border bg-slate-50 p-3 text-xs leading-relaxed text-charcoal">
+                                  {JSON.stringify(p, null, 2)}
+                                </pre>
+                              </details>
+                            </div>
+                          </details>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid gap-3 md:grid-cols-2">
+                    {visibleRecords.map((record) => (
+                      <article
+                        key={record.external_id}
+                        className="rounded-lg border border-border bg-white p-4"
+                      >
+                        <div className="mb-3 flex items-start justify-between gap-3">
+                          <div>
+                            <h4 className="font-semibold text-navy">
+                              {recordTitle(selectedResource, record)}
+                            </h4>
+                            <p className="mt-1 text-xs text-slate">
+                              Zoho reference: {record.external_id}
+                            </p>
+                          </div>
+                          <span className="grid h-9 w-9 place-items-center rounded-lg bg-navy/5 text-navy">
+                            {(() => {
+                              const Icon = RESOURCE_ICONS[selectedResource] ?? FileText;
+                              return <Icon className="h-4 w-4" />;
+                            })()}
+                          </span>
+                        </div>
+                        <ResourceFields resource={selectedResource} payload={record.payload} />
+                        <details className="mt-3 rounded-md border border-border bg-white">
+                          <summary className="cursor-pointer px-3 py-2.5 text-sm font-medium text-slate">
+                            View complete Zoho response
+                          </summary>
+                          <pre className="max-h-72 overflow-auto border-t border-border bg-slate-50 p-3 text-xs leading-relaxed text-charcoal">
+                            {JSON.stringify(record.payload, null, 2)}
+                          </pre>
+                        </details>
+                      </article>
+                    ))}
+                  </div>
+                )
+              ) : (
+                <div className="rounded-lg border border-dashed border-border px-4 py-12 text-center">
+                  <Boxes className="mx-auto h-8 w-8 text-slate/50" />
+                  <p className="mt-3 font-medium text-navy">
+                    {normalizedSearch ? "No matching records on this page" : "No records available"}
+                  </p>
+                  <p className="mt-1 text-sm text-slate">
+                    {normalizedSearch
+                      ? "Clear the search or try a different term."
+                      : "Sync account data from Zoho to populate this section."}
+                  </p>
+                </div>
+              )}
+
+              {selectedResource === "sales_orders" && orderState && totalPages > 1 && (
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
+                  <p className="text-sm text-slate">
+                    Page {salesOrdersPage} of {totalPages}{" "}
+                    <span className="text-slate/70">· 200 orders per page</span>
+                  </p>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={salesOrdersPage <= 1}
+                      onClick={() => {
+                        const page = salesOrdersPage - 1;
+                        setSalesOrdersPage(page);
+                        void reloadMirror(page);
+                      }}
+                    >
+                      <ChevronLeft className="mr-1 h-4 w-4" />
+                      Previous
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={salesOrdersPage >= totalPages}
+                      onClick={() => {
+                        const page = salesOrdersPage + 1;
+                        setSalesOrdersPage(page);
+                        void reloadMirror(page);
+                      }}
+                    >
+                      Next
+                      <ChevronRight className="ml-1 h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="rounded-lg border border-dashed border-border px-4 py-12 text-center">
+              <CloudDownload className="mx-auto h-8 w-8 text-slate/50" />
+              <p className="mt-3 font-medium text-navy">No account data synced yet</p>
+              <p className="mt-1 text-sm text-slate">
+                Connect Zoho, then choose “Sync account data” to read the supported information.
+              </p>
+            </div>
+          )}
+        </Panel>
+
+        <Panel title="About this connection">
+          <div className="grid gap-4 md:grid-cols-3">
+            <div className="flex gap-3">
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-emerald-50 text-emerald-700">
+                <CheckCircle2 className="h-4 w-4" />
+              </span>
+              <div>
+                <h3 className="text-sm font-semibold text-navy">Read-only account snapshots</h3>
+                <p className="mt-1 text-sm leading-relaxed text-slate">
+                  Sales orders and settings are shown for administrators. They stay separate from
+                  marketplace orders and customer accounts.
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-3">
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-blue-50 text-blue-700">
+                <PackageCheck className="h-4 w-4" />
+              </span>
+              <div>
+                <h3 className="text-sm font-semibold text-navy">Catalog sync is separate</h3>
+                <p className="mt-1 text-sm leading-relaxed text-slate">
+                  Products and general coupons use their own sync button. Storefront approval and
+                  customer access rules still apply.
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-3">
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-amber-50 text-amber-700">
+                <CalendarDays className="h-4 w-4" />
+              </span>
+              <div>
+                <h3 className="text-sm font-semibold text-navy">Updated when you sync</h3>
+                <p className="mt-1 text-sm leading-relaxed text-slate">
+                  This page shows the latest complete data read. It does not mirror Zoho
+                  continuously or reproduce Zoho’s native reports.
+                </p>
+              </div>
+            </div>
           </div>
-        )}
-        <div className="mt-5 border-t pt-4">
-          <h3 className="font-semibold text-navy">
-            Zoho areas without verified account-wide read access in this integration
-          </h3>
-          <p className="mt-2 text-sm text-slate">
-            Quotes; a global cart list; a full customer directory; standalone shipment/return
-            listing; collection administration; Files; editable page bodies, menus, themes, and
-            site-builder content; filter/recommendation rules; blogs; native reports; payment
-            gateway credentials or payment actions. Zoho exposes some related information inside
-            sales-order or public storefront responses, but that does not provide the full admin
-            module shown in its dashboard.
-          </p>
-        </div>
-      </Panel>
+          <details className="mt-5 rounded-lg border border-border">
+            <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-navy">
+              What is not available in this integration?
+            </summary>
+            <p className="border-t border-border px-4 py-3 text-sm leading-relaxed text-slate">
+              Zoho’s documented scopes used here do not provide account-wide access to quotes, all
+              customers, all carts, editable pages or themes, files, menus, blogs, native reports,
+              or payment gateway actions. These areas are not represented as synced data.{" "}
+              <a
+                href="https://www.zoho.com/commerce/api/"
+                target="_blank"
+                rel="noreferrer"
+                className="ml-1 inline-flex items-center gap-1 font-medium text-blue-700 hover:underline"
+              >
+                Zoho Commerce API documentation <ExternalLink className="h-3 w-3" />
+              </a>
+            </p>
+          </details>
+        </Panel>
+      </div>
     </PanelLayout>
   );
 }
