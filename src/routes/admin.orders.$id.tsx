@@ -191,7 +191,9 @@ function AdminOrderDetail() {
                     ? "This will mark the order as cancelled, stop fulfilment, and restore its available inventory."
                     : hasUnrefundedPayment
                       ? "Paid orders cannot be cancelled until a verified refund is completed. Refund processing is not configured yet."
-                      : "Orders cannot be cancelled after dispatch."}
+                      : order.vendorStatuses?.some((fulfillment) => ["Dispatched", "Out for Delivery", "Delivered"].includes(fulfillment.status))
+                        ? "Orders cannot be cancelled after any vendor has dispatched."
+                        : "A vendor has already started fulfilment."}
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
@@ -211,7 +213,9 @@ function AdminOrderDetail() {
             <span className="max-w-56 text-xs text-slate">
               {hasUnrefundedPayment
                 ? "Complete a verified refund before cancelling this paid order."
-                : "Orders cannot be cancelled after dispatch."}
+                : order.vendorStatuses?.some((fulfillment) => ["Dispatched", "Out for Delivery", "Delivered"].includes(fulfillment.status))
+                  ? "Orders cannot be cancelled after dispatch."
+                  : "At least one vendor has started fulfilment."}
             </span>
           )}
 
@@ -262,6 +266,22 @@ function AdminOrderDetail() {
           </div>
         )}
       </Panel>
+
+      {order.vendorStatuses && order.vendorStatuses.length > 0 && (
+        <Panel title="Vendor Fulfillment Status" className="mt-5">
+          <div className="divide-y divide-border">
+            {order.vendorStatuses.map((fulfillment) => (
+              <div key={fulfillment.vendorId} className="flex flex-wrap items-center justify-between gap-2 py-2 first:pt-0 last:pb-0">
+                <div>
+                  <p className="text-sm font-semibold text-navy">{fulfillment.vendor}</p>
+                  <p className="font-mono text-xs text-slate">{fulfillment.vendorId}</p>
+                </div>
+                <StatusBadge status={fulfillment.status} />
+              </div>
+            ))}
+          </div>
+        </Panel>
+      )}
 
       {!canEditItems && !isCancelled && (
         <p className="mb-3 rounded-md border border-border bg-muted/20 px-3 py-2 text-xs text-slate">

@@ -401,6 +401,38 @@ export type Database = {
           },
         ]
       }
+      order_vendor_fulfillments: {
+        Row: {
+          created_at: string
+          order_id: string
+          status: string
+          updated_at: string
+          vendor_id: string
+        }
+        Insert: {
+          created_at?: string
+          order_id: string
+          status?: string
+          updated_at?: string
+          vendor_id: string
+        }
+        Update: {
+          created_at?: string
+          order_id?: string
+          status?: string
+          updated_at?: string
+          vendor_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "order_vendor_fulfillments_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: false
+            referencedRelation: "orders"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       order_tracking: {
         Row: {
           actor_role: string | null
@@ -876,6 +908,8 @@ export type Database = {
       }
       request_vendor_payout: { Args: { _amount: number; _method?: string }; Returns: string }
       admin_update_order_item: { Args: { _order_no: string; _order_item_id: string; _qty: number; _capacity: string; _unit_price: number }; Returns: Json }
+      vendor_update_order_fulfillment: { Args: { _order_no: string; _status: string }; Returns: boolean }
+      admin_update_order_status: { Args: { _order_no: string; _status: string }; Returns: boolean }
       cancel_marketplace_order: { Args: { _order_no: string }; Returns: boolean }
       admin_broadcast_notification: { Args: { _audience: string; _title: string; _message: string }; Returns: number }
       admin_confirm_manual_payment: { Args: { _order_no: string; _amount: number; _utr: string }; Returns: boolean }

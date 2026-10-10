@@ -6,7 +6,7 @@ import { IndianRupee, Percent, TrendingUp, Wallet } from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { DataTable, Panel, StatCard } from "@/components/panel/widgets";
 import { adminNav } from "@/lib/panel-nav";
-import { inr } from "@/lib/data";
+import { getVendorPaidSales, inr } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,7 +27,7 @@ export const Route = createFileRoute("/admin/commissions")({
 });
 
 function AdminCommissions() {
-  const { vendors, setVendorCommission } = useApp();
+  const { vendors, orders, setVendorCommission } = useApp();
   const [editing, setEditing] = useState<string | null>(null);
   const [rateInput, setRateInput] = useState("");
 
@@ -35,10 +35,11 @@ function AdminCommissions() {
     () =>
       vendors.map((v) => {
         const pct = v.commission;
-        const earned = Math.round(v.sales * (pct / 100));
-        return { ...v, pct, earned, net: v.sales - earned };
+        const sales = getVendorPaidSales(orders, v.id);
+        const earned = Math.round(sales * (pct / 100));
+        return { ...v, sales, pct, earned, net: sales - earned };
       }),
-    [vendors],
+    [vendors, orders],
   );
 
   const totals = useMemo(

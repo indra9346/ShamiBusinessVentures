@@ -222,7 +222,9 @@ function AccountOrders() {
                       <AlertDialogDescription>
                         {canCancelOrder(o, "customer")
                           ? "This will mark the order as cancelled and restore its available inventory."
-                          : "Paid orders cannot be cancelled until a verified refund is completed. Contact support if you need help."}
+                          : o.vendorStatuses?.some((fulfillment) => !["Placed", "Payment Confirmed", "Cancelled"].includes(fulfillment.status))
+                            ? "A vendor has started fulfilment. Contact support if you need help cancelling this order."
+                            : "Paid orders cannot be cancelled until a verified refund is completed. Contact support if you need help."}
                       </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>

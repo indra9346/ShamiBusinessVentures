@@ -21,7 +21,7 @@ import { PanelLayout } from "@/components/panel/PanelLayout";
 import { DataTable, Panel, StatCard } from "@/components/panel/widgets";
 import { adminNav } from "@/lib/panel-nav";
 import { useApp } from "@/lib/store";
-import { getOrderItemTotal, inr } from "@/lib/data";
+import { getOrderItemTotal, getOrderPaymentsReceived, getVendorPaidSales, inr } from "@/lib/data";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -114,8 +114,7 @@ function AdminReports() {
         orders: 0,
         customers: new Set<string>(),
       };
-      if (order.payment !== "Refunded" && order.status !== "Cancelled")
-        point.revenue += order.amount;
+      point.revenue += getOrderPaymentsReceived(order);
       point.orders += 1;
       point.customers.add(order.customerId);
       byDay.set(key, point);
@@ -146,8 +145,8 @@ function AdminReports() {
 
   const stats = useMemo(() => {
     const live = filteredOrders.filter((o) => o.status !== "Cancelled");
-    const revenue = live.reduce((s, o) => s + o.amount, 0);
-    const gst = live.reduce((s, o) => s + o.tax, 0);
+    const revenue = live.reduce((s, o) => s + getOrderPaymentsReceived(o), 0);
+    const gst = live.reduce((s, o) => s + (o.amount > 0 ? o.tax * getOrderPaymentsReceived(o) / o.amount : 0), 0);
     const aov = live.length ? Math.round(revenue / live.length) : 0;
     const units = live.reduce((s, o) => s + o.items.reduce((t, i) => t + i.qty, 0), 0);
     return { revenue, gst, aov, units, count: live.length };
@@ -177,14 +176,7 @@ function AdminReports() {
       vendors
         .map((v) => {
           const vOrders = filteredOrders.filter((o) => o.items.some((i) => i.vendorId === v.id));
-          const revenue = vOrders.reduce(
-            (s, o) =>
-              s +
-              o.items
-                .filter((i) => i.vendorId === v.id)
-                .reduce((t, i) => t + getOrderItemTotal(i), 0),
-            0,
-          );
+          const revenue = getVendorPaidSales(vOrders, v.id);
           return {
             v,
             orders: vOrders.length,
@@ -199,7 +191,7 @@ function AdminReports() {
   const handleExportMainReport = () => {
     downloadCSV(
       `${reportType}_Report_${range.replace(/\s+/g, "_")}`,
-      ["Month", "Net Revenue (INR)", "Orders Count", "Customers Count"],
+      ["Month", "Revenue Collected (INR)", "Orders Count", "Customers Count"],
       reportSeries.map((s) => [s.month, s.revenue, s.orders, s.customers]),
     );
   };
@@ -307,7 +299,7 @@ function AdminReports() {
 
       <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
-          label="Net Revenue"
+          label="Revenue Collected"
           value={inr(stats.revenue)}
           icon={IndianRupee}
           delta="+14.2%"

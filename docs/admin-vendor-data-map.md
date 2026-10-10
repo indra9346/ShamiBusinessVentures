@@ -17,9 +17,9 @@ the signed-in Supabase role.
 | `/admin/products` and `/admin/products/$id` | `catalog_products`, `store_categories`, vendor profiles, and `catalog-images` Storage uploads |
 | `/admin/categories` | `store_categories`, product/category counts, and `catalog-images` Storage uploads |
 | `/admin/inventory` | `catalog_products`, admin-only FIFO `batches`, and `admin_receive_inventory_batch` |
-| `/admin/orders` and `/admin/orders/$id` | `orders`, `order_items`, `payments`; order creation and status changes use protected store/RPC paths |
+| `/admin/orders` and `/admin/orders/$id` | `orders`, `order_items`, `order_vendor_fulfillments`, `payments`; order creation and global status changes use protected RPCs |
 | `/admin/payments` | `orders`, `payments`, and `admin_confirm_manual_payment`; refunds require an external payment provider and are not enabled |
-| `/admin/commissions` | Vendor sales from `orders`/`order_items`; `profiles.commission_rate` through `admin_set_vendor_commission` |
+| `/admin/commissions` | Vendor paid item totals from `orders`/`order_items`; `profiles.commission_rate` through `admin_set_vendor_commission` |
 | `/admin/payouts` | `vendor_payout_requests`, vendor `profiles`, `admin_update_payout`, and Realtime refresh |
 | `/admin/coupons` | `coupons` |
 | `/admin/reports` | Derived views from orders, items, products, profiles, payouts, and reviews |
@@ -36,7 +36,7 @@ the signed-in Supabase role.
 | --- | --- |
 | `/vendor/dashboard` | Vendor-scoped `catalog_products`, `orders`/`order_items`, published reviews, and payout data; live refresh uses Supabase Realtime |
 | `/vendor/products` and `/vendor/products/add` | Vendor-owned `catalog_products`, enabled `store_categories`, and product image uploads to `catalog-images` |
-| `/vendor/orders` and `/vendor/orders/$id` | Vendor-owned order lines from `order_items` and order status from `orders`; vendor updates advance one stage at a time and require full payment before dispatch |
+| `/vendor/orders` and `/vendor/orders/$id` | Vendor-owned order lines from `order_items` and that vendor's `order_vendor_fulfillments` row; vendor updates advance only their shipment one stage at a time and require full payment before dispatch |
 | `/vendor/inventory` | Vendor-owned products in `catalog_products`; stock changes are persisted through the product update path |
 | `/vendor/earnings` | Paid/delivered `orders`/`order_items`, vendor commission from `profiles`, and reserved rows in `vendor_payout_requests` |
 | `/vendor/payouts` | Own `vendor_payout_requests`; create requests through `request_vendor_payout` |
@@ -51,7 +51,7 @@ the signed-in Supabase role.
 
 - Common records are loaded in `src/lib/store.tsx`; its Realtime channel listens
   for catalog, category, profile/role, order, payment, review, return, batch,
-  and coupon changes. Refreshes are debounced, stale overlapping reads are
+  coupon, and `order_vendor_fulfillments` changes. Refreshes are debounced, stale overlapping reads are
   discarded, and a Realtime reconnect triggers a fresh read. Vendor application
   status and payout/KYC screens also refresh from their own scoped channels.
   Migrations add these tables and the operational tables to the
@@ -64,6 +64,12 @@ the signed-in Supabase role.
   scopes in `20261010180000_vendor_order_data_scope.sql`. Profile insertion is
   restricted to trusted signup/profile functions by
   `20261010190000_restore_profile_insert_lock.sql`.
+- `order_vendor_fulfillments` keeps the shipment stage per vendor. Its RLS lets a
+  vendor read only their own shipment and lets the order's customer and admins
+  see all vendor shipments. Vendor RPCs update one shipment; the parent order
+  status advances to the least advanced vendor stage. Admin global status
+  changes synchronize all vendor rows. Direct authenticated writes to the
+  shared order status column are revoked.
 - Public catalog reads require an approved, active vendor profile; suspension
   hides its listings while retaining admin and vendor access in
   `20261010220000_hide_suspended_vendor_catalog.sql`.
@@ -77,7 +83,10 @@ the signed-in Supabase role.
   connected. Manual payment reconciliation and in-app notifications remain the
   supported workflows until provider setup is completed.
 - This map documents current code-to-schema wiring. The authenticated
-  production migration check confirmed history through `20261011040000`,
-  including the admin order-item and protected cancellation workflows. Route
+  production migration check confirmed history through `20261011050000`,
+  including protected order-item, cancellation, and multi-vendor fulfillment
+  workflows. The rollback-only database smoke check covered vendor isolation,
+  aggregate transitions, admin synchronization, cancellation rules, and
+  customer/vendor row visibility. Route
   behavior still needs a live acceptance pass with separate admin, vendor, and
   customer accounts.
