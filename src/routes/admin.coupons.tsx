@@ -132,11 +132,12 @@ function AdminCoupons() {
           rows={coupons.map((c) => [
             <div className="flex items-center gap-2">
               <span className="font-semibold text-navy">{c.code}</span>
+              {c.source === "zoho" && <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">Zoho</span>}
               <button onClick={() => copy(c.code)} className="text-slate hover:text-gold" aria-label="Copy code"><Copy className="h-3.5 w-3.5" /></button>
             </div>,
             c.type,
             c.value,
-            `₹${c.min} / ₹${c.max}`,
+            `₹${c.min} / ${c.source === "zoho" && c.type === "Percentage" ? "No cap" : `₹${c.max}`}`,
             <span className="text-xs">{c.start} – {c.end}</span>,
             <div className="w-32">
               <Progress value={Math.min(100, (c.used / c.limit) * 100)} className="h-2" />

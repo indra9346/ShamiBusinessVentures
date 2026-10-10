@@ -35,7 +35,10 @@ export type Address = (typeof seedAddresses)[number];
 export type Customer = (typeof seedCustomers)[number];
 export type Vendor = (typeof seedVendors)[number] & { avatar?: string; businessAddress?: string };
 export type Review = (typeof seedReviews)[number] & { reply?: string };
-export type Coupon = (typeof seedCoupons)[number];
+export type Coupon = (typeof seedCoupons)[number] & {
+  source?: "zoho";
+  maxPerUser?: number;
+};
 export type Notif = (typeof seedNotifications)[number] & { source?: "seed" | "live"; databaseId?: string };
 
 
@@ -342,6 +345,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
             value: row.discount_type === "Percentage" ? `${row.discount_value}%` : `₹${row.discount_value}`,
             min: Number(row.minimum_order), max: Number(row.maximum_discount),
             start: asDate(row.starts_on), end: asDate(row.ends_on), limit: row.usage_limit, used: row.used_count,
+            ...(row.zoho_coupon_id ? { source: "zoho" as const } : {}),
+            ...(row.zoho_usage_limit_per_user ? { maxPerUser: row.zoho_usage_limit_per_user } : {}),
             status: !row.active || row.used_count >= row.usage_limit || row.ends_on < todayISO ? "Expired" : row.starts_on > todayISO ? "Scheduled" : "Active",
           })));
         } else console.error("Could not load coupons", couponError);
@@ -1095,7 +1100,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             state: order.state,
             pin: order.pin,
           };
-          const { data, error } = await supabase.rpc("place_marketplace_order", {
+          const { data, error } = await supabase.rpc("place_marketplace_order_with_coupon", {
             _order_no: id,
             _target_user_id: customerOverride?.id ?? authUser.id,
             _customer_name: order.customer,
@@ -1106,6 +1111,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             _shipping_method: delivery?.toLowerCase().includes("express") ? "Express" : "Standard",
             _payment_method: method,
             _items: lines.map((line) => ({ product_id: line.product.id, qty: line.qty })),
+            _coupon: coupon ?? null,
           });
           if (error || !data) {
             const message = error?.message ?? "The order could not be saved";

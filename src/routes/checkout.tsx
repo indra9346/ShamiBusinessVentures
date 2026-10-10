@@ -33,8 +33,21 @@ const methods = ["UPI", "Credit Card", "Debit Card", "Net Banking"];
 const defaultShipping = { freeAbove: 10000, standard: 250, express: 650 };
 
 function Checkout() {
-  const { user, hydrated, cart, cartItems, products, productCatalogStatus, clearCart, removeFromCart, addresses, addAddress, placeOrder, coupons } =
-    useApp();
+  const {
+    user,
+    hydrated,
+    cart,
+    cartItems,
+    products,
+    productCatalogStatus,
+    clearCart,
+    removeFromCart,
+    addresses,
+    addAddress,
+    placeOrder,
+    coupons,
+    orders,
+  } = useApp();
   const { productId } = Route.useSearch();
   const navigate = useNavigate();
   useEffect(() => {
@@ -45,7 +58,8 @@ function Checkout() {
   const [addr, setAddr] = useState(addresses[0]?.id ?? "");
   const [addressFormOpen, setAddressFormOpen] = useState(addresses.length === 0);
   useEffect(() => {
-    if (!addr && addresses.length > 0) setAddr(addresses.find((address) => address.default)?.id ?? addresses[0]!.id);
+    if (!addr && addresses.length > 0)
+      setAddr(addresses.find((address) => address.default)?.id ?? addresses[0]!.id);
     if (addresses.length > 0) setAddressFormOpen(false);
   }, [addresses, addr]);
   const [addressForm, setAddressForm] = useState({
@@ -84,28 +98,37 @@ function Checkout() {
   const [shippingRatesReady, setShippingRatesReady] = useState(false);
   useEffect(() => {
     let active = true;
-    void supabase.from("settings").select("value").eq("key", "shipping").eq("is_public", true).maybeSingle().then(({ data, error }) => {
-      if (!active) return;
-      if (error) {
-        setShippingRatesReady(false);
-        console.error("Could not load checkout shipping rules", error.message);
-        return;
-      }
-      const value = data?.value && typeof data.value === "object" && !Array.isArray(data.value)
-        ? data.value as Record<string, unknown>
-        : {};
-      const numberOrDefault = (candidate: unknown, fallback: number) => {
-        const parsed = Number(candidate);
-        return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
-      };
-      setShippingRates({
-        freeAbove: numberOrDefault(value["free_above"], defaultShipping.freeAbove),
-        standard: numberOrDefault(value["standard"], defaultShipping.standard),
-        express: numberOrDefault(value["express"], defaultShipping.express),
+    void supabase
+      .from("settings")
+      .select("value")
+      .eq("key", "shipping")
+      .eq("is_public", true)
+      .maybeSingle()
+      .then(({ data, error }) => {
+        if (!active) return;
+        if (error) {
+          setShippingRatesReady(false);
+          console.error("Could not load checkout shipping rules", error.message);
+          return;
+        }
+        const value =
+          data?.value && typeof data.value === "object" && !Array.isArray(data.value)
+            ? (data.value as Record<string, unknown>)
+            : {};
+        const numberOrDefault = (candidate: unknown, fallback: number) => {
+          const parsed = Number(candidate);
+          return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+        };
+        setShippingRates({
+          freeAbove: numberOrDefault(value["free_above"], defaultShipping.freeAbove),
+          standard: numberOrDefault(value["standard"], defaultShipping.standard),
+          express: numberOrDefault(value["express"], defaultShipping.express),
+        });
+        setShippingRatesReady(true);
       });
-      setShippingRatesReady(true);
-    });
-    return () => { active = false; };
+    return () => {
+      active = false;
+    };
   }, []);
   useEffect(() => {
     if (addresses.length > 0) setAddressFormOpen(false);
@@ -126,20 +149,38 @@ function Checkout() {
   }, [user?.name, user?.phone]);
   const selectedProduct = productId ? products.find((p) => p.id === productId) : undefined;
   const checkoutItems = productId
-    ? (cartItems.some((line) => line.product.id === productId)
-        ? cartItems.filter((line) => line.product.id === productId)
-        : (selectedProduct ? [{ product: selectedProduct, qty: 1 }] : []))
+    ? cartItems.some((line) => line.product.id === productId)
+      ? cartItems.filter((line) => line.product.id === productId)
+      : selectedProduct
+        ? [{ product: selectedProduct, qty: 1 }]
+        : []
     : cartItems;
   const unresolvedCartLines = cartItems.length < cart.length;
   const subtotal = checkoutItems.reduce((sum, line) => sum + line.product.price * line.qty, 0);
-  const shipCost = subtotal < shippingRates.freeAbove
-    ? ship === "Express" ? shippingRates.express : shippingRates.standard
-    : 0;
-  const tax = checkoutItems.reduce((sum, line) => sum + Math.round(line.product.price * line.qty * line.product.gst / 100), 0);
-  const appliedCoupon = coupons.find((c) => c.code === couponCode);
+  const shipCost =
+    subtotal < shippingRates.freeAbove
+      ? ship === "Express"
+        ? shippingRates.express
+        : shippingRates.standard
+      : 0;
+  const tax = checkoutItems.reduce(
+    (sum, line) => sum + Math.round((line.product.price * line.qty * line.product.gst) / 100),
+    0,
+  );
+  const appliedCoupon = coupons.find(
+    (c) =>
+      c.code === couponCode &&
+      c.status === "Active" &&
+      subtotal >= c.min &&
+      (!c.maxPerUser ||
+        orders.filter((order) => order.coupon === c.code && order.status !== "Cancelled").length <
+          c.maxPerUser),
+  );
   const discount = appliedCoupon
     ? Math.min(
-        appliedCoupon.max,
+        appliedCoupon.source === "zoho" && appliedCoupon.type === "Percentage"
+          ? Number.MAX_SAFE_INTEGER
+          : appliedCoupon.max,
         appliedCoupon.type === "Percentage"
           ? Math.round((subtotal * parseFloat(appliedCoupon.value)) / 100)
           : parseFloat(appliedCoupon.value.replace(/[^0-9.]/g, "")),
@@ -168,7 +209,9 @@ function Checkout() {
 
   const goNext = async () => {
     if (productCatalogStatus !== "ready" || unresolvedCartLines) {
-      toast.error("Checkout is unavailable while saved cart items cannot be verified against the live catalog.");
+      toast.error(
+        "Checkout is unavailable while saved cart items cannot be verified against the live catalog.",
+      );
       return;
     }
     if (checkoutItems.length === 0) {
@@ -199,7 +242,10 @@ function Checkout() {
           discount,
           tax,
           shipping: shipCost,
-          delivery: ship === "Express" ? "Express Freight — next business day" : "Standard Freight — 2 to 4 days",
+          delivery:
+            ship === "Express"
+              ? "Express Freight — next business day"
+              : "Standard Freight — 2 to 4 days",
         });
       } catch {
         return;
@@ -255,7 +301,9 @@ function Checkout() {
         default: addresses.length === 0,
       });
     } catch (error) {
-      toast.error("Could not save this address", { description: error instanceof Error ? error.message : "Please retry." });
+      toast.error("Could not save this address", {
+        description: error instanceof Error ? error.message : "Please retry.",
+      });
     } finally {
       setSavingAddress(false);
     }
@@ -282,7 +330,10 @@ function Checkout() {
                 ? "Some saved cart items could not be verified against live products. Review your cart after the catalog is restored."
                 : "Add a product to your cart before continuing to checkout."}
           </p>
-          <Link to="/cart" className="mt-6 inline-block rounded-md bg-navy px-5 py-3 text-sm font-semibold text-white hover:bg-midnight">
+          <Link
+            to="/cart"
+            className="mt-6 inline-block rounded-md bg-navy px-5 py-3 text-sm font-semibold text-white hover:bg-midnight"
+          >
             Review cart
           </Link>
         </div>
@@ -356,7 +407,11 @@ function Checkout() {
                     </button>
                   ))}
                   {!addressFormOpen && (
-                    <button type="button" onClick={() => setAddressFormOpen(true)} className="text-sm font-semibold text-navy hover:text-gold">
+                    <button
+                      type="button"
+                      onClick={() => setAddressFormOpen(true)}
+                      className="text-sm font-semibold text-navy hover:text-gold"
+                    >
                       + Add new address
                     </button>
                   )}
@@ -364,21 +419,25 @@ function Checkout() {
                     <div className="rounded-lg border border-border bg-ivory p-4">
                       <h3 className="font-semibold text-navy">Add your delivery address</h3>
                       <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                        {([
-                          ["label", "Address label (Home, Shop, etc.)"],
-                          ["name", "Recipient name *"],
-                          ["phone", "Phone number *"],
-                          ["line", "Street / building address *"],
-                          ["city", "City *"],
-                          ["state", "State"],
-                          ["pin", "6-digit PIN code *"],
-                          ["landmark", "Landmark (optional)"],
-                        ] as const).map(([key, label]) => (
+                        {(
+                          [
+                            ["label", "Address label (Home, Shop, etc.)"],
+                            ["name", "Recipient name *"],
+                            ["phone", "Phone number *"],
+                            ["line", "Street / building address *"],
+                            ["city", "City *"],
+                            ["state", "State"],
+                            ["pin", "6-digit PIN code *"],
+                            ["landmark", "Landmark (optional)"],
+                          ] as const
+                        ).map(([key, label]) => (
                           <label key={key} className="text-xs font-medium text-slate">
                             {label}
                             <input
                               value={addressForm[key]}
-                              onChange={(event) => setAddressForm((form) => ({ ...form, [key]: event.target.value }))}
+                              onChange={(event) =>
+                                setAddressForm((form) => ({ ...form, [key]: event.target.value }))
+                              }
                               inputMode={key === "phone" || key === "pin" ? "numeric" : undefined}
                               maxLength={key === "pin" ? 6 : undefined}
                               className="mt-1 h-10 w-full rounded-md border border-border bg-card px-3 text-sm text-navy outline-none focus:border-gold"
@@ -387,9 +446,22 @@ function Checkout() {
                         ))}
                       </div>
                       <div className="mt-4 flex flex-wrap gap-2">
-                        <button type="button" disabled={savingAddress} onClick={() => void saveAddress()} className="rounded-md bg-navy px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">{savingAddress ? "Saving…" : "Save address"}</button>
+                        <button
+                          type="button"
+                          disabled={savingAddress}
+                          onClick={() => void saveAddress()}
+                          className="rounded-md bg-navy px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+                        >
+                          {savingAddress ? "Saving…" : "Save address"}
+                        </button>
                         {addresses.length > 0 && (
-                          <button type="button" onClick={() => setAddressFormOpen(false)} className="rounded-md border border-border px-4 py-2 text-sm font-semibold text-navy">Cancel</button>
+                          <button
+                            type="button"
+                            onClick={() => setAddressFormOpen(false)}
+                            className="rounded-md border border-border px-4 py-2 text-sm font-semibold text-navy"
+                          >
+                            Cancel
+                          </button>
                         )}
                       </div>
                     </div>
@@ -429,7 +501,8 @@ function Checkout() {
               <>
                 <h2 className="text-lg font-bold text-navy">Preferred Payment Method</h2>
                 <p className="mt-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
-                  Online payment is not enabled yet. Your selection is a preference only; the order will stay pending until payment is arranged and verified.
+                  Online payment is not enabled yet. Your selection is a preference only; the order
+                  will stay pending until payment is arranged and verified.
                 </p>
                 <div className="mt-5 grid gap-3 sm:grid-cols-2">
                   {methods.map((m) => (
@@ -457,6 +530,17 @@ function Checkout() {
                     placeholder="Coupon code (optional)"
                     className="h-10 w-full max-w-xs rounded-md border border-border px-3 text-sm"
                   />
+                  {couponCode && !appliedCoupon && (
+                    <p role="status" className="mt-1 text-xs text-danger">
+                      This coupon is unavailable, below its minimum order, or has reached its
+                      per-customer limit.
+                    </p>
+                  )}
+                  {appliedCoupon && (
+                    <p role="status" className="mt-1 text-xs text-emerald-700">
+                      {appliedCoupon.code} applied · {appliedCoupon.value} off
+                    </p>
+                  )}
                 </div>
               </>
             )}
@@ -478,10 +562,9 @@ function Checkout() {
                         height={800}
                         onError={(e) => {
                           const cat = product.category.toLowerCase();
-                          (e.currentTarget as HTMLImageElement).src =
-                            cat.includes("sugar")
-                              ? "/products/sugar.jpg"
-                              : cat.includes("oil")
+                          (e.currentTarget as HTMLImageElement).src = cat.includes("sugar")
+                            ? "/products/sugar.jpg"
+                            : cat.includes("oil")
                               ? "/products/oil.jpg"
                               : "/products/rice.jpg";
                         }}
@@ -513,8 +596,10 @@ function Checkout() {
                 </span>
                 <h2 className="mt-5 text-xl font-bold text-navy">Order Confirmed</h2>
                 <p className="mt-2 text-sm text-slate">
-                  Order ID <span className="font-bold text-gold">{placedId}</span> · Total {inr(summary.total)} · Payment pending.
-                  Online payment is not enabled yet; payment must be arranged and verified separately. Delivery estimate: {ship === "Express" ? "1 day" : "2–4 days"}.
+                  Order ID <span className="font-bold text-gold">{placedId}</span> · Total{" "}
+                  {inr(summary.total)} · Payment pending. Online payment is not enabled yet; payment
+                  must be arranged and verified separately. Delivery estimate:{" "}
+                  {ship === "Express" ? "1 day" : "2–4 days"}.
                 </p>
                 <div className="mt-6 flex flex-wrap justify-center gap-3">
                   {placedId && (
@@ -563,7 +648,9 @@ function Checkout() {
                 ["Subtotal", inr(summary.subtotal)],
                 ["Delivery", summary.shipCost === 0 ? "Free" : inr(summary.shipCost)],
                 ["GST", inr(summary.tax)],
-                ...(summary.discount > 0 ? [["Coupon discount", `- ${inr(summary.discount)}`]] : []),
+                ...(summary.discount > 0
+                  ? [["Coupon discount", `- ${inr(summary.discount)}`]]
+                  : []),
               ].map(([k, v]) => (
                 <div key={k} className="flex justify-between">
                   <span className="text-slate">{k}</span>
