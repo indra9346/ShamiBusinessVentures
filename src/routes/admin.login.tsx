@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { AuthCard } from "@/components/site/AuthCard";
 import { Input } from "@/components/ui/input";
@@ -27,12 +27,17 @@ export const Route = createFileRoute("/admin/login")({
 });
 
 function AdminLogin() {
-  const { login } = useApp();
+  const { login, user } = useApp();
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [credentialEntryEnabled, setCredentialEntryEnabled] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (user?.role === "admin") {
+      navigate({ to: "/admin/dashboard", replace: true });
+    }
+  }, [user?.role, navigate]);
 
   const finish = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -73,8 +78,7 @@ function AdminLogin() {
             type="email"
             name="admin_login_identifier"
             autoComplete="off"
-            readOnly={!credentialEntryEnabled}
-            onFocus={() => setCredentialEntryEnabled(true)}
+            placeholder=""
             value={email}
             onChange={(event) => setEmail(event.target.value)}
           />
@@ -86,8 +90,7 @@ function AdminLogin() {
             type="password"
             name="admin_login_secret"
             autoComplete="new-password"
-            readOnly={!credentialEntryEnabled}
-            onFocus={() => setCredentialEntryEnabled(true)}
+            placeholder=""
             value={password}
             onChange={(event) => setPassword(event.target.value)}
           />

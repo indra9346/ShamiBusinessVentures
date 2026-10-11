@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { AuthCard } from "@/components/site/AuthCard";
 import { Input } from "@/components/ui/input";
@@ -20,11 +20,17 @@ export const Route = createFileRoute("/vendor/login")({
 });
 
 function VendorLogin() {
-  const { login } = useApp();
+  const { login, user } = useApp();
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (user?.role === "vendor") {
+      navigate({ to: "/vendor/dashboard", replace: true });
+    }
+  }, [user?.role, navigate]);
 
   const finish = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -53,13 +59,15 @@ function VendorLogin() {
       title="Vendor Login"
       subtitle="Use the business email and password assigned to your vendor account. Vendor access is provisioned by an administrator."
     >
-      <form onSubmit={(event) => void finish(event)} className="space-y-4">
+      <form autoComplete="off" onSubmit={(event) => void finish(event)} className="space-y-4">
         <label className="block">
           <span className="mb-1.5 block text-xs font-semibold text-charcoal">Business email</span>
           <Input
             required
             type="email"
-            autoComplete="username"
+            name="vendor_login_email"
+            autoComplete="off"
+            placeholder=""
             value={email}
             onChange={(event) => setEmail(event.target.value)}
           />
@@ -69,7 +77,9 @@ function VendorLogin() {
           <Input
             required
             type="password"
-            autoComplete="current-password"
+            name="vendor_login_password"
+            autoComplete="new-password"
+            placeholder=""
             value={password}
             onChange={(event) => setPassword(event.target.value)}
           />

@@ -10,6 +10,7 @@ export function normalizePhone(phone: string | undefined) {
 export function orderBelongsToUser(order: Order, user: SessionUser | null) {
   if (!user || user.role !== "customer") return false;
 
+  if (user.id && order.customerId && order.customerId === user.id) return true;
   const orderEmail = typeof order.email === "string" ? order.email.toLowerCase() : "";
   const emailMatches = Boolean(user.email && orderEmail === user.email.toLowerCase());
   const userPhone = normalizePhone(user.phone);

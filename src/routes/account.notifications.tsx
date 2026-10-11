@@ -29,7 +29,7 @@ function AccountNotifications() {
   const { notifications, markRead, markAllRead, user, orders } = useApp();
   const navigate = useNavigate();
   const mine = notifications.filter(
-    (n) => n.role === "customer" && notificationBelongsToUser(n, user, orders),
+    (n) => (n.role === "customer" || !n.role) && (Boolean(n.databaseId) || notificationBelongsToUser(n, user, orders)),
   );
   const unread = mine.filter((n) => !n.read).length;
 

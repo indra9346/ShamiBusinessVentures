@@ -610,9 +610,15 @@ const vendorOrderNextStatus: Partial<Record<OrderStatus, OrderStatus>> = {
   "Out for Delivery": "Delivered",
 };
 
-export function vendorOrderStatusOptions(order: Pick<Order, "status" | "payment">): OrderStatus[] {
+export function vendorOrderStatusOptions(order: Pick<Order, "status" | "payment"> & Partial<Pick<Order, "paidAmount" | "amount">>): OrderStatus[] {
   const next = vendorOrderNextStatus[order.status];
-  if (!next || (order.status === "Packed" && order.payment !== "Paid")) return [order.status];
+  if (!next) return [order.status];
+  if (["Packed", "Dispatched", "Out for Delivery"].includes(order.status) && order.payment !== "Paid") {
+    return [order.status];
+  }
+  if (order.status === "Payment Confirmed" && order.payment === "Pending" && (!order.paidAmount || order.paidAmount <= 0)) {
+    return [order.status];
+  }
   return [order.status, next];
 }
 

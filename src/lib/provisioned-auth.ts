@@ -9,6 +9,11 @@ export async function signInProvisionedAccount(email: string, password: string, 
   let authenticated = false;
 
   try {
+    const { data: sessionData } = await supabase.auth.getSession();
+    if (sessionData.session?.user) {
+      await supabase.auth.signOut();
+    }
+
     const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
       email: cleanEmail,
       password,
