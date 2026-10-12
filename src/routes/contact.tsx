@@ -64,6 +64,23 @@ type SubmittedData = {
   emailSent: boolean;
 };
 
+function getEnquirySaveError(error: unknown) {
+  const details =
+    typeof error === "object" && error !== null ? (error as Record<string, unknown>) : {};
+  const code = typeof details.code === "string" ? details.code : "";
+  const message = typeof details.message === "string" ? details.message : "";
+  const diagnostic = `${code} ${message}`;
+
+  if (/PGRST202|submit_contact_enquiry|schema cache|42883/i.test(diagnostic)) {
+    return "The enquiry form is not connected to the production database yet, so this request was not saved. The site administrator must apply the contact enquiry database migration in Supabase. Please use WhatsApp or email until that is fixed.";
+  }
+  if (/42501|permission denied|not authorized/i.test(diagnostic)) {
+    return "The database rejected saving this request. The site administrator needs to check the contact enquiry function permissions in Supabase.";
+  }
+
+  return message || "We could not save your request. Please try again or contact us by WhatsApp or email.";
+}
+
 function Contact() {
   const search = Route.useSearch();
   const configurationRequest = search.request === "product-configuration";
@@ -123,16 +140,21 @@ function Contact() {
       });
       if (dbError || !savedId) throw dbError ?? new Error("The enquiry could not be saved.");
 
-      // Email is a separate delivery channel. Report it only when Resend confirms acceptance.
-      const { data: delivery, error: deliveryError } = await supabase.functions.invoke(
-        "send-enquiry",
-        {
-          body: { enquiry_id: savedId },
-        },
-      );
-      const emailSent = !deliveryError && delivery?.emailSent === true;
-      if (deliveryError)
-        console.warn("Enquiry saved; email delivery failed:", deliveryError.message);
+      // Email is a separate delivery channel. Once savedId exists, the request is durable
+      // even if the email provider or network is unavailable.
+      let emailSent = false;
+      try {
+        const { data: delivery, error: deliveryError } = await supabase.functions.invoke(
+          "send-enquiry",
+          { body: { enquiry_id: savedId } },
+        );
+        emailSent = !deliveryError && delivery?.emailSent === true;
+        if (deliveryError) {
+          console.warn("Enquiry saved; email delivery failed:", deliveryError.message);
+        }
+      } catch (deliveryError) {
+        console.warn("Enquiry saved; email delivery could not be confirmed:", deliveryError);
+      }
 
       setSubmitted({
         id: savedId,
@@ -149,16 +171,12 @@ function Contact() {
       toast.success(configurationRequest ? "Product request saved" : "Enquiry saved", {
         description: emailSent
           ? "The request is in the admin enquiry inbox and the email provider accepted the message."
-          : "The request is in the admin enquiry inbox. Email delivery was not confirmed; use the email link to contact the desk.",
+          : "Your request is saved in the admin enquiry inbox. Email delivery was not confirmed; the supply desk can follow up from there.",
       });
       setForm({ name: "", email: "", phone: "", message: "" });
     } catch (err: unknown) {
-      toast.error("Submission failed", {
-        description:
-          err instanceof Error
-            ? err.message
-            : "Please try reaching us directly on WhatsApp or Email.",
-      });
+      console.error("Could not save website enquiry:", err);
+      toast.error("Request was not saved", { description: getEnquirySaveError(err) });
     } finally {
       setLoading(false);
     }
