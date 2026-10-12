@@ -9,6 +9,7 @@ export function StatCard({
   description,
   icon: Icon,
   highlight,
+  compact = false,
 }: {
   label: string;
   value: string;
@@ -16,27 +17,30 @@ export function StatCard({
   description?: string;
   icon: React.ComponentType<{ className?: string }>;
   highlight?: boolean;
+  compact?: boolean;
 }) {
   const up = !delta?.startsWith("-");
   return (
     <div
       className={cn(
-        "rounded-lg border border-border bg-card p-5 shadow-card transition-all hover:-translate-y-0.5 hover:border-gold",
+        "rounded-lg border border-border bg-card shadow-card transition-all hover:-translate-y-0.5 hover:border-gold",
+        compact ? "p-3 sm:p-4" : "p-5",
         highlight && "border-gold/50 bg-ivory",
       )}
     >
-      <div className="flex items-start justify-between gap-3">
-        <p className="text-xs font-medium tracking-wide text-slate uppercase">{label}</p>
+      <div className={cn("flex items-start justify-between", compact ? "gap-2" : "gap-3")}>
+        <p className={cn("font-medium tracking-wide text-slate uppercase", compact ? "min-w-0 text-[10px] leading-tight sm:text-xs" : "text-xs")}>{label}</p>
         <span
           className={cn(
-            "grid h-9 w-9 shrink-0 place-items-center rounded-lg",
+            "grid shrink-0 place-items-center rounded-lg",
+            compact ? "h-8 w-8 sm:h-9 sm:w-9" : "h-9 w-9",
             highlight ? "bg-gold text-midnight" : "bg-navy/5 text-navy",
           )}
         >
           <Icon className="h-4 w-4" />
         </span>
       </div>
-      <p className={cn("mt-3 text-2xl font-bold", highlight ? "text-gold" : "text-navy")}>{value}</p>
+      <p className={cn(compact ? "mt-2 text-xl sm:mt-3 sm:text-2xl" : "mt-3 text-2xl", "font-bold", highlight ? "text-gold" : "text-navy")}>{value}</p>
       {delta && (
         <p className={cn("mt-1 flex items-center gap-1 text-xs font-medium", up ? "text-success" : "text-danger")}>
           {up ? <TrendingUp className="h-3.5 w-3.5" /> : <TrendingDown className="h-3.5 w-3.5" />}

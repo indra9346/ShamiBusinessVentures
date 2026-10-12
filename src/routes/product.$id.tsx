@@ -380,7 +380,7 @@ function ProductDetail() {
       <div className="bg-ivory">
         <div className="mx-auto max-w-7xl px-6 py-14">
           <SectionHeading eyebrow="You may also like" title="Related Products" />
-          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 sm:gap-5 lg:grid-cols-3 xl:grid-cols-4">
             {related.map((p) => (
               <ProductCard key={p.id} product={p} />
             ))}
