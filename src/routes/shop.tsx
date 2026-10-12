@@ -9,8 +9,9 @@ import { useApp } from "@/lib/store";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
-import { matchProductSearch, scoreProductSearch } from "@/lib/search";
+import { availableProductBrands, matchProductSearch, normalizeFacetValue, productMatchesBrand, scoreProductSearch } from "@/lib/search";
 import { SearchAutosuggest } from "@/components/site/SearchAutosuggest";
+import { categoryTree } from "@/lib/category-tree";
 
 type ShopSearch = { q?: string | undefined; category?: string | undefined; sort?: string | undefined };
 
@@ -36,6 +37,9 @@ export const Route = createFileRoute("/shop")({
 });
 
 const sorts = ["Popular", "Newest", "Price Low → High", "Price High → Low", "Highest Rated"];
+const configuredBrands = Object.values(categoryTree).flatMap((category) =>
+  Object.values(category.children ?? {}).flatMap((child) => child.tiles.filter((tile) => !tile.slug).map((tile) => tile.label)),
+);
 
 function Shop() {
   const search = Route.useSearch();
@@ -43,23 +47,48 @@ function Shop() {
   const { products, vendors, productCatalogStatus } = useApp();
 
   const vendorOptions = useMemo(() => {
-    const approved = vendors.filter((vendor) => vendor.status === "approved");
-    if (approved.length) return approved.map((vendor) => ({ id: vendor.id, business: vendor.business }));
-    return [...new Set(products.filter(isStorefrontProduct).map((product) => product.vendor))]
-      .map((business) => ({ id: business, business }));
+    const available = products.filter(isStorefrontProduct);
+    const approved = vendors.filter((vendor) => String(vendor.status ?? "").trim().toLocaleLowerCase() === "approved");
+    if (approved.length) {
+      const options = approved
+        .filter((vendor) => available.some((product) =>
+          normalizeFacetValue(product.vendorId) === normalizeFacetValue(vendor.id) ||
+          normalizeFacetValue(product.vendor) === normalizeFacetValue(vendor.business),
+        ))
+        .map((vendor) => ({ id: vendor.id, business: vendor.business }));
+      if (options.length) {
+        const unique = new Map<string, (typeof options)[number]>();
+        for (const option of options) {
+          const key = normalizeFacetValue(option.business);
+          if (key && !unique.has(key)) unique.set(key, option);
+        }
+        return [...unique.values()];
+      }
+    }
+    const unique = new Map<string, string>();
+    for (const product of available) {
+      const business = typeof product.vendor === "string" ? product.vendor.trim() : "";
+      const key = normalizeFacetValue(business);
+      if (key && !unique.has(key)) unique.set(key, business);
+    }
+    return [...unique.values()].map((business) => ({ id: business, business }));
   }, [vendors, products]);
 
   const visibleCats = useVisibleCategories();
 
   const highestPrice = useMemo(() => {
-    const list = products.filter(isStorefrontProduct);
-    if (!list.length) return 5000;
-    return Math.max(5000, Math.ceil(Math.max(...list.map((p) => p.price)) / 100) * 100);
+    const prices = products
+      .filter(isStorefrontProduct)
+      .map((product) => Number(product.price))
+      .filter((price) => Number.isFinite(price) && price >= 0);
+    if (!prices.length) return 5000;
+    return Math.max(5000, Math.ceil(Math.max(...prices) / 100) * 100);
   }, [products]);
 
   const [q, setQ] = useState(search.q ?? "");
   const [cats, setCats] = useState<string[]>(search.category ? [search.category] : []);
   const [vends, setVends] = useState<string[]>([]);
+  const [brands, setBrands] = useState<string[]>([]);
   const [maxPrice, setMaxPrice] = useState(5000);
   const [minRating, setMinRating] = useState(0);
   const [inStock, setInStock] = useState(false);
@@ -80,42 +109,39 @@ function Shop() {
 
   // Adjust maxPrice default if catalog price ceiling is higher
   useEffect(() => {
-    if (highestPrice > 5000 && maxPrice === 5000) {
+    if (maxPrice > highestPrice || (highestPrice > 5000 && maxPrice === 5000)) {
       setMaxPrice(highestPrice);
     }
   }, [highestPrice, maxPrice]);
 
   useEffect(() => {
     setPage(1);
-  }, [q, cats, vends, maxPrice, minRating, inStock, offersOnly, sort]);
+  }, [q, cats, vends, brands, maxPrice, minRating, inStock, offersOnly, sort]);
 
-  // Pre-calculate live counts for categories and vendors
-  const categoryCounts = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const p of products) {
-      if (!isStorefrontProduct(p)) continue;
-      counts.set(p.category, (counts.get(p.category) || 0) + 1);
-      if (p.subcategory) {
-        counts.set(p.subcategory, (counts.get(p.subcategory) || 0) + 1);
-      }
-    }
-    return counts;
-  }, [products]);
-
+  // Pre-calculate live counts for vendors.
   const vendorCounts = useMemo(() => {
     const counts = new Map<string, number>();
     for (const p of products) {
       if (!isStorefrontProduct(p)) continue;
-      counts.set(p.vendor, (counts.get(p.vendor) || 0) + 1);
-      if (p.vendorId) counts.set(p.vendorId, (counts.get(p.vendorId) || 0) + 1);
+      const vendorKey = normalizeFacetValue(p.vendor);
+      const vendorIdKey = normalizeFacetValue(p.vendorId);
+      if (vendorKey) counts.set(vendorKey, (counts.get(vendorKey) || 0) + 1);
+      if (vendorIdKey) counts.set(vendorIdKey, (counts.get(vendorIdKey) || 0) + 1);
     }
     return counts;
   }, [products]);
 
+  const eligibleProducts = useMemo(() => products.filter((product) =>
+    isStorefrontProduct(product) && visibleCats.some((category) => categoryMatches(product.category, category.name)),
+  ), [products, visibleCats]);
+  const brandOptions = useMemo(() => availableProductBrands(eligibleProducts, configuredBrands), [eligibleProducts]);
+  const brandCounts = useMemo(() => new Map(brandOptions.map((brand) => [
+    normalizeFacetValue(brand), eligibleProducts.filter((product) => productMatchesBrand(product, brand)).length,
+  ])), [brandOptions, eligibleProducts]);
+
   // Precision filtered product list
   const filtered = useMemo(() => {
-    const allowed = visibleCats.map((c) => c.name);
-    let list = products.filter((p) => isStorefrontProduct(p) && allowed.includes(p.category));
+    let list = eligibleProducts;
 
     // 1. Precision Multi-token & SKU matching
     if (q.trim()) {
@@ -124,45 +150,60 @@ function Shop() {
 
     // 2. Categories & Subcategories
     if (cats.length) {
-      const norm = (v: string) => v.toLowerCase().replace(/grade|\s+/g, "");
+      const selectedKeys = cats.map(normalizeFacetValue);
       list = list.filter((p) => {
-        if (cats.includes(p.category)) return true;
-        if (cats.includes(p.subcategory)) return true;
-        return cats.some((c) => norm(p.subcategory).includes(norm(c)) || norm(p.name).includes(norm(c)));
+        const subcategoryKey = normalizeFacetValue(p.subcategory);
+        const nameKey = normalizeFacetValue(p.name);
+        return selectedKeys.some((key) => {
+          if (!key) return false;
+          const parentCategory = visibleCats.find((category) => {
+            const categoryKey = normalizeFacetValue(category.name);
+            return key === categoryKey ||
+              (key === "oil" && categoryKey === "cookingoil") ||
+              (key === "cookingoil" && categoryKey === "oil");
+          });
+          if (parentCategory) return categoryMatches(p.category, parentCategory.name);
+          return subcategoryKey === key || nameKey.includes(key);
+        });
       });
     }
 
     // 3. Vendors
     if (vends.length) {
-      list = list.filter((p) => vends.includes(p.vendor) || vends.includes(p.vendorId));
+      const selectedVendors = new Set(vends.map(normalizeFacetValue));
+      list = list.filter((p) => selectedVendors.has(normalizeFacetValue(p.vendor)) || selectedVendors.has(normalizeFacetValue(p.vendorId)));
+    }
+
+    if (brands.length) {
+      list = list.filter((product) => brands.some((brand) => productMatchesBrand(product, brand)));
     }
 
     // 4. Price ceiling
-    list = list.filter((p) => p.price <= maxPrice);
+      list = list.filter((p) => Number.isFinite(Number(p.price)) && Number(p.price) <= maxPrice);
 
     // 5. Rating
     if (minRating) {
-      list = list.filter((p) => (p.rating || 0) >= minRating);
+      list = list.filter((p) => Number.isFinite(Number(p.rating)) && Number(p.rating) >= minRating);
     }
 
     // 6. In stock (available units > 0)
     if (inStock) {
-      list = list.filter((p) => Math.max(0, p.stock - (p.reserved || 0)) > 0);
+      list = list.filter((p) => Math.max(0, (Number(p.stock) || 0) - (Number(p.reserved) || 0)) > 0);
     }
 
     // 7. Offers only
     if (offersOnly) {
-      list = list.filter((p) => p.mrp > p.price);
+      list = list.filter((p) => Number(p.mrp) > Number(p.price));
     }
 
     // 8. Sorting & Relevance ranking
     const sorted = [...list];
     if (sort === "Price Low → High") {
-      sorted.sort((a, b) => a.price - b.price);
+      sorted.sort((a, b) => Number(a.price) - Number(b.price));
     } else if (sort === "Price High → Low") {
-      sorted.sort((a, b) => b.price - a.price);
+      sorted.sort((a, b) => Number(b.price) - Number(a.price));
     } else if (sort === "Highest Rated") {
-      sorted.sort((a, b) => (b.rating || 0) - (a.rating || 0));
+      sorted.sort((a, b) => (Number(b.rating) || 0) - (Number(a.rating) || 0));
     } else if (sort === "Newest") {
       sorted.reverse();
     } else if (q.trim()) {
@@ -171,11 +212,7 @@ function Shop() {
     }
 
     return sorted;
-  }, [products, visibleCats, q, cats, vends, maxPrice, minRating, inStock, offersOnly, sort]);
-
-  const eligibleProducts = products.filter(
-    (product) => isStorefrontProduct(product) && visibleCats.some((category) => category.name === product.category),
-  );
+  }, [eligibleProducts, q, cats, vends, brands, maxPrice, minRating, inStock, offersOnly, sort]);
   const pages = Math.max(1, Math.ceil(filtered.length / perPage));
   const current = filtered.slice((page - 1) * perPage, page * perPage);
 
@@ -186,6 +223,7 @@ function Shop() {
     q.trim() ||
     cats.length > 0 ||
     vends.length > 0 ||
+    brands.length > 0 ||
     maxPrice < highestPrice ||
     minRating > 0 ||
     inStock ||
@@ -196,6 +234,7 @@ function Shop() {
     setQ("");
     setCats([]);
     setVends([]);
+    setBrands([]);
     setMaxPrice(highestPrice);
     setMinRating(0);
     setInStock(false);
@@ -262,18 +301,20 @@ function Shop() {
 
           <FilterGroup title="Category">
             {visibleCats.map((c) => {
-              const catCount = categoryCounts.get(c.name) || 0;
+              const catProducts = eligibleProducts.filter((product) => categoryMatches(product.category, c.name));
+              const catCount = catProducts.length;
               return (
                 <div key={c.id} className="space-y-2">
                   <Row
                     label={`${c.name} (${catCount})`}
-                    checked={cats.includes(c.name)}
+                    checked={cats.some((selected) => normalizeFacetValue(selected) === normalizeFacetValue(c.name))}
                     onChange={() => toggle(cats, setCats, c.name)}
                     bold
                   />
                   <div className="ml-5 space-y-2">
                     {c.grades.map((s) => {
-                      const subCount = categoryCounts.get(s) || 0;
+                      const subcategoryKey = normalizeFacetValue(s);
+                      const subCount = catProducts.filter((product) => normalizeFacetValue(product.subcategory) === subcategoryKey).length;
                       return (
                         <Row
                           key={s}
@@ -305,9 +346,9 @@ function Shop() {
             {/* Quick Price Buttons */}
             <div className="mt-3 flex flex-wrap gap-1.5">
               {[
-                { label: "< ₹500", val: 500 },
-                { label: "< ₹1,000", val: 1000 },
-                { label: "< ₹2,000", val: 2000 },
+                { label: "≤ ₹500", val: 500 },
+                { label: "≤ ₹1,000", val: 1000 },
+                { label: "≤ ₹2,000", val: 2000 },
                 { label: "All", val: highestPrice },
               ].map((p) => (
                 <button
@@ -329,7 +370,7 @@ function Shop() {
 
           <FilterGroup title="Vendor">
             {vendorOptions.map((v) => {
-              const count = vendorCounts.get(v.business) || vendorCounts.get(v.id) || 0;
+              const count = vendorCounts.get(normalizeFacetValue(v.business)) || vendorCounts.get(normalizeFacetValue(v.id)) || 0;
               return (
                 <Row
                   key={v.id}
@@ -340,6 +381,19 @@ function Shop() {
               );
             })}
           </FilterGroup>
+
+          {brandOptions.length > 0 && (
+            <FilterGroup title="Brand">
+              {brandOptions.map((brand) => (
+                <Row
+                  key={brand}
+                  label={`${brand} (${brandCounts.get(normalizeFacetValue(brand)) ?? 0})`}
+                  checked={brands.includes(brand)}
+                  onChange={() => toggle(brands, setBrands, brand)}
+                />
+              ))}
+            </FilterGroup>
+          )}
 
           <FilterGroup title="Rating">
             {[4.5, 4, 3.5].map((r) => (
@@ -465,6 +519,19 @@ function Shop() {
                     onClick={() => toggle(vends, setVends, v)}
                     className="hover:text-danger transition-colors"
                     aria-label={`Remove vendor filter ${v}`}
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              ))}
+              {brands.map((brand) => (
+                <span key={brand} className="inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-1 text-xs font-semibold text-navy border border-border">
+                  Brand: {brand}
+                  <button
+                    type="button"
+                    onClick={() => toggle(brands, setBrands, brand)}
+                    className="hover:text-danger transition-colors"
+                    aria-label={`Remove brand filter ${brand}`}
                   >
                     <X className="h-3 w-3" />
                   </button>
@@ -635,6 +702,15 @@ function FilterGroup({ title, children }: { title: string; children: React.React
       <div className="space-y-2.5">{children}</div>
     </div>
   );
+}
+
+function categoryMatches(productCategory: string, visibleCategory: string) {
+  const productKey = normalizeFacetValue(productCategory);
+  const visibleKey = normalizeFacetValue(visibleCategory);
+  if (!productKey || !visibleKey) return false;
+  if (productKey === visibleKey) return true;
+  return (productKey === "oil" && visibleKey === "cookingoil") ||
+    (productKey === "cookingoil" && visibleKey === "oil");
 }
 
 function Row({

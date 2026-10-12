@@ -194,8 +194,9 @@ const KEY = "sbv-state-v2";
 export function AppProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<SessionUser | null>(null);
   const [cart, setCart] = useState<CartLine[]>([]);
-  const [wishlist, setWishlist] = useState<string[]>([]);
   const [wishlistsByUser, setWishlistsByUser] = useState<Record<string, string[]>>({});
+  const wishlistOwnerKey = addressOwnerKey(user) || "guest";
+  const wishlist = wishlistsByUser[wishlistOwnerKey] ?? [];
   const [products, setProducts] = useState<Product[]>(STATIC_DATA_MODE ? seedProducts : []);
   const [categories, setCategories] = useState<StoreCategory[]>(STATIC_DATA_MODE ? storeCategorySeed : []);
   const [batches, setBatches] = useState<PurchaseBatch[]>(STATIC_DATA_MODE ? seedBatches : []);
@@ -684,7 +685,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
           : null;
         const savedAddresses = STATIC_DATA_MODE ? s.addressesByUser ?? {} : {};
         const savedWishlists = s.wishlistsByUser ?? {};
-        const restoredOwner = restoredUser?.addressKey ?? "";
         setUser(restoredUser);
         setAddressesByUser(savedAddresses);
         setAddresses(restoredUser?.addressKey ? savedAddresses[restoredUser.addressKey] ?? [] : []);
@@ -692,7 +692,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setCart(s.cart ?? []);
         // Old releases stored one shared wishlist without an account owner. It cannot be
         // safely attributed to the current customer, so only restore owner-scoped lists.
-        setWishlist(restoredOwner ? savedWishlists[restoredOwner] ?? [] : []);
         if (STATIC_DATA_MODE && s.categories?.length) {
           const savedByName = new Map(s.categories.map((category) => [category.name.toLowerCase(), category]));
           const seededNames = new Set(storeCategorySeed.map((category) => category.name.toLowerCase()));
@@ -794,13 +793,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       } else if (event === "SIGNED_OUT") {
         setUser(null);
         setAddresses([]);
-        setWishlist([]);
         setCart([]);
-        try {
-          localStorage.removeItem(KEY);
-        } catch {
-          /* ignore */
-        }
       }
     });
 
@@ -816,19 +809,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
       ? saved
       : { ...saved, [user.addressKey!]: addresses });
   }, [hydrated, user, addresses]);
-
-  useEffect(() => {
-    if (!hydrated || !user?.addressKey) return;
-    setWishlistsByUser((saved) => saved[user.addressKey!] === wishlist
-      ? saved
-      : { ...saved, [user.addressKey!]: wishlist });
-  }, [hydrated, user, wishlist]);
-
-  const liveWishlistOwnerKey = addressOwnerKey(user);
-  useEffect(() => {
-    if (STATIC_DATA_MODE || !hydrated) return;
-    setWishlist(liveWishlistOwnerKey ? wishlistsByUser[liveWishlistOwnerKey] ?? [] : []);
-  }, [hydrated, liveWishlistOwnerKey, wishlistsByUser]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -854,13 +834,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     void supabase.auth.signOut();
     setUser(null);
     setAddresses([]);
-    setWishlist([]);
     setCart([]);
-    try {
-      localStorage.removeItem(KEY);
-    } catch {
-      /* ignore */
-    }
   }, []);
 
   const value = useMemo<AppState>(() => {
@@ -883,7 +857,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const signedInUser = { ...u, addressKey: u.addressKey ?? addressOwnerKey(u) };
         setUser(signedInUser);
         setAddresses(signedInUser.addressKey ? addressesByUser[signedInUser.addressKey] ?? [] : []);
-        setWishlist(signedInUser.addressKey ? wishlistsByUser[signedInUser.addressKey] ?? [] : []);
       },
       logout,
       updateProfile: async (p) => {
@@ -1018,7 +991,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
       clearCart: () => setCart([]),
 
       wishlist,
-      toggleWishlist: (id) => setWishlist((w) => (w.includes(id) ? w.filter((x) => x !== id) : [...w, id])),
+      toggleWishlist: (id) => setWishlistsByUser((saved) => {
+        const current = saved[wishlistOwnerKey] ?? [];
+        const next = current.includes(id) ? current.filter((productId) => productId !== id) : [...current, id];
+        return { ...saved, [wishlistOwnerKey]: next };
+      }),
 
       categories,
       addCategory: async (c) => {
