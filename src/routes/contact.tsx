@@ -17,6 +17,9 @@ export const Route = createFileRoute("/contact")({
     ...(typeof search["subcategory"] === "string" && search["subcategory"].trim()
       ? { subcategory: search["subcategory"].trim().slice(0, 100) }
       : {}),
+    ...(typeof search["brand"] === "string" && search["brand"].trim()
+      ? { brand: search["brand"].trim().slice(0, 100) }
+      : {}),
     ...(typeof search["weight"] === "string" && /^\d+(?:\.\d+)?$/.test(search["weight"])
       ? { weight: search["weight"] }
       : {}),
@@ -59,7 +62,7 @@ function Contact() {
   const configurationRequest = search.request === "product-configuration";
   const requestedPackSize = search.packSize ?? (search.weight ? `${search.weight} kg` : undefined);
   const configurationMessage = configurationRequest
-    ? `Please let me know if ${search.subcategory ?? search.category ?? "the requested product"} is available in ${requestedPackSize ?? "my requested pack size"}. Category: ${search.category ?? "Not specified"}.`
+    ? `Please let me know if ${search.subcategory ?? search.brand ?? search.category ?? "the requested product"} is available in ${requestedPackSize ?? "my requested pack size"}. Category: ${search.category ?? "Not specified"}.`
     : "";
   const [form, setForm] = useState(() => ({ name: "", email: "", phone: "", message: configurationMessage }));
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -90,6 +93,7 @@ function Contact() {
             request_type: "product_configuration",
             category: search.category ?? null,
             subcategory: search.subcategory ?? null,
+            brand: search.brand ?? null,
             requested_pack_size: requestedPackSize ?? null,
             requested_weight_kg: search.weight ? Number(search.weight) : null,
           }

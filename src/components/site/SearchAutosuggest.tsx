@@ -5,6 +5,7 @@ import { useApp } from "@/lib/store";
 import { inr } from "@/lib/data";
 import { cn } from "@/lib/utils";
 import { getSearchAutosuggestions, type SearchSuggestionItem } from "@/lib/search";
+import { categorySlug } from "@/lib/category-tree";
 
 interface SearchAutosuggestProps {
   value?: string;
@@ -113,7 +114,7 @@ export function SearchAutosuggest({
           navigate({ to: "/product/$id", params: { id: item.product.id } });
         } else if (item.kind === "category") {
           setIsOpen(false);
-          navigate({ to: "/categories/$slug", params: { slug: item.category.name.toLowerCase() } });
+          navigate({ to: "/categories/$slug", params: { slug: categorySlug(item.category.name === "Cooking Oil" ? "Oil" : item.category.name) } });
         } else if (item.kind === "subcategory") {
           setIsOpen(false);
           navigate({ to: "/shop", search: { q: item.subcategory } });

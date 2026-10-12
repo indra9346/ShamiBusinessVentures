@@ -5,9 +5,10 @@ import { ArrowLeft } from "lucide-react";
 import { SiteLayout, Breadcrumbs } from "@/components/site/SiteLayout";
 import { getCategoryNode, categorySlug } from "@/lib/category-tree";
 import { isStorefrontProduct, type Product } from "@/lib/data";
+import { availableProductBrands, normalizeFacetValue, productMatchesBrand } from "@/lib/search";
 import { useApp } from "@/lib/store";
 
-type CategorySearch = { subcategory?: string; weight?: string; packSize?: string };
+type CategorySearch = { subcategory?: string; brand?: string; weight?: string; packSize?: string };
 
 function parseKg(value: unknown): number | undefined {
   if (typeof value !== "string" && typeof value !== "number") return undefined;
@@ -28,10 +29,12 @@ function cleanText(value: unknown, maxLength: number) {
 export const Route = createFileRoute("/categories/$slug")({
   validateSearch: (search: Record<string, unknown>): CategorySearch => {
     const subcategory = cleanText(search["subcategory"], 100);
+    const brand = cleanText(search["brand"], 100);
     const weight = parseKg(search["weight"]);
     const packSize = cleanText(search["packSize"], 60);
     return {
       ...(subcategory ? { subcategory } : {}),
+      ...(brand ? { brand } : {}),
       ...(weight !== undefined ? { weight: String(weight) } : {}),
       ...(packSize ? { packSize } : {}),
     };
@@ -74,10 +77,11 @@ function CategoryLevel() {
   const catalogCategoryNames = new Set(
     [catalogCategory, ...(slug === "oil" ? ["Cooking Oil"] : [])]
       .filter((name): name is string => Boolean(name))
-      .map((name) => name.trim().toLowerCase()),
+      .map(normalizeFacetValue),
   );
   const childMatch = useMatch({ from: "/categories/$slug/$child", shouldThrow: false });
   const selectedPack = isRice ? search.weight ?? "" : search.packSize ?? "";
+  const selectedFacet = search.brand ? `brand:${search.brand}` : search.subcategory ? `type:${search.subcategory}` : "";
   const [packInput, setPackInput] = useState(selectedPack);
   useEffect(() => setPackInput(selectedPack), [selectedPack]);
 
@@ -99,7 +103,7 @@ function CategoryLevel() {
   }
 
   const categoryProducts = products.filter((product) =>
-    (catalogCategoryNames.has(product.category.trim().toLowerCase()) || categorySlug(product.category.trim()) === slug) &&
+    (catalogCategoryNames.has(normalizeFacetValue(product.category)) || categorySlug(safeText(product.category)) === slug) &&
     isStorefrontProduct(product),
   );
   const configuredSubcategories = [
@@ -107,21 +111,27 @@ function CategoryLevel() {
     ...Object.values(node?.children ?? {}).map((child) => child.name),
   ];
   const subcategories = availableSubcategories(categoryProducts, isRice, configuredSubcategories);
+  const configuredBrands = Object.values(node?.children ?? {}).flatMap((child) =>
+    child.tiles.filter((tile) => !tile.slug).map((tile) => tile.label),
+  );
+  const brands = availableProductBrands(categoryProducts, configuredBrands);
   const packSizes = isRice
     ? availableRiceWeights(categoryProducts)
     : availablePackSizes(categoryProducts);
   const filteredProducts = categoryProducts.filter((product) => {
-    if (search.subcategory && normalizeText(productSubcategory(product, isRice)) !== normalizeText(search.subcategory)) {
+    if (search.brand && !productMatchesBrand(product, search.brand)) return false;
+    if (search.subcategory && normalizeFacetValue(productSubcategory(product, isRice)) !== normalizeFacetValue(search.subcategory)) {
       return false;
     }
     if (isRice && search.weight && packWeightKg(product) !== parseKg(search.weight)) return false;
-    if (!isRice && search.packSize && normalizeText(product.weight) !== normalizeText(search.packSize)) return false;
+    if (!isRice && search.packSize && normalizePackSize(product.weight) !== normalizePackSize(search.packSize)) return false;
     return true;
   });
 
-  const changeFilter = (next: { subcategory?: string | undefined; value: string }) => {
+  const changeFilter = (next: { subcategory?: string | undefined; brand?: string | undefined; value: string }) => {
     const query: CategorySearch = {
       ...(next.subcategory ? { subcategory: next.subcategory } : {}),
+      ...(next.brand ? { brand: next.brand } : {}),
       ...(isRice
         ? (parseKg(next.value) !== undefined ? { weight: formatKg(parseKg(next.value)!) } : {})
         : (next.value.trim() ? { packSize: next.value.trim() } : {})),
@@ -149,15 +159,26 @@ function CategoryLevel() {
             <label className="grid gap-1.5 text-xs font-semibold text-navy">
               {isRice ? "Rice type" : "Product type"}
               <select
-                value={search.subcategory ?? ""}
-                onChange={(event) => changeFilter({
-                  ...(event.target.value ? { subcategory: event.target.value } : {}),
-                  value: selectedPack,
-                })}
+                value={selectedFacet}
+                onChange={(event) => {
+                  const selected = event.target.value;
+                  changeFilter({
+                    ...(selected.startsWith("brand:") ? { brand: selected.slice("brand:".length) } : {}),
+                    ...(selected.startsWith("type:") ? { subcategory: selected.slice("type:".length) } : {}),
+                    value: selectedPack,
+                  });
+                }}
                 className="h-10 rounded-md border border-border bg-card px-3 text-sm font-normal text-charcoal focus:border-gold focus:outline-none"
               >
                 <option value="">All {displayName.toLowerCase()}</option>
-                {subcategories.map((value) => <option key={value} value={value}>{value}</option>)}
+                <optgroup label="Product type">
+                  {subcategories.map((value) => <option key={`type:${value}`} value={`type:${value}`}>{value}</option>)}
+                </optgroup>
+                {brands.length > 0 && (
+                  <optgroup label="Brand">
+                    {brands.map((value) => <option key={`brand:${value}`} value={`brand:${value}`}>{value}</option>)}
+                  </optgroup>
+                )}
               </select>
             </label>
             <label className="grid gap-1.5 text-xs font-semibold text-navy">
@@ -173,10 +194,13 @@ function CategoryLevel() {
                 onChange={(event) => {
                   const value = event.target.value;
                   setPackInput(value);
-                  changeFilter({
-                    ...(search.subcategory ? { subcategory: search.subcategory } : {}),
-                    value,
-                  });
+                  if (!value.trim() || !isRice || parseKg(value) !== undefined) {
+                    changeFilter({
+                      ...(search.subcategory ? { subcategory: search.subcategory } : {}),
+                      ...(search.brand ? { brand: search.brand } : {}),
+                      value,
+                    });
+                  }
                 }}
                 className="h-10 rounded-md border border-border bg-card px-3 text-sm font-normal text-charcoal focus:border-gold focus:outline-none"
               />
@@ -203,11 +227,11 @@ function CategoryLevel() {
         ) : filteredProducts.length === 0 ? (
           <div className="rounded-lg border border-dashed border-border bg-card p-8 text-center">
             <p className="text-sm text-slate">
-              {search.subcategory || (isRice ? search.weight : search.packSize)
+              {search.subcategory || search.brand || (isRice ? search.weight : search.packSize)
                 ? `No ${displayName.toLowerCase()} products match the selected filters right now.`
                 : `No ${displayName.toLowerCase()} products are available right now.`}
             </p>
-            {(isRice ? search.weight : search.packSize) ? (
+            {search.brand || search.subcategory || (isRice ? search.weight : search.packSize) ? (
               <>
                 <p className="mt-2 text-sm text-slate">Our supply desk can review a request for this configuration.</p>
                 <Link
@@ -216,6 +240,7 @@ function CategoryLevel() {
                     request: "product-configuration",
                     category: displayName,
                     ...(search.subcategory ? { subcategory: search.subcategory } : {}),
+                    ...(search.brand ? { brand: search.brand } : {}),
                     ...(isRice && search.weight ? { weight: search.weight } : {}),
                     ...(!isRice && search.packSize ? { packSize: search.packSize } : {}),
                   }}
@@ -238,31 +263,37 @@ function CategoryLevel() {
   );
 }
 
-function normalizeText(value: string | undefined) {
-  return (value ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+function safeText(value: unknown) {
+  return typeof value === "string" ? value : "";
 }
 
 function riceType(product: Product) {
-  const value = `${product.subcategory} ${product.name}`.toLowerCase();
+  const value = `${safeText(product.subcategory)} ${safeText(product.name)}`.toLocaleLowerCase();
   if (/\bsteam(?:ed)?\b/.test(value)) return "Steam Rice";
   if (/\braw\b/.test(value)) return "Raw Rice";
   return undefined;
 }
 
 function productSubcategory(product: Product, isRice: boolean) {
-  return (isRice ? riceType(product) : undefined) ?? product.subcategory.trim();
+  return (isRice ? riceType(product) : undefined) ?? safeText(product.subcategory).trim();
 }
 
 function availableSubcategories(products: Product[], isRice: boolean, configured: string[]) {
-  return [...new Set([
+  const values = [
     ...configured.map((value) => value.trim()).filter(Boolean),
     ...products.map((product) => productSubcategory(product, isRice)).filter(Boolean),
-  ])]
+  ];
+  const unique = new Map<string, string>();
+  for (const value of values) {
+    const key = normalizeFacetValue(value);
+    if (key && !unique.has(key)) unique.set(key, value);
+  }
+  return [...unique.values()]
     .sort((a, b) => a.localeCompare(b));
 }
 
 function packWeightKg(product: { weight: string }) {
-  const match = product.weight.match(/(\d+(?:\.\d+)?)\s*(?:kg|kgs|kilograms?)\b/i);
+  const match = safeText(product.weight).match(/(\d+(?:\.\d+)?)\s*(?:kg|kgs|kilograms?)\b/i);
   return match ? parseKg(match[1]) : undefined;
 }
 
@@ -273,6 +304,26 @@ function availableRiceWeights(products: Product[]) {
 }
 
 function availablePackSizes(products: Product[]) {
-  return [...new Set(products.map((product) => product.weight.trim()).filter(Boolean))]
+  const unique = new Map<string, string>();
+  for (const product of products) {
+    const label = safeText(product.weight).trim();
+    const key = normalizePackSize(label);
+    if (key && !unique.has(key)) unique.set(key, label);
+  }
+  return [...unique.values()]
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
+}
+
+function normalizePackSize(value: unknown) {
+  if (typeof value !== "string") return "";
+  const cleaned = value.trim().replace(/\s+/g, " ").toLocaleLowerCase();
+  const unitAliases: Array<[RegExp, string]> = [
+    [/\b(?:kilograms?|kgs?)\b|(?<=\d)kg\b/g, "kg"],
+    [/\b(?:grams?|gms?)\b|(?<=\d)g\b/g, "g"],
+    [/\b(?:litres?|liters?|ltrs?)\b|(?<=\d)l\b/g, "l"],
+    [/\b(?:millilitres?|milliliters?)\b|(?<=\d)ml\b/g, "ml"],
+  ];
+  let normalized = cleaned;
+  for (const [pattern, replacement] of unitAliases) normalized = normalized.replace(pattern, replacement);
+  return normalized.replace(/\s+/g, "");
 }
