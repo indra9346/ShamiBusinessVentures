@@ -452,8 +452,8 @@ function Shop() {
                 type="button"
                 onClick={() => setView("grid")}
                 aria-pressed={view === "grid"}
-                aria-label="Grid view"
-                title="Grid view"
+                aria-label="Grid view, two columns on phones"
+                title="Grid view · two columns on phones"
                 className={cn(
                   "flex h-9 w-9 sm:h-10 sm:w-10 items-center justify-center rounded-md transition-all duration-200",
                   view === "grid"
@@ -647,7 +647,7 @@ function Shop() {
               className={cn(
                 "grid transition-all duration-300",
                 view === "grid"
-                  ? "grid-cols-2 gap-3 sm:gap-5 lg:grid-cols-3 xl:grid-cols-3"
+                  ? "grid-cols-2 gap-3 sm:gap-5 lg:grid-cols-3 xl:grid-cols-4"
                   : "grid-cols-1 gap-3 sm:gap-4",
               )}
             >

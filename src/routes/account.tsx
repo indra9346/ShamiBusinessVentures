@@ -1,5 +1,6 @@
 import { createFileRoute, Link, Outlet, useRouterState } from "@tanstack/react-router";
 import {
+  ArrowRight,
   Bell,
   Gift,
   Heart,
@@ -86,11 +87,31 @@ function Account() {
       title="My Dashboard"
       subtitle={`Welcome back, ${user?.name ?? "Guest"}`}
     >
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Total Orders" value={String(ordersList.length)} icon={Package} />
-        <StatCard label="Total Spend" value={inr(totalSpend)} icon={Wallet} highlight />
-        <StatCard label="Active Deliveries" value={String(activeDeliveries)} icon={Truck} />
-        <StatCard label="Wishlist Items" value={String(wishlist.length)} icon={Heart} />
+      <Link
+        to="/shop"
+        className="mb-4 flex flex-col gap-3 rounded-lg border border-gold/40 bg-ivory p-4 shadow-card transition-colors hover:border-gold sm:flex-row sm:items-center sm:justify-between sm:p-5"
+      >
+        <span className="flex min-w-0 items-center gap-3">
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-gold text-midnight">
+            <ShoppingCart className="h-5 w-5" />
+          </span>
+          <span className="min-w-0">
+            <span className="block font-bold text-navy">Ready to shop?</span>
+            <span className="mt-0.5 block text-sm text-slate">
+              Browse rice, sugar and oils from verified vendors.
+            </span>
+          </span>
+        </span>
+        <span className="inline-flex items-center gap-2 self-start rounded-md bg-navy px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-midnight sm:self-auto">
+          Browse products <ArrowRight className="h-4 w-4" />
+        </span>
+      </Link>
+
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
+        <StatCard label="Total Orders" value={String(ordersList.length)} icon={Package} compact />
+        <StatCard label="Total Spend" value={inr(totalSpend)} icon={Wallet} highlight compact />
+        <StatCard label="Active Deliveries" value={String(activeDeliveries)} icon={Truck} compact />
+        <StatCard label="Wishlist Items" value={String(wishlist.length)} icon={Heart} compact />
       </div>
 
       <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">

@@ -133,7 +133,7 @@ function Index() {
               View all
             </Link>
           </div>
-          <div className="grid gap-3 sm:grid-cols-2 sm:gap-5 lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 sm:gap-5 lg:grid-cols-3 xl:grid-cols-4">
             {popularProducts.map((product) => (
               <HomeProductCard key={product.id} product={product} />
             ))}
@@ -189,11 +189,11 @@ function HomeProductCard({ product }: { product: Product }) {
   };
 
   return (
-    <article className="grid min-h-32 grid-cols-[104px_minmax(0,1fr)] overflow-hidden rounded-lg border border-border bg-card shadow-card sm:flex sm:min-h-0 sm:flex-col transition-all hover:border-gold hover:shadow-elevated">
+    <article className="flex min-w-0 flex-col overflow-hidden rounded-lg border border-border bg-card shadow-card transition-all hover:border-gold hover:shadow-elevated">
       <Link
         to="/product/$id"
         params={{ id: product.id }}
-        className="relative block overflow-hidden bg-background sm:aspect-square"
+        className="relative block aspect-square overflow-hidden bg-background"
       >
         <img
           src={product.image || fallbackImg}
