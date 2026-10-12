@@ -6,11 +6,12 @@ import { getCategoryNode } from "@/lib/category-tree";
 
 export const Route = createFileRoute("/categories/$slug/$child")({
   beforeLoad: ({ params }) => {
-    if (params.slug === "rice" && (params.child === "raw-rice" || params.child === "steam-rice")) {
+    const child = getCategoryNode(params.slug)?.children?.[params.child];
+    if (child) {
       throw redirect({
         to: "/categories/$slug",
-        params: { slug: "rice" },
-        search: { subcategory: params.child === "raw-rice" ? "Raw Rice" : "Steam Rice" },
+        params: { slug: params.slug },
+        search: { subcategory: child.name },
       });
     }
   },
