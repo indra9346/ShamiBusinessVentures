@@ -9,6 +9,16 @@ import { Textarea } from "@/components/ui/textarea";
 import { supabase } from "@/integrations/supabase/client";
 
 export const Route = createFileRoute("/contact")({
+  validateSearch: (search: Record<string, unknown>) => ({
+    ...(search["request"] === "product-configuration" ? { request: "product-configuration" as const } : {}),
+    ...(typeof search["category"] === "string" ? { category: search["category"].slice(0, 80) } : {}),
+    ...(search["subcategory"] === "Raw Rice" || search["subcategory"] === "Steam Rice"
+      ? { subcategory: search["subcategory"] }
+      : {}),
+    ...(typeof search["weight"] === "string" && /^\d+(?:\.\d+)?$/.test(search["weight"])
+      ? { weight: search["weight"] }
+      : {}),
+  }),
   head: () => ({
     meta: [
       { title: "Contact the Shami Supply Desk | care@shamiventures.in" },
@@ -40,7 +50,12 @@ type SubmittedData = {
 };
 
 function Contact() {
-  const [form, setForm] = useState({ name: "", email: "", phone: "", message: "" });
+  const search = Route.useSearch();
+  const configurationRequest = search.request === "product-configuration";
+  const configurationMessage = configurationRequest
+    ? `Please let me know if ${search.subcategory ?? "Rice"} is available in ${search.weight ? `${search.weight} kg` : "my requested"} pack size. Category: ${search.category ?? "Rice"}.`
+    : "";
+  const [form, setForm] = useState(() => ({ name: "", email: "", phone: "", message: configurationMessage }));
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [submitted, setSubmitted] = useState<SubmittedData | null>(null);
@@ -64,6 +79,14 @@ function Contact() {
       message: form.message.trim(),
       recipient_email: "care@shamiventures.in",
       status: "new",
+      metadata: configurationRequest
+        ? {
+            request_type: "product_configuration",
+            category: search.category ?? "Rice",
+            subcategory: search.subcategory ?? null,
+            requested_weight_kg: search.weight ? Number(search.weight) : null,
+          }
+        : {},
     };
 
     try {
@@ -71,6 +94,7 @@ function Contact() {
       const { error: dbError } = await (supabase as any).from("contact_enquiries").insert(payload);
       if (dbError) {
         console.warn("Note: DB insert into contact_enquiries:", dbError.message);
+        if (configurationRequest) throw dbError;
       }
 
       // 2. Dispatch email notification to care@shamiventures.in via Edge Function / Webhook
@@ -92,9 +116,14 @@ function Contact() {
         }),
       });
 
-      toast.success("Enquiry Dispatched Directly to care@shamiventures.in", {
-        description: "Our Belagavi supply desk will respond within one business day.",
-      });
+      toast.success(
+        configurationRequest ? "Configuration request recorded" : "Enquiry Dispatched Directly to care@shamiventures.in",
+        {
+          description: configurationRequest
+            ? "Our supply desk will review the rice type and pack size you requested."
+            : "Our Belagavi supply desk will respond within one business day.",
+        },
+      );
       setForm({ name: "", email: "", phone: "", message: "" });
     } catch (err: any) {
       toast.error("Submission failed", {
@@ -138,15 +167,17 @@ function Contact() {
               </div>
               <div className="min-w-0 flex-1">
                 <span className="inline-block rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700">
-                  Dispatched to care@shamiventures.in
+                  {configurationRequest ? "Saved for supply desk review" : "Dispatched to care@shamiventures.in"}
                 </span>
                 <h2 className="mt-2 text-xl font-bold text-navy">
-                  Thank You, {submitted.name}! Your Enquiry Has Been Sent
+                  {configurationRequest
+                    ? `Thank You, ${submitted.name}! Your Pack-Size Request Has Been Recorded`
+                    : `Thank You, ${submitted.name}! Your Enquiry Has Been Sent`}
                 </h2>
                 <p className="mt-1 text-sm text-slate">
-                  Your message has been delivered to our official support desk at{" "}
-                  <strong className="text-navy">care@shamiventures.in</strong>. A dedicated supply
-                  manager will review your requirements and get in touch with you shortly.
+                  {configurationRequest
+                    ? "Our supply desk will review the requested rice type and pack size. You can also contact the team directly if you need a faster response."
+                    : <>Your message has been delivered to our official support desk at{" "}<strong className="text-navy">care@shamiventures.in</strong>. A dedicated supply manager will review your requirements and get in touch with you shortly.</>}
                 </p>
               </div>
             </div>
