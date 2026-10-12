@@ -1,7 +1,7 @@
 import { createFileRoute, Link, Outlet, useRouterState } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Download, IndianRupee, ShieldCheck, Users, UserX } from "lucide-react";
+import { Download, IndianRupee, Mail, ShieldCheck, Users, UserX } from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { DataTable, Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { Pager } from "@/components/panel/pager";
@@ -11,6 +11,7 @@ import { useApp } from "@/lib/store";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
 import { downloadCSV } from "@/lib/export-utils";
 
 export const Route = createFileRoute("/admin/customers")({
@@ -27,6 +28,9 @@ export const Route = createFileRoute("/admin/customers")({
 });
 
 const PAGE_SIZE = 12;
+const MAX_BCC_RECIPIENTS = 25;
+
+const hasEmailAddress = (email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 
 function AdminCustomers() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
@@ -43,6 +47,7 @@ function AdminCustomersPanel() {
   const [city, setCity] = useState("all");
   const [sort, setSort] = useState("spend-desc");
   const [page, setPage] = useState(1);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
 
   const cities = useMemo(() => Array.from(new Set(customers.map((c) => c.city))), [customers]);
 
@@ -66,6 +71,80 @@ function AdminCustomersPanel() {
   const pages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const pageSafe = Math.min(page, pages);
   const rows = filtered.slice((pageSafe - 1) * PAGE_SIZE, pageSafe * PAGE_SIZE);
+  const selectablePage = rows.filter((customer) => hasEmailAddress(customer.email));
+  const selectedCustomers = customers.filter((customer) => selectedIds.has(customer.id));
+  const selectedEmails = Array.from(
+    new Map(
+      selectedCustomers
+        .map((customer) => customer.email.trim())
+        .filter(hasEmailAddress)
+        .map((email) => [email.toLowerCase(), email] as const),
+    ).values(),
+  );
+  const allPageSelected =
+    selectablePage.length > 0 && selectablePage.every((customer) => selectedIds.has(customer.id));
+
+  const togglePageSelection = () => {
+    if (allPageSelected) {
+      setSelectedIds((current) => {
+        const next = new Set(current);
+        selectablePage.forEach((customer) => next.delete(customer.id));
+        return next;
+      });
+      return;
+    }
+
+    const knownAddresses = new Set(selectedEmails.map((email) => email.toLowerCase()));
+    const newRecipients = selectablePage.filter((customer) => {
+      const address = customer.email.trim().toLowerCase();
+      if (selectedIds.has(customer.id) || knownAddresses.has(address)) return false;
+      knownAddresses.add(address);
+      return true;
+    });
+    const capacity = Math.max(0, MAX_BCC_RECIPIENTS - selectedEmails.length);
+    const recipientsToAdd = newRecipients.slice(0, capacity);
+    if (recipientsToAdd.length < newRecipients.length) {
+      toast.info(`Email drafts are limited to ${MAX_BCC_RECIPIENTS} recipients. Clear some selections first.`);
+    }
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      recipientsToAdd.forEach((customer) => next.add(customer.id));
+      return next;
+    });
+  };
+
+  const toggleCustomerSelection = (customerId: string, checked: boolean) => {
+    const customer = customers.find((item) => item.id === customerId);
+    if (checked && customer && hasEmailAddress(customer.email)) {
+      const isNewAddress = !selectedEmails.some(
+        (email) => email.toLowerCase() === customer.email.trim().toLowerCase(),
+      );
+      if (isNewAddress && selectedEmails.length >= MAX_BCC_RECIPIENTS) {
+        toast.error(`Email drafts are limited to ${MAX_BCC_RECIPIENTS} recipients.`);
+        return;
+      }
+    }
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (checked) next.add(customerId);
+      else next.delete(customerId);
+      return next;
+    });
+  };
+
+  const draftBulkEmail = () => {
+    if (selectedEmails.length < 2) {
+      toast.error("Select at least two customers with valid email addresses.");
+      return;
+    }
+    if (selectedEmails.length > MAX_BCC_RECIPIENTS) {
+      toast.error(`Select no more than ${MAX_BCC_RECIPIENTS} customers for one email draft.`);
+      return;
+    }
+
+    // BCC keeps recipients' addresses private. Sending still happens in the admin's email app.
+    window.location.href = `mailto:?bcc=${encodeURIComponent(selectedEmails.join(","))}`;
+  };
 
   const active = customers.filter((c) => c.status === "active").length;
   const blocked = customers.filter((c) => c.status === "blocked").length;
@@ -140,9 +219,37 @@ function AdminCustomersPanel() {
           </div>
         }
       >
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-border bg-ivory/70 p-3">
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-navy">
+              {selectedEmails.length} customer{selectedEmails.length === 1 ? "" : "s"} selected
+            </p>
+            <p className="mt-1 text-xs text-slate">
+              Bulk email opens your email app with recipients in BCC; review and send it there.
+              Select up to {MAX_BCC_RECIPIENTS} customers per draft.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" size="sm" onClick={togglePageSelection} disabled={!selectablePage.length}>
+              {allPageSelected ? "Clear page selection" : `Select this page (${selectablePage.length})`}
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => setSelectedIds(new Set())} disabled={!selectedIds.size}>
+              Clear all
+            </Button>
+            <Button size="sm" onClick={draftBulkEmail} disabled={selectedEmails.length < 2 || selectedEmails.length > MAX_BCC_RECIPIENTS}>
+              <Mail className="mr-1.5 h-4 w-4" /> Draft email (BCC)
+            </Button>
+          </div>
+        </div>
         <DataTable
-          columns={["Customer", "Contact", "Location", "Joined", "Orders", "Spend", "Last Order", "Status", "Actions"]}
+          columns={["Select", "Customer", "Contact", "Location", "Joined", "Orders", "Spend", "Last Order", "Status", "Actions"]}
           rows={rows.map((c) => [
+            <Checkbox
+              checked={selectedIds.has(c.id)}
+              onCheckedChange={(checked) => toggleCustomerSelection(c.id, checked === true)}
+              disabled={!hasEmailAddress(c.email)}
+              aria-label={`Select ${c.name} for bulk email`}
+            />,
             <div className="flex items-center gap-3">
               <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-navy/10 text-xs font-bold text-navy">{c.avatar}</span>
               <Link to="/admin/customers/$id" params={{ id: c.id }} className="font-medium text-navy hover:text-gold">{c.name}</Link>
