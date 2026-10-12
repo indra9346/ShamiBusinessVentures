@@ -1,10 +1,19 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, redirect } from "@tanstack/react-router";
 import { ArrowLeft } from "lucide-react";
 import { SiteLayout, Breadcrumbs } from "@/components/site/SiteLayout";
 import { TileGrid } from "@/components/site/TileGrid";
 import { getCategoryNode } from "@/lib/category-tree";
 
 export const Route = createFileRoute("/categories/$slug/$child")({
+  beforeLoad: ({ params }) => {
+    if (params.slug === "rice" && (params.child === "raw-rice" || params.child === "steam-rice")) {
+      throw redirect({
+        to: "/categories/$slug",
+        params: { slug: "rice" },
+        search: { subcategory: params.child === "raw-rice" ? "Raw Rice" : "Steam Rice" },
+      });
+    }
+  },
   head: ({ params }) => {
     const child = getCategoryNode(params.slug)?.children?.[params.child];
     const name = child?.name ?? "Brands";
