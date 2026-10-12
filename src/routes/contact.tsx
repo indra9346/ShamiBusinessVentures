@@ -11,12 +11,17 @@ import { supabase } from "@/integrations/supabase/client";
 export const Route = createFileRoute("/contact")({
   validateSearch: (search: Record<string, unknown>) => ({
     ...(search["request"] === "product-configuration" ? { request: "product-configuration" as const } : {}),
-    ...(typeof search["category"] === "string" ? { category: search["category"].slice(0, 80) } : {}),
-    ...(search["subcategory"] === "Raw Rice" || search["subcategory"] === "Steam Rice"
-      ? { subcategory: search["subcategory"] }
+    ...(typeof search["category"] === "string" && search["category"].trim()
+      ? { category: search["category"].trim().slice(0, 80) }
+      : {}),
+    ...(typeof search["subcategory"] === "string" && search["subcategory"].trim()
+      ? { subcategory: search["subcategory"].trim().slice(0, 100) }
       : {}),
     ...(typeof search["weight"] === "string" && /^\d+(?:\.\d+)?$/.test(search["weight"])
       ? { weight: search["weight"] }
+      : {}),
+    ...(typeof search["packSize"] === "string" && search["packSize"].trim()
+      ? { packSize: search["packSize"].trim().slice(0, 60) }
       : {}),
   }),
   head: () => ({
@@ -52,8 +57,9 @@ type SubmittedData = {
 function Contact() {
   const search = Route.useSearch();
   const configurationRequest = search.request === "product-configuration";
+  const requestedPackSize = search.packSize ?? (search.weight ? `${search.weight} kg` : undefined);
   const configurationMessage = configurationRequest
-    ? `Please let me know if ${search.subcategory ?? "Rice"} is available in ${search.weight ? `${search.weight} kg` : "my requested"} pack size. Category: ${search.category ?? "Rice"}.`
+    ? `Please let me know if ${search.subcategory ?? search.category ?? "the requested product"} is available in ${requestedPackSize ?? "my requested pack size"}. Category: ${search.category ?? "Not specified"}.`
     : "";
   const [form, setForm] = useState(() => ({ name: "", email: "", phone: "", message: configurationMessage }));
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -82,8 +88,9 @@ function Contact() {
       metadata: configurationRequest
         ? {
             request_type: "product_configuration",
-            category: search.category ?? "Rice",
+            category: search.category ?? null,
             subcategory: search.subcategory ?? null,
+            requested_pack_size: requestedPackSize ?? null,
             requested_weight_kg: search.weight ? Number(search.weight) : null,
           }
         : {},
@@ -120,7 +127,7 @@ function Contact() {
         configurationRequest ? "Configuration request recorded" : "Enquiry Dispatched Directly to care@shamiventures.in",
         {
           description: configurationRequest
-            ? "Our supply desk will review the rice type and pack size you requested."
+            ? "Our supply desk will review the product type and pack size you requested."
             : "Our Belagavi supply desk will respond within one business day.",
         },
       );
@@ -171,12 +178,12 @@ function Contact() {
                 </span>
                 <h2 className="mt-2 text-xl font-bold text-navy">
                   {configurationRequest
-                    ? `Thank You, ${submitted.name}! Your Pack-Size Request Has Been Recorded`
+                    ? `Thank You, ${submitted.name}! Your Product Configuration Request Has Been Recorded`
                     : `Thank You, ${submitted.name}! Your Enquiry Has Been Sent`}
                 </h2>
                 <p className="mt-1 text-sm text-slate">
                   {configurationRequest
-                    ? "Our supply desk will review the requested rice type and pack size. You can also contact the team directly if you need a faster response."
+                    ? "Our supply desk will review the requested category, product type and pack size. You can also contact the team directly if you need a faster response."
                     : <>Your message has been delivered to our official support desk at{" "}<strong className="text-navy">care@shamiventures.in</strong>. A dedicated supply manager will review your requirements and get in touch with you shortly.</>}
                 </p>
               </div>

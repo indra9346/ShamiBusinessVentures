@@ -3,12 +3,11 @@ import { useEffect, useState } from "react";
 import { ProductCard } from "@/components/site/ProductCard";
 import { ArrowLeft } from "lucide-react";
 import { SiteLayout, Breadcrumbs } from "@/components/site/SiteLayout";
-import { TileGrid } from "@/components/site/TileGrid";
-import { getCategoryNode } from "@/lib/category-tree";
+import { getCategoryNode, categorySlug } from "@/lib/category-tree";
 import { isStorefrontProduct, type Product } from "@/lib/data";
 import { useApp } from "@/lib/store";
 
-type RiceSearch = { subcategory?: "Raw Rice" | "Steam Rice"; weight?: string };
+type CategorySearch = { subcategory?: string; weight?: string; packSize?: string };
 
 function parseKg(value: unknown): number | undefined {
   if (typeof value !== "string" && typeof value !== "number") return undefined;
@@ -22,27 +21,35 @@ function formatKg(kg: number) {
   return Number.isInteger(kg) ? String(kg) : String(kg).replace(/0+$/, "").replace(/\.$/, "");
 }
 
+function cleanText(value: unknown, maxLength: number) {
+  return typeof value === "string" && value.trim() ? value.trim().slice(0, maxLength) : undefined;
+}
+
 export const Route = createFileRoute("/categories/$slug")({
-  validateSearch: (search: Record<string, unknown>): RiceSearch => ({
-    ...(search["subcategory"] === "Raw Rice" || search["subcategory"] === "Steam Rice"
-      ? { subcategory: search["subcategory"] }
-      : {}),
-    ...(parseKg(search["weight"]) !== undefined ? { weight: String(parseKg(search["weight"])) } : {}),
-  } satisfies RiceSearch),
+  validateSearch: (search: Record<string, unknown>): CategorySearch => {
+    const subcategory = cleanText(search["subcategory"], 100);
+    const weight = parseKg(search["weight"]);
+    const packSize = cleanText(search["packSize"], 60);
+    return {
+      ...(subcategory ? { subcategory } : {}),
+      ...(weight !== undefined ? { weight: String(weight) } : {}),
+      ...(packSize ? { packSize } : {}),
+    };
+  },
   head: ({ params }) => {
     const node = getCategoryNode(params.slug);
     const name = node?.name ?? "Category";
     return {
       meta: [
-        { title: `${name} varieties | Shami Business Ventures` },
+        { title: `${name} products | Shami Business Ventures` },
         {
           name: "description",
-          content: `Browse ${name} varieties and pack sizes from verified mills with GST invoicing.`,
+          content: `Browse ${name} products, grades and pack sizes from verified suppliers.`,
         },
-        { property: "og:title", content: `${name} varieties | Shami Business Ventures` },
+        { property: "og:title", content: `${name} products | Shami Business Ventures` },
         {
           property: "og:description",
-          content: `Pick a ${name} variety to see live pricing and stock.`,
+          content: `Filter ${name} products by subcategory and pack size.`,
         },
       ],
     };
@@ -54,17 +61,35 @@ function CategoryLevel() {
   const { slug } = Route.useParams();
   const search = Route.useSearch();
   const navigate = useNavigate();
-  const { products, productCatalogStatus } = useApp();
-  const [weightInput, setWeightInput] = useState(search.weight ?? "");
-  useEffect(() => setWeightInput(search.weight ?? ""), [search.weight]);
+  const { categories, products, productCatalogStatus, categoryCatalogStatus } = useApp();
   const node = getCategoryNode(slug);
+  const category = categories.find((item) =>
+    categorySlug(item.name === "Cooking Oil" ? "Oil" : item.name) === slug,
+  );
+  const displayName = node?.name ?? category?.name;
+  const catalogCategory = category?.name === "Cooking Oil"
+    ? "Oil"
+    : category?.name ?? (node?.slug === "oil" ? "Oil" : node?.name);
+  const isRice = catalogCategory?.toLowerCase() === "rice";
+  const catalogCategoryNames = new Set(
+    [catalogCategory, ...(slug === "oil" ? ["Cooking Oil"] : [])]
+      .filter((name): name is string => Boolean(name))
+      .map((name) => name.trim().toLowerCase()),
+  );
   const childMatch = useMatch({ from: "/categories/$slug/$child", shouldThrow: false });
+  const selectedPack = isRice ? search.weight ?? "" : search.packSize ?? "";
+  const [packInput, setPackInput] = useState(selectedPack);
+  useEffect(() => setPackInput(selectedPack), [selectedPack]);
 
-  if (!node) {
+  if (childMatch) return <Outlet />;
+
+  if (!displayName || !catalogCategory) {
     return (
       <SiteLayout>
         <div className="mx-auto max-w-7xl px-4 py-16 text-center sm:px-6">
-          <h1 className="text-2xl font-bold text-navy">Category not found</h1>
+          <p className="text-sm text-slate">
+            {categoryCatalogStatus === "loading" ? "Loading category…" : "Category not found"}
+          </p>
           <Link to="/categories" className="mt-4 inline-block text-sm font-semibold text-gold">
             Back to categories
           </Link>
@@ -73,15 +98,42 @@ function CategoryLevel() {
     );
   }
 
-  if (childMatch) {
-    return <Outlet />;
-  }
+  const categoryProducts = products.filter((product) =>
+    (catalogCategoryNames.has(product.category.trim().toLowerCase()) || categorySlug(product.category.trim()) === slug) &&
+    isStorefrontProduct(product),
+  );
+  const configuredSubcategories = [
+    ...(category?.grades ?? []),
+    ...Object.values(node?.children ?? {}).map((child) => child.name),
+  ];
+  const subcategories = availableSubcategories(categoryProducts, isRice, configuredSubcategories);
+  const packSizes = isRice
+    ? availableRiceWeights(categoryProducts)
+    : availablePackSizes(categoryProducts);
+  const filteredProducts = categoryProducts.filter((product) => {
+    if (search.subcategory && normalizeText(productSubcategory(product, isRice)) !== normalizeText(search.subcategory)) {
+      return false;
+    }
+    if (isRice && search.weight && packWeightKg(product) !== parseKg(search.weight)) return false;
+    if (!isRice && search.packSize && normalizeText(product.weight) !== normalizeText(search.packSize)) return false;
+    return true;
+  });
+
+  const changeFilter = (next: { subcategory?: string | undefined; value: string }) => {
+    const query: CategorySearch = {
+      ...(next.subcategory ? { subcategory: next.subcategory } : {}),
+      ...(isRice
+        ? (parseKg(next.value) !== undefined ? { weight: formatKg(parseKg(next.value)!) } : {})
+        : (next.value.trim() ? { packSize: next.value.trim() } : {})),
+    };
+    void navigate({ to: "/categories/$slug", params: { slug }, search: query, replace: true });
+  };
 
   return (
     <SiteLayout>
       <div className="border-b border-border bg-ivory">
         <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8">
-          <Breadcrumbs items={[{ label: "Categories", to: "/categories" }, { label: node.name }]} />
+          <Breadcrumbs items={[{ label: "Categories", to: "/categories" }, { label: displayName }]} />
           <div className="mt-3 flex flex-wrap items-center gap-3">
             <Link
               to="/categories"
@@ -90,91 +142,104 @@ function CategoryLevel() {
             >
               <ArrowLeft className="h-4 w-4" />
             </Link>
-            <h1 className="text-2xl font-bold text-navy sm:text-3xl">{node.name}</h1>
-            {node.slug === "oil" && (
-              <Link
-                to="/shop"
-                search={{ category: "Oil" }}
-                className="ml-auto rounded-md bg-navy px-4 py-2 text-sm font-semibold text-white hover:bg-navy/90"
-              >
-                Shop all oils
-              </Link>
-            )}
+            <h1 className="text-2xl font-bold text-navy sm:text-3xl">{displayName}</h1>
           </div>
-          <p className="mt-2 text-sm text-slate">{node.tagline}</p>
-          {node.slug === "rice" && (
-            <div className="mt-5 grid gap-3 sm:grid-cols-2 sm:max-w-2xl">
-              <label className="grid gap-1.5 text-xs font-semibold text-navy">
-                Rice type
-                <select
-                  value={search.subcategory ?? ""}
-                  onChange={(event) => void navigate({
-                    to: "/categories/$slug",
-                    params: { slug },
-                    search: {
-                      ...(event.target.value ? { subcategory: event.target.value as NonNullable<RiceSearch["subcategory"]> } : {}),
-                    },
-                    replace: true,
-                  })}
-                  className="h-10 rounded-md border border-border bg-card px-3 text-sm font-normal text-charcoal focus:border-gold focus:outline-none"
-                >
-                  <option value="">All rice</option>
-                  <option value="Raw Rice">Raw Rice</option>
-                  <option value="Steam Rice">Steam Rice</option>
-                </select>
-              </label>
-              <label className="grid gap-1.5 text-xs font-semibold text-navy">
-                KG filter
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  min="0.1"
-                  step="any"
-                  list="available-rice-pack-sizes"
-                  placeholder="Choose or enter kg"
-                  value={weightInput}
-                  onChange={(event) => {
-                    const value = event.target.value;
-                    setWeightInput(value);
-                    const kg = parseKg(value);
-                    void navigate({
-                      to: "/categories/$slug",
-                      params: { slug },
-                      search: {
-                        ...(search.subcategory ? { subcategory: search.subcategory } : {}),
-                        ...(kg !== undefined ? { weight: formatKg(kg) } : {}),
-                      },
-                      replace: true,
-                    });
-                  }}
-                  className="h-10 rounded-md border border-border bg-card px-3 text-sm font-normal text-charcoal focus:border-gold focus:outline-none"
-                />
-                <datalist id="available-rice-pack-sizes">
-                  {availableRiceWeights(products).map((weight) => (
-                    <option key={weight} value={weight} label={`${weight} kg currently listed`} />
-                  ))}
-                </datalist>
-                <span className="font-normal text-slate">Choose a listed pack size or enter another size to request it.</span>
-              </label>
-            </div>
-          )}
+          <p className="mt-2 text-sm text-slate">{category?.tagline ?? node?.tagline ?? `Browse ${displayName} products`}</p>
+          <div className="mt-5 grid gap-3 sm:max-w-2xl sm:grid-cols-2">
+            <label className="grid gap-1.5 text-xs font-semibold text-navy">
+              {isRice ? "Rice type" : "Product type"}
+              <select
+                value={search.subcategory ?? ""}
+                onChange={(event) => changeFilter({
+                  ...(event.target.value ? { subcategory: event.target.value } : {}),
+                  value: selectedPack,
+                })}
+                className="h-10 rounded-md border border-border bg-card px-3 text-sm font-normal text-charcoal focus:border-gold focus:outline-none"
+              >
+                <option value="">All {displayName.toLowerCase()}</option>
+                {subcategories.map((value) => <option key={value} value={value}>{value}</option>)}
+              </select>
+            </label>
+            <label className="grid gap-1.5 text-xs font-semibold text-navy">
+              {isRice ? "KG filter" : "Pack size filter"}
+              <input
+                type={isRice ? "number" : "text"}
+                inputMode={isRice ? "decimal" : undefined}
+                min={isRice ? "0.1" : undefined}
+                step={isRice ? "any" : undefined}
+                list="category-pack-sizes"
+                placeholder={isRice ? "Choose or enter kg" : "Choose or enter a pack size"}
+                value={packInput}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  setPackInput(value);
+                  changeFilter({
+                    ...(search.subcategory ? { subcategory: search.subcategory } : {}),
+                    value,
+                  });
+                }}
+                className="h-10 rounded-md border border-border bg-card px-3 text-sm font-normal text-charcoal focus:border-gold focus:outline-none"
+              />
+              <datalist id="category-pack-sizes">
+                {packSizes.map((value) => (
+                  <option key={value} value={value} label={`${value}${isRice ? " kg" : " currently listed"}`} />
+                ))}
+              </datalist>
+              <span className="font-normal text-slate">
+                Choose a listed size or enter another size to request it.
+              </span>
+            </label>
+          </div>
         </div>
       </div>
 
       <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 sm:py-12">
-        {node.slug === "rice" ? (
-          <RiceProducts
-            products={products}
-            status={productCatalogStatus}
-            subcategory={search.subcategory}
-            weight={search.weight}
-          />
+        {productCatalogStatus !== "ready" ? (
+          <p className="rounded-lg border border-dashed border-border bg-card p-8 text-center text-sm text-slate">
+            {productCatalogStatus === "loading"
+              ? "Loading available products…"
+              : `${displayName} products are temporarily unavailable. Please try again shortly.`}
+          </p>
+        ) : filteredProducts.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-border bg-card p-8 text-center">
+            <p className="text-sm text-slate">
+              {search.subcategory || (isRice ? search.weight : search.packSize)
+                ? `No ${displayName.toLowerCase()} products match the selected filters right now.`
+                : `No ${displayName.toLowerCase()} products are available right now.`}
+            </p>
+            {(isRice ? search.weight : search.packSize) ? (
+              <>
+                <p className="mt-2 text-sm text-slate">Our supply desk can review a request for this configuration.</p>
+                <Link
+                  to="/contact"
+                  search={{
+                    request: "product-configuration",
+                    category: displayName,
+                    ...(search.subcategory ? { subcategory: search.subcategory } : {}),
+                    ...(isRice && search.weight ? { weight: search.weight } : {}),
+                    ...(!isRice && search.packSize ? { packSize: search.packSize } : {}),
+                  }}
+                  className="mt-4 inline-flex rounded-md bg-navy px-4 py-2 text-sm font-semibold text-white hover:bg-navy/90"
+                >
+                  Request this configuration
+                </Link>
+              </>
+            ) : (
+              <p className="mt-2 text-sm text-slate">Choose or enter the pack size you need to request it.</p>
+            )}
+          </div>
         ) : (
-          <TileGrid tiles={node.tiles} basePath={node.slug} />
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {filteredProducts.map((product) => <ProductCard key={product.id} product={product} />)}
+          </div>
         )}
       </div>
     </SiteLayout>
   );
+}
+
+function normalizeText(value: string | undefined) {
+  return (value ?? "").trim().replace(/\s+/g, " ").toLowerCase();
 }
 
 function riceType(product: Product) {
@@ -184,83 +249,30 @@ function riceType(product: Product) {
   return undefined;
 }
 
+function productSubcategory(product: Product, isRice: boolean) {
+  return (isRice ? riceType(product) : undefined) ?? product.subcategory.trim();
+}
+
+function availableSubcategories(products: Product[], isRice: boolean, configured: string[]) {
+  return [...new Set([
+    ...configured.map((value) => value.trim()).filter(Boolean),
+    ...products.map((product) => productSubcategory(product, isRice)).filter(Boolean),
+  ])]
+    .sort((a, b) => a.localeCompare(b));
+}
+
 function packWeightKg(product: { weight: string }) {
   const match = product.weight.match(/(\d+(?:\.\d+)?)\s*(?:kg|kgs|kilograms?)\b/i);
   return match ? parseKg(match[1]) : undefined;
 }
 
 function availableRiceWeights(products: Product[]) {
-  const rows = products.filter((product) =>
-    product.category.trim().toLowerCase() === "rice" &&
-    isStorefrontProduct(product),
-  );
-  return [...new Set(rows.map(packWeightKg).filter((weight): weight is number => weight !== undefined))]
+  return [...new Set(products.map(packWeightKg).filter((weight): weight is number => weight !== undefined))]
     .sort((a, b) => a - b)
     .map(formatKg);
 }
 
-function RiceProducts({
-  products,
-  status,
-  subcategory,
-  weight,
-}: {
-  products: Product[];
-  status: "loading" | "ready" | "unavailable";
-  subcategory: RiceSearch["subcategory"];
-  weight: string | undefined;
-}) {
-  const riceProducts = products.filter((product) => {
-    if (product.category.trim().toLowerCase() !== "rice" || !isStorefrontProduct(product)) return false;
-    if (subcategory && riceType(product) !== subcategory) return false;
-    if (weight && packWeightKg(product) !== parseKg(weight)) return false;
-    return true;
-  });
-
-  if (status !== "ready") {
-    return (
-      <p className="rounded-lg border border-dashed border-border bg-card p-8 text-center text-sm text-slate">
-        {status === "loading" ? "Loading available rice products…" : "Rice products are temporarily unavailable. Please try again shortly."}
-      </p>
-    );
-  }
-
-  if (riceProducts.length === 0) {
-    return (
-      <div className="rounded-lg border border-dashed border-border bg-card p-8 text-center">
-        <p className="text-sm text-slate">
-          {subcategory
-            ? `No ${subcategory.toLowerCase()} products are available${weight ? ` in ${weight} kg packs` : ""} right now.`
-            : weight
-              ? `No rice products are available in ${weight} kg packs right now.`
-              : "No rice products are available right now."}
-        </p>
-        {weight ? (
-          <>
-            <p className="mt-2 text-sm text-slate">Our supply desk can review a request for this pack size.</p>
-            <Link
-              to="/contact"
-              search={{
-                request: "product-configuration",
-                category: "Rice",
-                ...(subcategory ? { subcategory } : {}),
-                weight,
-              }}
-              className="mt-4 inline-flex rounded-md bg-navy px-4 py-2 text-sm font-semibold text-white hover:bg-navy/90"
-            >
-              Request this rice configuration
-            </Link>
-          </>
-        ) : (
-          <p className="mt-2 text-sm text-slate">Select or enter the KG pack size you need to request a configuration.</p>
-        )}
-      </div>
-    );
-  }
-
-  return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-      {riceProducts.map((product) => <ProductCard key={product.id} product={product} />)}
-    </div>
-  );
+function availablePackSizes(products: Product[]) {
+  return [...new Set(products.map((product) => product.weight.trim()).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
 }
