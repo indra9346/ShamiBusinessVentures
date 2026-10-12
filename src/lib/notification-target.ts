@@ -25,6 +25,10 @@ export function notificationTarget(
   if (order) return `/admin/orders/${order.id}`;
 
   const title = notification.title.toLowerCase();
+  const enquiryId = notification.body.match(/\bEnquiry ID:\s*([0-9a-f]{8}-[0-9a-f-]{27,})\b/i)?.[1];
+  if (enquiryId || title.includes("enquiry")) {
+    return enquiryId ? `/admin/enquiries/${enquiryId}` : "/admin/enquiries";
+  }
   if (title.includes("payment")) return "/admin/payments";
   if (title.includes("vendor")) return "/admin/vendors";
   if (title.includes("stock")) return "/admin/inventory";

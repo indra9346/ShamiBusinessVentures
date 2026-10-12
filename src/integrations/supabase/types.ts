@@ -179,6 +179,12 @@ export type Database = {
         Update: { id?: string; vendor_id?: string; category?: string; status?: string; active?: boolean; payload?: Json; created_at?: string; updated_at?: string }
         Relationships: []
       }
+      contact_enquiries: {
+        Row: { id: string; name: string; email: string; phone: string | null; message: string; recipient_email: string; status: string; email_sent: boolean; email_delivery_status: string; metadata: Json; created_at: string; updated_at: string }
+        Insert: { id?: string; name: string; email: string; phone?: string | null; message: string; recipient_email?: string; status?: string; email_sent?: boolean; email_delivery_status?: string; metadata?: Json; created_at?: string; updated_at?: string }
+        Update: { id?: string; name?: string; email?: string; phone?: string | null; message?: string; recipient_email?: string; status?: string; email_sent?: boolean; email_delivery_status?: string; metadata?: Json; created_at?: string; updated_at?: string }
+        Relationships: []
+      }
       crm_notes: {
         Row: {
           author_id: string | null
@@ -855,6 +861,7 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      submit_contact_enquiry: { Args: { _name: string; _email: string; _phone: string | null; _message: string; _metadata?: Json }; Returns: string }
       can_read_order: { Args: { _order: string }; Returns: boolean }
       current_vendor_id: { Args: never; Returns: string }
       admin_set_profile_status: { Args: { _profile_id: string; _status: string }; Returns: boolean }
