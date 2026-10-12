@@ -1,4 +1,12 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
@@ -760,6 +768,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
             role: role || base.role,
             addressKey: base.addressKey ?? addressOwnerKey(base),
           };
+          if (
+            current &&
+            current.id === nextUser.id &&
+            current.name === nextUser.name &&
+            current.email === nextUser.email &&
+            (current.phone || "") === nextUser.phone &&
+            current.role === nextUser.role &&
+            current.addressKey === nextUser.addressKey
+          ) {
+            return current;
+          }
           return nextUser;
         });
       } catch (err) {
@@ -827,6 +846,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [hydrated, user, cart, wishlist, wishlistsByUser, categories, products, batches, orders, vendors, customers, reviews, returns, coupons, notifications, addressesByUser]);
 
 
+  // Keep this action stable across unrelated store updates. PanelLayout uses it
+  // in its access-check effect; recreating it on every catalog/notification
+  // refresh would restart customer verification and flash the secure sign-in
+  // screen while navigating between account pages.
+  const logout = useCallback(() => {
+    void supabase.auth.signOut();
+    setUser(null);
+    setAddresses([]);
+    setWishlist([]);
+    setCart([]);
+    try {
+      localStorage.removeItem(KEY);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   const value = useMemo<AppState>(() => {
     const cartItems = cart
       .map((line) => ({ product: products.find((p) => p.id === line.id), qty: line.qty }))
@@ -849,18 +885,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setAddresses(signedInUser.addressKey ? addressesByUser[signedInUser.addressKey] ?? [] : []);
         setWishlist(signedInUser.addressKey ? wishlistsByUser[signedInUser.addressKey] ?? [] : []);
       },
-      logout: () => {
-        void supabase.auth.signOut();
-        setUser(null);
-        setAddresses([]);
-        setWishlist([]);
-        setCart([]);
-        try {
-          localStorage.removeItem(KEY);
-        } catch {
-          /* ignore */
-        }
-      },
+      logout,
       updateProfile: async (p) => {
         const current = user;
         if (!current) return false;
@@ -1674,7 +1699,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         return true;
       },
     };
-  }, [hydrated, user, cart, wishlist, wishlistsByUser, categories, products, batches, orders, vendors, customers, reviews, returns, coupons, notifications, addresses, addressesByUser, productCatalogStatus, categoryCatalogStatus, saveProduct]);
+  }, [hydrated, user, cart, wishlist, wishlistsByUser, categories, products, batches, orders, vendors, customers, reviews, returns, coupons, notifications, addresses, addressesByUser, productCatalogStatus, categoryCatalogStatus, saveProduct, logout]);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 }
