@@ -20,6 +20,8 @@ export type NavItem = {
   icon: React.ComponentType<{ className?: string }>;
 };
 
+const ROLE_VERIFICATION_TIMEOUT_MS = 15_000;
+
 export function PanelLayout({
   items,
   tone,
@@ -164,54 +166,57 @@ export function PanelLayout({
         active = false;
       };
     }
+    const verificationAbort = new AbortController();
+    let verificationTimedOut = false;
+    const verificationTimeout = window.setTimeout(() => {
+      if (!active) return;
+      verificationTimedOut = true;
+      verificationAbort.abort();
+      setRoleCheckError(
+        "The secure sign-in check took too long. Your session is still saved; check your connection and try again.",
+      );
+    }, ROLE_VERIFICATION_TIMEOUT_MS);
     void (async () => {
       const {
         data: { session },
         error: sessionError,
       } = await supabase.auth.getSession();
+      if (!active || verificationTimedOut) return;
       if (sessionError) {
-        if (active)
-          setRoleCheckError(
-            "We could not verify your sign-in right now. Your session has been kept; try again when your connection is available.",
-          );
+        setRoleCheckError(
+          "We could not verify your sign-in right now. Your session has been kept; try again when your connection is available.",
+        );
         return;
       }
       if (!session?.user) {
-        if (active) {
-          navigate({
-            to: tone === "admin" ? "/admin/login" : tone === "vendor" ? "/vendor/login" : "/login",
-            replace: true,
-          });
-        }
+        navigate({
+          to: tone === "admin" ? "/admin/login" : tone === "vendor" ? "/vendor/login" : "/login",
+          replace: true,
+        });
         return;
       }
-      const {
-        data: { user: authUser },
-        error: authError,
-      } = await supabase.auth.getUser();
-      if (authError) {
-        if (active)
-          setRoleCheckError(
-            "We could not verify your sign-in right now. Your session has been kept; try again when your connection is available.",
-          );
-        return;
-      }
-      if (!authUser) {
-        if (active) {
-          navigate({
-            to: tone === "admin" ? "/admin/login" : tone === "vendor" ? "/vendor/login" : "/login",
-            replace: true,
-          });
-        }
-        return;
-      }
-      const { data: roleRecord, error } = await supabase
+      // The session's user id is sufficient for this UI gate: the following
+      // role/profile reads are still authenticated by Supabase and enforced by
+      // RLS, so a second Auth user-info request only adds latency here.
+      const authUser = session.user;
+      const roleQuery = supabase
         .from("user_roles")
         .select("role")
         .eq("user_id", authUser.id)
         .eq("role", tone)
+        .abortSignal(verificationAbort.signal)
         .maybeSingle();
-      if (!active) return;
+      const profileQuery = tone === "customer"
+        ? supabase
+            .from("profiles")
+            .select("status")
+            .eq("id", authUser.id)
+            .abortSignal(verificationAbort.signal)
+            .maybeSingle()
+        : Promise.resolve({ data: null, error: null });
+      const [roleResult, profileResult] = await Promise.all([roleQuery, profileQuery]);
+      if (!active || verificationTimedOut) return;
+      const { data: roleRecord, error } = roleResult;
       if (error) {
         setRoleCheckError(
           "We could not confirm this account’s panel access. Your sign-in has been kept; try again when your connection is available.",
@@ -219,7 +224,6 @@ export function PanelLayout({
         return;
       }
       if (!roleRecord) {
-        await supabase.auth.signOut();
         logout();
         navigate({
           to: tone === "admin" ? "/admin/login" : tone === "vendor" ? "/vendor/login" : "/login",
@@ -230,29 +234,21 @@ export function PanelLayout({
       const signOutBlockedAccount = (message: string) => {
         if (!active || accountBlocked) return;
         accountBlocked = true;
-        void supabase.auth.signOut().catch(() => undefined).then(() => {
-          if (!active) return;
-          logout();
-          toast.error(message, {
-            description: "Contact Shami support if you think this is a mistake.",
-          });
-          navigate({ to: "/login", replace: true });
+        logout();
+        toast.error(message, {
+          description: "Contact Shami support if you think this is a mistake.",
         });
+        navigate({ to: "/login", replace: true });
       };
       if (tone === "customer") {
-        const { data: profile, error: profileError } = await supabase
-          .from("profiles")
-          .select("status")
-          .eq("id", authUser.id)
-          .maybeSingle();
-        if (!active) return;
-        if (profileError) {
+        if (profileResult.error) {
           setRoleCheckError(
             "We could not verify that this customer account is active. Your sign-in has been kept; try again when your connection is available.",
           );
           return;
         }
         const allowedStatuses = ["active", "approved"];
+        const profile = profileResult.data;
         const status = (profile?.status ?? "").trim().toLowerCase();
         if (!profile || !allowedStatuses.includes(status)) {
           signOutBlockedAccount("This customer account is not active");
@@ -284,14 +280,16 @@ export function PanelLayout({
       }
       setVerifiedRole(true);
     })().catch(() => {
-      if (active) {
+      if (active && !verificationTimedOut) {
         setRoleCheckError(
           "We could not verify your sign-in. Your session has been kept; retry the access check.",
         );
       }
-    });
+    }).finally(() => window.clearTimeout(verificationTimeout));
     return () => {
       active = false;
+      window.clearTimeout(verificationTimeout);
+      verificationAbort.abort();
       if (profileChannel) void supabase.removeChannel(profileChannel);
     };
   }, [hydrated, tone, logout, navigate, user?.role, verificationAttempt]);
