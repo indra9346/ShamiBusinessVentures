@@ -35,6 +35,7 @@ import { Route as AdminCommissionsRouteImport } from './routes/admin.commissions
 import { Route as AdminCouponsRouteImport } from './routes/admin.coupons'
 import { Route as AdminCustomersRouteImport } from './routes/admin.customers'
 import { Route as AdminDashboardRouteImport } from './routes/admin.dashboard'
+import { Route as AdminEnquiriesRouteImport } from './routes/admin.enquiries'
 import { Route as AdminInventoryRouteImport } from './routes/admin.inventory'
 import { Route as AdminLoginRouteImport } from './routes/admin.login'
 import { Route as AdminNotificationsRouteImport } from './routes/admin.notifications'
@@ -66,6 +67,7 @@ import { Route as VendorReviewsRouteImport } from './routes/vendor.reviews'
 import { Route as VendorSettingsRouteImport } from './routes/vendor.settings'
 import { Route as AccountOrdersIdRouteImport } from './routes/account.orders.$id'
 import { Route as AdminCustomersIdRouteImport } from './routes/admin.customers.$id'
+import { Route as AdminEnquiriesIdRouteImport } from './routes/admin.enquiries.$id'
 import { Route as AdminOrdersIdRouteImport } from './routes/admin.orders.$id'
 import { Route as AdminProductsIdRouteImport } from './routes/admin.products.$id'
 import { Route as AdminVendorsIdRouteImport } from './routes/admin.vendors.$id'
@@ -202,6 +204,11 @@ const AdminCustomersRoute = AdminCustomersRouteImport.update({
 const AdminDashboardRoute = AdminDashboardRouteImport.update({
   id: '/admin/dashboard',
   path: '/admin/dashboard',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminEnquiriesRoute = AdminEnquiriesRouteImport.update({
+  id: '/admin/enquiries',
+  path: '/admin/enquiries',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AdminInventoryRoute = AdminInventoryRouteImport.update({
@@ -359,6 +366,11 @@ const AdminCustomersIdRoute = AdminCustomersIdRouteImport.update({
   path: '/$id',
   getParentRoute: () => AdminCustomersRoute,
 } as any)
+const AdminEnquiriesIdRoute = AdminEnquiriesIdRouteImport.update({
+  id: '/$id',
+  path: '/$id',
+  getParentRoute: () => AdminEnquiriesRoute,
+} as any)
 const AdminOrdersIdRoute = AdminOrdersIdRouteImport.update({
   id: '/$id',
   path: '/$id',
@@ -421,6 +433,7 @@ export interface FileRoutesByFullPath {
   '/admin/coupons': typeof AdminCouponsRoute
   '/admin/customers': typeof AdminCustomersRouteWithChildren
   '/admin/dashboard': typeof AdminDashboardRoute
+  '/admin/enquiries': typeof AdminEnquiriesRouteWithChildren
   '/admin/inventory': typeof AdminInventoryRoute
   '/admin/login': typeof AdminLoginRoute
   '/admin/notifications': typeof AdminNotificationsRoute
@@ -453,6 +466,7 @@ export interface FileRoutesByFullPath {
   '/vendor/': typeof VendorIndexRoute
   '/account/orders/$id': typeof AccountOrdersIdRoute
   '/admin/customers/$id': typeof AdminCustomersIdRoute
+  '/admin/enquiries/$id': typeof AdminEnquiriesIdRoute
   '/admin/orders/$id': typeof AdminOrdersIdRoute
   '/admin/products/$id': typeof AdminProductsIdRoute
   '/admin/vendors/$id': typeof AdminVendorsIdRoute
@@ -486,6 +500,7 @@ export interface FileRoutesByTo {
   '/admin/coupons': typeof AdminCouponsRoute
   '/admin/customers': typeof AdminCustomersRouteWithChildren
   '/admin/dashboard': typeof AdminDashboardRoute
+  '/admin/enquiries': typeof AdminEnquiriesRouteWithChildren
   '/admin/inventory': typeof AdminInventoryRoute
   '/admin/login': typeof AdminLoginRoute
   '/admin/notifications': typeof AdminNotificationsRoute
@@ -518,6 +533,7 @@ export interface FileRoutesByTo {
   '/vendor': typeof VendorIndexRoute
   '/account/orders/$id': typeof AccountOrdersIdRoute
   '/admin/customers/$id': typeof AdminCustomersIdRoute
+  '/admin/enquiries/$id': typeof AdminEnquiriesIdRoute
   '/admin/orders/$id': typeof AdminOrdersIdRoute
   '/admin/products/$id': typeof AdminProductsIdRoute
   '/admin/vendors/$id': typeof AdminVendorsIdRoute
@@ -553,6 +569,7 @@ export interface FileRoutesById {
   '/admin/coupons': typeof AdminCouponsRoute
   '/admin/customers': typeof AdminCustomersRouteWithChildren
   '/admin/dashboard': typeof AdminDashboardRoute
+  '/admin/enquiries': typeof AdminEnquiriesRouteWithChildren
   '/admin/inventory': typeof AdminInventoryRoute
   '/admin/login': typeof AdminLoginRoute
   '/admin/notifications': typeof AdminNotificationsRoute
@@ -585,6 +602,7 @@ export interface FileRoutesById {
   '/vendor/': typeof VendorIndexRoute
   '/account/orders/$id': typeof AccountOrdersIdRoute
   '/admin/customers/$id': typeof AdminCustomersIdRoute
+  '/admin/enquiries/$id': typeof AdminEnquiriesIdRoute
   '/admin/orders/$id': typeof AdminOrdersIdRoute
   '/admin/products/$id': typeof AdminProductsIdRoute
   '/admin/vendors/$id': typeof AdminVendorsIdRoute
@@ -621,6 +639,7 @@ export interface FileRouteTypes {
     | '/admin/coupons'
     | '/admin/customers'
     | '/admin/dashboard'
+    | '/admin/enquiries'
     | '/admin/inventory'
     | '/admin/login'
     | '/admin/notifications'
@@ -653,6 +672,7 @@ export interface FileRouteTypes {
     | '/vendor/'
     | '/account/orders/$id'
     | '/admin/customers/$id'
+    | '/admin/enquiries/$id'
     | '/admin/orders/$id'
     | '/admin/products/$id'
     | '/admin/vendors/$id'
@@ -686,6 +706,7 @@ export interface FileRouteTypes {
     | '/admin/coupons'
     | '/admin/customers'
     | '/admin/dashboard'
+    | '/admin/enquiries'
     | '/admin/inventory'
     | '/admin/login'
     | '/admin/notifications'
@@ -718,6 +739,7 @@ export interface FileRouteTypes {
     | '/vendor'
     | '/account/orders/$id'
     | '/admin/customers/$id'
+    | '/admin/enquiries/$id'
     | '/admin/orders/$id'
     | '/admin/products/$id'
     | '/admin/vendors/$id'
@@ -752,6 +774,7 @@ export interface FileRouteTypes {
     | '/admin/coupons'
     | '/admin/customers'
     | '/admin/dashboard'
+    | '/admin/enquiries'
     | '/admin/inventory'
     | '/admin/login'
     | '/admin/notifications'
@@ -784,6 +807,7 @@ export interface FileRouteTypes {
     | '/vendor/'
     | '/account/orders/$id'
     | '/admin/customers/$id'
+    | '/admin/enquiries/$id'
     | '/admin/orders/$id'
     | '/admin/products/$id'
     | '/admin/vendors/$id'
@@ -811,6 +835,7 @@ export interface RootRouteChildren {
   AdminCouponsRoute: typeof AdminCouponsRoute
   AdminCustomersRoute: typeof AdminCustomersRouteWithChildren
   AdminDashboardRoute: typeof AdminDashboardRoute
+  AdminEnquiriesRoute: typeof AdminEnquiriesRouteWithChildren
   AdminInventoryRoute: typeof AdminInventoryRoute
   AdminLoginRoute: typeof AdminLoginRoute
   AdminNotificationsRoute: typeof AdminNotificationsRoute
@@ -1024,6 +1049,13 @@ declare module '@tanstack/react-router' {
       path: '/admin/dashboard'
       fullPath: '/admin/dashboard'
       preLoaderRoute: typeof AdminDashboardRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/enquiries': {
+      id: '/admin/enquiries'
+      path: '/admin/enquiries'
+      fullPath: '/admin/enquiries'
+      preLoaderRoute: typeof AdminEnquiriesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/admin/inventory': {
@@ -1243,6 +1275,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminCustomersIdRouteImport
       parentRoute: typeof AdminCustomersRoute
     }
+    '/admin/enquiries/$id': {
+      id: '/admin/enquiries/$id'
+      path: '/$id'
+      fullPath: '/admin/enquiries/$id'
+      preLoaderRoute: typeof AdminEnquiriesIdRouteImport
+      parentRoute: typeof AdminEnquiriesRoute
+    }
     '/admin/orders/$id': {
       id: '/admin/orders/$id'
       path: '/$id'
@@ -1370,6 +1409,18 @@ const AdminCustomersRouteWithChildren = AdminCustomersRoute._addFileChildren(
   AdminCustomersRouteChildren,
 )
 
+interface AdminEnquiriesRouteChildren {
+  AdminEnquiriesIdRoute: typeof AdminEnquiriesIdRoute
+}
+
+const AdminEnquiriesRouteChildren: AdminEnquiriesRouteChildren = {
+  AdminEnquiriesIdRoute: AdminEnquiriesIdRoute,
+}
+
+const AdminEnquiriesRouteWithChildren = AdminEnquiriesRoute._addFileChildren(
+  AdminEnquiriesRouteChildren,
+)
+
 interface AdminOrdersRouteChildren {
   AdminOrdersIdRoute: typeof AdminOrdersIdRoute
 }
@@ -1448,6 +1499,7 @@ const rootRouteChildren: RootRouteChildren = {
   AdminCouponsRoute: AdminCouponsRoute,
   AdminCustomersRoute: AdminCustomersRouteWithChildren,
   AdminDashboardRoute: AdminDashboardRoute,
+  AdminEnquiriesRoute: AdminEnquiriesRouteWithChildren,
   AdminInventoryRoute: AdminInventoryRoute,
   AdminLoginRoute: AdminLoginRoute,
   AdminNotificationsRoute: AdminNotificationsRoute,

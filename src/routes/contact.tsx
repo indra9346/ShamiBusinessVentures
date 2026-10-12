@@ -10,7 +10,9 @@ import { supabase } from "@/integrations/supabase/client";
 
 export const Route = createFileRoute("/contact")({
   validateSearch: (search: Record<string, unknown>) => ({
-    ...(search["request"] === "product-configuration" ? { request: "product-configuration" as const } : {}),
+    ...(search["request"] === "product-configuration"
+      ? { request: "product-configuration" as const }
+      : {}),
     ...(typeof search["category"] === "string" && search["category"].trim()
       ? { category: search["category"].trim().slice(0, 80) }
       : {}),
@@ -45,16 +47,21 @@ export const Route = createFileRoute("/contact")({
 const schema = z.object({
   name: z.string().trim().min(2, "Enter your full name").max(100),
   email: z.string().trim().email("Enter a valid email").max(255),
-  phone: z.string().trim().regex(/^[0-9+\s-]{8,15}$/, "Enter a valid phone number"),
+  phone: z
+    .string()
+    .trim()
+    .regex(/^[0-9+\s-]{8,15}$/, "Enter a valid phone number"),
   message: z.string().trim().min(5, "Tell us a bit more about your requirement").max(1000),
 });
 
 type SubmittedData = {
+  id: string;
   name: string;
   email: string;
   phone: string;
   message: string;
   time: string;
+  emailSent: boolean;
 };
 
 function Contact() {
@@ -64,7 +71,12 @@ function Contact() {
   const configurationMessage = configurationRequest
     ? `Please let me know if ${search.subcategory ?? search.brand ?? search.category ?? "the requested product"} is available in ${requestedPackSize ?? "my requested pack size"}. Category: ${search.category ?? "Not specified"}.`
     : "";
-  const [form, setForm] = useState(() => ({ name: "", email: "", phone: "", message: configurationMessage }));
+  const [form, setForm] = useState(() => ({
+    name: "",
+    email: "",
+    phone: "",
+    message: configurationMessage,
+  }));
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [submitted, setSubmitted] = useState<SubmittedData | null>(null);
@@ -101,24 +113,31 @@ function Contact() {
     };
 
     try {
-      // 1. Record enquiry in Supabase database
-      const { error: dbError } = await (supabase as any).from("contact_enquiries").insert(payload);
-      if (dbError) {
-        console.warn("Note: DB insert into contact_enquiries:", dbError.message);
-        if (configurationRequest) throw dbError;
-      }
+      // Persist first. The DB trigger creates an admin notification in the same transaction.
+      const { data: savedId, error: dbError } = await supabase.rpc("submit_contact_enquiry", {
+        _name: payload.name,
+        _email: payload.email,
+        _phone: payload.phone,
+        _message: payload.message,
+        _metadata: payload.metadata,
+      });
+      if (dbError || !savedId) throw dbError ?? new Error("The enquiry could not be saved.");
 
-      // 2. Dispatch email notification to care@shamiventures.in via Edge Function / Webhook
-      try {
-        await supabase.functions.invoke("send-enquiry", {
-          body: payload,
-        });
-      } catch (fnErr) {
-        console.warn("Note: Edge function send-enquiry:", fnErr);
-      }
+      // Email is a separate delivery channel. Report it only when Resend confirms acceptance.
+      const { data: delivery, error: deliveryError } = await supabase.functions.invoke(
+        "send-enquiry",
+        {
+          body: { enquiry_id: savedId },
+        },
+      );
+      const emailSent = !deliveryError && delivery?.emailSent === true;
+      if (deliveryError)
+        console.warn("Enquiry saved; email delivery failed:", deliveryError.message);
 
       setSubmitted({
+        id: savedId,
         ...payload,
+        emailSent,
         time: new Date().toLocaleTimeString("en-IN", {
           hour: "2-digit",
           minute: "2-digit",
@@ -127,18 +146,18 @@ function Contact() {
         }),
       });
 
-      toast.success(
-        configurationRequest ? "Configuration request recorded" : "Enquiry Dispatched Directly to care@shamiventures.in",
-        {
-          description: configurationRequest
-            ? "Our supply desk will review the product type and pack size you requested."
-            : "Our Belagavi supply desk will respond within one business day.",
-        },
-      );
+      toast.success(configurationRequest ? "Product request saved" : "Enquiry saved", {
+        description: emailSent
+          ? "The request is in the admin enquiry inbox and the email provider accepted the message."
+          : "The request is in the admin enquiry inbox. Email delivery was not confirmed; use the email link to contact the desk.",
+      });
       setForm({ name: "", email: "", phone: "", message: "" });
-    } catch (err: any) {
+    } catch (err: unknown) {
       toast.error("Submission failed", {
-        description: err?.message || "Please try reaching us directly on WhatsApp or Email.",
+        description:
+          err instanceof Error
+            ? err.message
+            : "Please try reaching us directly on WhatsApp or Email.",
       });
     } finally {
       setLoading(false);
@@ -150,11 +169,11 @@ function Contact() {
       `Hello Shami Business Desk, I have a wholesale enquiry.\nName: ${form.name || "Customer"}\nPhone: ${phoneVal || "N/A"}\nMessage: ${msgVal}`,
     )}`;
 
-  const emailUrl = (nameVal: string, msgVal: string) =>
+  const emailUrl = (item: SubmittedData) =>
     `mailto:care@shamiventures.in?subject=${encodeURIComponent(
-      `Enquiry from ${nameVal || "Customer"}`,
+      `Enquiry ${item.id} from ${item.name}`,
     )}&body=${encodeURIComponent(
-      `Name: ${nameVal}\nEmail: ${form.email}\nPhone: ${form.phone}\nRequirement: ${msgVal}`,
+      `Name: ${item.name}\nEmail: ${item.email}\nPhone: ${item.phone || "Not provided"}\nRequest ID: ${item.id}\nRequirement: ${item.message}`,
     )}`;
 
   return (
@@ -178,17 +197,30 @@ function Contact() {
               </div>
               <div className="min-w-0 flex-1">
                 <span className="inline-block rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700">
-                  {configurationRequest ? "Saved for supply desk review" : "Dispatched to care@shamiventures.in"}
+                  {submitted.emailSent ? "Email provider accepted" : "Saved for admin follow-up"}
                 </span>
                 <h2 className="mt-2 text-xl font-bold text-navy">
                   {configurationRequest
-                    ? `Thank You, ${submitted.name}! Your Product Configuration Request Has Been Recorded`
-                    : `Thank You, ${submitted.name}! Your Enquiry Has Been Sent`}
+                    ? `Thank You, ${submitted.name}! Your Product Request Has Been Recorded`
+                    : `Thank You, ${submitted.name}! Your Enquiry Has Been Recorded`}
                 </h2>
                 <p className="mt-1 text-sm text-slate">
-                  {configurationRequest
-                    ? "Our supply desk will review the requested category, product type and pack size. You can also contact the team directly if you need a faster response."
-                    : <>Your message has been delivered to our official support desk at{" "}<strong className="text-navy">care@shamiventures.in</strong>. A dedicated supply manager will review your requirements and get in touch with you shortly.</>}
+                  {configurationRequest ? (
+                    <>
+                      The admin team can review your product request in the enquiry inbox. The email
+                      provider{" "}
+                      {submitted.emailSent ? "accepted the message" : "did not confirm acceptance"};
+                      you can contact the desk directly below.
+                    </>
+                  ) : (
+                    <>
+                      Your request is saved in the admin enquiry inbox. The email provider{" "}
+                      {submitted.emailSent
+                        ? "accepted the message for care@shamiventures.in"
+                        : "did not confirm acceptance"}
+                      ; use the email link below if you need to contact the desk directly.
+                    </>
+                  )}
                 </p>
               </div>
             </div>
@@ -213,7 +245,10 @@ function Contact() {
                 </div>
                 <div>
                   <dt className="text-xs text-slate">Destination</dt>
-                  <dd className="font-semibold text-gold">care@shamiventures.in</dd>
+                  <dd className="font-semibold text-gold">
+                    {submitted.emailSent ? "Provider accepted" : "Not confirmed"} ·
+                    care@shamiventures.in
+                  </dd>
                 </div>
                 <div className="sm:col-span-2">
                   <dt className="text-xs text-slate">Requirement Note</dt>
@@ -236,7 +271,7 @@ function Contact() {
                 Chat on WhatsApp (+91 95385 00840)
               </a>
               <a
-                href={`mailto:care@shamiventures.in?subject=Enquiry Follow-up - ${submitted.name}`}
+                href={emailUrl(submitted)}
                 className="inline-flex items-center gap-2 rounded-lg border border-navy/20 bg-navy/5 px-4 py-2.5 text-xs font-bold text-navy transition-colors hover:bg-navy/10"
               >
                 <Mail className="h-4 w-4" />
@@ -261,13 +296,14 @@ function Contact() {
               <div>
                 <h2 className="text-lg font-bold text-navy">Send an enquiry</h2>
                 <p className="mt-0.5 text-xs text-slate">
-                  Bulk quotes, vendor onboarding or order support delivered to{" "}
+                  Bulk quotes, vendor onboarding or order support are saved for review and emailed
+                  when delivery is configured to{" "}
                   <strong className="text-gold">care@shamiventures.in</strong>.
                 </p>
               </div>
               <span className="hidden sm:inline-flex items-center gap-1.5 rounded-full bg-gold/10 px-2.5 py-1 text-xs font-semibold text-gold">
                 <Send className="h-3 w-3" />
-                Direct Desk Dispatch
+                Save & notify desk
               </span>
             </div>
 
@@ -305,7 +341,11 @@ function Contact() {
                 />
               </Field>
               <div className="sm:col-span-2">
-                <Field id="contact-message" label="Message / Requirement details" error={errors["message"]}>
+                <Field
+                  id="contact-message"
+                  label="Message / Requirement details"
+                  error={errors["message"]}
+                >
                   <Textarea
                     id="contact-message"
                     name="message"
@@ -327,7 +367,7 @@ function Contact() {
                 {loading ? (
                   <>
                     <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                    <span>Dispatching to care@shamiventures.in...</span>
+                    <span>Saving and sending enquiry...</span>
                   </>
                 ) : (
                   <>
@@ -339,7 +379,7 @@ function Contact() {
 
               <div className="flex items-center gap-2 text-xs text-slate">
                 <Mail className="h-3.5 w-3.5 text-gold shrink-0" />
-                <span>Goes directly to care@shamiventures.in</span>
+                <span>Saved for admin review; email status is confirmed after dispatch</span>
               </div>
             </div>
           </form>
@@ -421,7 +461,10 @@ function Field({
 }) {
   return (
     <div className="block">
-      <label htmlFor={id} className="mb-1.5 block text-xs font-semibold text-charcoal cursor-pointer">
+      <label
+        htmlFor={id}
+        className="mb-1.5 block text-xs font-semibold text-charcoal cursor-pointer"
+      >
         {label}
       </label>
       {children}
