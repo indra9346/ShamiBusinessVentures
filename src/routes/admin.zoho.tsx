@@ -37,6 +37,8 @@ import {
 import {
   getZohoConnectionStatus,
   getZohoCommerceReadMirror,
+  getZohoSyncQueueStatus,
+  retryZohoSyncJob,
   startZohoAuthorization,
   syncZohoCommerceReadMirror,
   syncZohoProducts,
@@ -62,6 +64,7 @@ type MirrorState = {
   last_error: string | null;
 };
 type MirrorRecord = { external_id: string; payload: Record<string, unknown>; captured_at: string };
+type SyncQueueJob = { id: string; entity_type: string; entity_id: string; status: string; attempts: number; last_error: string | null; created_at: string; updated_at: string };
 
 const PAGE_SIZE = 200;
 const RESOURCE_LABELS: Record<string, string> = {
@@ -298,6 +301,8 @@ function ZohoCommerceAdmin() {
   const mirrorRequestId = useRef(0);
   const [selectedResource, setSelectedResource] = useState("sales_orders");
   const [search, setSearch] = useState("");
+  const [syncQueue, setSyncQueue] = useState<{ counts: Record<string, number>; jobs: SyncQueueJob[] }>({ counts: {}, jobs: [] });
+  const [queueBusy, setQueueBusy] = useState(false);
 
   const reload = async () => {
     try {
@@ -348,6 +353,14 @@ function ZohoCommerceAdmin() {
       if (requestId === mirrorRequestId.current) setSalesOrdersLoading(false);
     }
   };
+  const reloadQueue = async () => {
+    try {
+      const queue = await getZohoSyncQueueStatus();
+      setSyncQueue(queue as { counts: Record<string, number>; jobs: SyncQueueJob[] });
+    } catch {
+      // Older deployments may not yet have the queue migration applied.
+    }
+  };
   const refreshSavedData = async () => {
     setRefreshBusy(true);
     try {
@@ -364,6 +377,7 @@ function ZohoCommerceAdmin() {
   useEffect(() => {
     void reload();
     void reloadMirror(1);
+    void reloadQueue();
     const params = new URLSearchParams(window.location.search);
     if (params.has("connected")) toast.success("Zoho Commerce connected");
     if (params.has("error"))
@@ -425,6 +439,18 @@ function ZohoCommerceAdmin() {
       });
     } finally {
       setMirrorBusy(false);
+    }
+  };
+  const retryJob = async (id: string) => {
+    setQueueBusy(true);
+    try {
+      await retryZohoSyncJob({ data: { id } });
+      await reloadQueue();
+      toast.success("Sync job queued for retry");
+    } catch (error) {
+      toast.error("Could not retry this sync job", { description: error instanceof Error ? error.message : "Try again" });
+    } finally {
+      setQueueBusy(false);
     }
   };
 
@@ -526,6 +552,50 @@ function ZohoCommerceAdmin() {
               </p>
             )}
           </div>
+        </Panel>
+
+        <Panel title="Customer, vendor, catalogue & order sync health">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <p className="max-w-3xl text-sm leading-relaxed text-slate">
+              Approved app catalogue changes, customer and vendor contacts, and orders are queued for Zoho Inventory. Mapped Zoho contact, catalogue, and shipment edits are reconciled back on each scheduled run. Conflicts and unsupported records stay visible here for review.
+            </p>
+            <Button variant="outline" size="sm" onClick={() => void reloadQueue()}>
+              <RefreshCw className="mr-2 h-4 w-4" /> Refresh status
+            </Button>
+          </div>
+          <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {["pending", "failed", "needs_review", "complete"].map((status) => (
+              <div key={status} className="rounded-md border border-border bg-white px-3 py-2">
+                <p className="text-xs uppercase tracking-wide text-slate">{status.replace("_", " ")}</p>
+                <p className="mt-1 text-xl font-semibold text-navy">{syncQueue.counts[status] ?? 0}</p>
+              </div>
+            ))}
+          </div>
+          {syncQueue.jobs.length ? (
+            <div className="divide-y divide-border rounded-md border border-border">
+              {syncQueue.jobs.map((job) => (
+                <div key={job.id} className="flex flex-col justify-between gap-3 p-3 sm:flex-row sm:items-center">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-navy">
+                      <span className="capitalize">{job.entity_type}</span>
+                      <code className="text-xs text-slate">{job.entity_id}</code>
+                      <StatusBadge status={job.status.replace("_", " ")} />
+                      <span className="text-xs text-slate">attempt {job.attempts}</span>
+                    </div>
+                    {job.last_error && <p className="mt-1 text-sm text-amber-900">{job.last_error}</p>}
+                    <p className="mt-1 text-xs text-slate">Updated {new Date(job.updated_at).toLocaleString()}</p>
+                  </div>
+                  {["failed", "needs_review"].includes(job.status) && (
+                    <Button size="sm" variant="outline" disabled={queueBusy} onClick={() => void retryJob(job.id)}>
+                      Retry after review
+                    </Button>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="rounded-md border border-dashed border-border p-4 text-sm text-slate">No customer, vendor, catalogue, or order sync jobs are recorded yet. Queue details appear after the production migration is applied.</p>
+          )}
         </Panel>
 
         <section

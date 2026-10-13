@@ -67,8 +67,8 @@ type SubmittedData = {
 function getEnquirySaveError(error: unknown) {
   const details =
     typeof error === "object" && error !== null ? (error as Record<string, unknown>) : {};
-  const code = typeof details.code === "string" ? details.code : "";
-  const message = typeof details.message === "string" ? details.message : "";
+  const code = typeof details["code"] === "string" ? details["code"] : "";
+  const message = typeof details["message"] === "string" ? details["message"] : "";
   const diagnostic = `${code} ${message}`;
 
   if (/PGRST202|submit_contact_enquiry|schema cache|42883/i.test(diagnostic)) {

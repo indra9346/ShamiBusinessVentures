@@ -72,6 +72,7 @@ import { Route as AdminOrdersIdRouteImport } from './routes/admin.orders.$id'
 import { Route as AdminProductsIdRouteImport } from './routes/admin.products.$id'
 import { Route as AdminVendorsIdRouteImport } from './routes/admin.vendors.$id'
 import { Route as ApiZohoCallbackRouteImport } from './routes/api.zoho.callback'
+import { Route as ApiZohoSyncRouteImport } from './routes/api.zoho.sync'
 import { Route as CategoriesSlugChildRouteImport } from './routes/categories.$slug.$child'
 import { Route as VendorOrdersIdRouteImport } from './routes/vendor.orders.$id'
 import { Route as VendorProductsAddRouteImport } from './routes/vendor.products.add'
@@ -391,6 +392,11 @@ const ApiZohoCallbackRoute = ApiZohoCallbackRouteImport.update({
   path: '/api/zoho/callback',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiZohoSyncRoute = ApiZohoSyncRouteImport.update({
+  id: '/api/zoho/sync',
+  path: '/api/zoho/sync',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const CategoriesSlugChildRoute = CategoriesSlugChildRouteImport.update({
   id: '/$child',
   path: '/$child',
@@ -471,6 +477,7 @@ export interface FileRoutesByFullPath {
   '/admin/products/$id': typeof AdminProductsIdRoute
   '/admin/vendors/$id': typeof AdminVendorsIdRoute
   '/api/zoho/callback': typeof ApiZohoCallbackRoute
+  '/api/zoho/sync': typeof ApiZohoSyncRoute
   '/categories/$slug/$child': typeof CategoriesSlugChildRoute
   '/vendor/orders/$id': typeof VendorOrdersIdRoute
   '/vendor/products/add': typeof VendorProductsAddRoute
@@ -538,6 +545,7 @@ export interface FileRoutesByTo {
   '/admin/products/$id': typeof AdminProductsIdRoute
   '/admin/vendors/$id': typeof AdminVendorsIdRoute
   '/api/zoho/callback': typeof ApiZohoCallbackRoute
+  '/api/zoho/sync': typeof ApiZohoSyncRoute
   '/categories/$slug/$child': typeof CategoriesSlugChildRoute
   '/vendor/orders/$id': typeof VendorOrdersIdRoute
   '/vendor/products/add': typeof VendorProductsAddRoute
@@ -607,6 +615,7 @@ export interface FileRoutesById {
   '/admin/products/$id': typeof AdminProductsIdRoute
   '/admin/vendors/$id': typeof AdminVendorsIdRoute
   '/api/zoho/callback': typeof ApiZohoCallbackRoute
+  '/api/zoho/sync': typeof ApiZohoSyncRoute
   '/categories/$slug/$child': typeof CategoriesSlugChildRoute
   '/vendor/orders/$id': typeof VendorOrdersIdRoute
   '/vendor/products/add': typeof VendorProductsAddRoute
@@ -677,6 +686,7 @@ export interface FileRouteTypes {
     | '/admin/products/$id'
     | '/admin/vendors/$id'
     | '/api/zoho/callback'
+    | '/api/zoho/sync'
     | '/categories/$slug/$child'
     | '/vendor/orders/$id'
     | '/vendor/products/add'
@@ -744,6 +754,7 @@ export interface FileRouteTypes {
     | '/admin/products/$id'
     | '/admin/vendors/$id'
     | '/api/zoho/callback'
+    | '/api/zoho/sync'
     | '/categories/$slug/$child'
     | '/vendor/orders/$id'
     | '/vendor/products/add'
@@ -812,6 +823,7 @@ export interface FileRouteTypes {
     | '/admin/products/$id'
     | '/admin/vendors/$id'
     | '/api/zoho/callback'
+    | '/api/zoho/sync'
     | '/categories/$slug/$child'
     | '/vendor/orders/$id'
     | '/vendor/products/add'
@@ -865,6 +877,7 @@ export interface RootRouteChildren {
   AdminIndexRoute: typeof AdminIndexRoute
   VendorIndexRoute: typeof VendorIndexRoute
   ApiZohoCallbackRoute: typeof ApiZohoCallbackRoute
+  ApiZohoSyncRoute: typeof ApiZohoSyncRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -1310,6 +1323,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiZohoCallbackRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/zoho/sync': {
+      id: '/api/zoho/sync'
+      path: '/api/zoho/sync'
+      fullPath: '/api/zoho/sync'
+      preLoaderRoute: typeof ApiZohoSyncRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/categories/$slug/$child': {
       id: '/categories/$slug/$child'
       path: '/$child'
@@ -1529,6 +1549,7 @@ const rootRouteChildren: RootRouteChildren = {
   AdminIndexRoute: AdminIndexRoute,
   VendorIndexRoute: VendorIndexRoute,
   ApiZohoCallbackRoute: ApiZohoCallbackRoute,
+  ApiZohoSyncRoute: ApiZohoSyncRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

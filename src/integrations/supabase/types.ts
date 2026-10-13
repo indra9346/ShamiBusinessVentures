@@ -14,6 +14,36 @@ export type Database = {
   }
   public: {
     Tables: {
+      zoho_oauth_states: {
+        Row: { state_hash: string; user_id: string; organization_id: string; region: string; expires_at: string; created_at: string }
+        Insert: { state_hash: string; user_id: string; organization_id: string; region: string; expires_at: string; created_at?: string }
+        Update: { state_hash?: string; user_id?: string; organization_id?: string; region?: string; expires_at?: string; created_at?: string }
+        Relationships: []
+      }
+      zoho_contact_links: {
+        Row: { user_id: string; contact_type: string; zoho_contact_id: string; updated_at: string; last_polled_at: string | null; last_zoho_modified_at: string | null }
+        Insert: { user_id: string; contact_type: string; zoho_contact_id: string; updated_at?: string; last_polled_at?: string | null; last_zoho_modified_at?: string | null }
+        Update: { user_id?: string; contact_type?: string; zoho_contact_id?: string; updated_at?: string; last_polled_at?: string | null; last_zoho_modified_at?: string | null }
+        Relationships: []
+      }
+      zoho_item_links: {
+        Row: { product_id: string; zoho_item_id: string; updated_at: string; last_polled_at: string | null; last_zoho_modified_at: string | null; app_fingerprint: string | null }
+        Insert: { product_id: string; zoho_item_id: string; updated_at?: string; last_polled_at?: string | null; last_zoho_modified_at?: string | null; app_fingerprint?: string | null }
+        Update: { product_id?: string; zoho_item_id?: string; updated_at?: string; last_polled_at?: string | null; last_zoho_modified_at?: string | null; app_fingerprint?: string | null }
+        Relationships: []
+      }
+      zoho_catalog_tombstones: {
+        Row: { product_id: string; zoho_item_id: string; deleted_at: string }
+        Insert: { product_id: string; zoho_item_id: string; deleted_at?: string }
+        Update: { product_id?: string; zoho_item_id?: string; deleted_at?: string }
+        Relationships: []
+      }
+      zoho_sync_outbox: {
+        Row: { id: string; entity_type: string; entity_id: string; event_type: string; status: string; attempts: number; available_at: string; locked_until: string | null; last_error: string | null; created_at: string; updated_at: string }
+        Insert: { id?: string; entity_type: string; entity_id: string; event_type: string; status?: string; attempts?: number; available_at?: string; locked_until?: string | null; last_error?: string | null; created_at?: string; updated_at?: string }
+        Update: { id?: string; entity_type?: string; entity_id?: string; event_type?: string; status?: string; attempts?: number; available_at?: string; locked_until?: string | null; last_error?: string | null; created_at?: string; updated_at?: string }
+        Relationships: []
+      }
       zoho_commerce_sync_state: {
         Row: {
           organization_id: string
@@ -82,6 +112,7 @@ export type Database = {
           pin: string
           state: string
           user_id: string
+          updated_at: string
         }
         Insert: {
           city: string
@@ -96,6 +127,7 @@ export type Database = {
           pin: string
           state: string
           user_id: string
+          updated_at?: string
         }
         Update: {
           city?: string
@@ -110,6 +142,7 @@ export type Database = {
           pin?: string
           state?: string
           user_id?: string
+          updated_at?: string
         }
         Relationships: []
       }
@@ -476,6 +509,8 @@ export type Database = {
       }
       orders: {
         Row: {
+          zoho_salesorder_id: string | null
+          zoho_last_polled_at: string | null
           advance_due: number
           balance_due: number
           coupon: string | null
@@ -506,6 +541,8 @@ export type Database = {
           vendor_ids: string[]
         }
         Insert: {
+          zoho_salesorder_id?: string | null
+          zoho_last_polled_at?: string | null
           advance_due?: number
           balance_due?: number
           coupon?: string | null
@@ -536,6 +573,8 @@ export type Database = {
           vendor_ids?: string[]
         }
         Update: {
+          zoho_salesorder_id?: string | null
+          zoho_last_polled_at?: string | null
           advance_due?: number
           balance_due?: number
           coupon?: string | null
@@ -861,6 +900,13 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      enqueue_zoho_sync: { Args: { _entity_type: string; _entity_id: string }; Returns: undefined }
+      claim_zoho_sync_jobs: { Args: { _limit?: number }; Returns: Database["public"]["Tables"]["zoho_sync_outbox"]["Row"][] }
+      apply_zoho_contact_update: { Args: { _user_id: string; _contact_type: string; _full_name: string | null; _phone: string | null; _company: string | null; _gstin: string | null; _address?: Json | null }; Returns: undefined }
+      retry_zoho_sync_job: { Args: { _id: string }; Returns: undefined }
+      apply_zoho_order_fulfillment: { Args: { _order_id: string; _status: string }; Returns: undefined }
+      apply_zoho_catalog_item: { Args: { _product_id: string; _item: Json; _expected_updated_at: string }; Returns: undefined }
+      finish_zoho_sync_job: { Args: { _id: string; _status: string; _error?: string | null }; Returns: undefined }
       submit_contact_enquiry: { Args: { _name: string; _email: string; _phone: string | null; _message: string; _metadata?: Json }; Returns: string }
       can_read_order: { Args: { _order: string }; Returns: boolean }
       current_vendor_id: { Args: never; Returns: string }

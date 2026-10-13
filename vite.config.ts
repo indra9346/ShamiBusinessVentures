@@ -7,6 +7,12 @@
 import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 
 export default defineConfig({
+  // The public application is deployed at shamibusinessventures.vercel.app.
+  // Pin the server build to Vercel so TanStack Start API routes such as the
+  // OAuth callback and protected sync worker are emitted as Vercel functions.
+  nitro: {
+    preset: "vercel",
+  },
   vite: {
     // Vercel preview deployments are static UI sandboxes; production remains
     // Supabase-backed unless explicitly configured in local development.
