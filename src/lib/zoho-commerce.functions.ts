@@ -234,6 +234,69 @@ export const retryZohoSyncJob = createServerFn({ method: "POST" })
     if (error) throw new Error("Could not requeue the selected Zoho sync job");
   });
 
+/**
+ * Queue records that existed before the outbound triggers were installed.
+ *
+ * This only writes to the local durable outbox. Zoho is not contacted here;
+ * the protected worker will send these records only after outbound writes have
+ * been explicitly enabled. Existing pending, failed, processing, and review
+ * jobs are deliberately left untouched so an administrator can resolve their
+ * current state without a backfill creating duplicate work.
+ */
+export const queueZohoInitialExport = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    await ensureAdmin(context.supabase, context.userId);
+    const db = await dbAdmin();
+    const [rolesResult, catalogResult, ordersResult, existingResult] = await Promise.all([
+      db.from("user_roles").select("user_id").in("role", ["customer", "vendor"]),
+      db.from("catalog_products")
+        .select("id")
+        .eq("status", "approved")
+        .not("vendor_id", "like", "zoho:%"),
+      db.from("orders")
+        .select("id")
+        .is("zoho_salesorder_id", null)
+        .not("order_status", "in", "(Cancelled,Awaiting Payment)"),
+      db.from("zoho_sync_outbox")
+        .select("entity_type,entity_id")
+        .in("status", ["pending", "processing", "failed", "needs_review"]),
+    ]);
+    if (rolesResult.error || catalogResult.error || ordersResult.error || existingResult.error)
+      throw new Error("Could not prepare the initial Zoho export; verify the production sync migration");
+
+    const existing = new Set(
+      (existingResult.data ?? []).map((job) => `${job.entity_type}:${job.entity_id}`),
+    );
+    const candidateJobs = [
+      ...new Set((rolesResult.data ?? []).map((role) => role.user_id)),
+    ].map((userId) => ({ entityType: "customer", entityId: userId }))
+      .concat((catalogResult.data ?? []).map((product) => ({ entityType: "catalog", entityId: product.id })))
+      .concat((ordersResult.data ?? []).map((order) => ({ entityType: "order", entityId: order.id })));
+    const jobs = candidateJobs.filter((job) => !existing.has(`${job.entityType}:${job.entityId}`));
+
+    for (let index = 0; index < jobs.length; index += 50) {
+      const batch = jobs.slice(index, index + 50);
+      const results = await Promise.all(
+        batch.map((job) =>
+          db.rpc("enqueue_zoho_sync", {
+            _entity_type: job.entityType,
+            _entity_id: job.entityId,
+          }),
+        ),
+      );
+      if (results.some((result) => result.error))
+        throw new Error("Could not enqueue the initial Zoho export");
+    }
+    return {
+      queued: jobs.length,
+      customers: jobs.filter((job) => job.entityType === "customer").length,
+      catalog: jobs.filter((job) => job.entityType === "catalog").length,
+      orders: jobs.filter((job) => job.entityType === "order").length,
+      skippedExisting: candidateJobs.length - jobs.length,
+    };
+  });
+
 const ZOHO_READ_RESOURCES = [
   "categories",
   "sales_orders",

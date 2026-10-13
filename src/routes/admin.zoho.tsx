@@ -38,6 +38,7 @@ import {
   getZohoConnectionStatus,
   getZohoCommerceReadMirror,
   getZohoSyncQueueStatus,
+  queueZohoInitialExport,
   retryZohoSyncJob,
   startZohoAuthorization,
   syncZohoCommerceReadMirror,
@@ -453,6 +454,22 @@ function ZohoCommerceAdmin() {
       setQueueBusy(false);
     }
   };
+  const queueInitialExport = async () => {
+    setQueueBusy(true);
+    try {
+      const result = await queueZohoInitialExport();
+      await reloadQueue();
+      toast.success(`Queued ${result.queued} existing records for Zoho`, {
+        description: `${result.customers} contacts, ${result.catalog} catalogue items, and ${result.orders} orders.`,
+      });
+    } catch (error) {
+      toast.error("Could not queue existing records", {
+        description: error instanceof Error ? error.message : "Check the production sync migration and try again",
+      });
+    } finally {
+      setQueueBusy(false);
+    }
+  };
 
   const statesByResource = useMemo(
     () => Object.fromEntries(mirrorStates.map((item) => [item.resource, item])),
@@ -557,11 +574,23 @@ function ZohoCommerceAdmin() {
         <Panel title="Customer, vendor, catalogue & order sync health">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <p className="max-w-3xl text-sm leading-relaxed text-slate">
-              Approved app catalogue changes, customer and vendor contacts, and orders are queued for Zoho Inventory. Mapped Zoho contact, catalogue, and shipment edits are reconciled back on each scheduled run. Conflicts and unsupported records stay visible here for review.
+              Approved app catalogue changes, customer and vendor contacts, and orders are queued for Zoho Inventory. Use the initial export once for records created before the sync migration. Mapped Zoho contact, catalogue, and shipment edits are reconciled back on each scheduled run. Conflicts and unsupported records stay visible here for review.
             </p>
-            <Button variant="outline" size="sm" onClick={() => void reloadQueue()}>
-              <RefreshCw className="mr-2 h-4 w-4" /> Refresh status
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={queueBusy || !connection}
+                onClick={() => void queueInitialExport()}
+                title="Queues existing local records only. Zoho is contacted later by the protected sync worker."
+              >
+                <CloudDownload className="mr-2 h-4 w-4" />
+                {queueBusy ? "Queueing existing data…" : "Queue existing data"}
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => void reloadQueue()}>
+                <RefreshCw className="mr-2 h-4 w-4" /> Refresh status
+              </Button>
+            </div>
           </div>
           <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
             {["pending", "failed", "needs_review", "complete"].map((status) => (
