@@ -20,6 +20,13 @@ export type NavItem = {
   icon: React.ComponentType<{ className?: string }>;
 };
 
+type PanelSearchResult = {
+  label: string;
+  detail: string;
+  to: string;
+  image?: string;
+};
+
 const ROLE_VERIFICATION_TIMEOUT_MS = 15_000;
 
 export function PanelLayout({
@@ -306,7 +313,7 @@ export function PanelLayout({
     return relevantNotifs.filter((n) => !n.read).length;
   }, [relevantNotifs]);
 
-  const searchResults = useMemo(() => {
+  const searchResults = useMemo<PanelSearchResult[]>(() => {
     const query = globalQuery.trim().toLowerCase();
     if (!query) return [];
     const vendor = vendors.find((item) => item.email.toLowerCase() === user?.email.toLowerCase());
@@ -325,6 +332,7 @@ export function PanelLayout({
           label: item.name,
           detail: `${item.sku} · Product`,
           to: tone === "admin" ? `/admin/products/${item.id}` : tone === "vendor" ? `/vendor/products?q=${encodeURIComponent(query)}` : `/shop?q=${encodeURIComponent(query)}`,
+          image: item.image || `/products/${item.category.toLowerCase()}.jpg`,
         })),
       ...(tone === "admin" ? categories : [])
         .filter((item) => item.name.toLowerCase().includes(query))
@@ -511,12 +519,31 @@ export function PanelLayout({
                           navigate({ to: result.to as never });
                           setGlobalQuery("");
                         }}
-                        className="flex w-full items-center justify-between gap-3 border-b border-border/60 px-3 py-2 text-left last:border-0 hover:bg-ivory"
+                        className="flex w-full items-center gap-3 border-b border-border/60 px-3 py-2 text-left last:border-0 hover:bg-ivory"
                       >
-                        <span className="truncate text-sm font-medium text-navy">
-                          {result.label}
+                        {result.image ? (
+                          <img
+                            src={result.image}
+                            alt=""
+                            loading="lazy"
+                            className="h-10 w-10 shrink-0 rounded-md border border-border bg-white object-cover"
+                          />
+                        ) : (
+                          <span
+                            aria-hidden="true"
+                            className="grid h-10 w-10 shrink-0 place-items-center rounded-md border border-border bg-ivory text-xs font-semibold text-slate"
+                          >
+                            {result.detail.split(" · ").at(-1)?.slice(0, 1)}
+                          </span>
+                        )}
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-medium text-navy">
+                            {result.label}
+                          </span>
+                          <span className="block truncate text-[10px] text-slate">
+                            {result.detail}
+                          </span>
                         </span>
-                        <span className="shrink-0 text-[10px] text-slate">{result.detail}</span>
                       </button>
                     ))}
                   </div>

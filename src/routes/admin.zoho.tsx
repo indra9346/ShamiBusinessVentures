@@ -485,6 +485,8 @@ function ZohoCommerceAdmin() {
   const [draftViewValue, setDraftViewValue] = useState("");
   const [syncQueue, setSyncQueue] = useState<{ counts: Record<string, number>; jobs: SyncQueueJob[] }>({ counts: {}, jobs: [] });
   const [queueBusy, setQueueBusy] = useState(false);
+  const [queueRefreshBusy, setQueueRefreshBusy] = useState(false);
+  const [queueRefreshedAt, setQueueRefreshedAt] = useState<string | null>(null);
   const [syncOutboxBusy, setSyncOutboxBusy] = useState(false);
   const [writeSyncEnabled, setWriteSyncEnabled] = useState(true);
   const [writeSyncBusy, setWriteSyncBusy] = useState(false);
@@ -538,12 +540,29 @@ function ZohoCommerceAdmin() {
       if (requestId === mirrorRequestId.current) setSalesOrdersLoading(false);
     }
   };
-  const reloadQueue = async () => {
+  const reloadQueue = async (reportError = false) => {
     try {
       const queue = await getZohoSyncQueueStatus();
       setSyncQueue(queue as { counts: Record<string, number>; jobs: SyncQueueJob[] });
-    } catch {
+      setQueueRefreshedAt((queue as { refreshedAt?: string }).refreshedAt ?? new Date().toISOString());
+      return true;
+    } catch (error) {
       // Older deployments may not yet have the queue migration applied.
+      if (reportError) {
+        toast.error("Could not refresh Zoho sync status", {
+          description: error instanceof Error ? error.message : "Check the connection and try again",
+        });
+      }
+      return false;
+    }
+  };
+  const refreshQueueStatus = async () => {
+    setQueueRefreshBusy(true);
+    try {
+      const refreshed = await reloadQueue(true);
+      if (refreshed) toast.success("Zoho sync status refreshed");
+    } finally {
+      setQueueRefreshBusy(false);
     }
   };
   const refreshSavedData = async () => {
@@ -982,10 +1001,23 @@ function ZohoCommerceAdmin() {
                 <CloudDownload className="mr-2 h-4 w-4" />
                 {queueBusy ? "Queueing existing data…" : "Queue existing data"}
               </Button>
-              <Button variant="outline" size="sm" onClick={() => void reloadQueue()}>
-                <RefreshCw className="mr-2 h-4 w-4" /> Refresh status
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={queueRefreshBusy}
+                onClick={() => void refreshQueueStatus()}
+              >
+                <RefreshCw className={`mr-2 h-4 w-4 ${queueRefreshBusy ? "animate-spin" : ""}`} />
+                {queueRefreshBusy ? "Refreshing status…" : "Refresh status"}
               </Button>
             </div>
+            <p className="mt-2 text-xs text-slate" role="status" aria-live="polite">
+              {queueRefreshBusy
+                ? "Checking the latest sync queue status…"
+                : queueRefreshedAt
+                  ? `Last checked ${new Date(queueRefreshedAt).toLocaleTimeString()}`
+                  : "Refresh status to check the latest sync queue."}
+            </p>
           </div>
           {Number(syncQueue.counts["failed"] || 0) > 0 && (
             <div className="mb-4 flex flex-col gap-3 rounded-lg border border-rose-300 bg-rose-50 p-4 sm:flex-row sm:items-center sm:justify-between text-sm text-rose-950">

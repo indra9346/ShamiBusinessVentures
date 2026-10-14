@@ -211,17 +211,25 @@ export const getZohoSyncQueueStatus = createServerFn({ method: "GET" })
   .handler(async ({ context }) => {
     await ensureAdmin(context.supabase, context.userId);
     const db = await dbAdmin();
-    const { data, error } = await db.from("zoho_sync_outbox")
+    const statuses = ["pending", "processing", "failed", "needs_review", "complete"] as const;
+    const [jobsResult, ...statusResults] = await Promise.all([
+      db.from("zoho_sync_outbox")
       .select("id,entity_type,entity_id,status,attempts,last_error,created_at,updated_at")
-      .order("updated_at", { ascending: false }).limit(250);
-    if (error) throw new Error("Could not load Zoho sync queue status");
-    const jobs = data ?? [];
+        .order("updated_at", { ascending: false }).limit(30),
+      ...statuses.map((status) => db.from("zoho_sync_outbox")
+        .select("id", { count: "exact", head: true })
+        .eq("status", status)),
+    ]);
+    if (jobsResult.error || statusResults.some((result) => result.error)) {
+      throw new Error("Could not load Zoho sync queue status");
+    }
+    const counts = Object.fromEntries(
+      statuses.map((status, index) => [status, statusResults[index]?.count ?? 0]),
+    );
     return {
-      counts: jobs.reduce((counts, job) => {
-        counts[job.status] = (counts[job.status] ?? 0) + 1;
-        return counts;
-      }, {} as Record<string, number>),
-      jobs: jobs.slice(0, 30),
+      counts,
+      jobs: jobsResult.data ?? [],
+      refreshedAt: new Date().toISOString(),
     };
   });
 
