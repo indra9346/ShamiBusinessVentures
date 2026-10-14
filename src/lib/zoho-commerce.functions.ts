@@ -1475,11 +1475,11 @@ export const setZohoWriteSyncConfig = createServerFn({ method: "POST" })
 
 export const processZohoSyncNow = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .validator(z.object({ limit: z.number().int().min(1).max(100).default(50) }).optional())
+  .validator(z.object({ limit: z.number().int().min(1).max(100).default(50), force: z.boolean().optional() }).optional())
   .handler(async ({ data, context }) => {
     await ensureAdmin(context.supabase, context.userId);
     const limit = data?.limit ?? 50;
-    return await processZohoSyncOutbox(limit, { force: true });
+    return await processZohoSyncOutbox(limit, { force: data?.force ?? true });
   });
 
 /**
