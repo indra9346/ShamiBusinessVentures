@@ -17,6 +17,7 @@ export function AddToCartPicker({
   const [open, setOpen] = useState(false);
   const [qty, setQty] = useState(Math.max(1, initialQty));
   const [typedQty, setTypedQty] = useState(String(Math.max(1, initialQty)));
+  const [keypadEntryStarted, setKeypadEntryStarted] = useState(false);
   const inCart = cart.find((line) => line.id === product.id)?.qty ?? 0;
   const availableStock = Math.max(0, Math.floor((Number(product.stock) || 0) - (Number(product.reserved) || 0)));
   const bagWeight = Number.parseFloat(product.weight.replace(/[^\d.]/g, "")) || 0;
@@ -26,23 +27,21 @@ export function AddToCartPicker({
   const handleManualQtyChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const raw = event.target.value;
     if (raw === "") {
+      setKeypadEntryStarted(true);
       setTypedQty("");
       return;
     }
     if (!/^\d+$/.test(raw)) {
       return;
     }
-    const num = parseInt(raw, 10);
-    if (availableStock > 0 && num > availableStock) {
-      toast.error(`Only ${availableStock} units available`);
-      setQty(availableStock);
-      setTypedQty(String(availableStock));
+    const num = Number(raw);
+    if (!Number.isSafeInteger(num)) {
+      toast.error("Enter a smaller whole number");
       return;
     }
+    setKeypadEntryStarted(true);
     setTypedQty(raw);
-    if (num >= 1) {
-      setQty(num);
-    }
+    setQty(num);
   };
 
   const handleManualQtyBlur = () => {
@@ -51,10 +50,23 @@ export function AddToCartPicker({
       setQty(1);
       setTypedQty("1");
     } else {
-      const clamped = Math.min(Math.max(1, num), availableStock || 1);
-      setQty(clamped);
-      setTypedQty(String(clamped));
+      setQty(num);
+      setTypedQty(String(num));
     }
+    setKeypadEntryStarted(false);
+  };
+
+  const appendKeypadDigit = (digit: number) => {
+    const prefix = keypadEntryStarted ? typedQty : "";
+    const candidate = `${prefix}${digit}`.replace(/^0+(?=\d)/, "");
+    const nextQty = Number(candidate);
+    if (!Number.isSafeInteger(nextQty)) {
+      toast.error("Enter a smaller whole number");
+      return;
+    }
+    setKeypadEntryStarted(true);
+    setTypedQty(candidate);
+    setQty(nextQty);
   };
 
   if (!open) {
@@ -66,6 +78,7 @@ export function AddToCartPicker({
           const initial = Math.max(1, initialQty);
           setQty(initial);
           setTypedQty(String(initial));
+          setKeypadEntryStarted(false);
           setOpen(true);
         }}
         className="flex w-full items-center justify-center gap-1.5 rounded-md bg-navy px-3 py-2.5 text-xs font-semibold text-white transition-colors hover:bg-midnight disabled:opacity-40"
@@ -93,16 +106,13 @@ export function AddToCartPicker({
         </button>
       </div>
       <div className="mt-3 grid grid-cols-5 gap-1.5">
-        {Array.from({ length: 10 }, (_, i) => i + 1).map((value) => (
+        {[1, 2, 3, 4, 5, 6, 7, 8, 9, 0].map((value) => (
           <button
             key={value}
             type="button"
-            onClick={() => {
-              setQty(value);
-              setTypedQty(String(value));
-            }}
-            aria-pressed={qty === value}
-            className={`rounded-md border py-2 text-sm font-bold ${qty === value ? "border-gold bg-ivory text-navy" : "border-border text-charcoal hover:border-gold"}`}
+            onClick={() => appendKeypadDigit(value)}
+            aria-pressed={Number(typedQty) === value}
+            className={`rounded-md border py-2 text-sm font-bold ${Number(typedQty) === value ? "border-gold bg-ivory text-navy" : "border-border text-charcoal hover:border-gold"}`}
           >
             {value}
           </button>
@@ -116,6 +126,7 @@ export function AddToCartPicker({
             const next = Math.max(1, qty - 1);
             setQty(next);
             setTypedQty(String(next));
+            setKeypadEntryStarted(false);
           }}
           className="grid h-10 w-10 shrink-0 place-items-center rounded-md bg-success text-white hover:bg-success/90"
         >
@@ -135,7 +146,7 @@ export function AddToCartPicker({
               (e.target as HTMLInputElement).blur();
             }
           }}
-          title={`Enter a whole number from 1 to ${availableStock} bags`}
+          title={`Enter a positive whole number. ${availableStock} units are available.`}
           className="h-10 min-w-0 flex-1 rounded-md border border-border bg-background text-center font-bold text-navy focus:border-gold focus:outline-none"
         />
         <button
@@ -145,19 +156,25 @@ export function AddToCartPicker({
             const next = Math.min(availableStock || 1, qty + 1);
             setQty(next);
             setTypedQty(String(next));
+            setKeypadEntryStarted(false);
           }}
           className="grid h-10 w-10 shrink-0 place-items-center rounded-md bg-success text-white hover:bg-success/90"
         >
           <Plus className="h-4 w-4" />
         </button>
       </div>
-      <p className="mt-1 text-[11px] text-slate">Tap the quantity to replace it, or type any whole number up to {availableStock}.</p>
+      <p className="mt-1 text-[11px] text-slate">Tap keypad digits in sequence or type a whole number. {availableStock} units are available.</p>
+      {Number(typedQty) > availableStock && (
+        <p role="alert" className="mt-1 text-xs font-medium text-danger">
+          Only {availableStock} units are available. Reduce the quantity to add this item to your cart.
+        </p>
+      )}
       <p className="mt-2 text-xs text-slate">
         {product.weight} per bag · {selectedWeight || qty} {unit} total
       </p>
       <button
         type="button"
-        disabled={availableStock === 0}
+        disabled={availableStock === 0 || !/^\d+$/.test(typedQty) || Number(typedQty) < 1 || Number(typedQty) > availableStock}
         onClick={() => {
           addToCart(product.id, qty);
           showCartNotification(

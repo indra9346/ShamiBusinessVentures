@@ -936,9 +936,19 @@ function ZohoCommerceAdmin() {
         <Panel title="Customer, vendor, catalogue & order sync health">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <p className="max-w-3xl text-sm leading-relaxed text-slate">
-              Approved app catalogue changes, customer and vendor contacts, and orders are queued for Zoho Inventory & Zoho Commerce. Click <strong>Push pending to Zoho</strong> to send queued changes immediately. Otherwise, this Vercel Hobby project checks queued changes daily at 03:00 UTC. To import changes made inside Zoho, run <strong>Sync account data</strong> above.
+              Approved app catalogue changes, customer and vendor contacts, and orders are queued for Zoho Inventory & Zoho Commerce. Click <strong>Push pending to Zoho</strong> to send queued changes immediately. Otherwise, this Vercel Hobby project checks queued changes daily at 03:00 UTC. To import changes made inside Zoho, click <strong>Sync account data</strong> here.
             </p>
             <div className="flex flex-wrap items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={busy || refreshBusy || mirrorBusy || !connection}
+                onClick={() => void syncReadMirror()}
+                title="Fetch the latest supported records from Zoho into this website's read-only snapshot."
+              >
+                <RefreshCw className={`mr-1.5 h-4 w-4 ${mirrorBusy ? "animate-spin" : ""}`} />
+                {mirrorBusy ? "Syncing account data…" : "Sync account data"}
+              </Button>
               <Button
                 size="sm"
                 disabled={syncOutboxBusy || !connection}
