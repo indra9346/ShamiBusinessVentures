@@ -454,9 +454,26 @@ export const getZohoCommerceReadMirror = createServerFn({ method: "GET" })
           .eq("batch_id", state.current_batch_id)
           .order("external_id", { ascending: true });
         if (state.resource === "sales_orders") {
-          const pageSize = 200;
-          const start = (data.salesOrdersPage - 1) * pageSize;
-          query = query.range(start, start + pageSize - 1);
+          // Keep the full bounded mirror available to the admin UI so search, status
+          // filters, and saved views operate across the whole snapshot, not just one page.
+          const pageSize = 1000;
+          const total = Math.min(state.record_count, 5000);
+          const pages = Math.ceil(total / pageSize);
+          const chunks = await Promise.all(
+            Array.from({ length: pages }, (_, index) =>
+              db
+                .from("zoho_commerce_sync_data")
+                .select("external_id,payload,captured_at")
+                .eq("organization_id", connection.organization_id)
+                .eq("resource", state.resource)
+                .eq("batch_id", state.current_batch_id)
+                .order("external_id", { ascending: true })
+                .range(index * pageSize, Math.min(total - 1, (index + 1) * pageSize - 1)),
+            ),
+          );
+          const failedChunk = chunks.find((chunk) => chunk.error);
+          if (failedChunk?.error) throw new Error(`Could not load Zoho ${state.resource} records`);
+          return [state.resource, chunks.flatMap((chunk) => chunk.data ?? [])] as const;
         } else {
           query = query.limit(200);
         }
