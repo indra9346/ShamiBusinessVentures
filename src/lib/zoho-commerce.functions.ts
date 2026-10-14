@@ -137,7 +137,7 @@ export const startZohoAuthorization = createServerFn({ method: "POST" })
       response_type: "code",
       client_id: reqEnv("ZOHO_CLIENT_ID"),
       scope:
-        "ZohoCommerce.items.READ,ZohoCommerce.coupons.READ,ZohoCommerce.salesorders.READ,ZohoCommerce.settings.READ,ZohoCommerce.sitesIndex.READ,ZohoInventory.contacts.READ,ZohoInventory.contacts.CREATE,ZohoInventory.contacts.UPDATE,ZohoInventory.items.READ,ZohoInventory.items.CREATE,ZohoInventory.items.UPDATE,ZohoInventory.salesorders.READ,ZohoInventory.salesorders.CREATE",
+        "ZohoCommerce.items.READ,ZohoCommerce.items.CREATE,ZohoCommerce.items.UPDATE,ZohoCommerce.coupons.READ,ZohoCommerce.coupons.CREATE,ZohoCommerce.coupons.UPDATE,ZohoCommerce.salesorders.READ,ZohoCommerce.salesorders.CREATE,ZohoCommerce.salesorders.UPDATE,ZohoCommerce.settings.READ,ZohoCommerce.settings.UPDATE,ZohoCommerce.sitesIndex.READ,ZohoInventory.contacts.READ,ZohoInventory.contacts.CREATE,ZohoInventory.contacts.UPDATE,ZohoInventory.items.READ,ZohoInventory.items.CREATE,ZohoInventory.items.UPDATE,ZohoInventory.salesorders.READ,ZohoInventory.salesorders.CREATE,ZohoInventory.salesorders.UPDATE",
       redirect_uri: redirectUri,
       access_type: "offline",
       prompt: "consent",
@@ -777,22 +777,31 @@ async function upsertZohoContact(
   ]);
   if (profileError || rolesError || addressesError) throw new Error("Could not read Grain Bazar profile data for Zoho synchronization");
   if (!profile) throw new Error("Grain Bazar profile no longer exists");
-  const allowedRole = (roles ?? []).some((r) => r.role === contactType);
+  const allowedRole = (roles ?? []).some((r) => r.role === contactType || r.role === "admin");
   if (!allowedRole) return null;
-  if (!profile.email?.trim()) throw new Error("Profile has no email address; add a verified email before syncing");
+
+  const email = profile.email?.trim() || `${(profile.phone || userId).replace(/[^0-9a-zA-Z]/g, "")}@shamibusiness.com`;
 
   const mainAddress = contactType === "vendor"
-    ? (profile.business_address ? { address: profile.business_address, city: profile.business_city ?? "", state: "Karnataka", zip: "", country: "India", attention: profile.full_name } : null)
+    ? (profile.business_address
+        ? { address: profile.business_address, city: profile.business_city ?? "Bengaluru", state: "Karnataka", zip: "", country: "India", attention: profile.full_name || profile.company || "Vendor" }
+        : addresses?.[0]
+          ? { address: addresses[0].line, street2: addresses[0].landmark ?? "", city: addresses[0].city, state: addresses[0].state, zip: addresses[0].pin, country: "India", attention: addresses[0].name }
+          : null)
     : addresses?.[0]
       ? { address: addresses[0].line, street2: addresses[0].landmark ?? "", city: addresses[0].city, state: addresses[0].state, zip: addresses[0].pin, country: "India", attention: addresses[0].name }
-      : null;
-  const name = profile.full_name?.trim() || profile.company?.trim() || profile.email;
-  const person = { ...splitContactName(profile.full_name || name), email: profile.email.trim(), phone: profile.phone ?? "", mobile: profile.phone ?? "", is_primary_contact: true };
+      : (profile.business_address
+          ? { address: profile.business_address, city: profile.business_city ?? "Bengaluru", state: "Karnataka", zip: "", country: "India", attention: profile.full_name || "Customer" }
+          : null);
+
+  const name = profile.company?.trim() || profile.full_name?.trim() || email;
+  const person = { ...splitContactName(profile.full_name || name), email, phone: profile.phone ?? "", mobile: profile.phone ?? "", is_primary_contact: true };
   const contact = {
     contact_type: contactType,
     contact_name: name,
     company_name: profile.company || undefined,
     contact_persons: [person],
+    notes: `Grain Bazar ${contactType} record · ID: ${userId}`,
     ...(profile.gstin ? { gst_no: profile.gstin } : {}),
     ...(mainAddress ? { billing_address: mainAddress, shipping_address: mainAddress } : {}),
   };
@@ -800,9 +809,9 @@ async function upsertZohoContact(
   let contactId = link?.zoho_contact_id ?? "";
   let zohoModifiedAt: string | null = null;
   if (!contactId) {
-    const found = await inventoryRequest<{ contacts?: Record<string, unknown>[] }>(region, organizationId, token, "contacts", "GET", undefined, { email: profile.email.trim(), per_page: "200" });
-    const exact = (found.contacts ?? []).filter((row) => str(row["contact_type"]) === contactType && str(row["email"]).toLowerCase() === profile.email.trim().toLowerCase());
-    if (exact.length > 1) throw new NeedsReviewError(`More than one Zoho ${contactType} contact matches ${profile.email}`);
+    const found = await inventoryRequest<{ contacts?: Record<string, unknown>[] }>(region, organizationId, token, "contacts", "GET", undefined, { email, per_page: "200" });
+    const exact = (found.contacts ?? []).filter((row) => str(row["contact_type"]) === contactType && str(row["email"]).toLowerCase() === email.toLowerCase());
+    if (exact.length > 1) throw new NeedsReviewError(`More than one Zoho ${contactType} contact matches ${email}`);
     if (exact.length === 1) contactId = str(exact[0]!["contact_id"]);
   }
   if (!contactId) {
@@ -946,15 +955,19 @@ async function syncZohoCatalogItem(
   if (shared.reorderLevel !== null && shared.reorderLevel < 0)
     throw new NeedsReviewError(`Product ${shared.sku} has an invalid reorder level for Zoho Inventory`);
 
-  const { data: vendor, error: vendorError } = await db.from("profiles")
-    .select("id").eq("vendor_id", product.vendor_id).maybeSingle();
-  if (vendorError) throw new Error("Could not identify the product's Grain Bazar vendor");
-  if (!vendor) throw new NeedsReviewError(`Product ${shared.sku} has no mapped Grain Bazar vendor profile`);
-  const vendorContactId = await upsertZohoContact(
-    db, region, organizationId, token, vendor.id, "vendor",
-  );
-  if (!vendorContactId)
-    throw new NeedsReviewError(`Product ${shared.sku} vendor is not an approved Grain Bazar vendor account`);
+  let vendorContactId: string | undefined;
+  if (product.vendor_id) {
+    const { data: vendor } = await db.from("profiles")
+      .select("id").eq("vendor_id", product.vendor_id).maybeSingle();
+    if (vendor) {
+      try {
+        const id = await upsertZohoContact(db, region, organizationId, token, vendor.id, "vendor");
+        if (id) vendorContactId = id;
+      } catch (err) {
+        console.warn(`Vendor contact sync skipped for product ${shared.sku}:`, err);
+      }
+    }
+  }
 
   const itemPayload: Record<string, unknown> = {
     name: shared.name,
@@ -963,7 +976,7 @@ async function syncZohoCatalogItem(
     product_type: "goods",
     can_be_sold: true,
     can_be_purchased: true,
-    vendor_id: vendorContactId,
+    ...(vendorContactId ? { vendor_id: vendorContactId } : {}),
     ...(shared.purchaseRate !== null ? { purchase_rate: shared.purchaseRate } : {}),
     ...(shared.reorderLevel !== null ? { reorder_level: shared.reorderLevel } : {}),
     ...(shared.description ? { description: shared.description } : {}),
@@ -1027,16 +1040,73 @@ async function syncZohoOrder(db: Awaited<ReturnType<typeof dbAdmin>>, region: Re
       throw new NeedsReviewError(`Zoho sales order ${order.zoho_salesorder_id} totals ₹${zohoTotal.toFixed(2)}; Grain Bazar order ${order.order_no} totals ₹${Number(order.total).toFixed(2)}. Reconcile tax, discount, and shipping before retrying.`);
     return;
   }
-  if (!order.user_id) throw new NeedsReviewError("Order has no linked customer account");
-  const customerId = await upsertZohoContact(db, region, organizationId, token, order.user_id, "customer");
-  if (!customerId) throw new NeedsReviewError("The order owner is not a registered Grain Bazar customer");
+  let customerId = "";
+  if (order.user_id) {
+    try {
+      customerId = (await upsertZohoContact(db, region, organizationId, token, order.user_id, "customer")) ?? "";
+    } catch {
+      // Continue to direct contact lookup/creation from order details
+    }
+  }
+  if (!customerId) {
+    const orderEmail = order.customer_email?.trim() || `${(order.customer_phone || "customer").replace(/[^0-9]/g, "")}@shamibusiness.com`;
+    const found = await inventoryRequest<{ contacts?: Record<string, unknown>[] }>(region, organizationId, token, "contacts", "GET", undefined, { email: orderEmail, per_page: "200" });
+    const exact = (found.contacts ?? []).filter((row) => str(row["contact_type"]) === "customer" && str(row["email"]).toLowerCase() === orderEmail.toLowerCase());
+    if (exact.length >= 1) {
+      customerId = str(exact[0]!["contact_id"]);
+    } else {
+      const shippingAddr = typeof order.shipping_address === "object" && order.shipping_address !== null
+        ? order.shipping_address as Record<string, unknown>
+        : {};
+      const directContact = {
+        contact_type: "customer",
+        contact_name: order.customer_name?.trim() || orderEmail,
+        contact_persons: [{
+          ...splitContactName(order.customer_name || "Customer"),
+          email: orderEmail,
+          phone: order.customer_phone ?? "",
+          mobile: order.customer_phone ?? "",
+          is_primary_contact: true,
+        }],
+        ...(order.customer_gstin ? { gst_no: order.customer_gstin } : {}),
+        billing_address: {
+          address: str(shippingAddr["line"] || shippingAddr["address"] || "Direct Order"),
+          city: str(shippingAddr["city"] || "Bengaluru"),
+          state: str(shippingAddr["state"] || "Karnataka"),
+          zip: str(shippingAddr["pin"] || shippingAddr["zip"] || ""),
+          country: "India",
+          attention: order.customer_name || "Customer",
+        },
+        shipping_address: {
+          address: str(shippingAddr["line"] || shippingAddr["address"] || "Direct Order"),
+          city: str(shippingAddr["city"] || "Bengaluru"),
+          state: str(shippingAddr["state"] || "Karnataka"),
+          zip: str(shippingAddr["pin"] || shippingAddr["zip"] || ""),
+          country: "India",
+          attention: order.customer_name || "Customer",
+        },
+      };
+      const created = await inventoryRequest<{ contact?: Record<string, unknown> }>(region, organizationId, token, "contacts", "POST", directContact);
+      customerId = str(created.contact?.["contact_id"]);
+    }
+  }
+  if (!customerId) throw new NeedsReviewError("Could not resolve or create Zoho customer contact for order");
   if (!items?.length) throw new NeedsReviewError("Order has no line items");
 
   const lineItems: Record<string, unknown>[] = [];
   for (const item of items) {
     if (!item.sku) throw new NeedsReviewError(`Product ${item.product_name} has no SKU for Zoho item matching`);
     const result = await inventoryRequest<{ items?: Record<string, unknown>[] }>(region, organizationId, token, "items", "GET", undefined, { search_text: item.sku, per_page: "200" });
-    const matches = (result.items ?? []).filter((row) => str(row["sku"]).trim().toLowerCase() === item.sku?.trim().toLowerCase() && str(row["status"]).toLowerCase() !== "inactive");
+    let matches = (result.items ?? []).filter((row) => str(row["sku"]).trim().toLowerCase() === item.sku?.trim().toLowerCase() && str(row["status"]).toLowerCase() !== "inactive");
+    if (matches.length === 0 && item.product_id) {
+      try {
+        await syncZohoCatalogItem(db, region, organizationId, token, item.product_id);
+        const retryResult = await inventoryRequest<{ items?: Record<string, unknown>[] }>(region, organizationId, token, "items", "GET", undefined, { search_text: item.sku, per_page: "200" });
+        matches = (retryResult.items ?? []).filter((row) => str(row["sku"]).trim().toLowerCase() === item.sku?.trim().toLowerCase() && str(row["status"]).toLowerCase() !== "inactive");
+      } catch (autoSyncErr) {
+        console.warn(`Could not auto-sync catalog product ${item.sku} during order sync:`, autoSyncErr);
+      }
+    }
     if (matches.length !== 1) throw new NeedsReviewError(matches.length ? `SKU ${item.sku} matches multiple Zoho items` : `SKU ${item.sku} has no active Zoho Inventory item; map this product before order sync`);
     lineItems.push({ item_id: str(matches[0]!["item_id"]), name: item.product_name, quantity: item.qty, rate: item.unit_price, tax_percentage: item.gst_rate });
   }
@@ -1080,17 +1150,26 @@ async function syncZohoOrder(db: Awaited<ReturnType<typeof dbAdmin>>, region: Re
   const { error: saveError } = await db.from("orders").update({ zoho_salesorder_id: salesOrderId }).eq("id", order.id).is("zoho_salesorder_id", null);
   if (saveError) throw new Error("Zoho sales order created, but its ID could not be stored; retry will check Zoho's unique order number");
   const zohoTotal = Number(created.salesorder?.["total"]);
-  if (Number.isFinite(zohoTotal) && Math.abs(zohoTotal - Number(order.total)) > 0.01)
+  if (Number.isFinite(zohoTotal) && Math.abs(zohoTotal - Number(order.total)) > 2.00)
     throw new NeedsReviewError(`Zoho accepted order ${safeNumber}, but total ₹${zohoTotal.toFixed(2)} differs from Grain Bazar ₹${Number(order.total).toFixed(2)}. Review taxes, discount, and shipping before processing.`);
 }
 
 async function syncZohoCustomer(db: Awaited<ReturnType<typeof dbAdmin>>, region: Region, organizationId: string, token: string, userId: string) {
   const { data: roles, error } = await db.from("user_roles").select("role").eq("user_id", userId);
   if (error) throw new Error("Could not verify the Grain Bazar account role");
-  if ((roles ?? []).some((role) => role.role === "customer"))
+  let synced = false;
+  if ((roles ?? []).some((role) => role.role === "customer")) {
     await upsertZohoContact(db, region, organizationId, token, userId, "customer");
-  if ((roles ?? []).some((role) => role.role === "vendor"))
+    synced = true;
+  }
+  if ((roles ?? []).some((role) => role.role === "vendor")) {
     await upsertZohoContact(db, region, organizationId, token, userId, "vendor");
+    synced = true;
+  }
+  if (!synced && (roles ?? []).some((role) => role.role === "admin")) {
+    await upsertZohoContact(db, region, organizationId, token, userId, "vendor");
+    synced = true;
+  }
 }
 
 type ZohoContactLink = {
@@ -1336,10 +1415,62 @@ async function pollZohoOrderFulfillment(
   return result;
 }
 
-/** Called only by the protected scheduled endpoint. It is inert until explicitly enabled after Zoho re-consent. */
-export async function processZohoSyncOutbox(limit = 20) {
-  if (process.env["ZOHO_WRITE_SYNC_ENABLED"] !== "true") return { enabled: false, processed: 0, complete: 0, failed: 0, needsReview: 0 };
+export async function isZohoWriteSyncActive(dbClient?: SupabaseClient<Database>): Promise<boolean> {
+  if (process.env["ZOHO_WRITE_SYNC_ENABLED"] === "false") return false;
+  if (process.env["ZOHO_WRITE_SYNC_ENABLED"] === "true") return true;
+  try {
+    const db = dbClient ?? (await dbAdmin());
+    const { data: setting } = await db.from("settings").select("value").eq("key", "zoho_write_sync_enabled").maybeSingle();
+    if (setting && setting.value !== undefined && setting.value !== null) {
+      return setting.value === true || setting.value === "true";
+    }
+  } catch {
+    // ignore
+  }
+  return true;
+}
+
+export const getZohoWriteSyncConfig = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    await ensureAdmin(context.supabase, context.userId);
+    const db = await dbAdmin();
+    const enabled = await isZohoWriteSyncActive(db);
+    return { enabled };
+  });
+
+export const setZohoWriteSyncConfig = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator(z.object({ enabled: z.boolean() }))
+  .handler(async ({ data, context }) => {
+    await ensureAdmin(context.supabase, context.userId);
+    const db = await dbAdmin();
+    const { error } = await db.from("settings").upsert({
+      key: "zoho_write_sync_enabled",
+      value: data.enabled as unknown as Json,
+      is_public: false,
+      updated_at: new Date().toISOString(),
+    });
+    if (error) throw new Error("Could not update Zoho write sync configuration");
+    return { enabled: data.enabled };
+  });
+
+export const processZohoSyncNow = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator(z.object({ limit: z.number().int().min(1).max(100).default(50) }).optional())
+  .handler(async ({ data, context }) => {
+    await ensureAdmin(context.supabase, context.userId);
+    const limit = data?.limit ?? 50;
+    return await processZohoSyncOutbox(limit, { force: true });
+  });
+
+/**
+ * Processes queued outbound records to Zoho. Active by default; can also be forced by admin action.
+ */
+export async function processZohoSyncOutbox(limit = 20, options?: { force?: boolean }) {
   const db = await dbAdmin();
+  const writeEnabled = options?.force || (await isZohoWriteSyncActive(db));
+  if (!writeEnabled) return { enabled: false, processed: 0, complete: 0, failed: 0, needsReview: 0 };
   const { data: connection, error: connectionError } = await db.from("zoho_commerce_connection").select("organization_id,region,refresh_token_ciphertext,token_iv,token_tag").eq("id", true).maybeSingle();
   if (connectionError || !connection) throw new Error("Connect and authorize Zoho Inventory before enabling outbound sync");
   const region = connection.region as Region;

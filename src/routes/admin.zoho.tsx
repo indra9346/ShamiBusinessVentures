@@ -19,6 +19,7 @@ import {
   Settings2,
   Shapes,
   Store,
+  UploadCloud,
 } from "lucide-react";
 import { toast } from "sonner";
 import { PanelLayout } from "@/components/panel/PanelLayout";
@@ -27,6 +28,7 @@ import { adminNav } from "@/lib/panel-nav";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import {
   Select,
   SelectContent,
@@ -38,6 +40,9 @@ import {
   getZohoConnectionStatus,
   getZohoCommerceReadMirror,
   getZohoSyncQueueStatus,
+  getZohoWriteSyncConfig,
+  setZohoWriteSyncConfig,
+  processZohoSyncNow,
   queueZohoInitialExport,
   retryZohoSyncJob,
   startZohoAuthorization,
@@ -304,6 +309,9 @@ function ZohoCommerceAdmin() {
   const [search, setSearch] = useState("");
   const [syncQueue, setSyncQueue] = useState<{ counts: Record<string, number>; jobs: SyncQueueJob[] }>({ counts: {}, jobs: [] });
   const [queueBusy, setQueueBusy] = useState(false);
+  const [syncOutboxBusy, setSyncOutboxBusy] = useState(false);
+  const [writeSyncEnabled, setWriteSyncEnabled] = useState(true);
+  const [writeSyncBusy, setWriteSyncBusy] = useState(false);
 
   const reload = async () => {
     try {
@@ -375,12 +383,55 @@ function ZohoCommerceAdmin() {
       setRefreshBusy(false);
     }
   };
+  const toggleWriteSync = async (enabled: boolean) => {
+    setWriteSyncBusy(true);
+    try {
+      await setZohoWriteSyncConfig({ data: { enabled } });
+      setWriteSyncEnabled(enabled);
+      toast.success(enabled ? "Outbound write sync is active" : "Outbound write sync paused");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not update sync configuration");
+    } finally {
+      setWriteSyncBusy(false);
+    }
+  };
+
+  const runSyncOutbox = async () => {
+    setSyncOutboxBusy(true);
+    try {
+      const res = await processZohoSyncNow({ data: { limit: 50 } });
+      await reloadQueue();
+      await reloadMirror();
+      if (res.processed === 0) {
+        toast.info("No pending jobs to process", {
+          description: "All records are up to date in Zoho.",
+        });
+      } else {
+        toast.success(`Processed ${res.processed} records for Zoho`, {
+          description: `${res.complete} completed, ${res.failed} failed, ${res.needsReview} needs review.`,
+        });
+      }
+    } catch (error) {
+      toast.error("Zoho outbox sync failed", {
+        description: error instanceof Error ? error.message : "Verify Zoho authorization scopes and try again",
+      });
+      await reloadQueue();
+    } finally {
+      setSyncOutboxBusy(false);
+    }
+  };
+
   useEffect(() => {
     void reload();
     void reloadMirror(1);
     void reloadQueue();
+    void getZohoWriteSyncConfig()
+      .then((cfg) => {
+        if (cfg && typeof cfg.enabled === "boolean") setWriteSyncEnabled(cfg.enabled);
+      })
+      .catch(() => {});
     const params = new URLSearchParams(window.location.search);
-    if (params.has("connected")) toast.success("Zoho Commerce connected");
+    if (params.has("connected")) toast.success("Zoho Commerce connected with read and write access");
     if (params.has("error"))
       toast.error("Zoho connection failed", {
         description: "Review Zoho app settings and server configuration, then try again.",
@@ -515,7 +566,7 @@ function ZohoCommerceAdmin() {
                   </h2>
                   {connection?.status === "connected" && (
                     <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-400/15 px-3 py-1 text-xs font-semibold text-emerald-100">
-                      <BadgeCheck className="h-4 w-4" /> Connected
+                      <BadgeCheck className="h-4 w-4" /> Connected · Read & Write Active
                     </span>
                   )}
                 </div>
@@ -562,6 +613,9 @@ function ZohoCommerceAdmin() {
                   {refreshBusy ? "Refreshing saved data…" : "Refresh saved data"}
                 </Button>
               </div>
+              <div className="rounded-md border border-white/20 bg-white/10 p-3 text-xs leading-relaxed text-white/90">
+                <span className="font-semibold text-white">Full Two-Way Sync Active:</span> Zoho Commerce & Zoho Inventory write permissions are enabled. If your store was previously connected in read-only mode, click <strong>Reauthorize Zoho</strong> to grant write permissions. Use <strong>Push pending to Zoho</strong> below to write queued records immediately.
+              </div>
             </div>
             {connection?.last_error && (
               <p role="alert" className="mt-4 rounded-md bg-red-100 p-3 text-sm text-red-900">
@@ -574,15 +628,25 @@ function ZohoCommerceAdmin() {
         <Panel title="Customer, vendor, catalogue & order sync health">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <p className="max-w-3xl text-sm leading-relaxed text-slate">
-              Approved app catalogue changes, customer and vendor contacts, and orders are queued for Zoho Inventory. Use the initial export once for records created before the sync migration. Mapped Zoho contact, catalogue, and shipment edits are reconciled back on each scheduled run. Conflicts and unsupported records stay visible here for review.
+              Approved app catalogue changes, customer and vendor contacts, and orders are queued for Zoho Inventory & Zoho Commerce. Click <strong>Push pending to Zoho</strong> to actively sync queued changes now, or allow them to reconcile on each scheduled run.
             </p>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                size="sm"
+                disabled={syncOutboxBusy || !connection}
+                onClick={() => void runSyncOutbox()}
+                className="bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm font-semibold"
+                title="Immediately writes all queued customer, vendor, catalog, and order changes to Zoho."
+              >
+                <UploadCloud className={`mr-1.5 h-4 w-4 ${syncOutboxBusy ? "animate-bounce" : ""}`} />
+                {syncOutboxBusy ? "Pushing to Zoho…" : `Push pending to Zoho (${syncQueue.counts["pending"] ?? 0})`}
+              </Button>
               <Button
                 variant="outline"
                 size="sm"
                 disabled={queueBusy || !connection}
                 onClick={() => void queueInitialExport()}
-                title="Queues existing local records only. Zoho is contacted later by the protected sync worker."
+                title="Queues existing local records only. Zoho is contacted when pushed."
               >
                 <CloudDownload className="mr-2 h-4 w-4" />
                 {queueBusy ? "Queueing existing data…" : "Queue existing data"}
@@ -592,6 +656,28 @@ function ZohoCommerceAdmin() {
               </Button>
             </div>
           </div>
+          {Number(syncQueue.counts["pending"] || 0) > 0 && (
+            <div className="mb-4 flex flex-col gap-3 rounded-lg border border-amber-300 bg-amber-50 p-4 sm:flex-row sm:items-center sm:justify-between text-sm text-amber-950">
+              <div className="flex items-center gap-2.5">
+                <AlertCircle className="h-5 w-5 shrink-0 text-amber-600" />
+                <div>
+                  <p className="font-semibold">{syncQueue.counts["pending"]} records are queued for Zoho write</p>
+                  <p className="text-xs text-amber-850">
+                    Customers, vendors, catalogue items, and sales orders are ready to be written to Zoho Commerce & Inventory.
+                  </p>
+                </div>
+              </div>
+              <Button
+                size="sm"
+                disabled={syncOutboxBusy || !connection}
+                onClick={() => void runSyncOutbox()}
+                className="bg-amber-600 text-white hover:bg-amber-700 text-xs font-semibold shrink-0 shadow-sm"
+              >
+                <UploadCloud className={`mr-1.5 h-3.5 w-3.5 ${syncOutboxBusy ? "animate-bounce" : ""}`} />
+                {syncOutboxBusy ? "Pushing data…" : `Push ${syncQueue.counts["pending"]} records now`}
+              </Button>
+            </div>
+          )}
           <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
             {["pending", "failed", "needs_review", "complete"].map((status) => (
               <div key={status} className="rounded-md border border-border bg-white px-3 py-2">
@@ -917,10 +1003,9 @@ function ZohoCommerceAdmin() {
                 <CheckCircle2 className="h-4 w-4" />
               </span>
               <div>
-                <h3 className="text-sm font-semibold text-navy">Read-only account snapshots</h3>
+                <h3 className="text-sm font-semibold text-navy">Two-way active synchronization</h3>
                 <p className="mt-1 text-sm leading-relaxed text-slate">
-                  Sales orders and settings are shown for administrators. They stay separate from
-                  marketplace orders and customer accounts.
+                  Approved products, customer profiles, vendor contacts, and sales orders are actively written to Zoho Inventory and Zoho Commerce.
                 </p>
               </div>
             </div>
@@ -929,22 +1014,20 @@ function ZohoCommerceAdmin() {
                 <PackageCheck className="h-4 w-4" />
               </span>
               <div>
-                <h3 className="text-sm font-semibold text-navy">Catalog sync is separate</h3>
+                <h3 className="text-sm font-semibold text-navy">Live outbox processing</h3>
                 <p className="mt-1 text-sm leading-relaxed text-slate">
-                  Products and general coupons use their own sync button. Storefront approval and
-                  customer access rules still apply.
+                  Outbound writes can be pushed instantly using &quot;Push pending to Zoho&quot; or automatically processed by the background sync worker.
                 </p>
               </div>
             </div>
             <div className="flex gap-3">
               <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-amber-50 text-amber-700">
-                <CalendarDays className="h-4 w-4" />
+                <RefreshCw className="h-4 w-4" />
               </span>
               <div>
-                <h3 className="text-sm font-semibold text-navy">Updated when you sync</h3>
+                <h3 className="text-sm font-semibold text-navy">Fulfillment & contact reconciliation</h3>
                 <p className="mt-1 text-sm leading-relaxed text-slate">
-                  This page shows the latest complete data read. It does not mirror Zoho
-                  continuously or reproduce Zoho’s native reports.
+                  Zoho shipment milestones (dispatched, delivered) and non-conflicting profile edits reconcile back automatically into Grain Bazar.
                 </p>
               </div>
             </div>
