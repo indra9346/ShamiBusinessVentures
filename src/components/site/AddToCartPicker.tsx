@@ -129,11 +129,13 @@ export function AddToCartPicker({
           value={typedQty}
           onChange={handleManualQtyChange}
           onBlur={handleManualQtyBlur}
+          onFocus={(event) => event.currentTarget.select()}
           onKeyDown={(e) => {
             if (e.key === "Enter") {
               (e.target as HTMLInputElement).blur();
             }
           }}
+          title={`Enter a whole number from 1 to ${availableStock} bags`}
           className="h-10 min-w-0 flex-1 rounded-md border border-border bg-background text-center font-bold text-navy focus:border-gold focus:outline-none"
         />
         <button
@@ -149,6 +151,7 @@ export function AddToCartPicker({
           <Plus className="h-4 w-4" />
         </button>
       </div>
+      <p className="mt-1 text-[11px] text-slate">Tap the quantity to replace it, or type any whole number up to {availableStock}.</p>
       <p className="mt-2 text-xs text-slate">
         {product.weight} per bag · {selectedWeight || qty} {unit} total
       </p>

@@ -217,6 +217,18 @@ function money(value: unknown, currency: unknown) {
   }
 }
 
+function zohoCommerceBase(region: string) {
+  const host: Record<string, string> = {
+    com: "commerce.zoho.com",
+    eu: "commerce.zoho.eu",
+    in: "commerce.zoho.in",
+    com_au: "commerce.zoho.com.au",
+    jp: "commerce.zoho.jp",
+    ca: "commerce.zoho.ca",
+  };
+  return `https://${host[region] ?? host.in}`;
+}
+
 function recordTitle(resource: string, record: MirrorRecord) {
   const payload = record.payload;
   if (resource === "sales_orders") {
@@ -344,7 +356,19 @@ function OrderLineItems({ payload }: { payload: Record<string, unknown> }) {
           <tbody className="divide-y divide-border">
             {rows.map((item, index) => (
               <tr key={String(first(item, "line_item_id", "item_id", "sku") ?? index)}>
-                <td className="px-3 py-2 font-medium text-navy">{displayValue(first(item, "name", "item_name", "description"))}</td>
+                <td className="px-3 py-2 font-medium text-navy">
+                  <span className="flex items-center gap-2">
+                    {typeof first(item, "image_url", "item_image_url", "image") === "string" && (
+                      <img
+                        src={String(first(item, "image_url", "item_image_url", "image"))}
+                        alt=""
+                        loading="lazy"
+                        className="h-9 w-9 shrink-0 rounded border border-border object-cover"
+                      />
+                    )}
+                    {displayValue(first(item, "name", "item_name", "description"))}
+                  </span>
+                </td>
                 <td className="px-3 py-2 text-slate">{displayValue(first(item, "sku", "item_sku"))}</td>
                 <td className="px-3 py-2 text-right">{displayValue(first(item, "quantity", "qty"))}</td>
                 <td className="px-3 py-2 text-right">{money(first(item, "rate", "item_rate"), first(payload, "currency_code", "currency"))}</td>
@@ -898,7 +922,7 @@ function ZohoCommerceAdmin() {
                 </Button>
               </div>
               <div className="rounded-md border border-white/20 bg-white/10 p-3 text-xs leading-relaxed text-white/90">
-                <span className="font-semibold text-white">Zoho read and write access is enabled.</span> Approved app records can be pushed to Zoho through the sync queue. Zoho account snapshots refresh when you run <strong>Sync account data</strong>; linked order fulfillment is reconciled by the scheduled sync worker.
+                <span className="font-semibold text-white">Zoho read and write access is enabled.</span> “Sync account data” imports a read-only snapshot from Zoho; “Refresh saved data” reloads that snapshot only. ShamiBusiness changes are queued and sent by “Push pending to Zoho” or the scheduled worker. The worker is configured to check every five minutes (Vercel Pro or Enterprise required; Hobby allows once daily). Account snapshots still refresh when you request a read sync.
               </div>
             </div>
             {connection?.last_error && (
@@ -912,7 +936,7 @@ function ZohoCommerceAdmin() {
         <Panel title="Customer, vendor, catalogue & order sync health">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <p className="max-w-3xl text-sm leading-relaxed text-slate">
-              Approved app catalogue changes, customer and vendor contacts, and orders are queued for Zoho Inventory & Zoho Commerce. Click <strong>Push pending to Zoho</strong> to actively sync queued changes now, or allow them to reconcile on each scheduled run.
+              Approved app catalogue changes, customer and vendor contacts, and orders are queued for Zoho Inventory & Zoho Commerce. Click <strong>Push pending to Zoho</strong> to send queued changes immediately. Otherwise, the scheduled worker checks them every five minutes on supported Vercel plans. To import changes made inside Zoho, run <strong>Sync account data</strong> above.
             </p>
             <div className="flex flex-wrap items-center gap-2">
               <Button
@@ -1080,9 +1104,10 @@ function ZohoCommerceAdmin() {
 
         <Panel title="Synced Zoho data">
           <p className="mb-4 rounded-md border border-blue-100 bg-blue-50/70 px-3 py-2.5 text-sm leading-relaxed text-slate">
-            This page shows the last data saved in ShamiBusiness from Zoho. It is not a live view;
-            use <strong>Sync account data</strong> to request a fresh read from Zoho, or{" "}
-            <strong>Refresh saved data</strong> to reload what is already stored.
+            This page shows a read-only snapshot imported from Zoho. It does not edit Zoho records.
+            Use <strong>Open this order in Zoho</strong> for the official editing and navigation options;
+            use <strong>Sync account data</strong> to import the latest Zoho values. <strong>Refresh
+            saved data</strong> only reloads the last saved snapshot.
           </p>
           <div className="mb-4 flex flex-wrap items-center gap-2 border-b border-border pb-4">
             {Object.entries(RESOURCE_LABELS).map(([key, label]) => {
@@ -1288,6 +1313,17 @@ function ZohoCommerceAdmin() {
                               </span>
                             </summary>
                             <div className="space-y-3 border-t border-border px-4 py-4">
+                              <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-blue-100 bg-blue-50/70 px-3 py-2.5">
+                                <p className="text-sm text-slate">This is a read-only copy. Use the matching Zoho record to edit status, payment, shipping, or other Zoho fields.</p>
+                                <a
+                                  href={`${zohoCommerceBase(region)}/app/${encodeURIComponent(organizationId)}#/salesorders/${encodeURIComponent(record.external_id)}`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="inline-flex h-9 items-center gap-2 rounded-md border border-border bg-white px-3 text-sm font-medium text-navy shadow-sm hover:border-gold"
+                                >
+                                  <ExternalLink className="h-4 w-4" /> Open this order in Zoho
+                                </a>
+                              </div>
                               <OrderFields payload={p} externalId={record.external_id} />
                               <details className="rounded-md border border-border bg-white">
                                 <summary className="cursor-pointer px-3 py-2.5 text-sm font-medium text-slate">
@@ -1413,7 +1449,7 @@ function ZohoCommerceAdmin() {
               <div>
                     <h3 className="text-sm font-semibold text-navy">Queued outbox processing</h3>
                 <p className="mt-1 text-sm leading-relaxed text-slate">
-                  Outbound writes can be pushed with &quot;Push pending to Zoho&quot; or processed by the scheduled background sync worker.
+                  Outbound writes can be pushed with &quot;Push pending to Zoho&quot; or processed on the configured five-minute schedule (Vercel Pro or Enterprise).
                 </p>
               </div>
             </div>
@@ -1424,7 +1460,7 @@ function ZohoCommerceAdmin() {
               <div>
                     <h3 className="text-sm font-semibold text-navy">Scheduled fulfillment reconciliation</h3>
                 <p className="mt-1 text-sm leading-relaxed text-slate">
-                  The worker polls supported linked-order shipment milestones and applies eligible fulfillment changes to Grain Bazar orders.
+                  The worker polls supported linked-order shipment milestones every five minutes on supported Vercel plans and applies eligible fulfillment changes to Grain Bazar orders. Imported Zoho sales order snapshots still need a manual &quot;Sync account data&quot; refresh.
                 </p>
               </div>
             </div>

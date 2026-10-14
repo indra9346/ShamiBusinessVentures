@@ -895,6 +895,7 @@ function catalogSharedValues(product: CatalogProduct) {
     purchaseRate: finiteNumber(payload["purchasePrice"]),
     reorderLevel: finiteNumber(payload["minimumStock"]),
     description: str(payload["description"]).trim(),
+    image: str(payload["image"]).trim(),
   };
 }
 
@@ -909,6 +910,51 @@ async function catalogFingerprint(product: CatalogProduct) {
   });
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", enc.encode(stable)));
   return b64(digest);
+}
+
+async function uploadCatalogImageToZohoInventory(
+  region: Region,
+  organizationId: string,
+  token: string,
+  itemId: string,
+  imageUrl: string,
+) {
+  if (!imageUrl) return;
+  const supabaseBase = new URL(reqEnv("SUPABASE_URL"));
+  let source: URL;
+  try {
+    source = new URL(imageUrl);
+  } catch {
+    // Local bundled placeholders are not user-uploaded product assets.
+    if (imageUrl.startsWith("/")) return;
+    throw new NeedsReviewError("Product image must be uploaded to ShamiBusiness catalog storage before Zoho sync");
+  }
+  if (source.origin !== supabaseBase.origin || !source.pathname.startsWith("/storage/v1/object/public/catalog-images/")) {
+    throw new NeedsReviewError("Product image is not in ShamiBusiness catalog storage; upload it there before Zoho sync");
+  }
+  const response = await fetch(source, { signal: AbortSignal.timeout(15_000), redirect: "error" });
+  if (!response.ok) throw new Error(`Could not read the saved product image (${response.status})`);
+  const contentType = (response.headers.get("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
+  const extensionByType: Record<string, string> = {
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/webp": "webp",
+    "image/gif": "gif",
+  };
+  const extension = extensionByType[contentType];
+  if (!extension) throw new NeedsReviewError("Zoho accepts JPG, PNG, WebP, or GIF product images; re-upload this image in a supported format");
+  const bytes = await response.arrayBuffer();
+  if (bytes.byteLength > 5 * 1024 * 1024) throw new NeedsReviewError("Product image is larger than the 5 MB ShamiBusiness upload limit");
+  const form = new FormData();
+  form.append("image", new Blob([bytes], { type: contentType }), `product.${extension}`);
+  const upload = await fetch(inventoryApi(region, `items/${encodeURIComponent(itemId)}/image`, organizationId), {
+    method: "POST",
+    headers: { Authorization: `Zoho-oauthtoken ${token}` },
+    body: form,
+    signal: AbortSignal.timeout(20_000),
+  });
+  const result = (await upload.json()) as { code?: number; message?: string };
+  if (!upload.ok || result.code !== 0) throw new Error(result.message ?? `Zoho Inventory image upload failed (${upload.status})`);
 }
 
 async function saveZohoReview(
@@ -1046,6 +1092,7 @@ async function syncZohoCatalogItem(
   }
   await inventoryRequest(region, organizationId, token,
     `items/${encodeURIComponent(itemId)}/active`, "POST");
+  await uploadCatalogImageToZohoInventory(region, organizationId, token, itemId, shared.image);
   const { error: linkError } = await db.from("zoho_item_links").upsert({
     product_id: product.id,
     zoho_item_id: itemId,
