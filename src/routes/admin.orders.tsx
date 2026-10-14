@@ -345,13 +345,24 @@ function AdminOrders() {
             const canCancel = canCancelOrder(o, "admin");
             const needsRefund = (o.paidAmount ?? 0) > 0 || o.payment === "Paid" || o.payment === "Partially Paid";
             return [
-              <Link
-                to="/admin/orders/$id"
-                params={{ id: o.id }}
-                className="font-mono font-bold text-navy hover:text-gold hover:underline transition-colors"
-              >
-                {o.id}
-              </Link>,
+              <div>
+                <Link
+                  to="/admin/orders/$id"
+                  params={{ id: o.id }}
+                  className="font-mono font-bold text-navy hover:text-gold hover:underline transition-colors block"
+                >
+                  {o.id}
+                </Link>
+                {o.zohoSalesOrderId ? (
+                  <span className="mt-0.5 inline-flex items-center gap-1 rounded bg-emerald-50 border border-emerald-200 px-1.5 py-0.2 text-[10px] font-semibold text-emerald-800">
+                    Zoho: {o.zohoSalesOrderId}
+                  </span>
+                ) : (
+                  <span className="mt-0.5 inline-flex items-center gap-0.5 text-[10px] text-slate/70">
+                    Zoho ready
+                  </span>
+                )}
+              </div>,
               o.date,
               <div>
                 <p className="font-medium text-navy">{o.customer}</p>

@@ -377,6 +377,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
                 address: String(shippingAddress["line"] || ""), city: String(shippingAddress["city"] || ""), state: String(shippingAddress["state"] || ""),
                 pin: String(shippingAddress["pin"] || ""), delivery: row.shipping_method === "Express" ? "Express Freight — next business day" : "Standard Freight — 2 to 4 days",
                 ...(row.coupon ? { coupon: row.coupon } : {}),
+                zohoSalesOrderId: ((row as Record<string, unknown>)["zoho_salesorder_id"] as string | null) || null,
+                dbOrderId: row.id,
                 ...(vendorStatuses.length ? { vendorStatuses } : {}),
               };
             }));

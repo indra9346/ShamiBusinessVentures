@@ -1818,3 +1818,38 @@ export const syncZohoProducts = createServerFn({ method: "POST" })
       throw new Error(message);
     }
   });
+
+export const syncSingleOrderToZoho = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator(z.object({ orderNo: z.string() }))
+  .handler(async ({ data, context }) => {
+    await ensureAdmin(context.supabase, context.userId);
+    const db = await dbAdmin();
+    const { data: order, error } = await db
+      .from("orders")
+      .select("id, order_no, zoho_salesorder_id")
+      .eq("order_no", data.orderNo)
+      .maybeSingle();
+    if (error || !order) throw new Error("Order not found for Zoho synchronization");
+
+    const { error: enqueueError } = await db.rpc("enqueue_zoho_sync", {
+      _entity_type: "order",
+      _entity_id: order.id,
+    });
+    if (enqueueError) throw new Error("Could not queue order for Zoho synchronization");
+
+    const res = await processZohoSyncNow({ data: { limit: 10, force: true } });
+    const { data: updated } = await db
+      .from("orders")
+      .select("zoho_salesorder_id")
+      .eq("id", order.id)
+      .maybeSingle();
+
+    return {
+      success: true,
+      zohoSalesOrderId: updated?.zoho_salesorder_id ?? null,
+      processed: res.processed,
+      complete: res.complete,
+    };
+  });
+

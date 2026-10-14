@@ -571,6 +571,8 @@ export type Order = {
   pin: string;
   delivery: string;
   coupon?: string;
+  zohoSalesOrderId?: string | null;
+  dbOrderId?: string;
   /** Per-vendor status for split marketplace fulfillment. */
   vendorStatuses?: { vendorId: string; vendor: string; status: OrderStatus }[];
 };
