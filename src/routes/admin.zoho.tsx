@@ -21,6 +21,7 @@ import {
   Shapes,
   Store,
   UploadCloud,
+  Users,
 } from "lucide-react";
 import { toast } from "sonner";
 import { PanelLayout } from "@/components/panel/PanelLayout";
@@ -73,6 +74,55 @@ type MirrorState = {
 };
 type MirrorRecord = { external_id: string; payload: Record<string, unknown>; captured_at: string };
 type SyncQueueJob = { id: string; entity_type: string; entity_id: string; status: string; attempts: number; last_error: string | null; created_at: string; updated_at: string };
+type ZohoOrderView = {
+  id: string;
+  name: string;
+  field: "status" | "payment" | "customer" | "order" | "balance";
+  comparator: "is" | "is_not" | "contains" | "gt";
+  value: string;
+};
+type ZohoOrderCustomer = {
+  key: string;
+  name: string;
+  email: string;
+  phone: string;
+  company: string;
+  orders: number;
+  spend: number;
+  currency: string;
+  lastOrder: string;
+  address: string;
+};
+
+const ORDER_VIEWS_STORAGE_KEY = "shamibusiness.zoho-order-views.v1";
+
+function orderFieldValue(record: MirrorRecord, field: ZohoOrderView["field"]): string {
+  const p = record.payload;
+  const value = field === "status"
+    ? first(p, "order_status", "status")
+    : field === "payment"
+      ? first(p, "paid_status", "payment_status", "payment")
+      : field === "customer"
+        ? first(p, "customer_name", "company_name", "contact_name")
+        : field === "balance"
+          ? first(p, "balance", "amount_due", "balance_due")
+          : first(p, "salesorder_number", "order_number", "number", "reference_number") ?? record.external_id;
+  return displayValue(value).toLocaleLowerCase();
+}
+
+function orderMatchesView(record: MirrorRecord, view: ZohoOrderView) {
+  const actual = orderFieldValue(record, view.field);
+  const expected = view.value.trim().toLocaleLowerCase();
+  if (!expected) return true;
+  if (view.comparator === "gt") {
+    const actualNumber = Number(actual);
+    const expectedNumber = Number(expected);
+    return Number.isFinite(actualNumber) && Number.isFinite(expectedNumber) && actualNumber > expectedNumber;
+  }
+  if (view.comparator === "contains") return actual.includes(expected);
+  if (view.comparator === "is_not") return actual !== expected;
+  return actual === expected;
+}
 
 const PAGE_SIZE = 200;
 const RESOURCE_LABELS: Record<string, string> = {
@@ -81,6 +131,7 @@ const RESOURCE_LABELS: Record<string, string> = {
   tax_rules: "Tax rules & preferences",
   store_index: "Zoho stores",
   store_meta: "Published store settings",
+  customers_from_orders: "Customers from orders",
 };
 const RESOURCE_ICONS: Record<string, typeof FileText> = {
   sales_orders: FileText,
@@ -88,6 +139,7 @@ const RESOURCE_ICONS: Record<string, typeof FileText> = {
   tax_rules: Coins,
   store_index: Store,
   store_meta: Settings2,
+  customers_from_orders: Users,
 };
 
 function first(payload: Record<string, unknown>, ...keys: string[]) {
@@ -140,6 +192,15 @@ function prettyDate(value: unknown) {
         month: "short",
         day: "numeric",
       });
+}
+
+function orderTimestamp(value: unknown) {
+  if (typeof value !== "string" || !value) return 0;
+  const localDate = value.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  const timestamp = localDate
+    ? Date.UTC(Number(localDate[3]), Number(localDate[2]) - 1, Number(localDate[1]))
+    : Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : 0;
 }
 
 function money(value: unknown, currency: unknown) {
@@ -195,25 +256,105 @@ function OrderFields({
   const rawDate = first(payload, "date", "created_time");
   const rawTotal = first(payload, "total", "bcy_total");
   const rawBalance = first(payload, "balance");
+  const amountFields: [string, unknown][] = [
+    ["Subtotal", first(payload, "sub_total", "subtotal")],
+    ["Tax total", first(payload, "tax_total", "tax_amount")],
+    ["Discount", first(payload, "discount_amount", "discount")],
+    ["Shipping", first(payload, "shipping_charge", "shipping_amount")],
+    ["Amount paid", first(payload, "paid_amount", "amount_paid")],
+  ].map(([label, value]) => [label, value === undefined ? undefined : money(value, currency)] as [string, unknown]);
   const fields: [string, unknown][] = [
     ["Order number", first(payload, "salesorder_number", "order_number", "number") ?? externalId],
     ["Customer / business", first(payload, "customer_name", "company_name", "contact_name")],
     ["Order date", rawDate ? prettyDate(rawDate) : undefined],
     ["Order status", first(payload, "order_status", "status")],
     ["Payment status", first(payload, "paid_status", "payment_status")],
+    ["Fulfillment status", first(payload, "shipment_status", "shipped_status", "package_status")],
+    ["Refund status", first(payload, "refund_status", "refund_state")],
     ["Order total", rawTotal === undefined ? undefined : money(rawTotal, currency)],
     ["Amount due", rawBalance === undefined ? undefined : money(rawBalance, currency)],
     ["Items quantity", first(payload, "quantity")],
+    ["Reference", first(payload, "reference_number", "reference", "purchaseorder_number")],
     ["Currency", currency],
+    ...amountFields,
   ];
   return (
-    <dl className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-      {fields
-        .filter(([, value]) => value !== undefined && value !== null && value !== "")
-        .map(([label, value]) => (
-          <Field key={label} label={label} value={value} />
-        ))}
-    </dl>
+    <div className="space-y-4">
+      <dl className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+        {fields
+          .filter(([, value]) => value !== undefined && value !== null && value !== "")
+          .map(([label, value]) => (
+            <Field key={label} label={label} value={value} />
+          ))}
+      </dl>
+      <OrderContactDetails payload={payload} />
+      <OrderLineItems payload={payload} />
+    </div>
+  );
+}
+
+function OrderContactDetails({ payload }: { payload: Record<string, unknown> }) {
+  const customer = first(payload, "customer_name", "contact_name", "company_name");
+  const email = first(payload, "email", "customer_email", "contact_email");
+  const phone = first(payload, "phone", "phone_number", "customer_phone");
+  const billing = first(payload, "billing_address", "billing_address_info");
+  const shipping = first(payload, "shipping_address", "shipping_address_info");
+  const addressText = (value: unknown) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+    const address = value as Record<string, unknown>;
+    return ["attention", "address", "street", "street2", "city", "state", "zip", "zip_code", "country"]
+      .map((key) => address[key])
+      .filter((part) => part !== undefined && part !== null && part !== "")
+      .map(String)
+      .join(", ");
+  };
+  const fields: [string, unknown][] = [
+    ["Customer / business", customer],
+    ["Email", email],
+    ["Phone", phone],
+    ["Billing address", addressText(billing)],
+    ["Shipping address", addressText(shipping)],
+  ];
+  const visible = fields.filter(([, value]) => value !== undefined && value !== null && value !== "");
+  if (!visible.length) return null;
+  return (
+    <section>
+      <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate">Customer and delivery</h4>
+      <dl className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+        {visible.map(([label, value]) => <Field key={label} label={label} value={value} />)}
+      </dl>
+      <p className="mt-2 text-xs text-slate">Contact details are shown only when included in this Zoho order snapshot.</p>
+    </section>
+  );
+}
+
+function OrderLineItems({ payload }: { payload: Record<string, unknown> }) {
+  const raw = first(payload, "line_items", "items");
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  const rows = raw.filter((item): item is Record<string, unknown> => !!item && typeof item === "object");
+  if (!rows.length) return null;
+  return (
+    <section>
+      <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate">Items ({rows.length})</h4>
+      <div className="overflow-x-auto rounded-md border border-border bg-white">
+        <table className="w-full min-w-[560px] text-left text-sm">
+          <thead className="bg-slate-50 text-[11px] uppercase tracking-wide text-slate">
+            <tr><th className="px-3 py-2">Item</th><th className="px-3 py-2">SKU</th><th className="px-3 py-2 text-right">Quantity</th><th className="px-3 py-2 text-right">Rate</th><th className="px-3 py-2 text-right">Amount</th></tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {rows.map((item, index) => (
+              <tr key={String(first(item, "line_item_id", "item_id", "sku") ?? index)}>
+                <td className="px-3 py-2 font-medium text-navy">{displayValue(first(item, "name", "item_name", "description"))}</td>
+                <td className="px-3 py-2 text-slate">{displayValue(first(item, "sku", "item_sku"))}</td>
+                <td className="px-3 py-2 text-right">{displayValue(first(item, "quantity", "qty"))}</td>
+                <td className="px-3 py-2 text-right">{money(first(item, "rate", "item_rate"), first(payload, "currency_code", "currency"))}</td>
+                <td className="px-3 py-2 text-right font-medium">{money(first(item, "item_total", "total", "amount"), first(payload, "currency_code", "currency"))}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }
 
@@ -309,6 +450,15 @@ function ZohoCommerceAdmin() {
   const mirrorRequestId = useRef(0);
   const [selectedResource, setSelectedResource] = useState("sales_orders");
   const [search, setSearch] = useState("");
+  const [orderStatusFilter, setOrderStatusFilter] = useState("all");
+  const [outstandingOnly, setOutstandingOnly] = useState(false);
+  const [orderViews, setOrderViews] = useState<ZohoOrderView[]>([]);
+  const [activeOrderViewId, setActiveOrderViewId] = useState("all");
+  const [newViewOpen, setNewViewOpen] = useState(false);
+  const [draftViewName, setDraftViewName] = useState("");
+  const [draftViewField, setDraftViewField] = useState<ZohoOrderView["field"]>("status");
+  const [draftViewComparator, setDraftViewComparator] = useState<ZohoOrderView["comparator"]>("is");
+  const [draftViewValue, setDraftViewValue] = useState("");
   const [syncQueue, setSyncQueue] = useState<{ counts: Record<string, number>; jobs: SyncQueueJob[] }>({ counts: {}, jobs: [] });
   const [queueBusy, setQueueBusy] = useState(false);
   const [syncOutboxBusy, setSyncOutboxBusy] = useState(false);
@@ -424,6 +574,19 @@ function ZohoCommerceAdmin() {
   };
 
   useEffect(() => {
+    try {
+      const saved = localStorage.getItem(ORDER_VIEWS_STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) setOrderViews(parsed.filter((item): item is ZohoOrderView =>
+          !!item && typeof item.id === "string" && typeof item.name === "string" &&
+          ["status", "payment", "customer", "order", "balance"].includes(item.field) &&
+          ["is", "is_not", "contains", "gt"].includes(item.comparator) && typeof item.value === "string",
+        ));
+      }
+    } catch {
+      // Ignore malformed browser-local view preferences and leave the shared Zoho data untouched.
+    }
     void reload();
     void reloadMirror(1);
     void reloadQueue();
@@ -544,20 +707,123 @@ function ZohoCommerceAdmin() {
     () => Object.fromEntries(mirrorStates.map((item) => [item.resource, item])),
     [mirrorStates],
   );
-  const selectedState = statesByResource[selectedResource] as MirrorState | undefined;
-  const selectedRecords = mirrorRecords[selectedResource] ?? [];
+  const orderSourceRecords = useMemo(
+    () => [...(mirrorRecords["sales_orders"] ?? [])].sort((a, b) =>
+      orderTimestamp(first(b.payload, "date", "created_time")) - orderTimestamp(first(a.payload, "date", "created_time")),
+    ),
+    [mirrorRecords["sales_orders"]],
+  );
+  const customersFromOrders = useMemo(() => {
+    const grouped = new Map<string, ZohoOrderCustomer>();
+    for (const record of orderSourceRecords) {
+      const p = record.payload;
+      const name = displayValue(first(p, "customer_name", "contact_name", "company_name"));
+      const email = displayValue(first(p, "customer_email", "email", "contact_email"));
+      const phone = displayValue(first(p, "phone", "phone_number", "customer_phone", "mobile"));
+      const id = displayValue(first(p, "customer_id", "contact_id"));
+      const key = (id !== "—" ? id : email !== "—" ? email : name).toLocaleLowerCase();
+      if (!key || key === "—") continue;
+      const existing = grouped.get(key);
+      const rawAmount = Number(first(p, "total", "bcy_total"));
+      const amount = Number.isFinite(rawAmount) ? rawAmount : Number.NaN;
+      const rawDate = first(p, "date", "created_time");
+      const date = typeof rawDate === "string" ? rawDate : "";
+      const address = first(p, "shipping_address", "billing_address");
+      const addressText = address && typeof address === "object" && !Array.isArray(address)
+        ? ["attention", "address", "street", "street2", "city", "state", "zip", "zip_code", "country"]
+            .map((key) => (address as Record<string, unknown>)[key])
+            .filter((part) => typeof part === "string" && part.trim())
+            .join(", ")
+        : "";
+      const currency = String(first(p, "currency_code", "currency") ?? "INR").toUpperCase();
+      if (existing) {
+        existing.orders += 1;
+        if (existing.currency === currency && Number.isFinite(existing.spend) && Number.isFinite(amount)) existing.spend += amount;
+        else if (existing.currency === currency) existing.spend = Number.NaN;
+        else { existing.currency = "MIXED"; existing.spend = Number.NaN; }
+        if (email !== "—") existing.email = email;
+        if (phone !== "—") existing.phone = phone;
+        if (date && (!existing.lastOrder || new Date(date).getTime() > new Date(existing.lastOrder).getTime())) existing.lastOrder = date;
+        if (addressText) existing.address = addressText;
+      } else {
+        grouped.set(key, {
+          key, name, email, phone,
+          company: displayValue(first(p, "company_name")),
+          orders: 1, spend: amount, currency, lastOrder: date, address: addressText,
+        });
+      }
+    }
+    return [...grouped.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }, [orderSourceRecords]);
+  const selectedState = (selectedResource === "customers_from_orders"
+    ? statesByResource["sales_orders"]
+    : statesByResource[selectedResource]) as MirrorState | undefined;
+  const selectedRecords = selectedResource === "customers_from_orders" || selectedResource === "sales_orders"
+    ? orderSourceRecords
+    : mirrorRecords[selectedResource] ?? [];
   const normalizedSearch = search.trim().toLocaleLowerCase();
-  const visibleRecords = normalizedSearch
+  const activeOrderView = orderViews.find((view) => view.id === activeOrderViewId);
+  const matchingRecords = normalizedSearch
     ? selectedRecords.filter((record) =>
         `${record.external_id} ${recordTitle(selectedResource, record)} ${JSON.stringify(record.payload)}`
           .toLocaleLowerCase()
           .includes(normalizedSearch),
       )
     : selectedRecords;
+  const filteredOrderRecords = selectedResource === "sales_orders"
+    ? matchingRecords.filter((record) => {
+        const statusMatches = orderStatusFilter === "all" ||
+          displayValue(first(record.payload, "order_status", "status")).toLocaleLowerCase() === orderStatusFilter.toLocaleLowerCase();
+        const balance = Number(first(record.payload, "balance", "amount_due", "balance_due"));
+        const isOutstanding = Number.isFinite(balance) && balance > 0;
+        return statusMatches && (!outstandingOnly || isOutstanding) && (!activeOrderView || orderMatchesView(record, activeOrderView));
+      })
+    : matchingRecords;
+  const orderStatuses = [...new Set(selectedRecords.map((record) =>
+    displayValue(first(record.payload, "order_status", "status")),
+  ).filter((status) => status !== "—"))].sort((a, b) => a.localeCompare(b));
   const orderState = statesByResource["sales_orders"] as MirrorState | undefined;
-  const totalPages = Math.max(1, Math.ceil((orderState?.record_count ?? 0) / PAGE_SIZE));
-  const pageStart = orderState?.record_count ? (salesOrdersPage - 1) * PAGE_SIZE + 1 : 0;
-  const pageEnd = Math.min(salesOrdersPage * PAGE_SIZE, orderState?.record_count ?? 0);
+  const totalPages = Math.max(1, Math.ceil((filteredOrderRecords.length) / PAGE_SIZE));
+  const pageStart = filteredOrderRecords.length ? (salesOrdersPage - 1) * PAGE_SIZE + 1 : 0;
+  const pageEnd = Math.min(salesOrdersPage * PAGE_SIZE, filteredOrderRecords.length);
+  const visibleRecords = selectedResource === "sales_orders"
+    ? filteredOrderRecords.slice((salesOrdersPage - 1) * PAGE_SIZE, salesOrdersPage * PAGE_SIZE)
+    : matchingRecords;
+  const visibleCustomers = normalizedSearch
+    ? customersFromOrders.filter((customer) =>
+        `${customer.name} ${customer.company} ${customer.email} ${customer.phone} ${customer.address}`
+          .toLocaleLowerCase().includes(normalizedSearch),
+      )
+    : customersFromOrders;
+  const hasVisibleRecords = selectedResource === "customers_from_orders"
+    ? visibleCustomers.length > 0
+    : visibleRecords.length > 0;
+
+  const saveOrderView = () => {
+    const name = draftViewName.trim();
+    const value = draftViewValue.trim();
+    if (!name || !value) {
+      toast.error("Enter a view name and a criterion value");
+      return;
+    }
+    const view: ZohoOrderView = {
+      id: crypto.randomUUID(), name, field: draftViewField,
+      comparator: draftViewComparator, value,
+    };
+    const next = [...orderViews, view];
+    setOrderViews(next);
+    setActiveOrderViewId(view.id);
+    setSalesOrdersPage(1);
+    setSearch("");
+    setNewViewOpen(false);
+    setDraftViewName("");
+    setDraftViewValue("");
+    try {
+      localStorage.setItem(ORDER_VIEWS_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      toast.error("Could not save this view in this browser");
+    }
+  };
 
   return (
     <PanelLayout
@@ -632,7 +898,7 @@ function ZohoCommerceAdmin() {
                 </Button>
               </div>
               <div className="rounded-md border border-white/20 bg-white/10 p-3 text-xs leading-relaxed text-white/90">
-                <span className="font-semibold text-white">Full Two-Way Sync Active:</span> Zoho Commerce & Zoho Inventory write permissions are enabled. If your store was previously connected in read-only mode, click <strong>Reauthorize Zoho</strong> to grant write permissions. Use <strong>Push pending to Zoho</strong> below to write queued records immediately.
+                <span className="font-semibold text-white">Zoho read and write access is enabled.</span> Approved app records can be pushed to Zoho through the sync queue. Zoho account snapshots refresh when you run <strong>Sync account data</strong>; linked order fulfillment is reconciled by the scheduled sync worker.
               </div>
             </div>
             {connection?.last_error && (
@@ -772,12 +1038,13 @@ function ZohoCommerceAdmin() {
         >
           {[
             { key: "sales_orders", label: "Sales orders", icon: FileText },
+            { key: "customers_from_orders", label: "Customers from orders", icon: Users },
             { key: "categories", label: "Categories", icon: Shapes },
             { key: "tax_rules", label: "Tax records", icon: Coins },
             { key: "store_index", label: "Zoho stores", icon: Store },
             { key: "store_meta", label: "Store settings", icon: Settings2 },
           ].map(({ key, label, icon: Icon }) => {
-            const state = statesByResource[key] as MirrorState | undefined;
+            const state = (key === "customers_from_orders" ? statesByResource["sales_orders"] : statesByResource[key]) as MirrorState | undefined;
             return (
               <button
                 key={key}
@@ -797,7 +1064,9 @@ function ZohoCommerceAdmin() {
                   </span>
                 </div>
                 <p className="mt-3 text-2xl font-bold text-navy">
-                  {state ? state.record_count.toLocaleString() : "Not synced"}
+                  {key === "customers_from_orders"
+                    ? customersFromOrders.length.toLocaleString()
+                    : state ? state.record_count.toLocaleString() : "Not synced"}
                 </p>
                 <p className="mt-1 text-xs text-slate">
                   {state
@@ -834,7 +1103,9 @@ function ZohoCommerceAdmin() {
                   <span
                     className={`rounded-full px-2 py-0.5 text-xs ${active ? "bg-white/15 text-white" : "bg-slate-100 text-slate"}`}
                   >
-                    {(statesByResource[key] as MirrorState | undefined)?.record_count ?? 0}
+                    {key === "customers_from_orders"
+                      ? customersFromOrders.length
+                      : (statesByResource[key] as MirrorState | undefined)?.record_count ?? 0}
                   </span>
                 </button>
               );
@@ -846,10 +1117,10 @@ function ZohoCommerceAdmin() {
               <div className="mb-4 flex flex-col gap-3 rounded-lg bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <h3 className="font-semibold text-navy">
-                    {RESOURCE_LABELS[selectedResource]} from Zoho
+                    {selectedResource === "customers_from_orders" ? "Customers from Zoho orders" : `${RESOURCE_LABELS[selectedResource]} from Zoho`}
                   </h3>
                   <p className="mt-1 text-sm text-slate">
-                    {selectedState.record_count.toLocaleString()} records · Last updated{" "}
+                    {(selectedResource === "customers_from_orders" ? customersFromOrders.length : selectedState.record_count).toLocaleString()} {selectedResource === "customers_from_orders" ? "customers represented by synced orders" : "records"} · Last updated{" "}
                     {new Date(selectedState.last_synced_at).toLocaleString()}
                   </p>
                 </div>
@@ -859,29 +1130,112 @@ function ZohoCommerceAdmin() {
                     Most recent sync reported an issue; the last complete data is shown.
                   </p>
                 )}
-                <div className="relative w-full sm:max-w-xs">
-                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate" />
-                  <Input
-                    value={search}
-                    onChange={(event) => setSearch(event.target.value)}
-                    placeholder={`Search ${(RESOURCE_LABELS[selectedResource] ?? "records").toLocaleLowerCase()}`}
-                    className="pl-9"
-                    aria-label={`Search ${RESOURCE_LABELS[selectedResource] ?? "records"}`}
-                  />
+                <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+                  {selectedResource === "sales_orders" && (
+                    <select
+                      value={orderStatusFilter}
+                      onChange={(event) => { setOrderStatusFilter(event.target.value); setSalesOrdersPage(1); }}
+                      className="h-10 rounded-md border border-border bg-white px-3 text-sm text-navy shadow-xs"
+                      aria-label="Filter sales orders by status"
+                    >
+                      <option value="all">All statuses</option>
+                      {orderStatuses.map((status) => <option key={status} value={status}>{status}</option>)}
+                    </select>
+                  )}
+                  <div className="relative w-full sm:w-64">
+                    <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate" />
+                    <Input
+                      value={search}
+                      onChange={(event) => { setSearch(event.target.value); setSalesOrdersPage(1); }}
+                      placeholder={`Search ${(RESOURCE_LABELS[selectedResource] ?? "records").toLocaleLowerCase()}`}
+                      className="pl-9"
+                      aria-label={`Search ${RESOURCE_LABELS[selectedResource] ?? "records"}`}
+                    />
+                  </div>
+                  {selectedResource === "sales_orders" && (
+                    <Button size="sm" variant="outline" onClick={() => setNewViewOpen((open) => !open)}>
+                      + New View
+                    </Button>
+                  )}
                 </div>
               </div>
+              {selectedResource === "customers_from_orders" && (
+                <p className="mb-4 rounded-md border border-blue-100 bg-blue-50/70 px-3 py-2 text-sm text-slate">
+                  This is a customer summary derived from synced Zoho sales orders. It is not Zoho’s standalone Contacts directory; customers without a synced order are not included, and only fields present on their orders are shown.
+                </p>
+              )}
+              {selectedResource === "sales_orders" && (
+                <>
+                  <div className="mb-4 flex flex-wrap items-center gap-2">
+                    <button type="button" onClick={() => { setActiveOrderViewId("all"); setSalesOrdersPage(1); }}
+                      className={`rounded-full border px-3 py-1.5 text-xs font-medium ${activeOrderViewId === "all" ? "border-navy bg-navy text-white" : "border-border bg-white text-slate hover:border-gold"}`}>
+                      All Sales Orders
+                    </button>
+                    <button type="button" onClick={() => { setOutstandingOnly((value) => !value); setSalesOrdersPage(1); }}
+                      className={`rounded-full border px-3 py-1.5 text-xs font-medium ${outstandingOnly ? "border-amber-500 bg-amber-500 text-white" : "border-border bg-white text-slate hover:border-gold"}`}>
+                      Outstanding
+                    </button>
+                    {orderViews.map((view) => (
+                      <div key={view.id} className={`inline-flex items-center rounded-full border text-xs ${activeOrderViewId === view.id ? "border-navy bg-navy text-white" : "border-border bg-white text-slate"}`}>
+                        <button type="button" onClick={() => { setActiveOrderViewId(view.id); setSalesOrdersPage(1); }} className="px-3 py-1.5 font-medium">{view.name}</button>
+                        <button type="button" aria-label={`Delete ${view.name} view`} title="Delete view" onClick={() => {
+                          const next = orderViews.filter((item) => item.id !== view.id);
+                          setOrderViews(next);
+                          if (activeOrderViewId === view.id) setActiveOrderViewId("all");
+                          try { localStorage.setItem(ORDER_VIEWS_STORAGE_KEY, JSON.stringify(next)); } catch { /* browser storage is optional */ }
+                        }} className="px-2 text-current/70 hover:text-current">×</button>
+                      </div>
+                    ))}
+                    {(orderStatusFilter !== "all" || outstandingOnly || search) && (
+                      <button type="button" onClick={() => { setOrderStatusFilter("all"); setOutstandingOnly(false); setSearch(""); setSalesOrdersPage(1); }} className="px-2 py-1 text-xs font-medium text-blue-700 hover:underline">Clear filters</button>
+                    )}
+                  </div>
+                  {newViewOpen && (
+                    <div role="dialog" aria-label="Create sales order view" className="mb-4 rounded-lg border border-gold/50 bg-amber-50/50 p-4 shadow-sm">
+                      <div className="mb-3 flex items-start justify-between gap-3">
+                        <div><h4 className="font-semibold text-navy">Create a sales order view</h4><p className="mt-1 text-xs text-slate">Saved in this browser and applied across the loaded Zoho snapshot.</p></div>
+                        <button type="button" onClick={() => setNewViewOpen(false)} aria-label="Close view builder" className="text-slate hover:text-navy">×</button>
+                      </div>
+                      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                        <Input value={draftViewName} onChange={(event) => setDraftViewName(event.target.value)} placeholder="View name" aria-label="View name" />
+                        <select value={draftViewField} onChange={(event) => { const field = event.target.value as ZohoOrderView["field"]; setDraftViewField(field); setDraftViewComparator(field === "balance" ? "gt" : "is"); }} className="h-10 rounded-md border border-border bg-white px-3 text-sm" aria-label="Criterion field">
+                          <option value="status">Order status</option><option value="payment">Payment status</option><option value="customer">Customer / business</option><option value="order">Sales order number</option><option value="balance">Outstanding balance</option>
+                        </select>
+                        <select value={draftViewComparator} onChange={(event) => setDraftViewComparator(event.target.value as ZohoOrderView["comparator"])} className="h-10 rounded-md border border-border bg-white px-3 text-sm" aria-label="Criterion comparator">
+                          {draftViewField === "balance" ? <option value="gt">greater than</option> : <><option value="is">is</option><option value="is_not">is not</option><option value="contains">contains</option></>}
+                        </select>
+                        <Input value={draftViewValue} onChange={(event) => setDraftViewValue(event.target.value)} placeholder={draftViewField === "balance" ? "Amount, e.g. 0" : "Value, e.g. Pending"} aria-label="Criterion value" />
+                      </div>
+                      <div className="mt-3 flex justify-end gap-2"><Button variant="outline" size="sm" onClick={() => setNewViewOpen(false)}>Cancel</Button><Button size="sm" onClick={saveOrderView}>Save view</Button></div>
+                    </div>
+                  )}
+                </>
+              )}
               {selectedResource === "sales_orders" && (
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-sm text-slate">
                   <span>
                     Showing {pageStart.toLocaleString()}–{pageEnd.toLocaleString()} of{" "}
-                    {orderState?.record_count.toLocaleString()} sales orders
-                    {normalizedSearch ? " · search applies to this page" : ""}
+                    {filteredOrderRecords.length.toLocaleString()} matching sales orders
                   </span>
                   <span>These are Zoho records. They do not create ShamiBusiness orders.</span>
                 </div>
               )}
-              {visibleRecords.length ? (
-                selectedResource === "sales_orders" ? (
+              {hasVisibleRecords ? (
+                selectedResource === "customers_from_orders" ? (
+                  <div className="overflow-x-auto rounded-lg border border-border">
+                    <table className="w-full min-w-[900px] text-left text-sm">
+                      <thead className="bg-slate-50 text-[11px] font-semibold uppercase tracking-wide text-slate"><tr><th className="px-4 py-3">Customer / business</th><th className="px-4 py-3">Email</th><th className="px-4 py-3">Phone</th><th className="px-4 py-3">Location</th><th className="px-4 py-3">Orders</th><th className="px-4 py-3">Sales order value</th><th className="px-4 py-3">Last order</th></tr></thead>
+                      <tbody className="divide-y divide-border bg-white">
+                        {visibleCustomers.map((customer) => (
+                          <tr key={customer.key} className="hover:bg-slate-50">
+                            <td className="px-4 py-3"><div className="font-medium text-navy">{customer.name}</div>{customer.company !== "—" && customer.company !== customer.name && <div className="mt-0.5 text-xs text-slate">{customer.company}</div>}</td>
+                            <td className="px-4 py-3 text-slate">{customer.email}</td><td className="px-4 py-3 text-slate">{customer.phone}</td><td className="max-w-xs truncate px-4 py-3 text-slate" title={customer.address}>{customer.address || "—"}</td><td className="px-4 py-3">{customer.orders}</td><td className="px-4 py-3 font-medium text-navy">{customer.currency === "MIXED" ? "Mixed currencies" : money(customer.spend, customer.currency)}</td><td className="px-4 py-3 text-slate">{prettyDate(customer.lastOrder)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : selectedResource === "sales_orders" ? (
                   <div className="overflow-hidden rounded-lg border border-border">
                     <div className="hidden grid-cols-[1.05fr_1.3fr_.8fr_.8fr_.8fr_.9fr] gap-3 bg-slate-50 px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-slate lg:grid">
                       <span>Order</span>
@@ -989,7 +1343,7 @@ function ZohoCommerceAdmin() {
                 <div className="rounded-lg border border-dashed border-border px-4 py-12 text-center">
                   <Boxes className="mx-auto h-8 w-8 text-slate/50" />
                   <p className="mt-3 font-medium text-navy">
-                    {normalizedSearch ? "No matching records on this page" : "No records available"}
+                    {normalizedSearch ? "No matching records" : "No records available"}
                   </p>
                   <p className="mt-1 text-sm text-slate">
                     {normalizedSearch
@@ -1010,12 +1364,7 @@ function ZohoCommerceAdmin() {
                       variant="outline"
                       size="sm"
                       disabled={salesOrdersPage <= 1 || salesOrdersLoading}
-                      onClick={() => {
-                        const page = salesOrdersPage - 1;
-                        void reloadMirror(page, "sales_orders").then((loadedPage) => {
-                          if (loadedPage) setSalesOrdersPage(page);
-                        });
-                      }}
+                      onClick={() => setSalesOrdersPage((page) => Math.max(1, page - 1))}
                     >
                       <ChevronLeft className="mr-1 h-4 w-4" />
                       {salesOrdersLoading ? "Loading…" : "Previous"}
@@ -1024,12 +1373,7 @@ function ZohoCommerceAdmin() {
                       variant="outline"
                       size="sm"
                       disabled={salesOrdersPage >= totalPages || salesOrdersLoading}
-                      onClick={() => {
-                        const page = salesOrdersPage + 1;
-                        void reloadMirror(page, "sales_orders").then((loadedPage) => {
-                          if (loadedPage) setSalesOrdersPage(page);
-                        });
-                      }}
+                      onClick={() => setSalesOrdersPage((page) => Math.min(totalPages, page + 1))}
                     >
                       {salesOrdersLoading ? "Loading…" : "Next"}
                       <ChevronRight className="ml-1 h-4 w-4" />
@@ -1056,9 +1400,9 @@ function ZohoCommerceAdmin() {
                 <CheckCircle2 className="h-4 w-4" />
               </span>
               <div>
-                <h3 className="text-sm font-semibold text-navy">Two-way active synchronization</h3>
+                    <h3 className="text-sm font-semibold text-navy">Outbound sync and inbound snapshots</h3>
                 <p className="mt-1 text-sm leading-relaxed text-slate">
-                  Approved products, customer profiles, vendor contacts, and sales orders are actively written to Zoho Inventory and Zoho Commerce.
+                  Approved catalogue, contact, and order changes are queued for Zoho. Supported account data is read into separate snapshots when synchronized.
                 </p>
               </div>
             </div>
@@ -1067,9 +1411,9 @@ function ZohoCommerceAdmin() {
                 <PackageCheck className="h-4 w-4" />
               </span>
               <div>
-                <h3 className="text-sm font-semibold text-navy">Live outbox processing</h3>
+                    <h3 className="text-sm font-semibold text-navy">Queued outbox processing</h3>
                 <p className="mt-1 text-sm leading-relaxed text-slate">
-                  Outbound writes can be pushed instantly using &quot;Push pending to Zoho&quot; or automatically processed by the background sync worker.
+                  Outbound writes can be pushed with &quot;Push pending to Zoho&quot; or processed by the scheduled background sync worker.
                 </p>
               </div>
             </div>
@@ -1078,9 +1422,9 @@ function ZohoCommerceAdmin() {
                 <RefreshCw className="h-4 w-4" />
               </span>
               <div>
-                <h3 className="text-sm font-semibold text-navy">Fulfillment & contact reconciliation</h3>
+                    <h3 className="text-sm font-semibold text-navy">Scheduled fulfillment reconciliation</h3>
                 <p className="mt-1 text-sm leading-relaxed text-slate">
-                  Zoho shipment milestones (dispatched, delivered) and non-conflicting profile edits reconcile back automatically into Grain Bazar.
+                  The worker polls supported linked-order shipment milestones and applies eligible fulfillment changes to Grain Bazar orders.
                 </p>
               </div>
             </div>
