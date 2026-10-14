@@ -23,6 +23,7 @@ import {
   inr,
   getCurrentFIFOCost,
   getProductAverageSellingPrice,
+  getProductImageFallback,
   getOrderItemTotal,
   notifications as seedNotifications,
   orders as seedOrders,
@@ -243,9 +244,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setProducts(
           productResult.data.map((row) => {
             const p = row.payload as unknown as Product;
+            const category = p.category ?? "";
+            const generatedCategoryImage = `/products/${category.toLowerCase()}.jpg`;
+            const image = typeof p.image === "string" ? p.image.trim() : "";
+            const generatedImageUsesUnknownCategory =
+              image === generatedCategoryImage && !["rice", "sugar", "oil", "dal"].includes(category.toLowerCase());
             return {
               ...p,
-              image: p.image || `/products/${p.category.toLowerCase()}.jpg`,
+              image: !image || generatedImageUsesUnknownCategory
+                ? getProductImageFallback(category, p.name)
+                : image,
             };
           }),
         );

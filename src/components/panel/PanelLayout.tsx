@@ -4,7 +4,7 @@ import { useState, useMemo, useEffect, type ReactNode } from "react";
 import { toast } from "sonner";
 import { LogoMark } from "@/components/brand/Logo";
 import { useApp } from "@/lib/store";
-import { isStorefrontProduct } from "@/lib/data";
+import { getProductImageFallback, isStorefrontProduct } from "@/lib/data";
 import { orderBelongsToUser } from "@/lib/account-identity";
 import { cn } from "@/lib/utils";
 import { notificationTarget } from "@/lib/notification-target";
@@ -25,6 +25,7 @@ type PanelSearchResult = {
   detail: string;
   to: string;
   image?: string;
+  fallbackImage?: string;
 };
 
 const ROLE_VERIFICATION_TIMEOUT_MS = 15_000;
@@ -332,7 +333,8 @@ export function PanelLayout({
           label: item.name,
           detail: `${item.sku} · Product`,
           to: tone === "admin" ? `/admin/products/${item.id}` : tone === "vendor" ? `/vendor/products?q=${encodeURIComponent(query)}` : `/shop?q=${encodeURIComponent(query)}`,
-          image: item.image || `/products/${item.category.toLowerCase()}.jpg`,
+          image: item.image || getProductImageFallback(item.category, item.name),
+          fallbackImage: getProductImageFallback(item.category, item.name),
         })),
       ...(tone === "admin" ? categories : [])
         .filter((item) => item.name.toLowerCase().includes(query))
@@ -527,6 +529,12 @@ export function PanelLayout({
                             alt=""
                             loading="lazy"
                             className="h-10 w-10 shrink-0 rounded-md border border-border bg-white object-cover"
+                            onError={(event) => {
+                              const image = event.currentTarget;
+                              const fallback = result.fallbackImage ?? "/products/rice.jpg";
+                              if (image.getAttribute("src") === fallback) image.style.visibility = "hidden";
+                              else image.src = fallback;
+                            }}
                           />
                         ) : (
                           <span

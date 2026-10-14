@@ -51,6 +51,14 @@ export type Product = {
   purchasePrice?: number;
 };
 
+export function getProductImageFallback(category: string | null | undefined, productName = "") {
+  const searchable = `${category ?? ""} ${productName}`.toLowerCase();
+  if (/sugar|sweetener|jaggery|salt/.test(searchable)) return "/products/sugar.jpg";
+  if (/oil/.test(searchable)) return "/products/oil.jpg";
+  if (/pulse|dal|lentil|chana|moong|urad|toor/.test(searchable)) return "/products/dal.jpg";
+  return "/products/rice.jpg";
+}
+
 export type PurchaseBatch = {
   id: string;
   batchCode: string;

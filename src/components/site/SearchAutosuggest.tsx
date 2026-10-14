@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { ArrowRight, CheckCircle2, ChevronRight, Layers, Package, Search, Tag, X } from "lucide-react";
 import { useApp } from "@/lib/store";
-import { inr } from "@/lib/data";
+import { getProductImageFallback, inr } from "@/lib/data";
 import { cn } from "@/lib/utils";
 import { getSearchAutosuggestions, type SearchSuggestionItem } from "@/lib/search";
 import { categorySlug } from "@/lib/category-tree";
@@ -233,6 +233,12 @@ export function SearchAutosuggest({
                         alt={product.name}
                         className="h-full w-full object-cover"
                         loading="lazy"
+                        onError={(event) => {
+                          const image = event.currentTarget;
+                          const fallback = getProductImageFallback(product.category, product.name);
+                          if (image.getAttribute("src") === fallback) image.style.visibility = "hidden";
+                          else image.src = fallback;
+                        }}
                       />
                     </div>
                     <div className="min-w-0 flex-1">
@@ -283,6 +289,12 @@ export function SearchAutosuggest({
                         alt={product.name}
                         className="h-full w-full object-cover"
                         loading="lazy"
+                        onError={(event) => {
+                          const image = event.currentTarget;
+                          const fallback = getProductImageFallback(product.category, product.name);
+                          if (image.getAttribute("src") === fallback) image.style.visibility = "hidden";
+                          else image.src = fallback;
+                        }}
                       />
                     </div>
                     <div className="min-w-0 flex-1">
