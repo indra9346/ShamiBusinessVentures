@@ -234,6 +234,24 @@ export const retryZohoSyncJob = createServerFn({ method: "POST" })
     if (error) throw new Error("Could not requeue the selected Zoho sync job");
   });
 
+export const retryAllZohoSyncJobs = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    await ensureAdmin(context.supabase, context.userId);
+    const db = await dbAdmin();
+    const { data: failedJobs, error } = await db
+      .from("zoho_sync_outbox")
+      .select("id")
+      .in("status", ["failed", "needs_review"]);
+    if (error) throw new Error("Could not load failed jobs to retry");
+    let count = 0;
+    for (const job of (failedJobs ?? [])) {
+      const { error: rpcErr } = await db.rpc("retry_zoho_sync_job", { _id: job.id });
+      if (!rpcErr) count++;
+    }
+    return { retried: count };
+  });
+
 /**
  * Queue records that existed before the outbound triggers were installed.
  *

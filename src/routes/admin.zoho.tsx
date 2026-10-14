@@ -15,6 +15,7 @@ import {
   Package,
   PackageCheck,
   RefreshCw,
+  RotateCw,
   Search,
   Settings2,
   Shapes,
@@ -45,6 +46,7 @@ import {
   processZohoSyncNow,
   queueZohoInitialExport,
   retryZohoSyncJob,
+  retryAllZohoSyncJobs,
   startZohoAuthorization,
   syncZohoCommerceReadMirror,
   syncZohoProducts,
@@ -505,6 +507,22 @@ function ZohoCommerceAdmin() {
       setQueueBusy(false);
     }
   };
+  const retryAllFailed = async () => {
+    setQueueBusy(true);
+    try {
+      const res = await retryAllZohoSyncJobs();
+      await reloadQueue();
+      toast.success(`Queued ${res.retried} records for retry`, {
+        description: "Click 'Push pending to Zoho' to write them to Zoho now.",
+      });
+    } catch (error) {
+      toast.error("Could not retry failed sync jobs", {
+        description: error instanceof Error ? error.message : "Try again",
+      });
+    } finally {
+      setQueueBusy(false);
+    }
+  };
   const queueInitialExport = async () => {
     setQueueBusy(true);
     try {
@@ -641,6 +659,19 @@ function ZohoCommerceAdmin() {
                 <UploadCloud className={`mr-1.5 h-4 w-4 ${syncOutboxBusy ? "animate-bounce" : ""}`} />
                 {syncOutboxBusy ? "Pushing to Zoho…" : `Push pending to Zoho (${syncQueue.counts["pending"] ?? 0})`}
               </Button>
+              {Number(syncQueue.counts["failed"] || 0) > 0 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={queueBusy || !connection}
+                  onClick={() => void retryAllFailed()}
+                  className="border-rose-300 bg-rose-50 text-rose-800 hover:bg-rose-100 font-semibold"
+                  title="Requeues all failed records so they can be written to Zoho with your active write permissions."
+                >
+                  <RotateCw className={`mr-1.5 h-4 w-4 ${queueBusy ? "animate-spin" : ""}`} />
+                  {queueBusy ? "Requeueing…" : `Retry all failed (${syncQueue.counts["failed"]})`}
+                </Button>
+              )}
               <Button
                 variant="outline"
                 size="sm"
@@ -656,6 +687,28 @@ function ZohoCommerceAdmin() {
               </Button>
             </div>
           </div>
+          {Number(syncQueue.counts["failed"] || 0) > 0 && (
+            <div className="mb-4 flex flex-col gap-3 rounded-lg border border-rose-300 bg-rose-50 p-4 sm:flex-row sm:items-center sm:justify-between text-sm text-rose-950">
+              <div className="flex items-center gap-2.5">
+                <AlertCircle className="h-5 w-5 shrink-0 text-rose-600" />
+                <div>
+                  <p className="font-semibold">{syncQueue.counts["failed"]} records failed before write permissions were granted</p>
+                  <p className="text-xs text-rose-800">
+                    Now that your store is connected with read & write access, click Retry all failed to requeue and push them to Zoho.
+                  </p>
+                </div>
+              </div>
+              <Button
+                size="sm"
+                disabled={queueBusy || !connection}
+                onClick={() => void retryAllFailed()}
+                className="bg-rose-600 text-white hover:bg-rose-700 text-xs font-semibold shrink-0 shadow-sm"
+              >
+                <RotateCw className={`mr-1.5 h-3.5 w-3.5 ${queueBusy ? "animate-spin" : ""}`} />
+                {queueBusy ? "Requeueing…" : `Retry all ${syncQueue.counts["failed"]} records`}
+              </Button>
+            </div>
+          )}
           {Number(syncQueue.counts["pending"] || 0) > 0 && (
             <div className="mb-4 flex flex-col gap-3 rounded-lg border border-amber-300 bg-amber-50 p-4 sm:flex-row sm:items-center sm:justify-between text-sm text-amber-950">
               <div className="flex items-center gap-2.5">
