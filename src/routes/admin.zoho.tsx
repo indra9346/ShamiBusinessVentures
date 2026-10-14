@@ -922,7 +922,7 @@ function ZohoCommerceAdmin() {
                 </Button>
               </div>
               <div className="rounded-md border border-white/20 bg-white/10 p-3 text-xs leading-relaxed text-white/90">
-                <span className="font-semibold text-white">Zoho read and write access is enabled.</span> “Sync account data” imports a read-only snapshot from Zoho; “Refresh saved data” reloads that snapshot only. ShamiBusiness changes are queued and sent by “Push pending to Zoho” or the scheduled worker. The worker is configured to check every five minutes (Vercel Pro or Enterprise required; Hobby allows once daily). Account snapshots still refresh when you request a read sync.
+                <span className="font-semibold text-white">Zoho read and write access is enabled.</span> “Sync account data” imports a read-only snapshot from Zoho; “Refresh saved data” reloads that snapshot only. ShamiBusiness changes are queued and sent immediately by “Push pending to Zoho” or by the background worker once daily at 03:00 UTC on this Vercel Hobby plan. Account snapshots still refresh when you request a read sync.
               </div>
             </div>
             {connection?.last_error && (
@@ -936,7 +936,7 @@ function ZohoCommerceAdmin() {
         <Panel title="Customer, vendor, catalogue & order sync health">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <p className="max-w-3xl text-sm leading-relaxed text-slate">
-              Approved app catalogue changes, customer and vendor contacts, and orders are queued for Zoho Inventory & Zoho Commerce. Click <strong>Push pending to Zoho</strong> to send queued changes immediately. Otherwise, the scheduled worker checks them every five minutes on supported Vercel plans. To import changes made inside Zoho, run <strong>Sync account data</strong> above.
+              Approved app catalogue changes, customer and vendor contacts, and orders are queued for Zoho Inventory & Zoho Commerce. Click <strong>Push pending to Zoho</strong> to send queued changes immediately. Otherwise, this Vercel Hobby project checks queued changes daily at 03:00 UTC. To import changes made inside Zoho, run <strong>Sync account data</strong> above.
             </p>
             <div className="flex flex-wrap items-center gap-2">
               <Button
@@ -1449,7 +1449,7 @@ function ZohoCommerceAdmin() {
               <div>
                     <h3 className="text-sm font-semibold text-navy">Queued outbox processing</h3>
                 <p className="mt-1 text-sm leading-relaxed text-slate">
-                  Outbound writes can be pushed with &quot;Push pending to Zoho&quot; or processed on the configured five-minute schedule (Vercel Pro or Enterprise).
+                  Outbound writes can be pushed with &quot;Push pending to Zoho&quot; or processed daily at 03:00 UTC by the scheduled worker on this Vercel Hobby plan.
                 </p>
               </div>
             </div>
@@ -1460,7 +1460,7 @@ function ZohoCommerceAdmin() {
               <div>
                     <h3 className="text-sm font-semibold text-navy">Scheduled fulfillment reconciliation</h3>
                 <p className="mt-1 text-sm leading-relaxed text-slate">
-                  The worker polls supported linked-order shipment milestones every five minutes on supported Vercel plans and applies eligible fulfillment changes to Grain Bazar orders. Imported Zoho sales order snapshots still need a manual &quot;Sync account data&quot; refresh.
+                  The worker polls supported linked-order shipment milestones daily at 03:00 UTC on this Vercel Hobby plan and applies eligible fulfillment changes to Grain Bazar orders. Imported Zoho sales order snapshots still need a manual &quot;Sync account data&quot; refresh.
                 </p>
               </div>
             </div>
