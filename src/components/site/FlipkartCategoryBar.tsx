@@ -74,7 +74,7 @@ export function FlipkartCategoryBar({
     <nav
       aria-label="Shop by category"
       className={cn(
-        "border-b border-slate-200 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.06)]",
+        "border-b border-stone-200 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.06)]",
         className,
       )}
     >
@@ -155,10 +155,10 @@ function BadgeBody({
     <span className="group flex w-16 flex-col items-center gap-1.5 transition-all duration-200 hover:-translate-y-1 sm:w-20">
       <span
         className={cn(
-          "relative grid h-14 w-14 place-items-center overflow-hidden rounded-full border-2 bg-slate-50 transition-all duration-200 sm:h-16 sm:w-16",
+          "relative grid h-14 w-14 place-items-center overflow-hidden rounded-full border-2 bg-stone-50 transition-all duration-200 sm:h-16 sm:w-16",
           active
             ? "border-gold bg-amber-50 shadow-[0_0_0_3px_rgba(212,175,55,0.18)]"
-            : "border-slate-200 group-hover:border-navy/40 group-hover:shadow-md",
+            : "border-stone-200 group-hover:border-navy/40 group-hover:shadow-md",
         )}
       >
         {showImage ? (
@@ -181,7 +181,7 @@ function BadgeBody({
       <span
         className={cn(
           "w-full truncate text-center text-xs font-semibold",
-          active ? "text-navy" : "text-slate-800 group-hover:text-navy",
+          active ? "text-navy" : "text-stone-800 group-hover:text-navy",
         )}
       >
         {label}

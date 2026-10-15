@@ -194,7 +194,7 @@ function ProductDetail() {
           <div className="mt-6 flex flex-wrap items-baseline gap-3">
             <span className="text-3xl font-extrabold text-navy">{inr(product.price)}</span>
             {mrpOnly ? (
-              <span className="text-sm font-medium text-slate-500">MRP</span>
+              <span className="text-sm font-medium text-stone-500">MRP</span>
             ) : (
               <>
                 {product.mrp > product.price && <span className="text-lg text-slate line-through">{inr(product.mrp)}</span>}

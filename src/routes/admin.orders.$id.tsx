@@ -256,11 +256,11 @@ function AdminOrderDetail() {
 
       {/* WHAT'S NEXT Action Banner (matching Zoho Commerce) */}
       {!isCancelled && order.status !== "Delivered" && (
-        <div className="mb-5 flex flex-col gap-3 rounded-xl border border-sky-200 bg-sky-50/70 p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="mb-5 flex flex-col gap-3 rounded-xl border border-emerald-200 bg-emerald-50/70 p-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-2.5">
-            <Sparkles className="h-5 w-5 text-sky-600 shrink-0" />
+            <Sparkles className="h-5 w-5 text-emerald-700 shrink-0" />
             <div>
-              <p className="text-xs font-bold uppercase tracking-wider text-sky-900">What's Next?</p>
+              <p className="text-xs font-bold uppercase tracking-wider text-emerald-900">What's Next?</p>
               <p className="text-sm font-medium text-navy">
                 {order.status === "Placed"
                   ? "You can either confirm or cancel this order."
@@ -437,8 +437,8 @@ function AdminOrderDetail() {
                   step.done
                     ? "border-emerald-300 bg-emerald-50/40 text-emerald-950"
                     : step.current
-                    ? "border-sky-400 bg-sky-50/60 text-navy shadow-sm ring-2 ring-sky-300/40"
-                    : "border-border bg-slate-50/50 text-slate"
+                    ? "border-emerald-700 bg-emerald-50/60 text-navy shadow-sm ring-2 ring-emerald-300/40"
+                    : "border-border bg-stone-50/50 text-slate"
                 )}
               >
                 <div className="flex items-center justify-between mb-2">
@@ -448,8 +448,8 @@ function AdminOrderDetail() {
                       step.done
                         ? "bg-emerald-600 text-white"
                         : step.current
-                        ? "bg-sky-600 text-white"
-                        : "bg-slate-200 text-slate-500"
+                        ? "bg-emerald-700 text-white"
+                        : "bg-stone-200 text-stone-500"
                     )}
                   >
                     <Icon className="h-4 w-4" />
@@ -615,7 +615,7 @@ function AdminOrderDetail() {
                 <dd>-{inr(order.discount)}</dd>
               </div>
             )}
-            <div className="rounded-md border border-border/80 bg-slate-50/70 p-2 space-y-1 text-xs">
+            <div className="rounded-md border border-border/80 bg-stone-50/70 p-2 space-y-1 text-xs">
               <div className="flex justify-between font-semibold text-navy">
                 <span>Tax Total</span>
                 <span>{inr(order.tax)}</span>

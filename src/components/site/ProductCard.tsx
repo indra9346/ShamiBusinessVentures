@@ -31,7 +31,7 @@ function PriceBlock({ product, size = "sm" }: { product: Product; size?: "sm" | 
     return (
       <div className="flex flex-wrap items-baseline gap-1">
         <span className={cn(priceClass, "font-bold text-navy")}>{inr(product.price)}</span>
-        <span className="text-[11px] font-medium text-slate-500">MRP</span>
+        <span className="text-[11px] font-medium text-stone-500">MRP</span>
       </div>
     );
   }
@@ -40,7 +40,7 @@ function PriceBlock({ product, size = "sm" }: { product: Product; size?: "sm" | 
     <div className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
       <span className={cn(priceClass, "font-bold text-navy")}>{inr(product.price)}</span>
       {product.mrp > product.price && (
-        <span className="text-[11px] sm:text-xs text-slate-500 line-through">{inr(product.mrp)}</span>
+        <span className="text-[11px] sm:text-xs text-stone-500 line-through">{inr(product.mrp)}</span>
       )}
       {off > 0 && <span className="text-[11px] sm:text-xs font-bold text-emerald-600">{off}% off</span>}
       {off > 0 && (
@@ -60,7 +60,7 @@ function RatingBadge({ product }: { product: Product }) {
         {product.rating}
         <Star className="h-2.5 w-2.5 fill-white" />
       </span>
-      <span className="text-[10px] sm:text-[11px] font-medium text-slate-500">({product.reviews.toLocaleString("en-IN")})</span>
+      <span className="text-[10px] sm:text-[11px] font-medium text-stone-500">({product.reviews.toLocaleString("en-IN")})</span>
     </div>
   );
 }
@@ -126,7 +126,7 @@ export function ProductCard({
       onClick={onWishlist}
       aria-label={wished ? "Remove from wishlist" : "Add to wishlist"}
       aria-pressed={wished}
-      className="absolute top-1.5 right-1.5 grid h-9 w-9 place-items-center rounded-full bg-white/90 text-slate-500 shadow-xs backdrop-blur-xs transition-all duration-200 hover:scale-110 hover:text-rose-500"
+      className="absolute top-1.5 right-1.5 grid h-9 w-9 place-items-center rounded-full bg-white/90 text-stone-500 shadow-xs backdrop-blur-xs transition-all duration-200 hover:scale-110 hover:text-rose-500"
     >
       <Heart className={cn("h-4 w-4", wished && "fill-rose-500 text-rose-500")} />
     </button>
@@ -156,8 +156,8 @@ export function ProductCard({
   );
 
   const unitChip = product.weight && (
-    <span className="inline-flex max-w-full items-center gap-1 rounded-sm bg-slate-100 px-1.5 py-0.5 text-[10px] sm:text-[11px] font-semibold text-slate-700">
-      <Package className="h-3 w-3 shrink-0 text-slate-500" />
+    <span className="inline-flex max-w-full items-center gap-1 rounded-sm bg-stone-100 px-1.5 py-0.5 text-[10px] sm:text-[11px] font-semibold text-stone-700">
+      <Package className="h-3 w-3 shrink-0 text-stone-500" />
       <span className="truncate">{product.weight}</span>
     </span>
   );
@@ -171,8 +171,8 @@ export function ProductCard({
 
   if (layout === "list") {
     return (
-      <article className="group relative flex flex-row overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xs transition-all duration-200 ease-out hover:-translate-y-0.5 hover:border-gold/60 hover:shadow-md">
-        <div className="relative w-28 shrink-0 overflow-hidden bg-slate-50/80 sm:w-44">
+      <article className="group relative flex flex-row overflow-hidden rounded-xl border border-stone-200 bg-white shadow-xs transition-all duration-200 ease-out hover:-translate-y-0.5 hover:border-gold/60 hover:shadow-md">
+        <div className="relative w-28 shrink-0 overflow-hidden bg-stone-50/80 sm:w-44">
           <Link to="/product/$id" params={{ id: product.id }} className="block h-full min-h-32 w-full">
             {image}
           </Link>
@@ -183,7 +183,7 @@ export function ProductCard({
 
         <div className="flex min-w-0 flex-1 flex-col justify-between gap-2 p-3 sm:p-4">
           <div className="min-w-0 space-y-1">
-            <p className="truncate text-[10px] font-semibold uppercase tracking-wider text-slate-500">{product.vendor}</p>
+            <p className="truncate text-[10px] font-semibold uppercase tracking-wider text-stone-500">{product.vendor}</p>
             <Link
               to="/product/$id"
               params={{ id: product.id }}
@@ -211,8 +211,8 @@ export function ProductCard({
   }
 
   return (
-    <article className="group relative flex h-full min-w-0 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xs transition-all duration-200 ease-out hover:-translate-y-1 hover:border-gold/60 hover:shadow-md">
-      <div className="relative overflow-hidden bg-slate-50/80">
+    <article className="group relative flex h-full min-w-0 flex-col overflow-hidden rounded-xl border border-stone-200 bg-white shadow-xs transition-all duration-200 ease-out hover:-translate-y-1 hover:border-gold/60 hover:shadow-md">
+      <div className="relative overflow-hidden bg-stone-50/80">
         <Link to="/product/$id" params={{ id: product.id }} className="block aspect-[4/3] w-full">
           {image}
         </Link>
@@ -222,7 +222,7 @@ export function ProductCard({
       </div>
 
       <div className="flex flex-1 flex-col gap-1 p-2.5 sm:p-3">
-        <p className="truncate text-[10px] font-semibold uppercase tracking-wider text-slate-500">{product.vendor}</p>
+        <p className="truncate text-[10px] font-semibold uppercase tracking-wider text-stone-500">{product.vendor}</p>
         <Link
           to="/product/$id"
           params={{ id: product.id }}

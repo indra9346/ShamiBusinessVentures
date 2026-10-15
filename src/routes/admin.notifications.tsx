@@ -332,7 +332,7 @@ function AdminNotifications() {
                     </div>
                     <p className="text-xs text-slate mt-0.5">{template.trigger}</p>
                   </div>
-                  <span className="text-xs font-medium text-slate/80 bg-slate-100 rounded px-2 py-1 self-start sm:self-auto shrink-0">
+                  <span className="text-xs font-medium text-slate/80 bg-stone-100 rounded px-2 py-1 self-start sm:self-auto shrink-0">
                     Recipient: {template.recipient}
                   </span>
                 </div>

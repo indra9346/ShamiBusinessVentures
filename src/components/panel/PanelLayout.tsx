@@ -629,7 +629,7 @@ export function PanelLayout({
                                   "mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full text-xs font-bold",
                                   n.type === "success" && "bg-emerald-100 text-emerald-700",
                                   n.type === "warning" && "bg-amber-100 text-amber-700",
-                                  n.type === "info" && "bg-blue-100 text-blue-700",
+                                  n.type === "info" && "bg-emerald-100 text-emerald-900",
                                 )}
                               >
                                 {n.type === "success" ? "✓" : n.type === "warning" ? "!" : "i"}

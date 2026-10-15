@@ -532,7 +532,7 @@ function AdminInventory() {
                               className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
                                 b.remainingQty > 0
                                   ? "bg-emerald-100 text-emerald-800"
-                                  : "bg-slate-100 text-slate-600"
+                                  : "bg-stone-100 text-stone-600"
                               }`}
                             >
                               {b.remainingQty > 0 ? "In FIFO Queue" : "Depleted"}

@@ -238,7 +238,7 @@ function HeaderCartButton({ cartCount, subtotal }: { cartCount: number; subtotal
       {/* Mobile: compact price pill */}
       <span
         key={`m-${pulseKey}`}
-        className={`font-mono text-[12px] font-black leading-none tracking-tight text-[#facc15] drop-shadow-xs sm:hidden ${animate ? "animate-cart-pop" : ""}`}
+        className={`font-mono text-[12px] font-black leading-none tracking-tight text-gold-light drop-shadow-xs sm:hidden ${animate ? "animate-cart-pop" : ""}`}
       >
         {inr(subtotal)}
       </span>
@@ -248,7 +248,7 @@ function HeaderCartButton({ cartCount, subtotal }: { cartCount: number; subtotal
         <span className="text-[11px] font-bold leading-none tracking-wide text-white/95">{itemsLabel}</span>
         <span
           key={`d-${pulseKey}`}
-          className={`origin-left font-mono text-[13px] font-black leading-tight tracking-tight text-[#facc15] drop-shadow-[0_0_6px_rgba(250,204,21,0.45)] ${animate ? "animate-cart-pop" : ""}`}
+          className={`origin-left font-mono text-[13px] font-black leading-tight tracking-tight text-gold-light drop-shadow-[0_0_6px_rgba(214,170,60,0.45)] ${animate ? "animate-cart-pop" : ""}`}
         >
           {inr(subtotal)}
         </span>

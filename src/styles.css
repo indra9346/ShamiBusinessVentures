@@ -63,15 +63,21 @@
 :root {
   --radius: 0.5rem;
 
-  /* Shami brand palette */
-  --navy: oklch(0.256 0.058 254);
-  --midnight: oklch(0.184 0.045 258);
+  /*
+   * Shami brand palette — "eye-comfort" edition.
+   * No pure black and no blue: deep forest green replaces navy/midnight,
+   * warm stone greys replace cool slate, and text is a warm charcoal.
+   * (The variable names are kept so every existing `text-navy`, `bg-midnight`
+   * etc. utility keeps working across all pages.)
+   */
+  --navy: oklch(0.34 0.07 158);
+  --midnight: oklch(0.26 0.06 158);
   --gold: oklch(0.688 0.121 82);
   --gold-light: oklch(0.79 0.12 86);
-  --ivory: oklch(0.938 0.024 75);
-  --charcoal: oklch(0.239 0.03 262);
-  --slate: oklch(0.556 0.028 262);
-  --panel: oklch(0.945 0.02 75);
+  --ivory: oklch(0.945 0.022 78);
+  --charcoal: oklch(0.31 0.022 60);
+  --slate: oklch(0.54 0.022 68);
+  --panel: oklch(0.95 0.018 78);
   --success: oklch(0.497 0.093 165);
   --warning: oklch(0.688 0.121 82);
   --danger: oklch(0.512 0.192 27);
@@ -99,12 +105,12 @@
   --accent-foreground: var(--midnight);
   --destructive: var(--danger);
   --destructive-foreground: oklch(1 0 0);
-  --border: oklch(0.885 0.024 75);
-  --input: oklch(0.885 0.024 75);
+  --border: oklch(0.885 0.022 76);
+  --input: oklch(0.885 0.022 76);
   --ring: var(--gold);
   --chart-1: var(--navy);
   --chart-2: var(--gold);
-  --chart-3: oklch(0.45 0.06 254);
+  --chart-3: oklch(0.5 0.07 158);
   --chart-4: var(--gold-light);
   --chart-5: var(--slate);
   --sidebar: var(--navy);
@@ -175,9 +181,19 @@
     border-color: var(--color-border);
   }
 
+  :root {
+    accent-color: var(--gold);
+    color-scheme: light;
+  }
+
+  ::selection {
+    background: oklch(0.86 0.1 86);
+    color: var(--midnight);
+  }
+
   body {
     background-color: var(--color-background);
-    background-image: radial-gradient(circle at 50% 0%, oklch(0.965 0.016 78) 0%, oklch(0.952 0.021 75) 100%);
+    background-image: radial-gradient(circle at 50% 0%, oklch(0.968 0.015 80) 0%, oklch(0.953 0.02 77) 100%);
     background-attachment: fixed;
     color: var(--color-foreground);
     font-family: var(--font-sans);
