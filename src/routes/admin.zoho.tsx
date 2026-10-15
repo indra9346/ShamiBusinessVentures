@@ -90,11 +90,11 @@ type SyncQueueJob = {
   updated_at: string;
   entity_details?: {
     title: string;
-    subtitle?: string;
-    meta?: string;
-    link?: string;
-    gstin?: string | null;
-  } | null;
+    subtitle?: string | undefined;
+    meta?: string | undefined;
+    link?: string | undefined;
+    gstin?: string | null | undefined;
+  } | null | undefined;
 };
 type ZohoOrderView = {
   id: string;

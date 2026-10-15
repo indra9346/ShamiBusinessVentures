@@ -251,10 +251,10 @@ export const getZohoSyncQueueStatus = createServerFn({ method: "GET" })
     const jobs = rawJobs.map((job) => {
       let details: {
         title: string;
-        subtitle?: string;
-        meta?: string;
-        link?: string;
-        gstin?: string | null;
+        subtitle?: string | undefined;
+        meta?: string | undefined;
+        link?: string | undefined;
+        gstin?: string | null | undefined;
       } | null = null;
 
       if (job.entity_type === "customer") {
@@ -280,9 +280,9 @@ export const getZohoSyncQueueStatus = createServerFn({ method: "GET" })
           details = {
             title: orderNum,
             subtitle: sub,
-            meta: o.customer_gstin ? `Customer GSTIN: ${o.customer_gstin}` : undefined,
+            ...(o.customer_gstin ? { meta: `Customer GSTIN: ${o.customer_gstin}` } : {}),
             link: `/admin/orders/${o.id}`,
-            gstin: o.customer_gstin,
+            ...(o.customer_gstin ? { gstin: o.customer_gstin } : {}),
           };
         }
       } else if (job.entity_type === "catalog") {
@@ -952,9 +952,9 @@ export const INDIAN_STATE_CODES: Record<string, string> = {
 
 export function cleanAndValidateGstin(raw?: string | null): {
   isValid: boolean;
-  gstin?: string;
-  placeOfContact?: string;
-  note?: string;
+  gstin?: string | undefined;
+  placeOfContact?: string | undefined;
+  note?: string | undefined;
 } {
   if (!raw) return { isValid: false };
   const trimmed = raw.trim().toUpperCase();
@@ -967,7 +967,11 @@ export function cleanAndValidateGstin(raw?: string | null): {
   if (INDIAN_GSTIN_REGEX.test(trimmed)) {
     const stateDigits = trimmed.slice(0, 2);
     const placeOfContact = INDIAN_STATE_CODES[stateDigits];
-    return { isValid: true, gstin: trimmed, placeOfContact };
+    return {
+      isValid: true,
+      gstin: trimmed,
+      ...(placeOfContact ? { placeOfContact } : {}),
+    };
   }
   return { isValid: false, note: `Customer provided unverified GSTIN: "${raw.trim()}"` };
 }
