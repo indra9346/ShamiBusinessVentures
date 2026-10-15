@@ -919,7 +919,7 @@ async function inventoryRequest<T>(
   body?: Record<string, unknown>,
   query: Record<string, string> = {},
 ): Promise<T> {
-  const response = await fetch(inventoryApi(region, resource, organizationId, query), {
+  const send = () => fetch(inventoryApi(region, resource, organizationId, query), {
     method,
     headers: {
       Authorization: `Zoho-oauthtoken ${token}`,
@@ -928,6 +928,13 @@ async function inventoryRequest<T>(
     ...(body ? { body: JSON.stringify(body) } : {}),
     signal: AbortSignal.timeout(20_000),
   });
+  let response = await send();
+  // Zoho throttles bursts per organization; wait as asked (capped) and retry once.
+  if (response.status === 429) {
+    const waitSeconds = Math.min(10, Math.max(1, Number(response.headers.get("retry-after")) || 2));
+    await new Promise((resolve) => setTimeout(resolve, waitSeconds * 1000));
+    response = await send();
+  }
   const data = (await response.json()) as T & { code?: number; message?: string };
   if (!response.ok || data.code !== 0)
     throw new Error(data.message ?? `Zoho Inventory ${resource} failed (${response.status})`);
@@ -1021,7 +1028,8 @@ async function upsertZohoContact(
     company_name: profile.company || undefined,
     contact_persons: [person],
     notes: notesParts.join(" | "),
-    gst_treatment: gstInfo.isValid ? "business_gst" : "consumer",
+    // Zoho allows "consumer" only on customers; an unregistered vendor is "business_none".
+    gst_treatment: gstInfo.isValid ? "business_gst" : contactType === "vendor" ? "business_none" : "consumer",
     ...(gstInfo.isValid && gstInfo.gstin ? { gst_no: gstInfo.gstin } : {}),
     ...(gstInfo.placeOfContact ? { place_of_contact: gstInfo.placeOfContact } : {}),
     ...(mainAddress ? { billing_address: mainAddress, shipping_address: mainAddress } : {}),
@@ -1050,6 +1058,47 @@ async function upsertZohoContact(
 }
 
 class NeedsReviewError extends Error {}
+
+/**
+ * State shared by every job in one sync run. Contact upserts are memoized per user and type,
+ * so parallel jobs for the same vendor reuse one Zoho call instead of racing to create
+ * duplicate contacts.
+ */
+type ZohoRunContext = { contacts: Map<string, Promise<string | null>> };
+
+function newZohoRunContext(): ZohoRunContext {
+  return { contacts: new Map() };
+}
+
+function upsertZohoContactOnce(
+  ctx: ZohoRunContext,
+  db: Awaited<ReturnType<typeof dbAdmin>>,
+  region: Region,
+  organizationId: string,
+  token: string,
+  userId: string,
+  contactType: "customer" | "vendor",
+) {
+  const key = `${contactType}:${userId}`;
+  let pending = ctx.contacts.get(key);
+  if (!pending) {
+    pending = upsertZohoContact(db, region, organizationId, token, userId, contactType);
+    ctx.contacts.set(key, pending);
+  }
+  return pending;
+}
+
+/** Runs `worker` over `items` with at most `size` in flight, preserving nothing but completion. */
+async function runPool<T>(items: T[], size: number, worker: (item: T) => Promise<void>) {
+  let next = 0;
+  const lanes = Array.from({ length: Math.min(size, items.length) }, async () => {
+    while (next < items.length) {
+      const item = items[next++]!;
+      await worker(item);
+    }
+  });
+  await Promise.all(lanes);
+}
 
 type CatalogProduct = Database["public"]["Tables"]["catalog_products"]["Row"];
 type ZohoItemLink = {
@@ -1082,6 +1131,9 @@ function catalogSharedValues(product: CatalogProduct) {
     reorderLevel: finiteNumber(payload["minimumStock"]),
     description: str(payload["description"]).trim(),
     image: str(payload["image"]).trim(),
+    /** Grain Bazar is the stock master: Zoho stock on hand is adjusted to match this. */
+    stock: finiteNumber(payload["stock"]),
+    hsn: str(payload["hsn"]).trim(),
   };
 }
 
@@ -1095,7 +1147,84 @@ async function catalogFingerprint(product: CatalogProduct) {
     ...shared,
   });
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", enc.encode(stable)));
-  return b64(digest);
+  // The suffix identifies the image alone, so a sync can skip re-uploading an unchanged image.
+  const imageDigest = new Uint8Array(await crypto.subtle.digest("SHA-256", enc.encode(shared.image)));
+  return `${b64(digest)}:${b64(imageDigest).slice(0, 16)}`;
+}
+
+/**
+ * Fingerprint format used before stock/HSN were synced (no ":" suffix). Links saved then are
+ * compared with this so an unchanged product is not mistaken for an app-side edit.
+ */
+async function legacyCatalogFingerprint(product: CatalogProduct) {
+  const { name, sku, rate, purchaseRate, reorderLevel, description, image } = catalogSharedValues(product);
+  const stable = JSON.stringify({
+    vendorId: product.vendor_id,
+    category: product.category,
+    status: product.status,
+    active: product.active,
+    name, sku, rate, purchaseRate, reorderLevel, description, image,
+  });
+  return b64(new Uint8Array(await crypto.subtle.digest("SHA-256", enc.encode(stable))));
+}
+
+/** True when the product still matches the fingerprint saved at its last sync. */
+async function catalogMatchesFingerprint(product: CatalogProduct, saved: string) {
+  return saved.includes(":")
+    ? saved === await catalogFingerprint(product)
+    : saved === await legacyCatalogFingerprint(product);
+}
+
+function fingerprintImagePart(fingerprint: string | null | undefined) {
+  return fingerprint?.split(":")[1] ?? "";
+}
+
+/**
+ * Zoho's stock that is free to sell: on hand minus quantity committed to open sales orders.
+ * Grain Bazar deducts stock when an order is placed, while Zoho only lowers stock on hand when
+ * it ships, so this (not raw stock on hand) is what must equal Grain Bazar's stock.
+ */
+function zohoAvailableForSale(item: Record<string, unknown> | undefined) {
+  if (!item) return 0;
+  const direct = finiteNumber(item["actual_available_for_sale_stock"]) ?? finiteNumber(item["available_for_sale_stock"]);
+  if (direct !== null) return direct;
+  const onHand = finiteNumber(item["stock_on_hand"]) ?? 0;
+  const committed = finiteNumber(item["actual_committed_stock"]) ?? finiteNumber(item["committed_stock"]) ?? 0;
+  return onHand - committed;
+}
+
+function todayInIndia() {
+  return new Date(Date.now() + 5.5 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
+/**
+ * Brings Zoho's available-for-sale stock to Grain Bazar's stock with a quantity adjustment for
+ * the difference. Idempotent: it is computed from the item's current stock, so re-running
+ * never double-counts.
+ */
+async function syncZohoItemStock(
+  region: Region,
+  organizationId: string,
+  token: string,
+  itemId: string,
+  sku: string,
+  appStock: number,
+  zohoAvailable: number,
+) {
+  const delta = Math.round((appStock - zohoAvailable) * 1000) / 1000;
+  if (delta === 0) return;
+  try {
+    await inventoryRequest(region, organizationId, token, "inventoryadjustments", "POST", {
+      date: todayInIndia(),
+      reason: "Grain Bazar stock sync",
+      adjustment_type: "quantity",
+      description: `Set ${sku} available stock to ${appStock} to match Grain Bazar`,
+      line_items: [{ item_id: itemId, quantity_adjusted: delta }],
+    });
+  } catch (cause) {
+    const message = cause instanceof Error ? cause.message : "Zoho rejected the stock adjustment";
+    throw new NeedsReviewError(`Item details synced, but stock for ${sku} could not be set to ${appStock}: ${message}`);
+  }
 }
 
 async function uploadCatalogImageToZohoInventory(
@@ -1172,6 +1301,7 @@ async function syncZohoCatalogItem(
   organizationId: string,
   token: string,
   productId: string,
+  ctx: ZohoRunContext = newZohoRunContext(),
 ) {
   const { data: product, error: productError } = await db.from("catalog_products")
     .select("id,vendor_id,category,status,active,payload,created_at,updated_at")
@@ -1222,16 +1352,44 @@ async function syncZohoCatalogItem(
   if (shared.reorderLevel !== null && shared.reorderLevel < 0)
     throw new NeedsReviewError(`Product ${shared.sku} has an invalid reorder level for Zoho Inventory`);
 
+  if (shared.stock !== null && shared.stock < 0)
+    throw new NeedsReviewError(`Product ${shared.sku} has negative stock; correct it before Zoho sync`);
+
+  let itemId = link?.zoho_item_id ?? "";
+
+  // Unchanged since the last successful sync: confirm with one read and stop if Zoho still
+  // matches, instead of rewriting the item, its status, image and vendor every time.
+  if (itemId && link?.app_fingerprint === fingerprint) {
+    const current = await inventoryRequest<{ item?: Record<string, unknown> }>(
+      region, organizationId, token, `items/${encodeURIComponent(itemId)}`, "GET",
+    );
+    const item = current.item;
+    const tracked = str(item?.["item_type"]) === "inventory";
+    const zohoStock = zohoAvailableForSale(item);
+    const inSync = !!item &&
+      str(item["status"]) === "active" &&
+      str(item["sku"]).trim().toLowerCase() === shared.sku.toLowerCase() &&
+      finiteNumber(item["rate"]) === shared.rate &&
+      (shared.stock === null || (tracked && zohoStock === shared.stock));
+    if (inSync) return;
+  }
+
+  // Use the vendor's existing Zoho contact; only create/update it when none is linked yet.
   let vendorContactId: string | undefined;
   if (product.vendor_id) {
     const { data: vendor } = await db.from("profiles")
       .select("id").eq("vendor_id", product.vendor_id).maybeSingle();
     if (vendor) {
-      try {
-        const id = await upsertZohoContact(db, region, organizationId, token, vendor.id, "vendor");
-        if (id) vendorContactId = id;
-      } catch (err) {
-        console.warn(`Vendor contact sync skipped for product ${shared.sku}:`, err);
+      const { data: vendorLink } = await db.from("zoho_contact_links")
+        .select("zoho_contact_id").eq("user_id", vendor.id).eq("contact_type", "vendor").maybeSingle();
+      if (vendorLink?.zoho_contact_id) vendorContactId = vendorLink.zoho_contact_id;
+      else {
+        try {
+          const id = await upsertZohoContactOnce(ctx, db, region, organizationId, token, vendor.id, "vendor");
+          if (id) vendorContactId = id;
+        } catch (err) {
+          console.warn(`Vendor contact sync skipped for product ${shared.sku}:`, err);
+        }
       }
     }
   }
@@ -1247,10 +1405,9 @@ async function syncZohoCatalogItem(
     ...(shared.purchaseRate !== null ? { purchase_rate: shared.purchaseRate } : {}),
     ...(shared.reorderLevel !== null ? { reorder_level: shared.reorderLevel } : {}),
     ...(shared.description ? { description: shared.description } : {}),
+    ...(shared.hsn ? { hsn_or_sac: shared.hsn } : {}),
   };
 
-  let itemId = link?.zoho_item_id ?? "";
-  let resultItem: Record<string, unknown> | undefined;
   if (!itemId) {
     const found = await inventoryRequest<{ items?: Record<string, unknown>[] }>(
       region, organizationId, token, "items", "GET", undefined,
@@ -1263,9 +1420,21 @@ async function syncZohoCatalogItem(
       throw new NeedsReviewError(`SKU ${shared.sku} matches multiple Zoho Inventory items`);
     if (matches.length === 1) itemId = str(matches[0]!["item_id"]);
   }
+
+  let resultItem: Record<string, unknown> | undefined;
+  let stockFollowUp: string | null = null;
   if (!itemId) {
+    // New items are stock-tracked from the start and open with Grain Bazar's stock.
     const created = await inventoryRequest<{ item?: Record<string, unknown> }>(
-      region, organizationId, token, "items", "POST", itemPayload,
+      region, organizationId, token, "items", "POST", {
+        ...itemPayload,
+        item_type: "inventory",
+        unit: "pcs",
+        ...(shared.stock !== null && shared.stock > 0 ? {
+          initial_stock: shared.stock,
+          initial_stock_rate: shared.purchaseRate ?? shared.rate,
+        } : {}),
+      },
     );
     resultItem = created.item;
     itemId = str(resultItem?.["item_id"]);
@@ -1275,10 +1444,32 @@ async function syncZohoCatalogItem(
       region, organizationId, token, `items/${encodeURIComponent(itemId)}`, "PUT", itemPayload,
     );
     resultItem = updated.item;
+    // Items first created without stock tracking show a blank stock on hand; switch them on.
+    if (shared.stock !== null && str(resultItem?.["item_type"]) !== "inventory") {
+      try {
+        const converted = await inventoryRequest<{ item?: Record<string, unknown> }>(
+          region, organizationId, token, `items/${encodeURIComponent(itemId)}`, "PUT", { item_type: "inventory" },
+        );
+        resultItem = converted.item ?? resultItem;
+      } catch (cause) {
+        stockFollowUp = `Turn on "Track Inventory" for ${shared.sku} in Zoho so its stock can sync (${
+          cause instanceof Error ? cause.message : "Zoho refused the change"
+        }).`;
+      }
+    }
+    if (shared.stock !== null && !stockFollowUp && str(resultItem?.["item_type"]) === "inventory") {
+      await syncZohoItemStock(
+        region, organizationId, token, itemId, shared.sku, shared.stock, zohoAvailableForSale(resultItem),
+      );
+    }
   }
-  await inventoryRequest(region, organizationId, token,
-    `items/${encodeURIComponent(itemId)}/active`, "POST");
-  await uploadCatalogImageToZohoInventory(region, organizationId, token, itemId, shared.image);
+  if (str(resultItem?.["status"]) !== "active") {
+    await inventoryRequest(region, organizationId, token,
+      `items/${encodeURIComponent(itemId)}/active`, "POST");
+  }
+  if (!link || fingerprintImagePart(link.app_fingerprint) !== fingerprintImagePart(fingerprint)) {
+    await uploadCatalogImageToZohoInventory(region, organizationId, token, itemId, shared.image);
+  }
   const { error: linkError } = await db.from("zoho_item_links").upsert({
     product_id: product.id,
     zoho_item_id: itemId,
@@ -1289,6 +1480,7 @@ async function syncZohoCatalogItem(
     } : {}),
   });
   if (linkError) throw new Error("Zoho item synchronized, but its Grain Bazar mapping could not be saved");
+  if (stockFollowUp) throw new NeedsReviewError(stockFollowUp);
 }
 
 async function syncZohoOrder(db: Awaited<ReturnType<typeof dbAdmin>>, region: Region, organizationId: string, token: string, job: ZohoSyncJob) {
@@ -1437,20 +1629,27 @@ async function syncZohoOrder(db: Awaited<ReturnType<typeof dbAdmin>>, region: Re
     throw new NeedsReviewError(`Zoho accepted order ${safeNumber}, but total ₹${zohoTotal.toFixed(2)} differs from Grain Bazar ₹${Number(order.total).toFixed(2)}. Review taxes, discount, and shipping before processing.`);
 }
 
-async function syncZohoCustomer(db: Awaited<ReturnType<typeof dbAdmin>>, region: Region, organizationId: string, token: string, userId: string) {
+async function syncZohoCustomer(
+  db: Awaited<ReturnType<typeof dbAdmin>>,
+  region: Region,
+  organizationId: string,
+  token: string,
+  userId: string,
+  ctx: ZohoRunContext = newZohoRunContext(),
+) {
   const { data: roles, error } = await db.from("user_roles").select("role").eq("user_id", userId);
   if (error) throw new Error("Could not verify the Grain Bazar account role");
   let synced = false;
   if ((roles ?? []).some((role) => role.role === "customer")) {
-    await upsertZohoContact(db, region, organizationId, token, userId, "customer");
+    await upsertZohoContactOnce(ctx, db, region, organizationId, token, userId, "customer");
     synced = true;
   }
   if ((roles ?? []).some((role) => role.role === "vendor")) {
-    await upsertZohoContact(db, region, organizationId, token, userId, "vendor");
+    await upsertZohoContactOnce(ctx, db, region, organizationId, token, userId, "vendor");
     synced = true;
   }
   if (!synced && (roles ?? []).some((role) => role.role === "admin")) {
-    await upsertZohoContact(db, region, organizationId, token, userId, "vendor");
+    await upsertZohoContactOnce(ctx, db, region, organizationId, token, userId, "vendor");
     synced = true;
   }
 }
@@ -1603,8 +1802,7 @@ async function pollZohoCatalogChanges(
         .select("id,vendor_id,category,status,active,payload,created_at,updated_at")
         .eq("id", link.product_id).maybeSingle();
       if (productError || !product) throw new Error("Could not compare the Zoho item to the mapped Grain Bazar product");
-      const currentFingerprint = await catalogFingerprint(product);
-      if (link.app_fingerprint && currentFingerprint !== link.app_fingerprint) {
+      if (link.app_fingerprint && !await catalogMatchesFingerprint(product, link.app_fingerprint)) {
         await saveZohoReview(
           db,
           "catalog",
@@ -1740,17 +1938,22 @@ export const setZohoWriteSyncConfig = createServerFn({ method: "POST" })
 
 export const processZohoSyncNow = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .validator(z.object({ limit: z.number().int().min(1).max(100).default(50), force: z.boolean().optional() }).optional())
+  .validator(z.object({
+    limit: z.number().int().min(1).max(100).default(50),
+    force: z.boolean().optional(),
+    /** Also read Zoho-side edits back after pushing (slow; the daily cron always does it). */
+    inbound: z.boolean().optional(),
+  }).optional())
   .handler(async ({ data, context }) => {
     await ensureAdmin(context.supabase, context.userId);
     const limit = data?.limit ?? 50;
-    return await processZohoSyncOutbox(limit, { force: data?.force ?? true });
+    return await processZohoSyncOutbox(limit, { force: data?.force ?? true, inbound: data?.inbound ?? false });
   });
 
 /**
  * Processes queued outbound records to Zoho. Active by default; can also be forced by admin action.
  */
-export async function processZohoSyncOutbox(limit = 20, options?: { force?: boolean }) {
+export async function processZohoSyncOutbox(limit = 20, options?: { force?: boolean; inbound?: boolean }) {
   const db = await dbAdmin();
   const writeEnabled = options?.force || (await isZohoWriteSyncActive(db));
   if (!writeEnabled) return { enabled: false, processed: 0, complete: 0, failed: 0, needsReview: 0 };
@@ -1761,16 +1964,17 @@ export async function processZohoSyncOutbox(limit = 20, options?: { force?: bool
   const { data: jobs, error: claimError } = await db.rpc("claim_zoho_sync_jobs", { _limit: limit });
   if (claimError) throw new Error("Could not claim Zoho sync jobs; apply the outbound sync migration");
   const summary = { enabled: true, processed: (jobs ?? []).length, complete: 0, failed: 0, needsReview: 0 };
-  for (const job of (jobs ?? []) as ZohoSyncJob[]) {
+  const ctx = newZohoRunContext();
+  const runJob = async (job: ZohoSyncJob) => {
     let status: "complete" | "failed" | "needs_review" = "complete";
     let errorMessage: string | null = null;
     try {
       if (job.entity_type === "customer")
-        await syncZohoCustomer(db, region, connection.organization_id, token, job.entity_id);
+        await syncZohoCustomer(db, region, connection.organization_id, token, job.entity_id, ctx);
       else if (job.entity_type === "order")
         await syncZohoOrder(db, region, connection.organization_id, token, job);
       else
-        await syncZohoCatalogItem(db, region, connection.organization_id, token, job.entity_id);
+        await syncZohoCatalogItem(db, region, connection.organization_id, token, job.entity_id, ctx);
     } catch (cause) {
       errorMessage = (cause instanceof Error ? cause.message : "Unexpected Zoho sync failure").slice(0, 1000);
       const isQuotaLimit =
@@ -1783,7 +1987,15 @@ export async function processZohoSyncOutbox(limit = 20, options?: { force?: bool
     if (status === "complete") summary.complete += 1;
     else if (status === "failed") summary.failed += 1;
     else summary.needsReview += 1;
-  }
+  };
+  // Contacts and catalogue items are independent, so a few run at once (well inside Zoho's
+  // per-minute limit). Orders run afterwards, one at a time, so their customer and item
+  // links exist first and sales orders are created in queue order.
+  const claimed = (jobs ?? []) as ZohoSyncJob[];
+  await runPool(claimed.filter((job) => job.entity_type !== "order"), 4, runJob);
+  await runPool(claimed.filter((job) => job.entity_type === "order"), 1, runJob);
+
+  if (options?.inbound === false) return summary;
   const [contacts, fulfillment, catalog] = await Promise.all([
     pollZohoContactChanges(db, region, connection.organization_id, token, limit),
     pollZohoOrderFulfillment(db, region, connection.organization_id, token, limit),
