@@ -226,7 +226,7 @@ function zohoCommerceBase(region: string) {
     jp: "commerce.zoho.jp",
     ca: "commerce.zoho.ca",
   };
-  return `https://${host[region] ?? host.in}`;
+  return `https://${host[region] ?? host["in"]}`;
 }
 
 function recordTitle(resource: string, record: MirrorRecord) {

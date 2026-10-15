@@ -3,7 +3,7 @@ import { Minus, Plus, ShoppingBag, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { SiteLayout, Breadcrumbs } from "@/components/site/SiteLayout";
-import { inr, type Product } from "@/lib/data";
+import { getAvailablePurchaseQuantity, getMaxPurchaseQuantity, inr, type Product } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { Input } from "@/components/ui/input";
 import { showCartNotification } from "@/components/site/CartFloatingNotification";
@@ -224,6 +224,8 @@ function CartQuantityControl({
   onUpdateQty: (newQty: number) => void;
 }) {
   const [val, setVal] = useState(String(qty));
+  const purchaseLimit = getAvailablePurchaseQuantity(product);
+  const configuredMax = getMaxPurchaseQuantity(product);
 
   useEffect(() => {
     setVal(String(qty));
@@ -240,10 +242,12 @@ function CartQuantityControl({
       return;
     }
 
-    if (product.stock && parsed > product.stock) {
-      toast.error(`Only ${product.stock} units available in stock`);
-      setVal(String(product.stock));
-      onUpdateQty(product.stock);
+    if (parsed > purchaseLimit) {
+      toast.error(purchaseLimit < configuredMax
+        ? `Maximum purchase quantity is ${purchaseLimit} based on available stock`
+        : `Maximum purchase quantity for this product is ${purchaseLimit}`);
+      setVal(String(purchaseLimit || 1));
+      onUpdateQty(purchaseLimit || 1);
       return;
     }
 
@@ -264,10 +268,8 @@ function CartQuantityControl({
     }
 
     const num = parseInt(digitsOnly, 10);
-    if (product.stock && num > product.stock) {
-      toast.error(`Only ${product.stock} units available in stock`);
-      setVal(String(product.stock));
-      onUpdateQty(product.stock);
+    if (num > purchaseLimit) {
+      setVal(digitsOnly);
       return;
     }
 
@@ -298,46 +300,53 @@ function CartQuantityControl({
   };
 
   const handleIncrease = () => {
-    if (product.stock && qty >= product.stock) {
-      toast.error(`Maximum available stock is ${product.stock}`);
+    if (qty >= purchaseLimit) {
+      toast.error(`Maximum purchase quantity is ${purchaseLimit}`);
       return;
     }
-    const next = qty + 1;
+    const next = Math.min(purchaseLimit, qty + 1);
     setVal(String(next));
     onUpdateQty(next);
   };
 
   return (
-    <div className="flex items-center rounded-md border border-border bg-card shadow-xs">
-      <button
-        type="button"
-        onClick={handleDecrease}
-        disabled={qty <= 1}
-        className="p-2 text-navy hover:text-gold transition-colors disabled:cursor-not-allowed disabled:opacity-40"
-        aria-label={`Decrease quantity of ${product.name}`}
-      >
-        <Minus className="h-3.5 w-3.5" />
-      </button>
-      <input
-        type="text"
-        inputMode="numeric"
-        pattern="[0-9]*"
-        value={val}
-        onChange={handleInputChange}
-        onBlur={handleBlur}
-        onKeyDown={handleKeyDown}
-        className="h-8 w-12 border-x border-border bg-transparent text-center text-sm font-semibold text-navy focus:bg-white focus:outline-none focus:ring-1 focus:ring-gold"
-        aria-label={`Quantity for ${product.name}`}
-      />
-      <button
-        type="button"
-        onClick={handleIncrease}
-        disabled={!!product.stock && qty >= product.stock}
-        className="p-2 text-navy hover:text-gold transition-colors disabled:cursor-not-allowed disabled:opacity-40"
-        aria-label={`Increase quantity of ${product.name}`}
-      >
-        <Plus className="h-3.5 w-3.5" />
-      </button>
+    <div className="space-y-1">
+      <div className="flex items-center rounded-md border border-border bg-card shadow-xs">
+        <button
+          type="button"
+          onClick={handleDecrease}
+          disabled={qty <= 1}
+          className="p-2 text-navy hover:text-gold transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+          aria-label={`Decrease quantity of ${product.name}`}
+        >
+          <Minus className="h-3.5 w-3.5" />
+        </button>
+        <input
+          type="text"
+          inputMode="numeric"
+          pattern="[0-9]*"
+          value={val}
+          onChange={handleInputChange}
+          onBlur={handleBlur}
+          onKeyDown={handleKeyDown}
+          className="h-8 w-12 border-x border-border bg-transparent text-center text-sm font-semibold text-navy focus:bg-white focus:outline-none focus:ring-1 focus:ring-gold"
+          aria-label={`Quantity for ${product.name}`}
+        />
+        <button
+          type="button"
+          onClick={handleIncrease}
+          disabled={qty >= purchaseLimit}
+          className="p-2 text-navy hover:text-gold transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+          aria-label={`Increase quantity of ${product.name}`}
+        >
+          <Plus className="h-3.5 w-3.5" />
+        </button>
+      </div>
+      {Number(val) > purchaseLimit && (
+        <p role="alert" className="text-xs font-medium text-danger">
+          Maximum {purchaseLimit} per purchase
+        </p>
+      )}
     </div>
   );
 }

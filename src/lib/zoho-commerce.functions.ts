@@ -1837,9 +1837,31 @@ export const syncZohoProducts = createServerFn({ method: "POST" })
         .filter((p) => str(p["product_id"]))
         .map((p) => mapProduct(p, connection.organization_id));
       for (let i = 0; i < rows.length; i += 100) {
+        const batch = rows.slice(i, i + 100);
+        const { data: existingRows, error: existingError } = await db
+          .from("catalog_products")
+          .select("id,payload")
+          .in("id", batch.map((row) => row.id));
+        if (existingError)
+          throw new Error("Existing Zoho product limits could not be preserved during catalog sync");
+        const existingById = new Map((existingRows ?? []).map((row) => {
+          const payload = row.payload && typeof row.payload === "object" && !Array.isArray(row.payload)
+            ? row.payload as Record<string, unknown>
+            : {};
+          return [row.id, payload] as const;
+        }));
+        const rowsToSave = batch.map((row) => {
+          const maxPurchaseQuantity = existingById.get(row.id)?.["maxPurchaseQuantity"];
+          return typeof maxPurchaseQuantity === "number"
+            && Number.isSafeInteger(maxPurchaseQuantity)
+            && maxPurchaseQuantity >= 1
+            && maxPurchaseQuantity <= 100000
+            ? { ...row, payload: { ...row.payload, maxPurchaseQuantity } }
+            : row;
+        });
         const { error: saveError } = await db
           .from("catalog_products")
-          .upsert(rows.slice(i, i + 100), { onConflict: "id" });
+          .upsert(rowsToSave, { onConflict: "id" });
         if (saveError)
           throw new Error("Zoho products could not be saved to the marketplace catalog");
       }

@@ -22,6 +22,8 @@ import {
   customers as seedCustomers,
   inr,
   getCurrentFIFOCost,
+  getAvailablePurchaseQuantity,
+  getMaxPurchaseQuantity,
   getProductAverageSellingPrice,
   getProductImageFallback,
   getOrderItemTotal,
@@ -813,6 +815,27 @@ export function AppProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  // A live product edit can lower a purchase cap while a customer already has
+  // the item in their saved cart. Keep those saved quantities inside the new
+  // product limit as soon as the catalog refreshes.
+  useEffect(() => {
+    if (!hydrated || productCatalogStatus !== "ready" || products.length === 0) return;
+    setCart((current) => {
+      let changed = false;
+      const next = current.map((line) => {
+        const product = products.find((candidate) => candidate.id === line.id);
+        if (!product) return line;
+        const limit = getAvailablePurchaseQuantity(product);
+        if (limit === 0) return line;
+        const qty = Math.min(Math.max(1, Math.floor(Number(line.qty) || 1)), limit);
+        if (qty === line.qty) return line;
+        changed = true;
+        return { ...line, qty };
+      });
+      return changed ? next : current;
+    });
+  }, [hydrated, productCatalogStatus, products]);
+
   useEffect(() => {
     if (!hydrated || !user?.addressKey) return;
     setAddressesByUser((saved) => saved[user.addressKey!] === addresses
@@ -971,7 +994,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       addToCart: (id, qty = 1) => {
         const product = products.find((item) => item.id === id);
         const addAmount = Math.max(1, Math.floor(Number(qty) || 1));
-        const available = product ? Math.max(0, Math.floor((Number(product.stock) || 0) - (Number(product.reserved) || 0))) : null;
+        const available = product ? getAvailablePurchaseQuantity(product) : null;
+        const maxPerOrder = product ? getMaxPurchaseQuantity(product) : null;
         if (product && available === 0) {
           toast.error("This product is currently out of stock");
           return;
@@ -979,7 +1003,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const existing = cart.find((line) => line.id === id);
         const requested = (existing?.qty ?? 0) + addAmount;
         const safeQty = Math.min(requested, available ?? requested);
-        if (safeQty < requested) toast.warning(`Only ${safeQty} unit${safeQty === 1 ? "" : "s"} available`);
+        if (safeQty < requested) {
+          toast.warning(safeQty === maxPerOrder
+            ? `Maximum ${maxPerOrder} units per order for ${product?.name ?? "this product"}`
+            : `Only ${safeQty} unit${safeQty === 1 ? "" : "s"} available`);
+        }
         setCart((current) => existing
           ? current.map((line) => line.id === id ? { ...line, qty: safeQty } : line)
           : [...current, { id, qty: safeQty }]);
@@ -987,14 +1015,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setQty: (id, qty) => {
         const product = products.find((item) => item.id === id);
         const parsed = Math.max(1, Math.floor(Number(qty) || 1));
-        const available = product ? Math.max(0, Math.floor((Number(product.stock) || 0) - (Number(product.reserved) || 0))) : null;
+        const available = product ? getAvailablePurchaseQuantity(product) : null;
+        const maxPerOrder = product ? getMaxPurchaseQuantity(product) : null;
         const safeQty = available === null ? parsed : Math.min(parsed, available);
         if (product && safeQty === 0) {
           toast.error("This product is out of stock and has been removed from your cart");
           setCart((current) => current.filter((line) => line.id !== id));
           return;
         }
-        if (safeQty < parsed) toast.warning(`Quantity adjusted to ${safeQty}; that is the available stock`);
+        if (safeQty < parsed) {
+          toast.warning(safeQty === maxPerOrder
+            ? `Quantity adjusted to ${safeQty}; that is the maximum purchase for this product`
+            : `Quantity adjusted to ${safeQty}; that is the available stock`);
+        }
         setCart((current) => current.map((line) => line.id === id ? { ...line, qty: safeQty } : line));
       },
       removeFromCart: (id) => setCart((c) => c.filter((l) => l.id !== id)),
@@ -1180,6 +1213,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
       placeOrder: async ({ lines, method, payment, coupon, customerIndex = 0, customerOverride, shippingAddress, delivery, subtotal, discount, tax, shipping, source, paymentDueDate }) => {
         if (method === "Cash on Delivery" || method === "COD") {
           throw new Error("Cash on delivery is not enabled for this store. Please select an online payment method (UPI, Card, Net Banking).");
+        }
+        const requestedByProduct = new Map<string, number>();
+        for (const line of lines) {
+          const qty = Number(line.qty);
+          if (!Number.isSafeInteger(qty) || qty < 1) throw new Error("Order quantities must be whole numbers of at least 1");
+          requestedByProduct.set(line.product.id, (requestedByProduct.get(line.product.id) ?? 0) + qty);
+        }
+        for (const [productId, requested] of requestedByProduct) {
+          const product = products.find((candidate) => candidate.id === productId)
+            ?? lines.find((line) => line.product.id === productId)!.product;
+          const limit = getMaxPurchaseQuantity(product);
+          if (requested > limit) {
+            const message = `Maximum purchase quantity for ${product.name} is ${limit}`;
+            toast.error("Order quantity exceeds the product limit", { description: message });
+            throw new Error(message);
+          }
         }
         const id = `ORD-${20000 + Math.floor(Math.random() * 9000)}`;
         const order = buildOrder(

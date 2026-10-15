@@ -15,7 +15,7 @@ import { PanelLayout } from "@/components/panel/PanelLayout";
 import { DataTable, Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { Pager } from "@/components/panel/pager";
 import { adminNav } from "@/lib/panel-nav";
-import { inr, type Product } from "@/lib/data";
+import { DEFAULT_MAX_PURCHASE_QUANTITY, getMaxPurchaseQuantity, inr, type Product } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -107,6 +107,7 @@ function emptyForm(
     price: "",
     gst: "5",
     stock: "",
+    maxPurchaseQuantity: String(DEFAULT_MAX_PURCHASE_QUANTITY),
     weight: "1 unit",
     minimumStock: "30",
     warehouseStock: "",
@@ -153,7 +154,7 @@ function AdminProductsPanel() {
   }, [form.vendorId, vendors]);
 
   const [quickOpen, setQuickOpen] = useState(false);
-  const [quickForm, setQuickForm] = useState({ name: "", qty: "", price: "", image: "" });
+  const [quickForm, setQuickForm] = useState({ name: "", qty: "", price: "", maxPurchaseQuantity: String(DEFAULT_MAX_PURCHASE_QUANTITY), image: "" });
   const [quickImageUploading, setQuickImageUploading] = useState(false);
 
   const [editing, setEditing] = useState<Product | null>(null);
@@ -165,6 +166,7 @@ function AdminProductsPanel() {
     stock: "",
     weight: "",
     image: "",
+    maxPurchaseQuantity: String(DEFAULT_MAX_PURCHASE_QUANTITY),
     minimumStock: "",
     warehouseStock: "",
     requiredStock: "",
@@ -258,6 +260,11 @@ function AdminProductsPanel() {
       toast.error("Enter a valid non-negative price");
       return;
     }
+    const maxPurchaseQuantity = Number(quickForm.maxPurchaseQuantity);
+    if (!Number.isSafeInteger(maxPurchaseQuantity) || maxPurchaseQuantity < 1 || maxPurchaseQuantity > 100000) {
+      toast.error("Set the maximum customer purchase quantity to a whole number from 1 to 100,000");
+      return;
+    }
     const vendor = vendors[0];
     if (!vendor) {
       toast.error("Create or approve a vendor profile before assigning products");
@@ -284,6 +291,7 @@ function AdminProductsPanel() {
       rating: 0,
       reviews: 0,
       stock: qty,
+      maxPurchaseQuantity,
       reserved: 0,
       sold: 0,
       weight: "1 unit",
@@ -298,7 +306,7 @@ function AdminProductsPanel() {
     if (!(await addProduct(item))) return;
     if (item.active) toast.success(`${item.name} added with ${qty} units`);
     else toast.success(`${item.name} saved as a draft; add an image and price before publishing`);
-    setQuickForm({ name: "", qty: "", price: "", image: "" });
+    setQuickForm({ name: "", qty: "", price: "", maxPurchaseQuantity: String(DEFAULT_MAX_PURCHASE_QUANTITY), image: "" });
     setQuickOpen(false);
   };
 
@@ -320,6 +328,11 @@ function AdminProductsPanel() {
     const stock = Number(form.stock || 0);
     if (!Number.isFinite(mrp) || mrp <= 0 || !Number.isFinite(price) || price <= 0 || price > mrp) {
       toast.error("Enter valid prices; selling price must not exceed MRP");
+      return;
+    }
+    const maxPurchaseQuantity = Number(form.maxPurchaseQuantity);
+    if (!Number.isSafeInteger(maxPurchaseQuantity) || maxPurchaseQuantity < 1 || maxPurchaseQuantity > 100000) {
+      toast.error("Set the maximum customer purchase quantity to a whole number from 1 to 100,000");
       return;
     }
     if (!Number.isFinite(stock) || stock < 0) {
@@ -348,6 +361,7 @@ function AdminProductsPanel() {
       rating: 4.2,
       reviews: 0,
       stock,
+      maxPurchaseQuantity,
       warehouseStock: Number(form.warehouseStock || form.stock) || 0,
       requiredStock: Number(form.requiredStock) || 0,
       minimumStock: Number(form.minimumStock) || 0,
@@ -390,6 +404,7 @@ function AdminProductsPanel() {
         "Selling Price (INR)",
         "GST (%)",
         "Stock Units",
+        "Max Purchase Units",
         "Units Sold",
         "Rating",
         "Status",
@@ -405,6 +420,7 @@ function AdminProductsPanel() {
         p.price,
         `${p.gst}%`,
         p.stock,
+        getMaxPurchaseQuantity(p),
         p.sold,
         p.rating,
         p.status,
@@ -541,6 +557,17 @@ function AdminProductsPanel() {
                         min={0}
                         value={quickForm.qty}
                         onChange={(e) => setQuickForm({ ...quickForm, qty: e.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <Label>Max customer purchase</Label>
+                      <Input
+                        type="number"
+                        min={1}
+                        max={100000}
+                        step={1}
+                        value={quickForm.maxPurchaseQuantity}
+                        onChange={(e) => setQuickForm({ ...quickForm, maxPurchaseQuantity: e.target.value })}
                       />
                     </div>
                     <div>
@@ -771,6 +798,18 @@ function AdminProductsPanel() {
                     />
                   </div>
                   <div>
+                    <Label>Maximum customer purchase quantity</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={100000}
+                      step={1}
+                      value={form.maxPurchaseQuantity}
+                      onChange={(e) => setForm({ ...form, maxPurchaseQuantity: e.target.value })}
+                    />
+                    <p className="mt-1 text-xs text-slate">Customers can purchase from 1 up to this amount, limited by available stock.</p>
+                  </div>
+                  <div>
                     <Label>Approval Status</Label>
                     <Select
                       value={form.status}
@@ -814,6 +853,7 @@ function AdminProductsPanel() {
             "Warehouse",
             "Required",
             "Min Stock",
+            "Max Purchase",
             "Availability",
             "Rating",
             "Approval",
@@ -853,6 +893,7 @@ function AdminProductsPanel() {
               p.warehouseStock ?? p.stock,
               p.requiredStock ?? 0,
               p.minimumStock ?? 30,
+              getMaxPurchaseQuantity(p),
               <StatusBadge status={p.stock > 0 ? "Available" : "Out of Stock"} />,
               <Select
                 value={p.status}
@@ -895,6 +936,7 @@ function AdminProductsPanel() {
                       stock: String(p.stock),
                       weight: p.weight,
                       image: p.image,
+                      maxPurchaseQuantity: String(getMaxPurchaseQuantity(p)),
                       minimumStock: String(p.minimumStock ?? 30),
                       warehouseStock: String(p.warehouseStock ?? p.stock),
                       requiredStock: String(p.requiredStock ?? 0),
@@ -1032,6 +1074,18 @@ function AdminProductsPanel() {
                 )}
               </div>
             </div>
+            <div>
+              <Label>Maximum customer purchase quantity</Label>
+              <Input
+                type="number"
+                min={1}
+                max={100000}
+                step={1}
+                value={editForm.maxPurchaseQuantity}
+                onChange={(e) => setEditForm({ ...editForm, maxPurchaseQuantity: e.target.value })}
+              />
+              <p className="mt-1 text-xs text-slate">Minimum is always 1. The effective maximum also respects available stock.</p>
+            </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <Label>Available Stock</Label>
@@ -1096,6 +1150,11 @@ function AdminProductsPanel() {
             <Button
               onClick={async () => {
                 if (!editing) return;
+                const maxPurchaseQuantity = Number(editForm.maxPurchaseQuantity);
+                if (!Number.isSafeInteger(maxPurchaseQuantity) || maxPurchaseQuantity < 1 || maxPurchaseQuantity > 100000) {
+                  toast.error("Set the maximum customer purchase quantity to a whole number from 1 to 100,000");
+                  return;
+                }
                 const saved = await updateProduct(editing.id, {
                   name: editForm.name,
                   mrp: Number(editForm.mrp),
@@ -1104,6 +1163,7 @@ function AdminProductsPanel() {
                   stock: Number(editForm.stock),
                   weight: editForm.weight,
                   image: editForm.image,
+                  maxPurchaseQuantity,
                   minimumStock: Number(editForm.minimumStock),
                   warehouseStock: Number(editForm.warehouseStock),
                   requiredStock: Number(editForm.requiredStock),

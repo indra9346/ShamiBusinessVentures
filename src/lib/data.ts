@@ -35,6 +35,7 @@ export type Product = {
   rating: number;
   reviews: number;
   stock: number;
+  maxPurchaseQuantity?: number;
   minimumStock?: number;
   warehouseStock?: number;
   requiredStock?: number;
@@ -50,6 +51,20 @@ export type Product = {
   updated: string;
   purchasePrice?: number;
 };
+
+export const DEFAULT_MAX_PURCHASE_QUANTITY = 120;
+
+export function getMaxPurchaseQuantity(product: Pick<Product, "maxPurchaseQuantity">) {
+  const limit = Number(product.maxPurchaseQuantity);
+  return Number.isSafeInteger(limit) && limit >= 1 ? limit : DEFAULT_MAX_PURCHASE_QUANTITY;
+}
+
+export function getAvailablePurchaseQuantity(
+  product: Pick<Product, "stock" | "reserved" | "maxPurchaseQuantity">,
+) {
+  const availableStock = Math.max(0, Math.floor((Number(product.stock) || 0) - (Number(product.reserved) || 0)));
+  return Math.min(availableStock, getMaxPurchaseQuantity(product));
+}
 
 export function getProductImageFallback(category: string | null | undefined, productName = "") {
   const searchable = `${category ?? ""} ${productName}`.toLowerCase();

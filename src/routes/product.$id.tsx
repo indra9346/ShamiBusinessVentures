@@ -4,7 +4,7 @@ import { Heart, Minus, Plus, ShieldCheck, Star, Truck, Store, ShoppingCart } fro
 import { toast } from "sonner";
 import { SiteLayout, Breadcrumbs, SectionHeading } from "@/components/site/SiteLayout";
 import { ProductCard } from "@/components/site/ProductCard";
-import { inr, isStorefrontProduct } from "@/lib/data";
+import { getAvailablePurchaseQuantity, getMaxPurchaseQuantity, inr, isStorefrontProduct } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { supabase } from "@/integrations/supabase/client";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -50,8 +50,10 @@ export const Route = createFileRoute("/product/$id")({
 });
 
 function ProductDetail() {
-  const { product, catalogUnavailable } = Route.useLoaderData();
+  const { product: loadedProduct, catalogUnavailable } = Route.useLoaderData();
   const { addToCart, toggleWishlist, wishlist, products, reviews, vendors } = useApp();
+  const product = products.find((candidate) => candidate.id === loadedProduct?.id) ?? loadedProduct;
+  const currentPurchaseLimit = product ? getAvailablePurchaseQuantity(product) : 1;
   const [qty, setQty] = useState(1);
   const [typedQty, setTypedQty] = useState("1");
   const [active, setActive] = useState(0);
@@ -59,6 +61,10 @@ function ProductDetail() {
   useEffect(() => {
     setTypedQty(String(qty));
   }, [qty]);
+
+  useEffect(() => {
+    setQty((current) => Math.min(Math.max(1, current), currentPurchaseLimit || 1));
+  }, [currentPurchaseLimit]);
 
   if (!product) {
     return (
@@ -78,6 +84,8 @@ function ProductDetail() {
     );
   }
   const availableStock = Math.max(0, Math.floor((Number(product.stock) || 0) - (Number(product.reserved) || 0)));
+  const purchaseLimit = currentPurchaseLimit;
+  const configuredMax = getMaxPurchaseQuantity(product);
   const vendor = vendors.find((v) => v.id === product.vendorId);
   const off = Math.round(((product.mrp - product.price) / product.mrp) * 100);
   const productImg = product.image || `/products/${product.category.toLowerCase()}.jpg`;
@@ -94,12 +102,14 @@ function ProductDetail() {
     if (!/^\d+$/.test(raw)) {
       return;
     }
-    const max = availableStock > 0 ? availableStock : 9999;
+    const max = purchaseLimit;
     const num = parseInt(raw, 10);
     if (num > max) {
-      toast.error(`Only ${max} units available in stock`);
-      setTypedQty(String(max));
-      setQty(max);
+      toast.error(max < configuredMax
+        ? `Only ${max} units are available to purchase now`
+        : `Maximum purchase quantity is ${max}`);
+      setTypedQty(String(max || 1));
+      setQty(max || 1);
       return;
     }
     setTypedQty(raw);
@@ -114,8 +124,7 @@ function ProductDetail() {
       setQty(1);
       setTypedQty("1");
     } else {
-      const max = availableStock > 0 ? availableStock : 9999;
-      const clamped = Math.min(max, parsed);
+      const clamped = Math.min(purchaseLimit || 1, parsed);
       setQty(clamped);
       setTypedQty(String(clamped));
     }
@@ -191,6 +200,7 @@ function ProductDetail() {
           <p className={cn("mt-4 text-sm font-semibold", availableStock > 0 ? "text-success" : "text-danger")}>
             {availableStock > 0 ? `In stock — ${availableStock} units available` : "Currently out of stock"}
           </p>
+          <p className="mt-1 text-xs text-slate">Purchase range: 1–{purchaseLimit} units (maximum {configuredMax} per order, subject to stock).</p>
 
           <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-3">
             <div className="flex items-center gap-2.5 sm:gap-3">
@@ -226,11 +236,11 @@ function ProductDetail() {
                 <button
                   type="button"
                   onClick={() => {
-                    const next = Math.min(availableStock || 1, qty + 1);
+                    const next = Math.min(purchaseLimit || 1, qty + 1);
                     setQty(next);
                     setTypedQty(String(next));
                   }}
-                  disabled={qty >= availableStock}
+                  disabled={qty >= purchaseLimit}
                   className="flex h-full w-10 items-center justify-center text-navy transition-colors hover:text-gold disabled:opacity-30"
                   aria-label="Increase quantity"
                 >
