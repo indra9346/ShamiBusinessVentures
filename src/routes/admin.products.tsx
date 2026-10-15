@@ -119,6 +119,23 @@ function emptyForm(
   };
 }
 
+/** GST % must be a finite number from 0 to 100; anything else (negative, blank, NaN) is rejected. */
+function parseGstPercent(value: string): number | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const gst = Number(trimmed);
+  return Number.isFinite(gst) && gst >= 0 && gst <= 100 ? gst : null;
+}
+
+/** Keeps a GST text input within 0–100 while typing (strips "-", clamps above 100). */
+function sanitizeGstInput(raw: string): string {
+  const cleaned = raw.replace(/[^\d.]/g, "");
+  if (!cleaned) return "";
+  const n = Number(cleaned);
+  if (!Number.isFinite(n)) return "";
+  return n > 100 ? "100" : cleaned;
+}
+
 function AdminProducts() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   if (pathname !== "/admin/products" && pathname !== "/admin/products/") {
@@ -338,6 +355,11 @@ function AdminProductsPanel() {
       toast.error("Set the maximum customer purchase quantity to a whole number from 1 to 100,000");
       return;
     }
+    const gst = parseGstPercent(form.gst);
+    if (gst === null) {
+      toast.error("Enter a GST rate between 0% and 100%");
+      return;
+    }
     if (!Number.isFinite(stock) || stock < 0) {
       toast.error("Enter a valid non-negative stock quantity");
       return;
@@ -361,7 +383,7 @@ function AdminProductsPanel() {
       mrp,
       price,
       pricingDisplayMode: form.pricingDisplayMode,
-      gst: Number(form.gst),
+      gst,
       rating: 4.2,
       reviews: 0,
       stock,
@@ -724,8 +746,14 @@ function AdminProductsPanel() {
                       <Label>GST %</Label>
                       <Input
                         type="number"
+                        inputMode="decimal"
+                        min={0}
+                        max={100}
+                        step="0.01"
                         value={form.gst}
-                        onChange={(e) => setForm({ ...form, gst: e.target.value })}
+                        onChange={(e) => setForm({ ...form, gst: sanitizeGstInput(e.target.value) })}
+                        onKeyDown={(e) => { if (e.key === "-" || e.key === "e" || e.key === "E") e.preventDefault(); }}
+                        onWheel={(e) => e.currentTarget.blur()}
                       />
                     </div>
                   </div>
@@ -1047,8 +1075,14 @@ function AdminProductsPanel() {
                 <Label>GST %</Label>
                 <Input
                   type="number"
+                  inputMode="decimal"
+                  min={0}
+                  max={100}
+                  step="0.01"
                   value={editForm.gst}
-                  onChange={(e) => setEditForm({ ...editForm, gst: e.target.value })}
+                  onChange={(e) => setEditForm({ ...editForm, gst: sanitizeGstInput(e.target.value) })}
+                  onKeyDown={(e) => { if (e.key === "-" || e.key === "e" || e.key === "E") e.preventDefault(); }}
+                  onWheel={(e) => e.currentTarget.blur()}
                 />
               </div>
             </div>
@@ -1174,11 +1208,22 @@ function AdminProductsPanel() {
                   toast.error("Set the maximum customer purchase quantity to a whole number from 1 to 100,000");
                   return;
                 }
+                const gst = parseGstPercent(editForm.gst);
+                if (gst === null) {
+                  toast.error("Enter a GST rate between 0% and 100%");
+                  return;
+                }
+                const mrp = Number(editForm.mrp);
+                const price = Number(editForm.price);
+                if (!Number.isFinite(mrp) || mrp <= 0 || !Number.isFinite(price) || price <= 0 || price > mrp) {
+                  toast.error("Enter valid prices; selling price must not exceed MRP");
+                  return;
+                }
                 const saved = await updateProduct(editing.id, {
                   name: editForm.name,
-                  mrp: Number(editForm.mrp),
-                  price: Number(editForm.price),
-                  gst: Number(editForm.gst),
+                  mrp,
+                  price,
+                  gst,
                   stock: Number(editForm.stock),
                   weight: editForm.weight,
                   image: editForm.image,
