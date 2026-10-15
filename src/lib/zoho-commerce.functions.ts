@@ -226,9 +226,90 @@ export const getZohoSyncQueueStatus = createServerFn({ method: "GET" })
     const counts = Object.fromEntries(
       statuses.map((status, index) => [status, statusResults[index]?.count ?? 0]),
     );
+
+    const rawJobs = jobsResult.data ?? [];
+    const customerIds = rawJobs.filter((j) => j.entity_type === "customer").map((j) => j.entity_id);
+    const orderIds = rawJobs.filter((j) => j.entity_type === "order").map((j) => j.entity_id);
+    const catalogIds = rawJobs.filter((j) => j.entity_type === "catalog").map((j) => j.entity_id);
+
+    const [profilesRes, ordersRes, catalogRes] = await Promise.all([
+      customerIds.length
+        ? db.from("profiles").select("id,full_name,email,phone,company,gstin").in("id", customerIds)
+        : { data: [] },
+      orderIds.length
+        ? db.from("orders").select("id,order_no,customer_name,customer_email,customer_phone,customer_gstin,total,payment_status,order_status,created_at").in("id", orderIds)
+        : { data: [] },
+      catalogIds.length
+        ? db.from("catalog_products").select("id,payload").in("id", catalogIds)
+        : { data: [] },
+    ]);
+
+    const profileMap = new Map((profilesRes.data ?? []).map((p) => [p.id, p]));
+    const orderMap = new Map((ordersRes.data ?? []).map((o) => [o.id, o]));
+    const catalogMap = new Map((catalogRes.data ?? []).map((c) => [c.id, c]));
+
+    const jobs = rawJobs.map((job) => {
+      let details: {
+        title: string;
+        subtitle?: string;
+        meta?: string;
+        link?: string;
+        gstin?: string | null;
+      } | null = null;
+
+      if (job.entity_type === "customer") {
+        const p = profileMap.get(job.entity_id);
+        if (p) {
+          const name = p.company?.trim() || p.full_name?.trim() || "Customer Contact";
+          const sub = [p.email, p.phone].filter(Boolean).join(" · ");
+          details = {
+            title: name,
+            subtitle: sub || `User: ${p.id.slice(0, 8)}…`,
+            meta: p.gstin ? `GSTIN: ${p.gstin}` : "No GSTIN",
+            link: `/admin/customers`,
+            gstin: p.gstin,
+          };
+        }
+      } else if (job.entity_type === "order") {
+        const o = orderMap.get(job.entity_id);
+        if (o) {
+          const orderNum = o.order_no ? `Order #${o.order_no}` : `Order ${o.id.slice(0, 8)}`;
+          const amount = Number(o.total);
+          const totalStr = Number.isFinite(amount) ? `₹${amount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}` : "";
+          const sub = [o.customer_name, totalStr, o.order_status].filter(Boolean).join(" · ");
+          details = {
+            title: orderNum,
+            subtitle: sub,
+            meta: o.customer_gstin ? `Customer GSTIN: ${o.customer_gstin}` : undefined,
+            link: `/admin/orders/${o.id}`,
+            gstin: o.customer_gstin,
+          };
+        }
+      } else if (job.entity_type === "catalog") {
+        const c = catalogMap.get(job.entity_id);
+        if (c) {
+          const payload = plainObject(c.payload);
+          const name = str(payload["name"]) || job.entity_id;
+          const sku = str(payload["sku"]);
+          const price = finiteNumber(payload["price"]);
+          const sub = [sku ? `SKU: ${sku}` : null, price !== null ? `₹${price.toLocaleString("en-IN")}` : null].filter(Boolean).join(" · ");
+          details = {
+            title: name,
+            subtitle: sub,
+            link: `/admin/products`,
+          };
+        }
+      }
+
+      return {
+        ...job,
+        entity_details: details,
+      };
+    });
+
     return {
       counts,
-      jobs: jobsResult.data ?? [],
+      jobs,
       refreshedAt: new Date().toISOString(),
     };
   });
@@ -258,6 +339,60 @@ export const retryAllZohoSyncJobs = createServerFn({ method: "POST" })
       if (!rpcErr) count++;
     }
     return { retried: count };
+  });
+
+export const dismissZohoSyncJob = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator(z.object({ id: z.string().uuid(), reason: z.string().optional() }))
+  .handler(async ({ data, context }) => {
+    await ensureAdmin(context.supabase, context.userId);
+    const db = await dbAdmin();
+    const reason = data.reason || "Dismissed by admin from Zoho sync queue";
+    const { error } = await db
+      .from("zoho_sync_outbox")
+      .update({
+        status: "complete",
+        last_error: reason,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", data.id);
+    if (error) throw new Error("Could not dismiss the selected sync job");
+    return { success: true };
+  });
+
+export const dismissAllQuotaFailedJobs = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    await ensureAdmin(context.supabase, context.userId);
+    const db = await dbAdmin();
+    const { data: failedJobs, error: fetchError } = await db
+      .from("zoho_sync_outbox")
+      .select("id,last_error")
+      .in("status", ["failed", "needs_review"]);
+    if (fetchError) throw new Error("Could not load jobs to dismiss");
+
+    const matched = (failedJobs ?? []).filter((j) => {
+      const err = (j.last_error ?? "").toLowerCase();
+      return (
+        err.includes("used up your available sales orders") ||
+        err.includes("create more orders") ||
+        err.includes("sales order monthly limit")
+      );
+    });
+
+    let count = 0;
+    for (const job of matched) {
+      const { error } = await db
+        .from("zoho_sync_outbox")
+        .update({
+          status: "complete",
+          last_error: "Dismissed by admin: Zoho sales order monthly limit reached",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", job.id);
+      if (!error) count++;
+    }
+    return { dismissed: count };
   });
 
 /**
@@ -804,6 +939,39 @@ function splitContactName(fullName: string) {
   return { first_name: parts[0] ?? "Grain Bazar Customer", last_name: parts.slice(1).join(" ") };
 }
 
+export const INDIAN_GSTIN_REGEX = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/;
+
+export const INDIAN_STATE_CODES: Record<string, string> = {
+  "01": "JK", "02": "HP", "03": "PB", "04": "CH", "05": "UT", "06": "HR", "07": "DL",
+  "08": "RJ", "09": "UP", "10": "BR", "11": "SK", "12": "AR", "13": "NL", "14": "MN",
+  "15": "MZ", "16": "TR", "17": "ML", "18": "AS", "19": "WB", "20": "JH", "21": "OR",
+  "22": "CT", "23": "MP", "24": "GJ", "26": "DN", "27": "MH", "28": "AP", "29": "KA",
+  "30": "GA", "31": "LD", "32": "KL", "33": "TN", "34": "PY", "35": "AN", "36": "TS",
+  "37": "AD", "38": "LA",
+};
+
+export function cleanAndValidateGstin(raw?: string | null): {
+  isValid: boolean;
+  gstin?: string;
+  placeOfContact?: string;
+  note?: string;
+} {
+  if (!raw) return { isValid: false };
+  const trimmed = raw.trim().toUpperCase();
+  if (
+    !trimmed ||
+    ["NA", "N/A", "NONE", "NIL", "NULL", "0", "PENDING", "NO", "NOT APPLICABLE", "UNREGISTERED"].includes(trimmed)
+  ) {
+    return { isValid: false, note: `Customer marked GSTIN as "${raw.trim()}"` };
+  }
+  if (INDIAN_GSTIN_REGEX.test(trimmed)) {
+    const stateDigits = trimmed.slice(0, 2);
+    const placeOfContact = INDIAN_STATE_CODES[stateDigits];
+    return { isValid: true, gstin: trimmed, placeOfContact };
+  }
+  return { isValid: false, note: `Customer provided unverified GSTIN: "${raw.trim()}"` };
+}
+
 async function upsertZohoContact(
   db: Awaited<ReturnType<typeof dbAdmin>>,
   region: Region,
@@ -839,13 +1007,19 @@ async function upsertZohoContact(
 
   const name = profile.company?.trim() || profile.full_name?.trim() || email;
   const person = { ...splitContactName(profile.full_name || name), email, phone: profile.phone ?? "", mobile: profile.phone ?? "", is_primary_contact: true };
-  const contact = {
+  const gstInfo = cleanAndValidateGstin(profile.gstin);
+  const notesParts = [`Grain Bazar ${contactType} record · ID: ${userId}`];
+  if (gstInfo.note) notesParts.push(gstInfo.note);
+
+  const contact: Record<string, unknown> = {
     contact_type: contactType,
     contact_name: name,
     company_name: profile.company || undefined,
     contact_persons: [person],
-    notes: `Grain Bazar ${contactType} record · ID: ${userId}`,
-    ...(profile.gstin ? { gst_no: profile.gstin } : {}),
+    notes: notesParts.join(" | "),
+    gst_treatment: gstInfo.isValid ? "business_gst" : "consumer",
+    ...(gstInfo.isValid && gstInfo.gstin ? { gst_no: gstInfo.gstin } : {}),
+    ...(gstInfo.placeOfContact ? { place_of_contact: gstInfo.placeOfContact } : {}),
     ...(mainAddress ? { billing_address: mainAddress, shipping_address: mainAddress } : {}),
   };
 
@@ -1148,7 +1322,11 @@ async function syncZohoOrder(db: Awaited<ReturnType<typeof dbAdmin>>, region: Re
       const shippingAddr = typeof order.shipping_address === "object" && order.shipping_address !== null
         ? order.shipping_address as Record<string, unknown>
         : {};
-      const directContact = {
+      const gstInfo = cleanAndValidateGstin(order.customer_gstin);
+      const directNotes = [`Grain Bazar direct order contact`];
+      if (gstInfo.note) directNotes.push(gstInfo.note);
+
+      const directContact: Record<string, unknown> = {
         contact_type: "customer",
         contact_name: order.customer_name?.trim() || orderEmail,
         contact_persons: [{
@@ -1158,7 +1336,10 @@ async function syncZohoOrder(db: Awaited<ReturnType<typeof dbAdmin>>, region: Re
           mobile: order.customer_phone ?? "",
           is_primary_contact: true,
         }],
-        ...(order.customer_gstin ? { gst_no: order.customer_gstin } : {}),
+        notes: directNotes.join(" | "),
+        gst_treatment: gstInfo.isValid ? "business_gst" : "consumer",
+        ...(gstInfo.isValid && gstInfo.gstin ? { gst_no: gstInfo.gstin } : {}),
+        ...(gstInfo.placeOfContact ? { place_of_contact: gstInfo.placeOfContact } : {}),
         billing_address: {
           address: str(shippingAddr["line"] || shippingAddr["address"] || "Direct Order"),
           city: str(shippingAddr["city"] || "Bengaluru"),
@@ -1220,7 +1401,13 @@ async function syncZohoOrder(db: Awaited<ReturnType<typeof dbAdmin>>, region: Re
       return;
     }
   }
-  const payload = {
+  const orderGstInfo = cleanAndValidateGstin(order.customer_gstin);
+  const notesParts = [
+    `Grain Bazar order ${order.order_no}; payment ${order.payment_status}; app total ₹${Number(order.total).toFixed(2)}. Verify tax treatment and total in Zoho before invoicing.`,
+  ];
+  if (orderGstInfo.note) notesParts.push(orderGstInfo.note);
+
+  const payload: Record<string, unknown> = {
     salesorder_number: safeNumber,
     reference_number: String(order.order_no).slice(0, 100),
     customer_id: customerId,
@@ -1231,8 +1418,10 @@ async function syncZohoOrder(db: Awaited<ReturnType<typeof dbAdmin>>, region: Re
     is_discount_before_tax: true,
     shipping_charge: Number(order.shipping) || 0,
     is_inclusive_tax: false,
-    notes: `Grain Bazar order ${order.order_no}; payment ${order.payment_status}; app total ₹${Number(order.total).toFixed(2)}. Verify tax treatment and total in Zoho before invoicing.`,
-    ...(order.customer_gstin ? { gst_no: order.customer_gstin } : {}),
+    notes: notesParts.join(" "),
+    gst_treatment: orderGstInfo.isValid ? "business_gst" : "consumer",
+    ...(orderGstInfo.isValid && orderGstInfo.gstin ? { gst_no: orderGstInfo.gstin } : {}),
+    ...(orderGstInfo.placeOfContact ? { place_of_supply: orderGstInfo.placeOfContact } : {}),
   };
   const created = await inventoryRequest<{ salesorder?: Record<string, unknown> }>(region, organizationId, token, "salesorders", "POST", payload, { ignore_auto_number_generation: "true" });
   const salesOrderId = str(created.salesorder?.["salesorder_id"]);
@@ -1580,7 +1769,10 @@ export async function processZohoSyncOutbox(limit = 20, options?: { force?: bool
         await syncZohoCatalogItem(db, region, connection.organization_id, token, job.entity_id);
     } catch (cause) {
       errorMessage = (cause instanceof Error ? cause.message : "Unexpected Zoho sync failure").slice(0, 1000);
-      status = cause instanceof NeedsReviewError ? "needs_review" : "failed";
+      const isQuotaLimit =
+        errorMessage.toLowerCase().includes("used up your available sales orders") ||
+        errorMessage.toLowerCase().includes("create more orders");
+      status = cause instanceof NeedsReviewError || isQuotaLimit ? "needs_review" : "failed";
     }
     const { error: finishError } = await db.rpc("finish_zoho_sync_job", { _id: job.id, _status: status, _error: errorMessage });
     if (finishError) throw new Error(`Zoho job ${job.id} was processed but its result could not be recorded`);

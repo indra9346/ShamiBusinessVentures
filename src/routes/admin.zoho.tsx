@@ -1,10 +1,11 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   BadgeCheck,
   Boxes,
   CalendarDays,
+  Check,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
@@ -12,6 +13,7 @@ import {
   Coins,
   ExternalLink,
   FileText,
+  Info,
   Package,
   PackageCheck,
   RefreshCw,
@@ -20,8 +22,10 @@ import {
   Settings2,
   Shapes,
   Store,
+  Trash2,
   UploadCloud,
   Users,
+  XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
 import { PanelLayout } from "@/components/panel/PanelLayout";
@@ -48,6 +52,8 @@ import {
   queueZohoInitialExport,
   retryZohoSyncJob,
   retryAllZohoSyncJobs,
+  dismissZohoSyncJob,
+  dismissAllQuotaFailedJobs,
   startZohoAuthorization,
   syncZohoCommerceReadMirror,
   syncZohoProducts,
@@ -73,7 +79,23 @@ type MirrorState = {
   last_error: string | null;
 };
 type MirrorRecord = { external_id: string; payload: Record<string, unknown>; captured_at: string };
-type SyncQueueJob = { id: string; entity_type: string; entity_id: string; status: string; attempts: number; last_error: string | null; created_at: string; updated_at: string };
+type SyncQueueJob = {
+  id: string;
+  entity_type: string;
+  entity_id: string;
+  status: string;
+  attempts: number;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
+  entity_details?: {
+    title: string;
+    subtitle?: string;
+    meta?: string;
+    link?: string;
+    gstin?: string | null;
+  } | null;
+};
 type ZohoOrderView = {
   id: string;
   name: string;
@@ -491,6 +513,29 @@ function ZohoCommerceAdmin() {
   const [writeSyncEnabled, setWriteSyncEnabled] = useState(true);
   const [writeSyncBusy, setWriteSyncBusy] = useState(false);
 
+  const quotaFailedJobs = useMemo(() => {
+    return syncQueue.jobs.filter((j) => {
+      const err = (j.last_error ?? "").toLowerCase();
+      return (
+        (j.status === "failed" || j.status === "needs_review") &&
+        (err.includes("used up your available sales orders") ||
+          err.includes("create more orders") ||
+          err.includes("quota reached") ||
+          err.includes("monthly limit"))
+      );
+    });
+  }, [syncQueue.jobs]);
+
+  const gstFailedJobs = useMemo(() => {
+    return syncQueue.jobs.filter((j) => {
+      const err = (j.last_error ?? "").toLowerCase();
+      return (
+        (j.status === "failed" || j.status === "needs_review") &&
+        err.includes("gst_no")
+      );
+    });
+  }, [syncQueue.jobs]);
+
   const reload = async () => {
     try {
       const status = await getZohoConnectionStatus();
@@ -723,6 +768,34 @@ function ZohoCommerceAdmin() {
       });
     } catch (error) {
       toast.error("Could not retry failed sync jobs", {
+        description: error instanceof Error ? error.message : "Try again",
+      });
+    } finally {
+      setQueueBusy(false);
+    }
+  };
+  const dismissJob = async (id: string, reason?: string) => {
+    setQueueBusy(true);
+    try {
+      await dismissZohoSyncJob({ data: { id, reason } });
+      await reloadQueue();
+      toast.success("Job dismissed from Zoho sync queue");
+    } catch (error) {
+      toast.error("Could not dismiss sync job", {
+        description: error instanceof Error ? error.message : "Try again",
+      });
+    } finally {
+      setQueueBusy(false);
+    }
+  };
+  const dismissQuotaJobs = async () => {
+    setQueueBusy(true);
+    try {
+      const res = await dismissAllQuotaFailedJobs();
+      await reloadQueue();
+      toast.success(`Dismissed ${res.dismissed} quota-blocked orders from sync queue`);
+    } catch (error) {
+      toast.error("Could not dismiss quota-blocked orders", {
         description: error instanceof Error ? error.message : "Try again",
       });
     } finally {
@@ -1019,14 +1092,70 @@ function ZohoCommerceAdmin() {
                   : "Refresh status to check the latest sync queue."}
             </p>
           </div>
-          {Number(syncQueue.counts["failed"] || 0) > 0 && (
+          {quotaFailedJobs.length > 0 && (
+            <div className="mb-4 flex flex-col gap-3 rounded-lg border border-amber-300 bg-amber-50 p-4 sm:flex-row sm:items-start sm:justify-between text-sm text-amber-950">
+              <div className="flex items-start gap-2.5">
+                <AlertCircle className="h-5 w-5 shrink-0 text-amber-600 mt-0.5" />
+                <div>
+                  <p className="font-semibold">Zoho Sales Order Monthly Limit Reached ({quotaFailedJobs.length} orders blocked)</p>
+                  <p className="mt-1 text-xs text-amber-900 leading-relaxed">
+                    Zoho Inventory&apos;s free plan includes a quota of 50 sales orders per month. These orders cannot be written to Zoho until your Zoho subscription is upgraded or the monthly quota resets on the 1st of next month. You can dismiss them from the queue so they no longer block your sync status.
+                  </p>
+                </div>
+              </div>
+              <div className="flex shrink-0 flex-wrap items-center gap-2">
+                <a
+                  href="https://www.zoho.com/inventory/pricing.html"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1.5 rounded-md border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-900 hover:bg-amber-100 shadow-sm"
+                >
+                  <ExternalLink className="h-3.5 w-3.5" /> Upgrade Zoho Plan
+                </a>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={queueBusy}
+                  onClick={() => void dismissQuotaJobs()}
+                  className="border-amber-400 bg-amber-100 text-amber-950 hover:bg-amber-200 text-xs font-semibold"
+                >
+                  <XCircle className="mr-1.5 h-3.5 w-3.5" /> Dismiss {quotaFailedJobs.length} blocked order{quotaFailedJobs.length > 1 ? "s" : ""}
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {gstFailedJobs.length > 0 && (
+            <div className="mb-4 flex flex-col gap-3 rounded-lg border border-blue-300 bg-blue-50 p-4 sm:flex-row sm:items-center sm:justify-between text-sm text-blue-950">
+              <div className="flex items-center gap-2.5">
+                <Info className="h-5 w-5 shrink-0 text-blue-600" />
+                <div>
+                  <p className="font-semibold">GSTIN Auto-Sanitization Enabled ({gstFailedJobs.length} records ready)</p>
+                  <p className="text-xs text-blue-800">
+                    The integration now automatically validates Indian GSTIN formats, treats unverified or retail consumer numbers safely, and preserves customer inputs in order notes so Zoho write will succeed. Click Retry all failed to push them.
+                  </p>
+                </div>
+              </div>
+              <Button
+                size="sm"
+                disabled={queueBusy || !connection}
+                onClick={() => void retryAllFailed()}
+                className="bg-blue-600 text-white hover:bg-blue-700 text-xs font-semibold shrink-0 shadow-sm"
+              >
+                <RotateCw className={`mr-1.5 h-3.5 w-3.5 ${queueBusy ? "animate-spin" : ""}`} />
+                {queueBusy ? "Requeueing…" : `Retry ${gstFailedJobs.length} GST record${gstFailedJobs.length > 1 ? "s" : ""}`}
+              </Button>
+            </div>
+          )}
+
+          {Number(syncQueue.counts["failed"] || 0) > 0 && quotaFailedJobs.length === 0 && gstFailedJobs.length === 0 && (
             <div className="mb-4 flex flex-col gap-3 rounded-lg border border-rose-300 bg-rose-50 p-4 sm:flex-row sm:items-center sm:justify-between text-sm text-rose-950">
               <div className="flex items-center gap-2.5">
                 <AlertCircle className="h-5 w-5 shrink-0 text-rose-600" />
                 <div>
-                  <p className="font-semibold">{syncQueue.counts["failed"]} records failed before write permissions were granted</p>
+                  <p className="font-semibold">{syncQueue.counts["failed"]} records failed to sync</p>
                   <p className="text-xs text-rose-800">
-                    Now that your store is connected with read & write access, click Retry all failed to requeue and push them to Zoho.
+                    Review each failed record details below, or click Retry all failed to requeue and push them to Zoho.
                   </p>
                 </div>
               </div>
@@ -1041,6 +1170,7 @@ function ZohoCommerceAdmin() {
               </Button>
             </div>
           )}
+
           {Number(syncQueue.counts["pending"] || 0) > 0 && (
             <div className="mb-4 flex flex-col gap-3 rounded-lg border border-amber-300 bg-amber-50 p-4 sm:flex-row sm:items-center sm:justify-between text-sm text-amber-950">
               <div className="flex items-center gap-2.5">
@@ -1071,27 +1201,115 @@ function ZohoCommerceAdmin() {
               </div>
             ))}
           </div>
+
+          <details className="mb-4 rounded-md border border-border bg-slate-50/70 p-3 text-xs leading-relaxed text-slate">
+            <summary className="cursor-pointer font-semibold text-navy flex items-center gap-1.5">
+              <Info className="h-4 w-4 text-gold shrink-0" />
+              How do records enter this Zoho Sync Queue?
+            </summary>
+            <div className="mt-2.5 space-y-1.5 pl-5 border-l-2 border-gold/40 text-charcoal">
+              <p><strong>Approved Catalogue:</strong> Added automatically when products are approved or updated in Grain Bazar.</p>
+              <p><strong>Customers & Vendors:</strong> Added automatically when accounts are registered or address/business details change.</p>
+              <p><strong>Orders:</strong> Added automatically when customers place orders or when order quantities/status are updated.</p>
+              <p><strong>Historical Sync:</strong> Clicking <em>&ldquo;Queue existing data&rdquo;</em> scans all past local records and queues any not yet synced to Zoho.</p>
+            </div>
+          </details>
+
           {syncQueue.jobs.length ? (
-            <div className="divide-y divide-border rounded-md border border-border">
-              {syncQueue.jobs.map((job) => (
-                <div key={job.id} className="flex flex-col justify-between gap-3 p-3 sm:flex-row sm:items-center">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-navy">
-                      <span className="capitalize">{job.entity_type}</span>
-                      <code className="text-xs text-slate">{job.entity_id}</code>
-                      <StatusBadge status={job.status.replace("_", " ")} />
-                      <span className="text-xs text-slate">attempt {job.attempts}</span>
+            <div className="divide-y divide-border rounded-md border border-border bg-white shadow-xs">
+              {syncQueue.jobs.map((job) => {
+                const isQuotaError = (job.last_error ?? "").toLowerCase().includes("used up your available sales orders") ||
+                  (job.last_error ?? "").toLowerCase().includes("create more orders");
+                const isGstError = (job.last_error ?? "").toLowerCase().includes("gst_no");
+
+                return (
+                  <div key={job.id} className="flex flex-col justify-between gap-3 p-4 sm:flex-row sm:items-center hover:bg-slate-50/50 transition-colors">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-navy">
+                        <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs font-semibold capitalize text-slate-800">
+                          {job.entity_type}
+                        </span>
+                        {job.entity_details?.title ? (
+                          <span className="font-semibold text-navy">{job.entity_details.title}</span>
+                        ) : (
+                          <code className="text-xs text-slate">{job.entity_id}</code>
+                        )}
+                        <StatusBadge status={job.status.replace("_", " ")} />
+                        <span className="text-xs text-slate">attempt {job.attempts}</span>
+                      </div>
+
+                      {job.entity_details?.subtitle && (
+                        <p className="mt-1 text-xs text-slate flex flex-wrap items-center gap-2">
+                          <span>{job.entity_details.subtitle}</span>
+                          {job.entity_details.meta && (
+                            <span className="rounded bg-slate-100 px-1.5 py-0.2 text-[11px] font-mono text-slate-700">
+                              {job.entity_details.meta}
+                            </span>
+                          )}
+                          <code className="text-[10px] text-slate/70">ID: {job.entity_id}</code>
+                        </p>
+                      )}
+
+                      {job.last_error && (
+                        <div className="mt-2 rounded-md p-2.5 text-xs leading-relaxed">
+                          {isQuotaError ? (
+                            <div className="rounded border border-amber-200 bg-amber-50 p-2 text-amber-900">
+                              <p className="font-semibold flex items-center gap-1.5">
+                                <AlertCircle className="h-3.5 w-3.5 text-amber-600 shrink-0" />
+                                Zoho Monthly Limit Reached:
+                              </p>
+                              <p className="mt-0.5">
+                                Your Zoho Inventory organization reached its free limit of 50 sales orders/month. Upgrade your Zoho plan or click &quot;Dismiss&quot; to skip this order.
+                              </p>
+                            </div>
+                          ) : isGstError ? (
+                            <div className="rounded border border-blue-200 bg-blue-50 p-2 text-blue-900">
+                              <p className="font-semibold flex items-center gap-1.5">
+                                <Info className="h-3.5 w-3.5 text-blue-600 shrink-0" />
+                                GSTIN Format Fixed:
+                              </p>
+                              <p className="mt-0.5">
+                                Zoho rejected the raw GSTIN ({job.last_error}). The integration now validates Indian GSTINs and falls back to consumer status for retail orders. Click Retry to push now.
+                              </p>
+                            </div>
+                          ) : (
+                            <p className="text-amber-900">{job.last_error}</p>
+                          )}
+                        </div>
+                      )}
+                      <p className="mt-1 text-[11px] text-slate/80">Updated {new Date(job.updated_at).toLocaleString()}</p>
                     </div>
-                    {job.last_error && <p className="mt-1 text-sm text-amber-900">{job.last_error}</p>}
-                    <p className="mt-1 text-xs text-slate">Updated {new Date(job.updated_at).toLocaleString()}</p>
+
+                    <div className="flex shrink-0 flex-wrap items-center gap-2">
+                      {job.entity_details?.link && (
+                        <Link
+                          to={job.entity_details.link}
+                          className="inline-flex h-8 items-center gap-1 rounded-md border border-border bg-white px-2.5 text-xs font-semibold text-navy hover:bg-slate-50 shadow-xs"
+                        >
+                          <ExternalLink className="h-3 w-3" /> View
+                        </Link>
+                      )}
+                      {["failed", "needs_review"].includes(job.status) && (
+                        <>
+                          <Button size="sm" variant="outline" disabled={queueBusy} onClick={() => void retryJob(job.id)} className="h-8 text-xs font-semibold">
+                            <RotateCw className="mr-1 h-3 w-3" /> Retry
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={queueBusy}
+                            onClick={() => void dismissJob(job.id, isQuotaError ? "Dismissed: Zoho monthly sales order quota reached" : "Dismissed by admin")}
+                            className="h-8 text-xs font-semibold border-slate-300 text-slate-700 hover:bg-slate-100"
+                            title="Dismiss this record so it no longer appears as failed"
+                          >
+                            <XCircle className="mr-1 h-3 w-3" /> Dismiss
+                          </Button>
+                        </>
+                      )}
+                    </div>
                   </div>
-                  {["failed", "needs_review"].includes(job.status) && (
-                    <Button size="sm" variant="outline" disabled={queueBusy} onClick={() => void retryJob(job.id)}>
-                      Retry after review
-                    </Button>
-                  )}
-                </div>
-              ))}
+                );
+              })}
             </div>
           ) : (
             <p className="rounded-md border border-dashed border-border p-4 text-sm text-slate">No customer, vendor, catalogue, or order sync jobs are recorded yet. Queue details appear after the production migration is applied.</p>
