@@ -3,6 +3,7 @@ import { ArrowRight } from "lucide-react";
 import { isStorefrontProduct, type StoreCategory } from "@/lib/data";
 import { categorySlug } from "@/lib/category-tree";
 import { useApp } from "@/lib/store";
+import { CategoryImage } from "@/components/site/CategoryImage";
 
 /** Enabled storefront categories in admin-defined display order. */
 export function useVisibleCategories(): StoreCategory[] {
@@ -65,16 +66,16 @@ function CardBody({ c, countLabel }: { c: StoreCategory; countLabel: string }) {
   return (
     <>
       <div className="relative overflow-hidden bg-ivory">
-        <img
+        <CategoryImage
           src={c.image || `/categories/${c.name.toLowerCase()}.jpg`}
           alt={`${c.name} category`}
-          loading="lazy"
+          fit={c.imageFit}
           width={800}
           height={800}
           onError={(e) => {
             (e.currentTarget as HTMLImageElement).src = `/categories/${c.name.toLowerCase()}.jpg`;
           }}
-          className="aspect-[4/3] w-full object-cover transition-transform duration-500 group-hover:scale-105 sm:aspect-square"
+          className="aspect-[4/3] transition-transform duration-500 group-hover:scale-105 sm:aspect-square"
         />
         <span className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-midnight/70 to-transparent" />
         <span className="absolute bottom-2 left-3 rounded-full bg-gold px-2.5 py-1 text-[10px] font-bold text-midnight sm:bottom-3 sm:left-4 sm:text-[11px]">

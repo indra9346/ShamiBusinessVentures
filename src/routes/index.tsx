@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { CategoryImage } from "@/components/site/CategoryImage";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { ArrowRight } from "lucide-react";
 import { SiteLayout } from "@/components/site/SiteLayout";
@@ -93,12 +94,12 @@ function Index() {
                 className="group flex min-w-0 flex-col items-center rounded-lg border border-border bg-card px-2 py-4 text-center shadow-card transition-all hover:-translate-y-1 hover:border-gold hover:shadow-elevated sm:px-5 sm:py-7"
               >
                 <span className="block aspect-square w-full max-w-28 overflow-hidden rounded-full bg-ivory ring-4 ring-ivory sm:max-w-40">
-                  <img
+                  <CategoryImage
                     src={category.image || `/categories/${slug}.jpg`}
                     alt={t(category.name)}
+                    fit={category.imageFit}
                     width={640}
                     height={640}
-                    loading="lazy"
                     onError={(e) => {
                       const cat = slug.toLowerCase();
                       (e.currentTarget as HTMLImageElement).src =
@@ -108,7 +109,7 @@ function Index() {
                           ? "/categories/oil.jpg"
                           : "/categories/rice.jpg";
                     }}
-                    className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
+                    className="transition-transform duration-500 group-hover:scale-105"
                   />
                 </span>
                 <span className="mt-3 text-base font-bold text-navy sm:text-xl">{category.name}</span>

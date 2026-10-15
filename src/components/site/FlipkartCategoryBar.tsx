@@ -14,6 +14,7 @@ import { useVisibleCategories } from "@/components/site/CategoryCards";
 import { categorySlug } from "@/lib/category-tree";
 import type { StoreCategory } from "@/lib/data";
 import { cn } from "@/lib/utils";
+import { CategoryImage } from "@/components/site/CategoryImage";
 
 /** URL slug used by /categories/$slug for a store category ("Cooking Oil" lives at /categories/oil). */
 function storeCategoryRouteSlug(name: string) {
@@ -105,7 +106,7 @@ export function FlipkartCategoryBar({
           {categories.map((c) => {
             const on = isActive(c);
             const body = (
-              <BadgeBody label={c.name} image={c.image} Icon={iconFor(c.name)} active={on} />
+              <BadgeBody label={c.name} image={c.image} fit={c.imageFit} Icon={iconFor(c.name)} active={on} />
             );
             return (
               <li key={c.id} className="shrink-0">
@@ -140,11 +141,13 @@ export function FlipkartCategoryBar({
 function BadgeBody({
   label,
   image,
+  fit,
   Icon,
   active,
 }: {
   label: string;
   image?: string;
+  fit?: StoreCategory["imageFit"];
   Icon: LucideIcon;
   active: boolean;
 }) {
@@ -162,14 +165,13 @@ function BadgeBody({
         )}
       >
         {showImage ? (
-          <img
+          <CategoryImage
             src={image}
-            alt=""
-            loading="lazy"
+            fit={fit}
             width={80}
             height={80}
             onError={() => setBroken(true)}
-            className="h-full w-full object-cover brightness-105 contrast-105 transition-transform duration-300 group-hover:scale-110"
+            className="transition-transform duration-300 group-hover:scale-110"
           />
         ) : (
           <Icon

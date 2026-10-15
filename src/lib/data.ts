@@ -129,7 +129,26 @@ export type StoreCategory = {
   grades: string[];
   enabled: boolean;
   order: number;
+  /** How the image sits in the round category badges and cards (set in Admin → Categories). */
+  imageFit?: CategoryImageFit;
 };
+
+/** Zoom (1 = fill) and focus point (0–100 % from left / top) for a category image. */
+export type CategoryImageFit = { zoom: number; x: number; y: number };
+
+export const defaultCategoryImageFit: CategoryImageFit = { zoom: 1, x: 50, y: 50 };
+
+export function normalizeCategoryImageFit(fit: Partial<CategoryImageFit> | undefined | null): CategoryImageFit {
+  const clamp = (n: unknown, lo: number, hi: number, fallback: number) => {
+    const v = Number(n);
+    return Number.isFinite(v) ? Math.round(Math.min(hi, Math.max(lo, v)) * 100) / 100 : fallback;
+  };
+  return {
+    zoom: clamp(fit?.zoom, 1, 3, 1),
+    x: clamp(fit?.x, 0, 100, 50),
+    y: clamp(fit?.y, 0, 100, 50),
+  };
+}
 
 export const storeCategorySeed: StoreCategory[] = [
   { id: "C1", name: "Rice", tagline: "Raw, steam & premium grades", image: premiumRiceCategoryImg, grades: ["Raw Rice", "Steam Rice", "Premium Rice"], enabled: true, order: 1 },
