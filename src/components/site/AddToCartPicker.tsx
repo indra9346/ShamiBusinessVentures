@@ -1,6 +1,13 @@
 import { useEffect, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { Minus, Plus, ShoppingCart } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { showCartNotification } from "@/components/site/CartFloatingNotification";
 import { useApp } from "@/lib/store";
@@ -13,7 +20,10 @@ export function AddToCartPicker({
 }: {
   product: Product;
   initialQty?: number;
-  /** Smaller trigger + tighter quantity panel for dense product grids. */
+  /**
+   * Dense product-grid mode: smaller trigger, and the quantity keypad opens in a
+   * centred pop-up instead of expanding inside the card (keeps every card the same height).
+   */
   compact?: boolean;
 }) {
   const { addToCart, cart } = useApp();
@@ -22,7 +32,10 @@ export function AddToCartPicker({
   const [typedQty, setTypedQty] = useState(String(Math.max(1, initialQty)));
   const [keypadEntryStarted, setKeypadEntryStarted] = useState(false);
   const inCart = cart.find((line) => line.id === product.id)?.qty ?? 0;
-  const availableStock = Math.max(0, Math.floor((Number(product.stock) || 0) - (Number(product.reserved) || 0)));
+  const availableStock = Math.max(
+    0,
+    Math.floor((Number(product.stock) || 0) - (Number(product.reserved) || 0)),
+  );
   const purchaseLimit = getAvailablePurchaseQuantity(product);
   const configuredMax = getMaxPurchaseQuantity(product);
   const bagWeight = Number.parseFloat(product.weight.replace(/[^\d.]/g, "")) || 0;
@@ -31,9 +44,11 @@ export function AddToCartPicker({
 
   useEffect(() => {
     setQty((current) => Math.min(Math.max(1, current), purchaseLimit || 1));
-    setTypedQty((current) => /^\d+$/.test(current)
-      ? String(Math.min(Math.max(1, Number(current) || 1), purchaseLimit || 1))
-      : current);
+    setTypedQty((current) =>
+      /^\d+$/.test(current)
+        ? String(Math.min(Math.max(1, Number(current) || 1), purchaseLimit || 1))
+        : current,
+    );
     setKeypadEntryStarted(false);
   }, [purchaseLimit]);
 
@@ -64,7 +79,8 @@ export function AddToCartPicker({
       setTypedQty("1");
     } else {
       const clamped = Math.min(num, purchaseLimit || 1);
-      if (clamped < num) toast.error(`Maximum purchase quantity is ${purchaseLimit} for this product`);
+      if (clamped < num)
+        toast.error(`Maximum purchase quantity is ${purchaseLimit} for this product`);
       setQty(clamped);
       setTypedQty(String(clamped));
     }
@@ -84,48 +100,52 @@ export function AddToCartPicker({
     setQty(nextQty);
   };
 
-  if (!open) {
-    return (
-      <button
-        type="button"
-        disabled={availableStock === 0}
-        onClick={() => {
-          const initial = Math.min(Math.max(1, initialQty), purchaseLimit || 1);
-          setQty(initial);
-          setTypedQty(String(initial));
-          setKeypadEntryStarted(false);
-          setOpen(true);
-        }}
-        className={
-          compact
-            ? "flex h-9 w-full items-center justify-center gap-1.5 rounded-md bg-navy px-2 text-[11px] sm:text-xs font-semibold text-white transition-colors hover:bg-midnight active:scale-[0.98] disabled:opacity-40"
-            : "flex w-full items-center justify-center gap-1.5 rounded-md bg-navy px-3 py-2.5 text-xs font-semibold text-white transition-colors hover:bg-midnight disabled:opacity-40"
-        }
-      >
-        <ShoppingCart className="h-3.5 w-3.5 shrink-0" /> {compact ? "Add" : "Add to Cart"}
-      </button>
-    );
-  }
-
-  return (
-    <div
-      className={compact ? "w-full rounded-lg border border-border bg-card p-2 shadow-card" : "w-full rounded-xl border border-border bg-card p-3 shadow-card"}
-      aria-label={`Choose quantity for ${product.name}`}
-      data-picker-open=""
+  const trigger = (
+    <button
+      type="button"
+      disabled={availableStock === 0}
+      onClick={() => {
+        const initial = Math.min(Math.max(1, initialQty), purchaseLimit || 1);
+        setQty(initial);
+        setTypedQty(String(initial));
+        setKeypadEntryStarted(false);
+        setOpen(true);
+      }}
+      className={
+        compact
+          ? "flex h-9 w-full items-center justify-center gap-1.5 rounded-md bg-navy px-2 text-[11px] sm:text-xs font-semibold text-white transition-colors hover:bg-midnight active:scale-[0.98] disabled:opacity-40"
+          : "flex w-full items-center justify-center gap-1.5 rounded-md bg-navy px-3 py-2.5 text-xs font-semibold text-white transition-colors hover:bg-midnight disabled:opacity-40"
+      }
     >
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-sm font-bold text-success">
-          {inCart} {inCart === 1 ? "bag" : "bags"} in cart
-        </p>
-        <button
-          type="button"
-          onClick={() => setOpen(false)}
-          className="text-xs font-semibold text-danger hover:underline"
-        >
-          Close
-        </button>
-      </div>
-      <div className={compact ? "mt-2 grid grid-cols-5 gap-1" : "mt-3 grid grid-cols-5 gap-1.5"}>
+      <ShoppingCart className="h-3.5 w-3.5 shrink-0" />{" "}
+      {compact ? (inCart > 0 ? `Add · ${inCart} in cart` : "Add") : "Add to Cart"}
+    </button>
+  );
+
+  if (!open) return trigger;
+
+  const panel = (
+    <div
+      className={
+        compact ? "w-full" : "w-full rounded-xl border border-border bg-card p-3 shadow-card"
+      }
+      aria-label={`Choose quantity for ${product.name}`}
+    >
+      {!compact && (
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-sm font-bold text-success">
+            {inCart} {inCart === 1 ? "bag" : "bags"} in cart
+          </p>
+          <button
+            type="button"
+            onClick={() => setOpen(false)}
+            className="text-xs font-semibold text-danger hover:underline"
+          >
+            Close
+          </button>
+        </div>
+      )}
+      <div className={compact ? "grid grid-cols-5 gap-1.5" : "mt-3 grid grid-cols-5 gap-1.5"}>
         {[1, 2, 3, 4, 5, 6, 7, 8, 9, 0].map((value) => (
           <button
             key={value}
@@ -184,12 +204,16 @@ export function AddToCartPicker({
           <Plus className="h-4 w-4" />
         </button>
       </div>
-      <p className="mt-1 text-[11px] text-slate">Tap keypad digits in sequence or type a whole number. Choose 1–{purchaseLimit} units (configured maximum {configuredMax}; {availableStock} in stock).</p>
+      <p className="mt-1 text-[11px] text-slate">
+        Tap keypad digits in sequence or type a whole number. Choose 1–{purchaseLimit} units
+        (configured maximum {configuredMax}; {availableStock} in stock).
+      </p>
       {Number(typedQty) > purchaseLimit && (
         <p role="alert" className="mt-1 text-xs font-medium text-danger">
           {purchaseLimit < availableStock
             ? `The maximum purchase for this product is ${purchaseLimit} units.`
-            : `Only ${availableStock} units are available in stock.`} Reduce the quantity to add this item to your cart.
+            : `Only ${availableStock} units are available in stock.`}{" "}
+          Reduce the quantity to add this item to your cart.
         </p>
       )}
       <p className="mt-2 text-xs text-slate">
@@ -197,7 +221,12 @@ export function AddToCartPicker({
       </p>
       <button
         type="button"
-        disabled={purchaseLimit === 0 || !/^\d+$/.test(typedQty) || Number(typedQty) < 1 || Number(typedQty) > purchaseLimit}
+        disabled={
+          purchaseLimit === 0 ||
+          !/^\d+$/.test(typedQty) ||
+          Number(typedQty) < 1 ||
+          Number(typedQty) > purchaseLimit
+        }
         onClick={() => {
           addToCart(product.id, qty);
           showCartNotification(
@@ -221,5 +250,30 @@ export function AddToCartPicker({
         </Link>
       )}
     </div>
+  );
+
+  if (!compact) return panel;
+
+  return (
+    <>
+      {trigger}
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-w-[calc(100vw-2rem)] gap-3 rounded-xl p-4 sm:max-w-xs sm:p-5">
+          <DialogHeader className="space-y-0.5 text-left">
+            <DialogTitle className="line-clamp-2 text-sm font-bold leading-snug text-navy">
+              {product.name}
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              <span className="font-semibold text-success">
+                {inCart} {inCart === 1 ? "bag" : "bags"} in cart
+              </span>
+              {" · "}
+              {product.weight} per bag
+            </DialogDescription>
+          </DialogHeader>
+          {panel}
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

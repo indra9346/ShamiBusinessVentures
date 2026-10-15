@@ -10,23 +10,14 @@ const LOW_STOCK_FALLBACK = 20;
 
 function fallbackImage(category: string) {
   const cat = category.toLowerCase();
-  return cat.includes("sugar")
-    ? "/products/sugar.jpg"
-    : cat.includes("oil")
-      ? "/products/oil.jpg"
-      : "/products/rice.jpg";
+  return cat.includes("sugar") ? "/products/sugar.jpg" : cat.includes("oil") ? "/products/oil.jpg" : "/products/rice.jpg";
 }
 
 function stockState(product: Product, availableStock: number) {
-  if (availableStock <= 0)
-    return { label: "Out of Stock", dot: "bg-red-500", text: "text-red-600" } as const;
+  if (availableStock <= 0) return { label: "Out of Stock", dot: "bg-red-500", text: "text-red-600" } as const;
   const threshold = Math.max(1, Number(product.minimumStock) || LOW_STOCK_FALLBACK);
   if (availableStock <= threshold)
-    return {
-      label: `Low Stock · ${availableStock} left`,
-      dot: "bg-amber-500",
-      text: "text-amber-700",
-    } as const;
+    return { label: `Low Stock · ${availableStock} left`, dot: "bg-amber-500", text: "text-amber-700" } as const;
   return { label: "In Stock", dot: "bg-emerald-500", text: "text-emerald-700" } as const;
 }
 
@@ -49,13 +40,9 @@ function PriceBlock({ product, size = "sm" }: { product: Product; size?: "sm" | 
     <div className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
       <span className={cn(priceClass, "font-bold text-navy")}>{inr(product.price)}</span>
       {product.mrp > product.price && (
-        <span className="text-[11px] sm:text-xs text-slate-500 line-through">
-          {inr(product.mrp)}
-        </span>
+        <span className="text-[11px] sm:text-xs text-slate-500 line-through">{inr(product.mrp)}</span>
       )}
-      {off > 0 && (
-        <span className="text-[11px] sm:text-xs font-bold text-emerald-600">{off}% off</span>
-      )}
+      {off > 0 && <span className="text-[11px] sm:text-xs font-bold text-emerald-600">{off}% off</span>}
       {off > 0 && (
         <span className="basis-full text-[10px] sm:text-[11px] font-medium text-emerald-700">
           Save {inr(product.mrp - product.price)}
@@ -73,9 +60,7 @@ function RatingBadge({ product }: { product: Product }) {
         {product.rating}
         <Star className="h-2.5 w-2.5 fill-white" />
       </span>
-      <span className="text-[10px] sm:text-[11px] font-medium text-slate-500">
-        ({product.reviews.toLocaleString("en-IN")})
-      </span>
+      <span className="text-[10px] sm:text-[11px] font-medium text-slate-500">({product.reviews.toLocaleString("en-IN")})</span>
     </div>
   );
 }
@@ -90,10 +75,7 @@ export function ProductCard({
   const { addToCart, toggleWishlist, wishlist } = useApp();
   const off = getDisplayDiscountPercent(product);
   const wished = wishlist.includes(product.id);
-  const availableStock = Math.max(
-    0,
-    Math.floor((Number(product.stock) || 0) - (Number(product.reserved) || 0)),
-  );
+  const availableStock = Math.max(0, Math.floor((Number(product.stock) || 0) - (Number(product.reserved) || 0)));
   const stock = stockState(product, availableStock);
 
   const onWishlist = () => {
@@ -130,12 +112,10 @@ export function ProductCard({
   );
 
   const newBadge = product.tags.includes("new") && (
-    <span
-      className={cn(
-        "absolute left-2 rounded-sm bg-amber-400 px-1.5 py-0.5 text-[10px] font-bold text-amber-950",
-        off > 0 ? "top-7" : "top-2",
-      )}
-    >
+    <span className={cn(
+      "absolute left-2 rounded-sm bg-amber-400 px-1.5 py-0.5 text-[10px] font-bold text-amber-950",
+      off > 0 ? "top-7" : "top-2",
+    )}>
       NEW
     </span>
   );
@@ -183,12 +163,7 @@ export function ProductCard({
   );
 
   const stockIndicator = (
-    <span
-      className={cn(
-        "inline-flex items-center gap-1 text-[10px] sm:text-[11px] font-semibold",
-        stock.text,
-      )}
-    >
+    <span className={cn("inline-flex items-center gap-1 text-[10px] sm:text-[11px] font-semibold", stock.text)}>
       <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", stock.dot)} aria-hidden />
       {stock.label}
     </span>
@@ -198,11 +173,7 @@ export function ProductCard({
     return (
       <article className="group relative flex flex-row overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xs transition-all duration-200 ease-out hover:-translate-y-0.5 hover:border-gold/60 hover:shadow-md">
         <div className="relative w-28 shrink-0 overflow-hidden bg-slate-50/80 sm:w-44">
-          <Link
-            to="/product/$id"
-            params={{ id: product.id }}
-            className="block h-full min-h-32 w-full"
-          >
+          <Link to="/product/$id" params={{ id: product.id }} className="block h-full min-h-32 w-full">
             {image}
           </Link>
           {discountBadge}
@@ -212,9 +183,7 @@ export function ProductCard({
 
         <div className="flex min-w-0 flex-1 flex-col justify-between gap-2 p-3 sm:p-4">
           <div className="min-w-0 space-y-1">
-            <p className="truncate text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-              {product.vendor}
-            </p>
+            <p className="truncate text-[10px] font-semibold uppercase tracking-wider text-slate-500">{product.vendor}</p>
             <Link
               to="/product/$id"
               params={{ id: product.id }}
@@ -230,8 +199,8 @@ export function ProductCard({
             {stockIndicator}
           </div>
 
-          <div className="flex flex-wrap items-start gap-2 sm:flex-nowrap has-[[data-picker-open]]:flex-col has-[[data-picker-open]]:sm:flex-col">
-            <div className="w-full sm:w-40 has-[[data-picker-open]]:sm:w-full has-[[data-picker-open]]:sm:max-w-sm">
+          <div className="flex flex-wrap items-start gap-2 sm:flex-nowrap">
+            <div className="w-full sm:w-40">
               <AddToCartPicker product={product} compact />
             </div>
             {buyNow("flex-1 sm:flex-none sm:w-28")}
@@ -253,9 +222,7 @@ export function ProductCard({
       </div>
 
       <div className="flex flex-1 flex-col gap-1 p-2.5 sm:p-3">
-        <p className="truncate text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-          {product.vendor}
-        </p>
+        <p className="truncate text-[10px] font-semibold uppercase tracking-wider text-slate-500">{product.vendor}</p>
         <Link
           to="/product/$id"
           params={{ id: product.id }}
@@ -272,7 +239,7 @@ export function ProductCard({
         </div>
         {stockIndicator}
 
-        <div className="mt-auto flex flex-col gap-1.5 pt-2 min-[400px]:flex-row has-[[data-picker-open]]:flex-col">
+        <div className="mt-auto flex flex-col gap-1.5 pt-2 min-[400px]:flex-row">
           <div className="min-w-0 flex-1">
             <AddToCartPicker product={product} compact />
           </div>
