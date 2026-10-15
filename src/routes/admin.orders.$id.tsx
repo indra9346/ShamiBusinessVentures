@@ -346,7 +346,7 @@ function AdminOrderDetail() {
       )}
 
       {/* Zoho Integration Status Ribbon */}
-      <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-white p-3.5 shadow-xs">
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card p-3.5 shadow-xs">
         <div className="flex items-center gap-3">
           <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">
             <Building2 className="h-5 w-5" />

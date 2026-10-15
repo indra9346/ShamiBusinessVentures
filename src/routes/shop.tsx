@@ -514,7 +514,7 @@ function Shop() {
                 </span>
               ))}
               {vends.map((v) => (
-                <span key={v} className="inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-1 text-xs font-semibold text-navy border border-border">
+                <span key={v} className="inline-flex items-center gap-1.5 rounded-full bg-card px-3 py-1 text-xs font-semibold text-navy border border-border">
                   Vendor: {v}
                   <button
                     type="button"
@@ -527,7 +527,7 @@ function Shop() {
                 </span>
               ))}
               {brands.map((brand) => (
-                <span key={brand} className="inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-1 text-xs font-semibold text-navy border border-border">
+                <span key={brand} className="inline-flex items-center gap-1.5 rounded-full bg-card px-3 py-1 text-xs font-semibold text-navy border border-border">
                   Brand: {brand}
                   <button
                     type="button"
@@ -540,7 +540,7 @@ function Shop() {
                 </span>
               ))}
               {maxPrice < highestPrice && (
-                <span className="inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-1 text-xs font-semibold text-navy border border-border">
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-card px-3 py-1 text-xs font-semibold text-navy border border-border">
                   Price: ≤ {inr(maxPrice)}
                   <button
                     type="button"
@@ -553,7 +553,7 @@ function Shop() {
                 </span>
               )}
               {minRating > 0 && (
-                <span className="inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-1 text-xs font-semibold text-navy border border-border">
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-card px-3 py-1 text-xs font-semibold text-navy border border-border">
                   Rating: ≥ {minRating}★
                   <button
                     type="button"

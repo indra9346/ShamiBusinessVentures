@@ -53,15 +53,15 @@ export const Route = createFileRoute("/admin/reports")({
 });
 
 const PIE_COLORS = [
-  "#0B2341",
+  "#1F4D3A",
   "#C99A2E",
-  "#1B3B60",
+  "#2F6B4F",
   "#E0B84A",
-  "#2F5480",
+  "#4E8A68",
   "#8A6A1C",
-  "#4A6E99",
+  "#7FA98C",
   "#D8C48C",
-  "#132C4C",
+  "#163A2B",
   "#B08A3E",
 ];
 
@@ -342,9 +342,9 @@ function AdminReports() {
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="#E6E3DC" />
-                <XAxis dataKey="month" stroke="#6B7A8F" fontSize={12} />
+                <XAxis dataKey="month" stroke="#857A6B" fontSize={12} />
                 <YAxis
-                  stroke="#6B7A8F"
+                  stroke="#857A6B"
                   fontSize={12}
                   tickFormatter={(v: number) => `${Math.round(v / 1000)}k`}
                 />
@@ -360,7 +360,7 @@ function AdminReports() {
                         ? "orders"
                         : "customers"
                   }
-                  stroke="#0B2341"
+                  stroke="#1F4D3A"
                   strokeWidth={2}
                   fill="url(#repGold)"
                 />
@@ -406,11 +406,11 @@ function AdminReports() {
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={reportSeries}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#E6E3DC" />
-                <XAxis dataKey="month" stroke="#6B7A8F" fontSize={12} />
-                <YAxis stroke="#6B7A8F" fontSize={12} />
+                <XAxis dataKey="month" stroke="#857A6B" fontSize={12} />
+                <YAxis stroke="#857A6B" fontSize={12} />
                 <Tooltip />
                 <Legend wrapperStyle={{ fontSize: 11 }} />
-                <Bar dataKey="orders" fill="#0B2341" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="orders" fill="#1F4D3A" radius={[4, 4, 0, 0]} />
                 <Bar dataKey="customers" fill="#C99A2E" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>

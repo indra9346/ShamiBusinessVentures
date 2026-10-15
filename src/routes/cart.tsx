@@ -329,7 +329,7 @@ function CartQuantityControl({
           onChange={handleInputChange}
           onBlur={handleBlur}
           onKeyDown={handleKeyDown}
-          className="h-8 w-12 border-x border-border bg-transparent text-center text-sm font-semibold text-navy focus:bg-white focus:outline-none focus:ring-1 focus:ring-gold"
+          className="h-8 w-12 border-x border-border bg-transparent text-center text-sm font-semibold text-navy focus:bg-card focus:outline-none focus:ring-1 focus:ring-gold"
           aria-label={`Quantity for ${product.name}`}
         />
         <button

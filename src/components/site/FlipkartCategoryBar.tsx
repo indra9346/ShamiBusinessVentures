@@ -74,7 +74,7 @@ export function FlipkartCategoryBar({
     <nav
       aria-label="Shop by category"
       className={cn(
-        "border-b border-stone-200 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.06)]",
+        "border-b border-stone-200 bg-card shadow-[0_1px_2px_rgba(60,45,20,0.08)]",
         className,
       )}
     >

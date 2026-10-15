@@ -242,19 +242,22 @@ const replacements: Array<[string, string]> = [
   ["Refined Sugar", "ಸಂಸ್ಕರಿಸಿದ ಸಕ್ಕರೆ"], ["Sugar Retail Pack", "ಸಕ್ಕರೆ ಚಿಲ್ಲರೆ ಪ್ಯಾಕ್"], ["Sugar Cubes", "ಸಕ್ಕರೆ ಘನಗಳು"],
   ["Steam Rice", "ಬೇಯಿಸಿದ ಅಕ್ಕಿ"], ["Raw Rice", "ಕಚ್ಚಾ ಅಕ್ಕಿ"], ["Basmati", "ಬಾಸ್ಮತಿ"], ["Idli Rice", "ಇಡ್ಲಿ ಅಕ್ಕಿ"],
   ["Premium Rice", "ಪ್ರೀಮಿಯಂ ಅಕ್ಕಿ"], ["Grade A", "A ದರ್ಜೆ"], ["Grade B", "B ದರ್ಜೆ"], ["Grade S1", "S1 ದರ್ಜೆ"],
-  ["Retail Pack", "ಚಿಲ್ಲರೆ ಪ್ಯಾಕ್"], ["Bulk", "ದೊಡ್ಡ ಪ್ಯಾಕ್"], ["Bag", "ಚೀಲ"], ["Tin", "ಟಿನ್"], ["Can", "ಕ್ಯಾನ್"], ["Pouch", "ಪೌಚ್"], ["Box", "ಪೆಟ್ಟಿಗೆ"],
+  ["Retail Pack", "ಚಿಲ್ಲರೆ ಪ್ಯಾಕ್"], ["Bulk", "ದೊಡ್ಡ ಪ್ಯಾಕ್"], ["Bags", "ಚೀಲಗಳು"], ["Bag", "ಚೀಲ"], ["Tin", "ಟಿನ್"], ["Can", "ಕ್ಯಾನ್"], ["Pouch", "ಪೌಚ್"], ["Box", "ಪೆಟ್ಟಿಗೆ"],
   ["Pack Size", "ಪ್ಯಾಕ್ ಗಾತ್ರ"], ["Shelf Life", "ಬಳಕೆಯ ಅವಧಿ"], ["Storage", "ಸಂಗ್ರಹಣೆ"], ["Country of Origin", "ಮೂಲ ದೇಶ"],
   ["12 months from packing", "ಪ್ಯಾಕ್ ಮಾಡಿದ ದಿನದಿಂದ 12 ತಿಂಗಳು"], ["Cool, dry place away from sunlight", "ಸೂರ್ಯನ ಬೆಳಕಿನಿಂದ ದೂರ ತಂಪಾದ ಒಣ ಸ್ಥಳ"], ["India", "ಭಾರತ"],
   ["Total Orders", "ಒಟ್ಟು ಆರ್ಡರ್‌ಗಳು"], ["Total Products", "ಒಟ್ಟು ಉತ್ಪನ್ನಗಳು"], ["Total Customers", "ಒಟ್ಟು ಗ್ರಾಹಕರು"], ["Total Vendors", "ಒಟ್ಟು ಮಾರಾಟಗಾರರು"],
   ["Low Stock", "ಕಡಿಮೆ ದಾಸ್ತಾನು"], ["Order ID", "ಆರ್ಡರ್ ID"], ["Product Name", "ಉತ್ಪನ್ನದ ಹೆಸರು"], ["Customer Name", "ಗ್ರಾಹಕರ ಹೆಸರು"],
   ["Add New", "ಹೊಸದನ್ನು ಸೇರಿಸಿ"], ["Save Changes", "ಬದಲಾವಣೆಗಳನ್ನು ಉಳಿಸಿ"], ["View Details", "ವಿವರಗಳನ್ನು ನೋಡಿ"], ["Download", "ಡೌನ್‌ಲೋಡ್"],
   ["per page", "ಪ್ರತಿ ಪುಟಕ್ಕೆ"], ["Showing", "ತೋರಿಸಲಾಗುತ್ತಿದೆ"], ["results", "ಫಲಿತಾಂಶಗಳು"], ["of", "ರಲ್ಲಿ"],
+  ["Products", "ಉತ್ಪನ್ನಗಳು"], ["Product", "ಉತ್ಪನ್ನ"],
 ];
 
 function replaceEnglish(value: string) {
   let output = value;
   for (const [from, to] of replacements) {
-    output = output.replace(new RegExp(from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), to);
+    // Whole words only, so "Bag" doesn't rewrite "Bags" and "of" doesn't rewrite "Profile".
+    const pattern = `(?<![A-Za-z])${from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![A-Za-z])`;
+    output = output.replace(new RegExp(pattern, "gi"), to);
   }
   return output;
 }
@@ -266,6 +269,17 @@ export function translateText(value: string, language: Language) {
   const core = value.trim();
   const translated = exact[core] ?? replaceEnglish(core);
   return `${leading}${translated}${trailing}`;
+}
+
+/**
+ * The English source for a node we may already have translated. The cached source is only
+ * trusted while the live value is still that source or our translation of it; anything else
+ * means React re-rendered new content (e.g. a cart count), which becomes the new source.
+ * Without this, a stale cache rewrites fresh values back to old ones.
+ */
+function currentSource(cached: string | undefined, live: string) {
+  if (cached === undefined) return live;
+  return live === cached || live === translateText(cached, "kn") ? cached : live;
 }
 
 type LanguageContextValue = {
@@ -291,8 +305,7 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
       const text = node as Text;
       const parent = text.parentElement;
       if (parent && !parent.closest("[data-no-translate]") && !["SCRIPT", "STYLE"].includes(parent.tagName)) {
-        const knownSource = textSources.current.get(text);
-        const source = knownSource ?? text.nodeValue ?? "";
+        const source = currentSource(textSources.current.get(text), text.nodeValue ?? "");
         textSources.current.set(text, source);
         const translated = translateText(source, nextLanguage);
         if (text.nodeValue !== translated) text.nodeValue = translated;
@@ -311,8 +324,8 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
       for (const attribute of translatedAttributes) {
         const current = element.getAttribute(attribute);
         if (current === null) continue;
-        if (!sources.has(attribute)) sources.set(attribute, current);
-        const source = sources.get(attribute) ?? current;
+        const source = currentSource(sources.get(attribute), current);
+        sources.set(attribute, source);
         element.setAttribute(attribute, translateText(source, nextLanguage));
       }
     }

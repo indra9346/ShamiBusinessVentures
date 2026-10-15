@@ -380,7 +380,7 @@ export function PanelLayout({
         {roleCheckError ? (
           <div
             role="alert"
-            className="max-w-md rounded-lg border border-amber-200 bg-white p-6 text-center shadow-card"
+            className="max-w-md rounded-lg border border-amber-200 bg-card p-6 text-center shadow-card"
           >
             <AlertTriangle className="mx-auto h-8 w-8 text-amber-600" />
             <p className="mt-3 font-semibold text-navy">
@@ -416,7 +416,7 @@ export function PanelLayout({
     <div className={cn("flex h-full w-64 flex-col", sidebarBg)}>
       <div className="flex items-center justify-between border-b border-white/10 px-5 py-4">
         <Link to="/" className="flex items-center">
-          <LogoMark className="h-9 w-9 rounded-lg bg-white p-1.5 object-contain shadow-sm" />
+          <LogoMark className="h-9 w-9 rounded-lg bg-card p-1.5 object-contain shadow-sm" />
           <span className="ml-2 text-sm font-extrabold tracking-wide text-white">GRAIN BAZAR</span>
         </Link>
         <button
@@ -528,7 +528,7 @@ export function PanelLayout({
                             src={result.image}
                             alt=""
                             loading="lazy"
-                            className="h-10 w-10 shrink-0 rounded-md border border-border bg-white object-cover"
+                            className="h-10 w-10 shrink-0 rounded-md border border-border bg-card object-cover"
                             onError={(event) => {
                               const image = event.currentTarget;
                               const fallback = result.fallbackImage ?? "/products/rice.jpg";

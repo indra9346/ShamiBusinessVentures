@@ -227,7 +227,7 @@ export function SearchAutosuggest({
                       isSelected && "bg-gold/25 ring-1 ring-gold",
                     )}
                   >
-                    <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-md border border-gold/40 bg-white">
+                    <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-md border border-gold/40 bg-card">
                       <img
                         src={product.image || `/products/${product.category.toLowerCase()}.jpg`}
                         alt={product.name}
@@ -283,7 +283,7 @@ export function SearchAutosuggest({
                       isSelected && "bg-ivory ring-1 ring-gold/40",
                     )}
                   >
-                    <div className="relative h-11 w-11 shrink-0 overflow-hidden rounded-md border border-border bg-white">
+                    <div className="relative h-11 w-11 shrink-0 overflow-hidden rounded-md border border-border bg-card">
                       <img
                         src={product.image || `/products/${product.category.toLowerCase()}.jpg`}
                         alt={product.name}

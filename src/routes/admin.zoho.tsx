@@ -370,9 +370,9 @@ function OrderLineItems({ payload }: { payload: Record<string, unknown> }) {
   return (
     <section>
       <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate">Items ({rows.length})</h4>
-      <div className="overflow-x-auto rounded-md border border-border bg-white">
+      <div className="overflow-x-auto rounded-md border border-border bg-card">
         <table className="w-full min-w-[560px] text-left text-sm">
-          <thead className="bg-slate-50 text-[11px] uppercase tracking-wide text-slate">
+          <thead className="bg-panel text-[11px] uppercase tracking-wide text-slate">
             <tr><th className="px-3 py-2">Item</th><th className="px-3 py-2">SKU</th><th className="px-3 py-2 text-right">Quantity</th><th className="px-3 py-2 text-right">Rate</th><th className="px-3 py-2 text-right">Amount</th></tr>
           </thead>
           <tbody className="divide-y divide-border">
@@ -950,7 +950,7 @@ function ZohoCommerceAdmin() {
     >
       <div className="space-y-5">
         <Panel className="overflow-hidden">
-          <div className="-m-4 bg-gradient-to-r from-navy to-[#17375f] p-5 text-white sm:-m-5 sm:p-6">
+          <div className="-m-4 bg-gradient-to-r from-navy to-midnight p-5 text-white sm:-m-5 sm:p-6">
             <div className="flex flex-col gap-4">
               <div className="min-w-0">
                 <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-white/70">
@@ -980,7 +980,7 @@ function ZohoCommerceAdmin() {
                 <Button
                   disabled={busy || refreshBusy || mirrorBusy}
                   onClick={() => void connect()}
-                  className="bg-white text-navy hover:bg-white/90"
+                  className="bg-card text-navy hover:bg-white/90"
                 >
                   {connection ? "Reauthorize Zoho" : "Connect Zoho"}
                 </Button>
@@ -1108,7 +1108,7 @@ function ZohoCommerceAdmin() {
                   href="https://www.zoho.com/inventory/pricing.html"
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex items-center gap-1.5 rounded-md border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-900 hover:bg-amber-100 shadow-sm"
+                  className="inline-flex items-center gap-1.5 rounded-md border border-amber-300 bg-card px-3 py-1.5 text-xs font-semibold text-amber-900 hover:bg-amber-100 shadow-sm"
                 >
                   <ExternalLink className="h-3.5 w-3.5" /> Upgrade Zoho Plan
                 </a>
@@ -1126,12 +1126,12 @@ function ZohoCommerceAdmin() {
           )}
 
           {gstFailedJobs.length > 0 && (
-            <div className="mb-4 flex flex-col gap-3 rounded-lg border border-blue-300 bg-blue-50 p-4 sm:flex-row sm:items-center sm:justify-between text-sm text-blue-950">
+            <div className="mb-4 flex flex-col gap-3 rounded-lg border border-emerald-300 bg-emerald-50 p-4 sm:flex-row sm:items-center sm:justify-between text-sm text-emerald-950">
               <div className="flex items-center gap-2.5">
-                <Info className="h-5 w-5 shrink-0 text-blue-600" />
+                <Info className="h-5 w-5 shrink-0 text-emerald-700" />
                 <div>
                   <p className="font-semibold">GSTIN Auto-Sanitization Enabled ({gstFailedJobs.length} records ready)</p>
-                  <p className="text-xs text-blue-800">
+                  <p className="text-xs text-emerald-900">
                     The integration now automatically validates Indian GSTIN formats, treats unverified or retail consumer numbers safely, and preserves customer inputs in order notes so Zoho write will succeed. Click Retry all failed to push them.
                   </p>
                 </div>
@@ -1140,7 +1140,7 @@ function ZohoCommerceAdmin() {
                 size="sm"
                 disabled={queueBusy || !connection}
                 onClick={() => void retryAllFailed()}
-                className="bg-blue-600 text-white hover:bg-blue-700 text-xs font-semibold shrink-0 shadow-sm"
+                className="bg-emerald-700 text-white hover:bg-emerald-800 text-xs font-semibold shrink-0 shadow-sm"
               >
                 <RotateCw className={`mr-1.5 h-3.5 w-3.5 ${queueBusy ? "animate-spin" : ""}`} />
                 {queueBusy ? "Requeueing…" : `Retry ${gstFailedJobs.length} GST record${gstFailedJobs.length > 1 ? "s" : ""}`}
@@ -1195,14 +1195,14 @@ function ZohoCommerceAdmin() {
           )}
           <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
             {["pending", "failed", "needs_review", "complete"].map((status) => (
-              <div key={status} className="rounded-md border border-border bg-white px-3 py-2">
+              <div key={status} className="rounded-md border border-border bg-card px-3 py-2">
                 <p className="text-xs uppercase tracking-wide text-slate">{status.replace("_", " ")}</p>
                 <p className="mt-1 text-xl font-semibold text-navy">{syncQueue.counts[status] ?? 0}</p>
               </div>
             ))}
           </div>
 
-          <details className="mb-4 rounded-md border border-border bg-slate-50/70 p-3 text-xs leading-relaxed text-slate">
+          <details className="mb-4 rounded-md border border-border bg-panel/70 p-3 text-xs leading-relaxed text-slate">
             <summary className="cursor-pointer font-semibold text-navy flex items-center gap-1.5">
               <Info className="h-4 w-4 text-gold shrink-0" />
               How do records enter this Zoho Sync Queue?
@@ -1216,17 +1216,17 @@ function ZohoCommerceAdmin() {
           </details>
 
           {syncQueue.jobs.length ? (
-            <div className="divide-y divide-border rounded-md border border-border bg-white shadow-xs">
+            <div className="divide-y divide-border rounded-md border border-border bg-card shadow-xs">
               {syncQueue.jobs.map((job) => {
                 const isQuotaError = (job.last_error ?? "").toLowerCase().includes("used up your available sales orders") ||
                   (job.last_error ?? "").toLowerCase().includes("create more orders");
                 const isGstError = (job.last_error ?? "").toLowerCase().includes("gst_no");
 
                 return (
-                  <div key={job.id} className="flex flex-col justify-between gap-3 p-4 sm:flex-row sm:items-center hover:bg-slate-50/50 transition-colors">
+                  <div key={job.id} className="flex flex-col justify-between gap-3 p-4 sm:flex-row sm:items-center hover:bg-panel/50 transition-colors">
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-navy">
-                        <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs font-semibold capitalize text-slate-800">
+                        <span className="rounded-md bg-stone-100 px-2 py-0.5 text-xs font-semibold capitalize text-stone-800">
                           {job.entity_type}
                         </span>
                         {job.entity_details?.title ? (
@@ -1242,7 +1242,7 @@ function ZohoCommerceAdmin() {
                         <p className="mt-1 text-xs text-slate flex flex-wrap items-center gap-2">
                           <span>{job.entity_details.subtitle}</span>
                           {job.entity_details.meta && (
-                            <span className="rounded bg-slate-100 px-1.5 py-0.2 text-[11px] font-mono text-slate-700">
+                            <span className="rounded bg-stone-100 px-1.5 py-0.2 text-[11px] font-mono text-stone-700">
                               {job.entity_details.meta}
                             </span>
                           )}
@@ -1263,9 +1263,9 @@ function ZohoCommerceAdmin() {
                               </p>
                             </div>
                           ) : isGstError ? (
-                            <div className="rounded border border-blue-200 bg-blue-50 p-2 text-blue-900">
+                            <div className="rounded border border-emerald-200 bg-emerald-50 p-2 text-emerald-900">
                               <p className="font-semibold flex items-center gap-1.5">
-                                <Info className="h-3.5 w-3.5 text-blue-600 shrink-0" />
+                                <Info className="h-3.5 w-3.5 text-emerald-700 shrink-0" />
                                 GSTIN Format Fixed:
                               </p>
                               <p className="mt-0.5">
@@ -1284,7 +1284,7 @@ function ZohoCommerceAdmin() {
                       {job.entity_details?.link && (
                         <Link
                           to={job.entity_details.link}
-                          className="inline-flex h-8 items-center gap-1 rounded-md border border-border bg-white px-2.5 text-xs font-semibold text-navy hover:bg-slate-50 shadow-xs"
+                          className="inline-flex h-8 items-center gap-1 rounded-md border border-border bg-card px-2.5 text-xs font-semibold text-navy hover:bg-panel shadow-xs"
                         >
                           <ExternalLink className="h-3 w-3" /> View
                         </Link>
@@ -1299,7 +1299,7 @@ function ZohoCommerceAdmin() {
                             variant="outline"
                             disabled={queueBusy}
                             onClick={() => void dismissJob(job.id, isQuotaError ? "Dismissed: Zoho monthly sales order quota reached" : "Dismissed by admin")}
-                            className="h-8 text-xs font-semibold border-slate-300 text-slate-700 hover:bg-slate-100"
+                            className="h-8 text-xs font-semibold border-stone-300 text-stone-700 hover:bg-stone-100"
                             title="Dismiss this record so it no longer appears as failed"
                           >
                             <XCircle className="mr-1 h-3 w-3" /> Dismiss
@@ -1363,7 +1363,7 @@ function ZohoCommerceAdmin() {
         </section>
 
         <Panel title="Synced Zoho data">
-          <p className="mb-4 rounded-md border border-blue-100 bg-blue-50/70 px-3 py-2.5 text-sm leading-relaxed text-slate">
+          <p className="mb-4 rounded-md border border-emerald-100 bg-emerald-50/70 px-3 py-2.5 text-sm leading-relaxed text-slate">
             This page shows a read-only snapshot imported from Zoho. It does not edit Zoho records.
             Use <strong>Open this order in Zoho</strong> for the official editing and navigation options;
             use <strong>Sync account data</strong> to import the latest Zoho values. <strong>Refresh
@@ -1386,7 +1386,7 @@ function ZohoCommerceAdmin() {
                   <Icon className="h-4 w-4" />
                   {label}
                   <span
-                    className={`rounded-full px-2 py-0.5 text-xs ${active ? "bg-white/15 text-white" : "bg-slate-100 text-slate"}`}
+                    className={`rounded-full px-2 py-0.5 text-xs ${active ? "bg-white/15 text-white" : "bg-stone-100 text-slate"}`}
                   >
                     {key === "customers_from_orders"
                       ? customersFromOrders.length
@@ -1399,7 +1399,7 @@ function ZohoCommerceAdmin() {
 
           {selectedState ? (
             <>
-              <div className="mb-4 flex flex-col gap-3 rounded-lg bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="mb-4 flex flex-col gap-3 rounded-lg bg-panel p-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <h3 className="font-semibold text-navy">
                     {selectedResource === "customers_from_orders" ? "Customers from Zoho orders" : `${RESOURCE_LABELS[selectedResource]} from Zoho`}
@@ -1420,7 +1420,7 @@ function ZohoCommerceAdmin() {
                     <select
                       value={orderStatusFilter}
                       onChange={(event) => { setOrderStatusFilter(event.target.value); setSalesOrdersPage(1); }}
-                      className="h-10 rounded-md border border-border bg-white px-3 text-sm text-navy shadow-xs"
+                      className="h-10 rounded-md border border-border bg-card px-3 text-sm text-navy shadow-xs"
                       aria-label="Filter sales orders by status"
                     >
                       <option value="all">All statuses</option>
@@ -1445,7 +1445,7 @@ function ZohoCommerceAdmin() {
                 </div>
               </div>
               {selectedResource === "customers_from_orders" && (
-                <p className="mb-4 rounded-md border border-blue-100 bg-blue-50/70 px-3 py-2 text-sm text-slate">
+                <p className="mb-4 rounded-md border border-emerald-100 bg-emerald-50/70 px-3 py-2 text-sm text-slate">
                   This is a customer summary derived from synced Zoho sales orders. It is not Zoho’s standalone Contacts directory; customers without a synced order are not included, and only fields present on their orders are shown.
                 </p>
               )}
@@ -1453,15 +1453,15 @@ function ZohoCommerceAdmin() {
                 <>
                   <div className="mb-4 flex flex-wrap items-center gap-2">
                     <button type="button" onClick={() => { setActiveOrderViewId("all"); setSalesOrdersPage(1); }}
-                      className={`rounded-full border px-3 py-1.5 text-xs font-medium ${activeOrderViewId === "all" ? "border-navy bg-navy text-white" : "border-border bg-white text-slate hover:border-gold"}`}>
+                      className={`rounded-full border px-3 py-1.5 text-xs font-medium ${activeOrderViewId === "all" ? "border-navy bg-navy text-white" : "border-border bg-card text-slate hover:border-gold"}`}>
                       All Sales Orders
                     </button>
                     <button type="button" onClick={() => { setOutstandingOnly((value) => !value); setSalesOrdersPage(1); }}
-                      className={`rounded-full border px-3 py-1.5 text-xs font-medium ${outstandingOnly ? "border-amber-500 bg-amber-500 text-white" : "border-border bg-white text-slate hover:border-gold"}`}>
+                      className={`rounded-full border px-3 py-1.5 text-xs font-medium ${outstandingOnly ? "border-amber-500 bg-amber-500 text-white" : "border-border bg-card text-slate hover:border-gold"}`}>
                       Outstanding
                     </button>
                     {orderViews.map((view) => (
-                      <div key={view.id} className={`inline-flex items-center rounded-full border text-xs ${activeOrderViewId === view.id ? "border-navy bg-navy text-white" : "border-border bg-white text-slate"}`}>
+                      <div key={view.id} className={`inline-flex items-center rounded-full border text-xs ${activeOrderViewId === view.id ? "border-navy bg-navy text-white" : "border-border bg-card text-slate"}`}>
                         <button type="button" onClick={() => { setActiveOrderViewId(view.id); setSalesOrdersPage(1); }} className="px-3 py-1.5 font-medium">{view.name}</button>
                         <button type="button" aria-label={`Delete ${view.name} view`} title="Delete view" onClick={() => {
                           const next = orderViews.filter((item) => item.id !== view.id);
@@ -1472,7 +1472,7 @@ function ZohoCommerceAdmin() {
                       </div>
                     ))}
                     {(orderStatusFilter !== "all" || outstandingOnly || search) && (
-                      <button type="button" onClick={() => { setOrderStatusFilter("all"); setOutstandingOnly(false); setSearch(""); setSalesOrdersPage(1); }} className="px-2 py-1 text-xs font-medium text-blue-700 hover:underline">Clear filters</button>
+                      <button type="button" onClick={() => { setOrderStatusFilter("all"); setOutstandingOnly(false); setSearch(""); setSalesOrdersPage(1); }} className="px-2 py-1 text-xs font-medium text-emerald-800 hover:underline">Clear filters</button>
                     )}
                   </div>
                   {newViewOpen && (
@@ -1483,10 +1483,10 @@ function ZohoCommerceAdmin() {
                       </div>
                       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                         <Input value={draftViewName} onChange={(event) => setDraftViewName(event.target.value)} placeholder="View name" aria-label="View name" />
-                        <select value={draftViewField} onChange={(event) => { const field = event.target.value as ZohoOrderView["field"]; setDraftViewField(field); setDraftViewComparator(field === "balance" ? "gt" : "is"); }} className="h-10 rounded-md border border-border bg-white px-3 text-sm" aria-label="Criterion field">
+                        <select value={draftViewField} onChange={(event) => { const field = event.target.value as ZohoOrderView["field"]; setDraftViewField(field); setDraftViewComparator(field === "balance" ? "gt" : "is"); }} className="h-10 rounded-md border border-border bg-card px-3 text-sm" aria-label="Criterion field">
                           <option value="status">Order status</option><option value="payment">Payment status</option><option value="customer">Customer / business</option><option value="order">Sales order number</option><option value="balance">Outstanding balance</option>
                         </select>
-                        <select value={draftViewComparator} onChange={(event) => setDraftViewComparator(event.target.value as ZohoOrderView["comparator"])} className="h-10 rounded-md border border-border bg-white px-3 text-sm" aria-label="Criterion comparator">
+                        <select value={draftViewComparator} onChange={(event) => setDraftViewComparator(event.target.value as ZohoOrderView["comparator"])} className="h-10 rounded-md border border-border bg-card px-3 text-sm" aria-label="Criterion comparator">
                           {draftViewField === "balance" ? <option value="gt">greater than</option> : <><option value="is">is</option><option value="is_not">is not</option><option value="contains">contains</option></>}
                         </select>
                         <Input value={draftViewValue} onChange={(event) => setDraftViewValue(event.target.value)} placeholder={draftViewField === "balance" ? "Amount, e.g. 0" : "Value, e.g. Pending"} aria-label="Criterion value" />
@@ -1509,10 +1509,10 @@ function ZohoCommerceAdmin() {
                 selectedResource === "customers_from_orders" ? (
                   <div className="overflow-x-auto rounded-lg border border-border">
                     <table className="w-full min-w-[900px] text-left text-sm">
-                      <thead className="bg-slate-50 text-[11px] font-semibold uppercase tracking-wide text-slate"><tr><th className="px-4 py-3">Customer / business</th><th className="px-4 py-3">Email</th><th className="px-4 py-3">Phone</th><th className="px-4 py-3">Location</th><th className="px-4 py-3">Orders</th><th className="px-4 py-3">Sales order value</th><th className="px-4 py-3">Last order</th></tr></thead>
-                      <tbody className="divide-y divide-border bg-white">
+                      <thead className="bg-panel text-[11px] font-semibold uppercase tracking-wide text-slate"><tr><th className="px-4 py-3">Customer / business</th><th className="px-4 py-3">Email</th><th className="px-4 py-3">Phone</th><th className="px-4 py-3">Location</th><th className="px-4 py-3">Orders</th><th className="px-4 py-3">Sales order value</th><th className="px-4 py-3">Last order</th></tr></thead>
+                      <tbody className="divide-y divide-border bg-card">
                         {visibleCustomers.map((customer) => (
-                          <tr key={customer.key} className="hover:bg-slate-50">
+                          <tr key={customer.key} className="hover:bg-panel">
                             <td className="px-4 py-3"><div className="font-medium text-navy">{customer.name}</div>{customer.company !== "—" && customer.company !== customer.name && <div className="mt-0.5 text-xs text-slate">{customer.company}</div>}</td>
                             <td className="px-4 py-3 text-slate">{customer.email}</td><td className="px-4 py-3 text-slate">{customer.phone}</td><td className="max-w-xs truncate px-4 py-3 text-slate" title={customer.address}>{customer.address || "—"}</td><td className="px-4 py-3">{customer.orders}</td><td className="px-4 py-3 font-medium text-navy">{customer.currency === "MIXED" ? "Mixed currencies" : money(customer.spend, customer.currency)}</td><td className="px-4 py-3 text-slate">{prettyDate(customer.lastOrder)}</td>
                           </tr>
@@ -1522,7 +1522,7 @@ function ZohoCommerceAdmin() {
                   </div>
                 ) : selectedResource === "sales_orders" ? (
                   <div className="overflow-hidden rounded-lg border border-border">
-                    <div className="hidden grid-cols-[1.05fr_1.3fr_.8fr_.8fr_.8fr_.9fr] gap-3 bg-slate-50 px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-slate lg:grid">
+                    <div className="hidden grid-cols-[1.05fr_1.3fr_.8fr_.8fr_.8fr_.9fr] gap-3 bg-panel px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-slate lg:grid">
                       <span>Order</span>
                       <span>Customer / business</span>
                       <span>Date</span>
@@ -1541,9 +1541,9 @@ function ZohoCommerceAdmin() {
                         return (
                           <details
                             key={record.external_id}
-                            className="group bg-white open:bg-slate-50/60"
+                            className="group bg-card open:bg-panel/60"
                           >
-                            <summary className="grid cursor-pointer list-none grid-cols-1 items-center gap-2 px-4 py-3.5 transition hover:bg-slate-50 lg:grid-cols-[1.05fr_1.3fr_.8fr_.8fr_.8fr_.9fr] lg:gap-3">
+                            <summary className="grid cursor-pointer list-none grid-cols-1 items-center gap-2 px-4 py-3.5 transition hover:bg-panel lg:grid-cols-[1.05fr_1.3fr_.8fr_.8fr_.8fr_.9fr] lg:gap-3">
                               <span className="flex items-center gap-2 font-semibold text-navy">
                                 <ChevronRight className="h-4 w-4 shrink-0 text-slate transition-transform group-open:rotate-90" />
                                 <span className="grid h-8 w-8 shrink-0 place-items-center rounded-md bg-navy/5 text-navy">
@@ -1573,23 +1573,23 @@ function ZohoCommerceAdmin() {
                               </span>
                             </summary>
                             <div className="space-y-3 border-t border-border px-4 py-4">
-                              <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-blue-100 bg-blue-50/70 px-3 py-2.5">
+                              <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-emerald-100 bg-emerald-50/70 px-3 py-2.5">
                                 <p className="text-sm text-slate">This is a read-only copy. Use the matching Zoho record to edit status, payment, shipping, or other Zoho fields.</p>
                                 <a
                                   href={`${zohoCommerceBase(region)}/app/${encodeURIComponent(organizationId)}#/salesorders/${encodeURIComponent(record.external_id)}`}
                                   target="_blank"
                                   rel="noreferrer"
-                                  className="inline-flex h-9 items-center gap-2 rounded-md border border-border bg-white px-3 text-sm font-medium text-navy shadow-sm hover:border-gold"
+                                  className="inline-flex h-9 items-center gap-2 rounded-md border border-border bg-card px-3 text-sm font-medium text-navy shadow-sm hover:border-gold"
                                 >
                                   <ExternalLink className="h-4 w-4" /> Open this order in Zoho
                                 </a>
                               </div>
                               <OrderFields payload={p} externalId={record.external_id} />
-                              <details className="rounded-md border border-border bg-white">
+                              <details className="rounded-md border border-border bg-card">
                                 <summary className="cursor-pointer px-3 py-2.5 text-sm font-medium text-slate">
                                   View complete Zoho response
                                 </summary>
-                                <pre className="max-h-80 overflow-auto border-t border-border bg-slate-50 p-3 text-xs leading-relaxed text-charcoal">
+                                <pre className="max-h-80 overflow-auto border-t border-border bg-panel p-3 text-xs leading-relaxed text-charcoal">
                                   {JSON.stringify(p, null, 2)}
                                 </pre>
                               </details>
@@ -1604,7 +1604,7 @@ function ZohoCommerceAdmin() {
                     {visibleRecords.map((record) => (
                       <article
                         key={record.external_id}
-                        className="rounded-lg border border-border bg-white p-4"
+                        className="rounded-lg border border-border bg-card p-4"
                       >
                         <div className="mb-3 flex items-start justify-between gap-3">
                           <div>
@@ -1623,11 +1623,11 @@ function ZohoCommerceAdmin() {
                           </span>
                         </div>
                         <ResourceFields resource={selectedResource} payload={record.payload} />
-                        <details className="mt-3 rounded-md border border-border bg-white">
+                        <details className="mt-3 rounded-md border border-border bg-card">
                           <summary className="cursor-pointer px-3 py-2.5 text-sm font-medium text-slate">
                             View complete Zoho response
                           </summary>
-                          <pre className="max-h-72 overflow-auto border-t border-border bg-slate-50 p-3 text-xs leading-relaxed text-charcoal">
+                          <pre className="max-h-72 overflow-auto border-t border-border bg-panel p-3 text-xs leading-relaxed text-charcoal">
                             {JSON.stringify(record.payload, null, 2)}
                           </pre>
                         </details>
@@ -1703,7 +1703,7 @@ function ZohoCommerceAdmin() {
               </div>
             </div>
             <div className="flex gap-3">
-              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-blue-50 text-blue-700">
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-emerald-50 text-emerald-800">
                 <PackageCheck className="h-4 w-4" />
               </span>
               <div>
@@ -1737,7 +1737,7 @@ function ZohoCommerceAdmin() {
                 href="https://www.zoho.com/commerce/api/"
                 target="_blank"
                 rel="noreferrer"
-                className="ml-1 inline-flex items-center gap-1 font-medium text-blue-700 hover:underline"
+                className="ml-1 inline-flex items-center gap-1 font-medium text-emerald-800 hover:underline"
               >
                 Zoho Commerce API documentation <ExternalLink className="h-3 w-3" />
               </a>

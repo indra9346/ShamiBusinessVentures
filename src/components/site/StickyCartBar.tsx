@@ -29,11 +29,27 @@ export function StickyCartBar() {
     setPulseKey((k) => k + 1);
   }, [subtotal]);
 
-  const totalKg = cartItems.reduce((sum, line) => {
-    const match = String(line.product.weight ?? "").match(/(\d+(?:\.\d+)?)\s*kg/i);
-    return sum + (match ? Number(match[1]) * line.qty : 0);
-  }, 0);
+  const totals = { kg: 0, L: 0 };
+  for (const line of cartItems) {
+    const match = String(line.product.weight ?? "").match(/(\d+(?:\.\d+)?)\s*(kg|g|l|ml|litres?)\b/i);
+    if (!match) continue;
+    const amount = Number(match[1]) * line.qty;
+    const unit = match[2]!.toLowerCase();
+    if (unit === "kg") totals.kg += amount;
+    else if (unit === "g") totals.kg += amount / 1000;
+    else if (unit === "ml") totals.L += amount / 1000;
+    else totals.L += amount;
+  }
+  const measure = [
+    totals.kg > 0 && `${totals.kg.toLocaleString("en-IN", { maximumFractionDigits: 2 })} kg`,
+    totals.L > 0 && `${totals.L.toLocaleString("en-IN", { maximumFractionDigits: 2 })} L`,
+  ].filter(Boolean);
   const distinct = cartItems.length;
+  const summary = [
+    `${distinct} ${distinct === 1 ? "product" : "products"}`,
+    `${cartCount} ${cartCount === 1 ? "bag" : "bags"}`,
+    ...measure,
+  ].join(" · ");
 
   return (
     <>
@@ -71,8 +87,7 @@ export function StickyCartBar() {
               </span>
               <span className="min-w-0 leading-tight">
                 <span className="block truncate text-[11px] font-semibold uppercase tracking-wider text-slate">
-                  {distinct} {distinct === 1 ? "product" : "products"} · {cartCount} {cartCount === 1 ? "bag" : "bags"}
-                  {totalKg > 0 && ` · ${totalKg.toLocaleString("en-IN")} kg`}
+                  {summary}
                 </span>
                 <span
                   key={`t-${pulseKey}`}

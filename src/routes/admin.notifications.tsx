@@ -321,7 +321,7 @@ function AdminNotifications() {
               ].map((template) => (
                 <div
                   key={template.name}
-                  className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-lg border border-border p-3.5 bg-white shadow-2xs"
+                  className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-lg border border-border p-3.5 bg-card shadow-2xs"
                 >
                   <div>
                     <div className="flex items-center gap-2">

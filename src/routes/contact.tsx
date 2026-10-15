@@ -270,7 +270,7 @@ function Contact() {
                 </div>
                 <div className="sm:col-span-2">
                   <dt className="text-xs text-slate">Requirement Note</dt>
-                  <dd className="mt-1 rounded-md bg-white p-3 font-mono text-xs text-charcoal border border-border">
+                  <dd className="mt-1 rounded-md bg-card p-3 font-mono text-xs text-charcoal border border-border">
                     {submitted.message}
                   </dd>
                 </div>
