@@ -70,33 +70,35 @@
    * (The variable names are kept so every existing `text-navy`, `bg-midnight`
    * etc. utility keeps working across all pages.)
    */
-  --navy: oklch(0.34 0.07 158);
-  --midnight: oklch(0.26 0.06 158);
-  --gold: oklch(0.688 0.121 82);
-  --gold-light: oklch(0.79 0.12 86);
-  --ivory: oklch(0.945 0.022 78);
-  --charcoal: oklch(0.31 0.022 60);
-  --slate: oklch(0.54 0.022 68);
-  --panel: oklch(0.95 0.018 78);
+  --navy: oklch(0.43 0.055 162);
+  --midnight: oklch(0.37 0.05 162);
+  --gold: oklch(0.75 0.095 78);
+  --gold-light: oklch(0.82 0.08 82);
+  /* Deeper bronze for gold text on light surfaces; bright gold stays for fills and dark areas */
+  --gold-ink: oklch(0.55 0.085 68);
+  --ivory: oklch(0.955 0.011 88);
+  --charcoal: oklch(0.35 0.016 70);
+  --slate: oklch(0.53 0.014 75);
+  --panel: oklch(0.958 0.009 88);
   --success: oklch(0.497 0.093 165);
-  --warning: oklch(0.688 0.121 82);
-  --danger: oklch(0.512 0.192 27);
+  --warning: oklch(0.75 0.095 78);
+  --danger: oklch(0.53 0.14 30);
 
   --gradient-hero: linear-gradient(135deg, var(--midnight) 0%, var(--navy) 60%, var(--midnight) 100%);
   --gradient-gold: linear-gradient(120deg, var(--gold) 0%, var(--gold-light) 100%);
   --shadow-card: 0 1px 3px oklch(0.25 0.04 60 / 6%), 0 10px 26px -12px oklch(0.25 0.04 60 / 12%);
   --shadow-elevated: 0 18px 44px -14px oklch(0.25 0.04 60 / 22%);
-  --shadow-gold: 0 0 0 1px var(--gold), 0 18px 40px -20px oklch(0.688 0.121 82 / 55%);
+  --shadow-gold: 0 0 0 1px var(--gold), 0 18px 40px -20px oklch(0.75 0.095 78 / 40%);
 
-  /* Ancient document / warm antique parchment theme */
-  --background: oklch(0.955 0.019 76);
+  /* Soft linen surfaces: low chroma so large areas stay calm on the eyes */
+  --background: oklch(0.968 0.008 88);
   --foreground: var(--charcoal);
-  --card: oklch(0.985 0.009 80);
+  --card: oklch(0.988 0.005 90);
   --card-foreground: var(--charcoal);
-  --popover: oklch(0.985 0.009 80);
+  --popover: oklch(0.988 0.005 90);
   --popover-foreground: var(--charcoal);
   --primary: var(--navy);
-  --primary-foreground: oklch(0.985 0.009 80);
+  --primary-foreground: oklch(0.988 0.005 90);
   --secondary: var(--ivory);
   --secondary-foreground: var(--navy);
   --muted: var(--panel);
@@ -105,12 +107,12 @@
   --accent-foreground: var(--midnight);
   --destructive: var(--danger);
   --destructive-foreground: oklch(1 0 0);
-  --border: oklch(0.885 0.022 76);
-  --input: oklch(0.885 0.022 76);
+  --border: oklch(0.9 0.012 88);
+  --input: oklch(0.9 0.012 88);
   --ring: var(--gold);
   --chart-1: var(--navy);
   --chart-2: var(--gold);
-  --chart-3: oklch(0.5 0.07 158);
+  --chart-3: oklch(0.6 0.06 162);
   --chart-4: var(--gold-light);
   --chart-5: var(--slate);
   --sidebar: var(--navy);
@@ -187,13 +189,13 @@
   }
 
   ::selection {
-    background: oklch(0.86 0.1 86);
+    background: oklch(0.88 0.06 84);
     color: var(--midnight);
   }
 
   body {
     background-color: var(--color-background);
-    background-image: radial-gradient(circle at 50% 0%, oklch(0.968 0.015 80) 0%, oklch(0.953 0.02 77) 100%);
+    background-image: radial-gradient(circle at 50% 0%, oklch(0.976 0.006 90) 0%, oklch(0.964 0.009 88) 100%);
     background-attachment: fixed;
     color: var(--color-foreground);
     font-family: var(--font-sans);
@@ -461,4 +463,23 @@
   .animate-cart-ring {
     animation: none;
   }
+}
+
+/*
+ * Gold text: the bright brand gold is too faint for small text on the light linen
+ * surfaces, so text-gold reads as bronze there and switches back to bright gold on
+ * the dark green header, sidebar, footer and buttons. Unlayered, so it wins over the
+ * generated utilities.
+ */
+.text-gold,
+.hover\:text-gold:hover,
+.group:hover .group-hover\:text-gold {
+  color: var(--gold-ink);
+}
+
+:is(.bg-navy, .bg-midnight, .bg-sidebar, .bg-primary, .bg-hero-gradient, .bg-navy\/85, .bg-navy\/90, .bg-navy\/95, [class*="from-navy"], [class*="from-midnight"]):is(.text-gold, .hover\:text-gold:hover),
+:is(.bg-navy, .bg-midnight, .bg-sidebar, .bg-primary, .bg-hero-gradient, .bg-navy\/85, .bg-navy\/90, .bg-navy\/95, [class*="from-navy"], [class*="from-midnight"]) :is(.text-gold, .hover\:text-gold:hover),
+.group:hover:is(.bg-navy, .bg-midnight, .bg-sidebar, .bg-primary) .group-hover\:text-gold,
+:is(.bg-navy, .bg-midnight, .bg-sidebar, .bg-primary) .group:hover .group-hover\:text-gold {
+  color: var(--gold);
 }
