@@ -4,12 +4,15 @@ import { toast } from "sonner";
 import {
   AlertTriangle,
   Boxes,
+  Copy,
   Download,
   ImagePlus,
   Minus,
   Package,
   PackageX,
+  Pencil,
   Plus,
+  Trash2,
 } from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { DataTable, Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
@@ -52,6 +55,14 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 
+/** Shows a product's created stamp as a date; older rows store epoch milliseconds. */
+function formatCreated(value: string | undefined) {
+  if (!value) return "—";
+  const date = /^\d{11,}$/.test(value) ? new Date(Number(value)) : new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+}
+
 export const Route = createFileRoute("/admin/products")({
   head: () => ({
     meta: [
@@ -75,7 +86,7 @@ function ProductThumbnail({ src, name }: { src?: string; name: string }) {
   useEffect(() => setFailed(!src), [src]);
   return (
     <div
-      className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-md border border-border bg-ivory text-gold"
+      className="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-md border border-border bg-card text-gold"
       role="img"
       aria-label={`${name} product image`}
     >
@@ -84,7 +95,7 @@ function ProductThumbnail({ src, name }: { src?: string; name: string }) {
           src={src}
           alt=""
           loading="lazy"
-          className="h-full w-full object-cover"
+          className="h-full w-full object-contain p-0.5"
           onError={() => setFailed(true)}
         />
       ) : (
@@ -634,7 +645,7 @@ function AdminProductsPanel() {
               <DialogTrigger asChild>
                 <Button size="sm">Add Product</Button>
               </DialogTrigger>
-              <DialogContent>
+              <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
                 <DialogHeader>
                   <DialogTitle>Add Product</DialogTitle>
                 </DialogHeader>
@@ -879,92 +890,105 @@ function AdminProductsPanel() {
         }
       >
         <DataTable
-          columns={[
-            "Product",
-            "SKU",
-            "Category",
-            "Vendor",
-            "Weight / Capacity",
-            "MRP",
-            "Price",
-            "FIFO Cost",
-            "Stock",
-            "Warehouse",
-            "Required",
-            "Min Stock",
-            "Max Purchase",
-            "Availability",
-            "Rating",
-            "Approval",
-            "Active",
-            "Created",
-            "Actions",
+          minWidth={900}
+          columns={["Product", "Category / Vendor", "Price", "Stock", "Status", "Created", "Actions"]}
+          columnClassNames={[
+            "w-[32%] min-w-[220px]",
+            "min-w-[120px]",
+            "whitespace-nowrap",
+            "whitespace-nowrap",
+            "w-[130px]",
+            "whitespace-nowrap",
+            "sticky right-0 z-[1] whitespace-nowrap bg-card text-right shadow-[-8px_0_12px_-10px_rgba(60,45,20,0.25)]",
           ]}
           rows={rows.map((p) => {
+            const lowAt = p.minimumStock ?? 30;
+            const fifo = getFIFOCost(p.id);
             return [
-              <div className="flex items-center gap-3">
+              <div className="flex min-w-0 items-center gap-3">
                 <ProductThumbnail src={p.image} name={p.name} />
-                <Link
-                  to="/admin/products/$id"
-                  params={{ id: p.id }}
-                  className="font-medium text-navy hover:text-gold"
+                <div className="min-w-0">
+                  <Link
+                    to="/admin/products/$id"
+                    params={{ id: p.id }}
+                    title={p.name}
+                    className="line-clamp-2 font-semibold leading-snug text-navy hover:text-gold"
+                  >
+                    {p.name}
+                  </Link>
+                  <p className="mt-0.5 truncate font-mono text-[11px] text-slate">
+                    {p.sku}
+                    {p.weight && <span className="font-sans"> · {p.weight}</span>}
+                  </p>
+                </div>
+              </div>,
+              <div className="min-w-0 leading-snug">
+                <p className="truncate font-medium text-charcoal">{p.category || "—"}</p>
+                <p className="truncate text-xs text-slate">{p.vendor || "—"}</p>
+              </div>,
+              <div className="leading-snug">
+                <p className="font-bold tabular-nums text-navy">{inr(p.price)}</p>
+                {p.mrp > p.price && <p className="text-xs tabular-nums text-slate line-through">{inr(p.mrp)}</p>}
+                {fifo > 0 && <p className="text-[11px] tabular-nums text-slate">FIFO {inr(fifo)}</p>}
+              </div>,
+              <div className="leading-snug">
+                <div className="flex items-center gap-2">
+                  <span className="text-base font-bold tabular-nums text-navy">{p.stock}</span>
+                  {p.stock === 0 ? (
+                    <StatusBadge status="Out of Stock" />
+                  ) : p.stock < lowAt ? (
+                    <StatusBadge status="Low Stock" />
+                  ) : (
+                    <StatusBadge status="Available" />
+                  )}
+                </div>
+                <p className="mt-0.5 text-[11px] tabular-nums text-slate">
+                  WH {p.warehouseStock ?? p.stock} · Req {p.requiredStock ?? 0}
+                </p>
+                <p className="text-[11px] tabular-nums text-slate">
+                  Min {lowAt} · Max/order {getMaxPurchaseQuantity(p)}
+                </p>
+              </div>,
+              <div className="flex flex-col items-start gap-2">
+                <Select
+                  value={p.status}
+                  onValueChange={async (v) => {
+                    if (
+                      await updateProduct(p.id, { status: v as "approved" | "pending" | "rejected" })
+                    ) {
+                      toast.success(`${p.name} marked as ${v}`);
+                    }
+                  }}
                 >
-                  {p.name}
-                </Link>
+                  <SelectTrigger className="h-8 w-[118px] text-xs" aria-label={`Approval for ${p.name}`}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="approved">Approved</SelectItem>
+                    <SelectItem value="pending">Pending</SelectItem>
+                    <SelectItem value="rejected">Rejected</SelectItem>
+                  </SelectContent>
+                </Select>
+                <label className="flex items-center gap-2 text-xs text-slate">
+                  <Switch
+                    checked={p.active}
+                    aria-label={`${p.name} active on storefront`}
+                    onCheckedChange={async (v) => {
+                      if (await updateProduct(p.id, { active: v }))
+                        toast.success(`${p.name} ${v ? "enabled" : "disabled"}`);
+                    }}
+                  />
+                  {p.active ? "Active" : "Inactive"}
+                </label>
               </div>,
-              p.sku,
-              p.category,
-              p.vendor,
-              p.weight,
-              inr(p.mrp),
-              inr(p.price),
-              <span className="font-mono text-xs font-semibold text-slate">
-                {inr(getFIFOCost(p.id))}
-              </span>,
-              <div className="flex items-center gap-1.5">
-                <span>{p.stock}</span>
-                {p.stock === 0 ? (
-                  <StatusBadge status="Out of Stock" />
-                ) : p.stock < (p.minimumStock ?? 30) ? (
-                  <StatusBadge status="Low Stock" />
-                ) : null}
-              </div>,
-              p.warehouseStock ?? p.stock,
-              p.requiredStock ?? 0,
-              p.minimumStock ?? 30,
-              getMaxPurchaseQuantity(p),
-              <StatusBadge status={p.stock > 0 ? "Available" : "Out of Stock"} />,
-              <Select
-                value={p.status}
-                onValueChange={async (v) => {
-                  if (
-                    await updateProduct(p.id, { status: v as "approved" | "pending" | "rejected" })
-                  ) {
-                    toast.success(`${p.name} marked as ${v}`);
-                  }
-                }}
-              >
-                <SelectTrigger className="h-7 w-[108px] text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="approved">Approved</SelectItem>
-                  <SelectItem value="pending">Pending</SelectItem>
-                  <SelectItem value="rejected">Rejected</SelectItem>
-                </SelectContent>
-              </Select>,
-              <Switch
-                checked={p.active}
-                onCheckedChange={async (v) => {
-                  if (await updateProduct(p.id, { active: v }))
-                    toast.success(`${p.name} ${v ? "enabled" : "disabled"}`);
-                }}
-              />,
-              p.created,
-              <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-xs text-slate">{formatCreated(p.created)}</span>,
+              <div className="inline-flex items-center gap-1">
                 <Button
                   variant="outline"
-                  size="sm"
+                  size="icon"
+                  className="h-8 w-8"
+                  title="Edit"
+                  aria-label={`Edit ${p.name}`}
                   onClick={() => {
                     setEditing(p);
                     setEditForm({
@@ -984,33 +1008,45 @@ function AdminProductsPanel() {
                     });
                   }}
                 >
-                  Edit
+                  <Pencil className="h-3.5 w-3.5" />
                 </Button>
                 <Button
                   variant="outline"
-                  size="sm"
+                  size="icon"
+                  className="h-8 w-8"
+                  title="Update stock"
+                  aria-label={`Update stock for ${p.name}`}
                   onClick={() => {
                     setStockEditing(p);
                     setStockValue(String(p.stock));
                   }}
                 >
-                  Stock
+                  <Boxes className="h-3.5 w-3.5" />
                 </Button>
                 <Button
                   variant="outline"
-                  size="sm"
+                  size="icon"
+                  className="h-8 w-8"
+                  title="Duplicate"
+                  aria-label={`Duplicate ${p.name}`}
                   onClick={() => {
                     void duplicateProduct(p.id).then((ok) => {
                       if (ok) toast.success(`${p.name} duplicated`);
                     });
                   }}
                 >
-                  Duplicate
+                  <Copy className="h-3.5 w-3.5" />
                 </Button>
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
-                    <Button variant="outline" size="sm">
-                      Delete
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      className="h-8 w-8 text-danger hover:text-danger"
+                      title="Delete"
+                      aria-label={`Delete ${p.name}`}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
                     </Button>
                   </AlertDialogTrigger>
                   <AlertDialogContent>
@@ -1042,9 +1078,9 @@ function AdminProductsPanel() {
       </Panel>
 
       <Dialog open={!!editing} onOpenChange={(v) => !v && setEditing(null)}>
-        <DialogContent>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Edit {editing?.name}</DialogTitle>
+            <DialogTitle className="pr-6 leading-snug">Edit {editing?.name}</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
             <div>

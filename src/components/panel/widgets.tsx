@@ -119,10 +119,16 @@ export function DataTable({
   columns,
   rows,
   empty = "No records found",
+  columnClassNames,
+  minWidth = 640,
 }: {
   columns: string[];
   rows: ReactNode[][];
   empty?: string;
+  /** Optional classes per column (width, alignment, wrapping), applied to its header and cells. */
+  columnClassNames?: (string | undefined)[];
+  /** Table min width in px before it scrolls sideways. */
+  minWidth?: number;
 }) {
   if (rows.length === 0) {
     return (
@@ -134,11 +140,11 @@ export function DataTable({
   }
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[640px] text-sm">
+      <table className="w-full text-sm" style={{ minWidth }}>
         <thead>
           <tr className="border-b border-border text-left">
-            {columns.map((c) => (
-              <th key={c} className="px-3 py-3 text-[11px] font-bold tracking-wider text-slate uppercase">
+            {columns.map((c, j) => (
+              <th key={c} className={cn("px-3 py-3 text-[11px] font-bold tracking-wider text-slate uppercase", columnClassNames?.[j])}>
                 {c}
               </th>
             ))}
@@ -148,7 +154,7 @@ export function DataTable({
           {rows.map((r, i) => (
             <tr key={i} className="border-b border-border/70 transition-colors last:border-0 hover:bg-ivory">
               {r.map((cell, j) => (
-                <td key={j} className="px-3 py-3.5 align-middle text-charcoal">
+                <td key={j} className={cn("px-3 py-3.5 align-middle text-charcoal", columnClassNames?.[j])}>
                   {cell}
                 </td>
               ))}
