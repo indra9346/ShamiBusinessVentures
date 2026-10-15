@@ -3,6 +3,7 @@ import { Heart, Package, Star } from "lucide-react";
 import { getDisplayDiscountPercent, getPricingDisplayMode, inr, type Product } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { cn } from "@/lib/utils";
+import { useStorefrontDisplay } from "@/lib/storefront-display";
 import { showCustomerNotification } from "@/components/site/CartFloatingNotification";
 import { AddToCartPicker } from "@/components/site/AddToCartPicker";
 
@@ -21,16 +22,27 @@ function stockState(product: Product, availableStock: number) {
   return { label: "In Stock", dot: "bg-emerald-500", text: "text-emerald-700" } as const;
 }
 
-/** Price block shared by grid + list layouts. Honours the admin "Pricing Display Mode". */
-function PriceBlock({ product, size = "sm" }: { product: Product; size?: "sm" | "lg" }) {
+/**
+ * Price block shared by grid + list layouts. The selling price is always shown, large, with a
+ * soft blink. MRP strike-through, "% off" and "Save ₹N" appear only when the admin switches on
+ * "Show MRP & savings" (Settings → Storefront), and then follow the product's Pricing Display Mode.
+ */
+function PriceBlock({ product, size = "sm", showSavings }: { product: Product; size?: "sm" | "lg"; showSavings: boolean }) {
   const mrpOnly = getPricingDisplayMode(product) === "mrp_only";
   const off = getDisplayDiscountPercent(product);
-  const priceClass = size === "lg" ? "text-base sm:text-lg" : "text-sm sm:text-base";
+  const priceClass = size === "lg" ? "text-xl sm:text-2xl" : "text-lg sm:text-xl";
+  const price = (
+    <span className={cn(priceClass, "animate-price-blink font-extrabold leading-none tracking-tight text-navy")}>
+      {inr(product.price)}
+    </span>
+  );
+
+  if (!showSavings) return <div className="flex items-baseline">{price}</div>;
 
   if (mrpOnly) {
     return (
       <div className="flex flex-wrap items-baseline gap-1">
-        <span className={cn(priceClass, "font-bold text-navy")}>{inr(product.price)}</span>
+        {price}
         <span className="text-[11px] font-medium text-stone-500">MRP</span>
       </div>
     );
@@ -38,7 +50,7 @@ function PriceBlock({ product, size = "sm" }: { product: Product; size?: "sm" | 
 
   return (
     <div className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
-      <span className={cn(priceClass, "font-bold text-navy")}>{inr(product.price)}</span>
+      {price}
       {product.mrp > product.price && (
         <span className="text-[11px] sm:text-xs text-stone-500 line-through">{inr(product.mrp)}</span>
       )}
@@ -73,7 +85,8 @@ export function ProductCard({
   layout?: "grid" | "list";
 }) {
   const { addToCart, toggleWishlist, wishlist } = useApp();
-  const off = getDisplayDiscountPercent(product);
+  const display = useStorefrontDisplay();
+  const off = display.showMrpSavings ? getDisplayDiscountPercent(product) : 0;
   const wished = wishlist.includes(product.id);
   const availableStock = Math.max(0, Math.floor((Number(product.stock) || 0) - (Number(product.reserved) || 0)));
   const stock = stockState(product, availableStock);
@@ -183,7 +196,9 @@ export function ProductCard({
 
         <div className="flex min-w-0 flex-1 flex-col justify-between gap-2 p-3 sm:p-4">
           <div className="min-w-0 space-y-1">
-            <p className="truncate text-[10px] font-semibold uppercase tracking-wider text-stone-500">{product.vendor}</p>
+            {display.showVendor && (
+              <p className="truncate text-[10px] font-semibold uppercase tracking-wider text-stone-500">{product.vendor}</p>
+            )}
             <Link
               to="/product/$id"
               params={{ id: product.id }}
@@ -192,10 +207,12 @@ export function ProductCard({
               {product.name}
             </Link>
             <div className="flex flex-wrap items-center gap-2">
-              <RatingBadge product={product} />
+              {display.showRatings && <RatingBadge product={product} />}
               {unitChip}
             </div>
-            <PriceBlock product={product} size="lg" />
+            <div className="py-1">
+              <PriceBlock product={product} size="lg" showSavings={display.showMrpSavings} />
+            </div>
             {stockIndicator}
           </div>
 
@@ -222,7 +239,9 @@ export function ProductCard({
       </div>
 
       <div className="flex flex-1 flex-col gap-1 p-2.5 sm:p-3">
-        <p className="truncate text-[10px] font-semibold uppercase tracking-wider text-stone-500">{product.vendor}</p>
+        {display.showVendor && (
+          <p className="truncate text-[10px] font-semibold uppercase tracking-wider text-stone-500">{product.vendor}</p>
+        )}
         <Link
           to="/product/$id"
           params={{ id: product.id }}
@@ -231,11 +250,11 @@ export function ProductCard({
           {product.name}
         </Link>
         <div className="flex flex-wrap items-center gap-1.5">
-          <RatingBadge product={product} />
+          {display.showRatings && <RatingBadge product={product} />}
           {unitChip}
         </div>
-        <div className="mt-0.5">
-          <PriceBlock product={product} />
+        <div className="mt-1 mb-0.5">
+          <PriceBlock product={product} showSavings={display.showMrpSavings} />
         </div>
         {stockIndicator}
 

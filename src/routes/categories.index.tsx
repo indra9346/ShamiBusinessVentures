@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { SiteLayout, Breadcrumbs, SectionHeading } from "@/components/site/SiteLayout";
+import { SiteLayout, SectionHeading } from "@/components/site/SiteLayout";
 import { CategoryCards, useVisibleCategories } from "@/components/site/CategoryCards";
 import { FlipkartCategoryBar } from "@/components/site/FlipkartCategoryBar";
 import { ProductCard } from "@/components/site/ProductCard";
@@ -29,15 +29,9 @@ function Categories() {
   return (
     <SiteLayout>
       <FlipkartCategoryBar />
-      <div className="border-b border-border bg-ivory">
-        <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8">
-          <Breadcrumbs items={[{ label: "Categories" }]} />
-          <h1 className="mt-3 text-2xl font-bold text-navy sm:text-3xl">Shop by Category</h1>
-          <p className="mt-2 text-sm text-slate">Rice, Sugar and Oil sourced directly from certified mills.</p>
-        </div>
-      </div>
+      <h1 className="sr-only">Shop by Category</h1>
 
-      <div className="mx-auto max-w-7xl px-4 py-10 sm:px-6 sm:py-12">
+      <div className="mx-auto max-w-7xl px-4 py-5 sm:px-6 sm:py-8">
         <CategoryCards />
       </div>
 

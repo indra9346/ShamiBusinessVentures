@@ -1,7 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { LayoutGrid, List, RotateCcw, Search, SlidersHorizontal, X } from "lucide-react";
-import { SiteLayout, Breadcrumbs } from "@/components/site/SiteLayout";
+import { SiteLayout } from "@/components/site/SiteLayout";
 import { ProductCard } from "@/components/site/ProductCard";
 import { inr, isStorefrontProduct } from "@/lib/data";
 import { useVisibleCategories } from "@/components/site/CategoryCards";
@@ -11,6 +11,7 @@ import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
 import { availableProductBrands, matchProductSearch, normalizeFacetValue, productMatchesBrand, scoreProductSearch } from "@/lib/search";
 import { SearchAutosuggest } from "@/components/site/SearchAutosuggest";
+import { useStorefrontDisplay } from "@/lib/storefront-display";
 import { FlipkartCategoryBar } from "@/components/site/FlipkartCategoryBar";
 import { categoryTree } from "@/lib/category-tree";
 
@@ -46,6 +47,7 @@ function Shop() {
   const search = Route.useSearch();
   const navigate = useNavigate();
   const { products, vendors, productCatalogStatus } = useApp();
+  const display = useStorefrontDisplay();
 
   const vendorOptions = useMemo(() => {
     const available = products.filter(isStorefrontProduct);
@@ -248,21 +250,7 @@ function Shop() {
   return (
     <SiteLayout>
       <FlipkartCategoryBar target="shop" active={cats.length === 1 ? cats[0] : search.category} />
-      <div className="border-b border-border bg-ivory">
-        <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8">
-          <Breadcrumbs items={[{ label: "Shop" }]} />
-          <h1 className="mt-3 text-2xl font-bold text-navy sm:text-3xl">Shop All Products</h1>
-          <p className="mt-2 text-sm text-slate">
-            {productCatalogStatus === "loading"
-              ? "Loading live products…"
-              : productCatalogStatus === "unavailable"
-                ? "The live product catalog is unavailable."
-                : q.trim()
-                  ? `Showing ${filtered.length} products matching "${q}"`
-                  : `${filtered.length} products from ${vendorOptions.length} verified vendors`}
-          </p>
-        </div>
-      </div>
+      <h1 className="sr-only">Shop All Products</h1>
 
       <div className="mx-auto max-w-7xl px-4 pt-6 sm:px-6 lg:hidden">
         <button
@@ -370,6 +358,7 @@ function Shop() {
             </div>
           </FilterGroup>
 
+          {display.showVendor && (
           <FilterGroup title="Vendor">
             {vendorOptions.map((v) => {
               const count = vendorCounts.get(normalizeFacetValue(v.business)) || vendorCounts.get(normalizeFacetValue(v.id)) || 0;
@@ -383,6 +372,7 @@ function Shop() {
               );
             })}
           </FilterGroup>
+          )}
 
           {brandOptions.length > 0 && (
             <FilterGroup title="Brand">
@@ -397,6 +387,7 @@ function Shop() {
             </FilterGroup>
           )}
 
+          {display.showRatings && (
           <FilterGroup title="Rating">
             {[4.5, 4, 3.5].map((r) => (
               <Row
@@ -407,6 +398,7 @@ function Shop() {
               />
             ))}
           </FilterGroup>
+          )}
 
           <FilterGroup title="Availability & Offers">
             <Row label="In stock only" checked={inStock} onChange={() => setInStock(!inStock)} />

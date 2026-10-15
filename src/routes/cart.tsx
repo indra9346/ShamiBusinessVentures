@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { SiteLayout, Breadcrumbs } from "@/components/site/SiteLayout";
 import { getAvailablePurchaseQuantity, getMaxPurchaseQuantity, inr, type Product } from "@/lib/data";
 import { useApp } from "@/lib/store";
+import { useStorefrontDisplay } from "@/lib/storefront-display";
 import { Input } from "@/components/ui/input";
 import { showCartNotification } from "@/components/site/CartFloatingNotification";
 
@@ -22,6 +23,7 @@ export const Route = createFileRoute("/cart")({
 
 function Cart() {
   const { cart, cartItems, setQty, removeFromCart, subtotal, coupons, clearCart, productCatalogStatus } = useApp();
+  const display = useStorefrontDisplay();
   const [coupon, setCoupon] = useState("");
   const [applied, setApplied] = useState<string | null>(null);
   const hasUnavailableLines = cartItems.length < cart.length;
@@ -118,13 +120,18 @@ function Cart() {
                   className="h-24 w-24 shrink-0 rounded-md object-cover"
                 />
                 <div className="min-w-0 flex-1">
-                  <p className="text-[11px] tracking-wider text-slate uppercase">{product.vendor}</p>
+                  {display.showVendor && <p className="text-[11px] tracking-wider text-slate uppercase">{product.vendor}</p>}
                   <Link to="/product/$id" params={{ id: product.id }} className="font-semibold text-navy hover:text-gold">
                     {product.name}
                   </Link>
                   <p className="mt-1 text-xs text-slate">
-                    {product.weight} · MRP <span className="line-through">{inr(product.mrp)}</span> ·{" "}
-                    <span className="font-semibold text-gold">Save {inr(product.mrp - product.price)}</span>
+                    {product.weight}
+                    {display.showMrpSavings && product.mrp > product.price && (
+                      <>
+                        {" "}· MRP <span className="line-through">{inr(product.mrp)}</span> ·{" "}
+                        <span className="font-semibold text-gold">Save {inr(product.mrp - product.price)}</span>
+                      </>
+                    )}
                   </p>
                   <div className="mt-3 flex flex-wrap items-center gap-3">
                     <CartQuantityControl

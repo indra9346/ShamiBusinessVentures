@@ -4,6 +4,7 @@ import { ArrowRight, CheckCircle2, ChevronRight, Layers, Package, Search, Tag, X
 import { useApp } from "@/lib/store";
 import { getProductImageFallback, inr } from "@/lib/data";
 import { cn } from "@/lib/utils";
+import { useStorefrontDisplay } from "@/lib/storefront-display";
 import { getSearchAutosuggestions, type SearchSuggestionItem } from "@/lib/search";
 import { categorySlug } from "@/lib/category-tree";
 
@@ -29,6 +30,7 @@ export function SearchAutosuggest({
   id = "site-search",
 }: SearchAutosuggestProps) {
   const { products, categories } = useApp();
+  const display = useStorefrontDisplay();
   const navigate = useNavigate();
   const [internalValue, setInternalValue] = useState(defaultValue);
   const [isOpen, setIsOpen] = useState(false);
@@ -255,7 +257,7 @@ export function SearchAutosuggest({
                         <span>{product.category}</span>
                         <span>•</span>
                         <span className="font-semibold text-navy">{inr(product.price)}</span>
-                        {product.mrp > product.price && (
+                        {display.showMrpSavings && product.mrp > product.price && (
                           <span className="line-through text-slate/70 text-[11px]">{inr(product.mrp)}</span>
                         )}
                         <span>•</span>
@@ -308,7 +310,7 @@ export function SearchAutosuggest({
                         </span>
                         <span>•</span>
                         <span className="truncate">{product.category}</span>
-                        {product.vendor && (
+                        {display.showVendor && product.vendor && (
                           <>
                             <span>•</span>
                             <span className="truncate">{product.vendor}</span>

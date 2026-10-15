@@ -25,14 +25,6 @@ export function SiteHeader() {
 
   return (
     <header className="sticky top-0 z-50 w-full">
-      <div className="hidden bg-midnight text-[13px] text-white/70 md:block">
-        <div className="mx-auto flex max-w-7xl items-center justify-end px-6 py-2">
-          <div className="flex items-center gap-5">
-            <LanguageSwitcher light />
-          </div>
-        </div>
-      </div>
-
       <div className="border-b border-white/10 bg-navy/95 backdrop-blur-md">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-3.5 py-2.5 sm:px-6 sm:py-3">
           <Logo />
@@ -52,10 +44,12 @@ export function SiteHeader() {
             />
           </div>
 
-          <div className="flex items-center gap-1.5 sm:gap-2">
+          <div className="flex items-center gap-1 sm:gap-2">
+            <LanguageSwitcher light compact className="sm:hidden" />
+            <LanguageSwitcher light className="hidden sm:inline-flex" />
             <Link
               to="/wishlist"
-              className="relative flex h-10 w-10 items-center justify-center rounded-full text-white transition-colors hover:text-gold"
+              className="relative flex h-9 w-9 items-center justify-center rounded-full text-white transition-colors hover:text-gold sm:h-10 sm:w-10"
               aria-label="Wishlist"
             >
               <Heart className="h-5 w-5" />
@@ -71,7 +65,7 @@ export function SiteHeader() {
             </Link>
             <button
               onClick={() => setOpen((v) => !v)}
-              className="flex h-10 w-10 items-center justify-center rounded-full text-white transition-colors hover:text-gold lg:hidden"
+              className="flex h-9 w-9 items-center justify-center rounded-full text-white transition-colors hover:text-gold sm:h-10 sm:w-10 lg:hidden"
               aria-label="Menu"
             >
               {open ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
@@ -163,10 +157,6 @@ export function SiteHeader() {
                 </Link>
               </div>
             )}
-            <div className="mt-3 flex items-center justify-between px-3 pt-2">
-              <span className="text-xs text-white/60">Language</span>
-              <LanguageSwitcher light />
-            </div>
           </div>
         </div>
       )}
@@ -189,7 +179,6 @@ function Badge({ count }: { count: number }) {
  */
 function HeaderCartButton({ cartCount, subtotal }: { cartCount: number; subtotal: number }) {
   const [pulseKey, setPulseKey] = useState(0);
-  const [direction, setDirection] = useState<"up" | "down">("up");
   const previous = useRef<{ subtotal: number; count: number } | null>(null);
 
   useEffect(() => {
@@ -198,7 +187,6 @@ function HeaderCartButton({ cartCount, subtotal }: { cartCount: number; subtotal
     // Skip the first render (and hydration from storage) — only animate real changes.
     if (!prev) return;
     if (prev.subtotal === subtotal && prev.count === cartCount) return;
-    setDirection(subtotal >= prev.subtotal ? "up" : "down");
     setPulseKey((k) => k + 1);
   }, [subtotal, cartCount]);
 
@@ -208,7 +196,7 @@ function HeaderCartButton({ cartCount, subtotal }: { cartCount: number; subtotal
   return (
     <Link
       to="/cart"
-      className="group relative flex h-10 items-center gap-2 rounded-full border border-gold/70 bg-gradient-to-r from-midnight/90 via-navy/95 to-midnight/90 py-1 pl-2.5 pr-3 text-white shadow-[0_0_12px_rgba(234,179,8,0.35)] ring-1 ring-gold/40 transition-all duration-300 hover:scale-[1.02] hover:border-gold hover:shadow-[0_0_20px_rgba(234,179,8,0.6)] sm:gap-2.5 sm:px-3.5"
+      className="group relative flex h-9 w-9 items-center justify-center rounded-full border border-gold/50 bg-white/5 text-white transition-colors duration-200 hover:border-gold hover:bg-white/10 sm:h-10 sm:w-auto sm:gap-2 sm:px-3.5"
       aria-label={`Shopping cart, ${itemsLabel}, total ${inr(subtotal)}`}
     >
       <span className="relative flex shrink-0 items-center justify-center">
@@ -216,53 +204,31 @@ function HeaderCartButton({ cartCount, subtotal }: { cartCount: number; subtotal
           <span
             key={`ring-${pulseKey}`}
             aria-hidden
-            className="animate-cart-ring pointer-events-none absolute inset-0 rounded-full border-2 border-amber-300"
+            className="animate-cart-ring pointer-events-none absolute inset-0 rounded-full border-2 border-gold/70"
           />
         )}
         <ShoppingCart
           key={`icon-${pulseKey}`}
-          className={`h-5 w-5 text-amber-400 drop-shadow-xs transition-transform duration-300 group-hover:scale-110 ${animate ? "animate-cart-pop" : ""}`}
+          className={`h-[18px] w-[18px] text-gold transition-transform duration-300 group-hover:scale-110 sm:h-5 sm:w-5 ${animate ? "animate-cart-pop" : ""}`}
         />
         {cartCount > 0 && (
           <span
             key={`count-${pulseKey}`}
-            className={`absolute -top-2 -right-2.5 flex h-4 min-w-[17px] items-center justify-center rounded-full bg-gradient-to-br from-amber-300 via-amber-400 to-yellow-500 px-1 text-[10px] font-black text-midnight shadow-md ring-1 ring-midnight/90 ${animate ? "animate-cart-pop" : ""}`}
+            className={`absolute -top-2 -right-2.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-gold px-1 text-[10px] font-bold leading-none text-midnight ring-2 ring-navy ${animate ? "animate-cart-pop" : ""}`}
           >
             {cartCount > 99 ? "99+" : cartCount}
           </span>
         )}
       </span>
 
-      <span className="h-5 w-px bg-gradient-to-b from-transparent via-gold/50 to-transparent" aria-hidden />
-
-      {/* Mobile: compact price pill */}
+      {/* Tablet & desktop: total next to the icon (phones see it in the bottom cart bar) */}
       <span
-        key={`m-${pulseKey}`}
-        className={`font-mono text-[12px] font-black leading-none tracking-tight text-gold-light drop-shadow-xs sm:hidden ${animate ? "animate-cart-pop" : ""}`}
+        key={`d-${pulseKey}`}
+        className={`hidden origin-left pl-1 text-sm font-bold tabular-nums text-gold-light sm:inline ${animate ? "animate-cart-pop" : ""}`}
       >
         {inr(subtotal)}
       </span>
 
-      {/* Desktop: two-tier stack */}
-      <span className="hidden flex-col text-left leading-tight sm:flex">
-        <span className="text-[11px] font-bold leading-none tracking-wide text-white/95">{itemsLabel}</span>
-        <span
-          key={`d-${pulseKey}`}
-          className={`origin-left font-mono text-[13px] font-black leading-tight tracking-tight text-gold-light drop-shadow-[0_0_6px_rgba(214,170,60,0.45)] ${animate ? "animate-cart-pop" : ""}`}
-        >
-          {inr(subtotal)}
-        </span>
-      </span>
-
-      {animate && (
-        <span
-          key={`spark-${pulseKey}`}
-          aria-hidden
-          className="animate-cart-pop pointer-events-none absolute -top-1.5 -right-1 select-none text-xs"
-        >
-          {direction === "up" ? "✨" : ""}
-        </span>
-      )}
       <span className="sr-only" aria-live="polite">
         {animate ? `Cart updated: ${itemsLabel}, ${inr(subtotal)}` : ""}
       </span>

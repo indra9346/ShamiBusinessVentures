@@ -6,6 +6,7 @@ import { SiteLayout, Breadcrumbs, SectionHeading } from "@/components/site/SiteL
 import { ProductCard } from "@/components/site/ProductCard";
 import { getAvailablePurchaseQuantity, getDisplayDiscountPercent, getMaxPurchaseQuantity, getPricingDisplayMode, inr, isStorefrontProduct } from "@/lib/data";
 import { useApp } from "@/lib/store";
+import { useStorefrontDisplay } from "@/lib/storefront-display";
 import { supabase } from "@/integrations/supabase/client";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
@@ -52,6 +53,7 @@ export const Route = createFileRoute("/product/$id")({
 function ProductDetail() {
   const { product: loadedProduct, catalogUnavailable } = Route.useLoaderData();
   const { addToCart, toggleWishlist, wishlist, products, reviews, vendors } = useApp();
+  const display = useStorefrontDisplay();
   const product = products.find((candidate) => candidate.id === loadedProduct?.id) ?? loadedProduct;
   const currentPurchaseLimit = product ? getAvailablePurchaseQuantity(product) : 1;
   const [qty, setQty] = useState(1);
@@ -179,21 +181,29 @@ function ProductDetail() {
           <p className="text-[11px] font-bold tracking-[0.18em] text-gold uppercase">{product.brand}</p>
           <h1 className="mt-2 text-2xl font-bold text-navy sm:text-3xl">{product.name}</h1>
           <div className="mt-3 flex flex-wrap items-center gap-3 text-sm text-slate">
-            <span className="flex items-center gap-1 font-semibold text-gold">
-              <Star className="h-4 w-4 fill-gold" /> {product.rating}
-            </span>
-            <span>{product.reviews} reviews</span>
-            <span className="text-border">|</span>
-            <span>
-              Sold by <span className="font-semibold text-navy">{product.vendor}</span>
-            </span>
-            <span className="text-border">|</span>
+            {display.showRatings && (
+              <>
+                <span className="flex items-center gap-1 font-semibold text-gold">
+                  <Star className="h-4 w-4 fill-gold" /> {product.rating}
+                </span>
+                <span>{product.reviews} reviews</span>
+                <span className="text-border">|</span>
+              </>
+            )}
+            {display.showVendor && (
+              <>
+                <span>
+                  Sold by <span className="font-semibold text-navy">{product.vendor}</span>
+                </span>
+                <span className="text-border">|</span>
+              </>
+            )}
             <span>SKU {product.sku}</span>
           </div>
 
           <div className="mt-6 flex flex-wrap items-baseline gap-3">
-            <span className="text-3xl font-extrabold text-navy">{inr(product.price)}</span>
-            {mrpOnly ? (
+            <span className="animate-price-blink text-3xl font-extrabold text-navy sm:text-4xl">{inr(product.price)}</span>
+            {!display.showMrpSavings ? null : mrpOnly ? (
               <span className="text-sm font-medium text-stone-500">MRP</span>
             ) : (
               <>
@@ -336,9 +346,9 @@ function ProductDetail() {
           <TabsList className="flex-wrap">
             <TabsTrigger value="desc">Description</TabsTrigger>
             <TabsTrigger value="spec">Specifications</TabsTrigger>
-            <TabsTrigger value="vendor">Vendor</TabsTrigger>
+            {display.showVendor && <TabsTrigger value="vendor">Vendor</TabsTrigger>}
             <TabsTrigger value="delivery">Delivery</TabsTrigger>
-            <TabsTrigger value="reviews">Reviews</TabsTrigger>
+            {display.showRatings && <TabsTrigger value="reviews">Reviews</TabsTrigger>}
           </TabsList>
           <TabsContent value="desc" className="rounded-lg border border-border bg-card p-6 text-sm leading-relaxed text-charcoal">
             {product.description}

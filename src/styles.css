@@ -483,3 +483,24 @@
 :is(.bg-navy, .bg-midnight, .bg-sidebar, .bg-primary) .group:hover .group-hover\:text-gold {
   color: var(--gold);
 }
+
+/* Product card price: a soft, slow blink that draws the eye without flashing */
+@utility animate-price-blink {
+  animation: price-blink 2.4s ease-in-out infinite;
+}
+
+@keyframes price-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-price-blink {
+    animation: none;
+  }
+}

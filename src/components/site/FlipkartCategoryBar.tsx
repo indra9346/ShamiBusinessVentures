@@ -152,10 +152,10 @@ function BadgeBody({
   const showImage = !!image && !broken;
 
   return (
-    <span className="group flex w-16 flex-col items-center gap-1.5 transition-all duration-200 hover:-translate-y-1 sm:w-20">
+    <span className="group flex w-[4.5rem] flex-col items-center gap-1.5 transition-all duration-200 hover:-translate-y-1 sm:w-24">
       <span
         className={cn(
-          "relative grid h-14 w-14 place-items-center overflow-hidden rounded-full border-2 bg-stone-50 transition-all duration-200 sm:h-16 sm:w-16",
+          "relative grid h-16 w-16 place-items-center overflow-hidden rounded-full border-2 bg-card shadow-xs transition-all duration-200 sm:h-20 sm:w-20",
           active
             ? "border-gold bg-amber-50 shadow-[0_0_0_3px_rgba(212,175,55,0.18)]"
             : "border-stone-200 group-hover:border-navy/40 group-hover:shadow-md",
@@ -166,10 +166,10 @@ function BadgeBody({
             src={image}
             alt=""
             loading="lazy"
-            width={64}
-            height={64}
+            width={80}
+            height={80}
             onError={() => setBroken(true)}
-            className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-110"
+            className="h-full w-full object-cover brightness-105 contrast-105 transition-transform duration-300 group-hover:scale-110"
           />
         ) : (
           <Icon

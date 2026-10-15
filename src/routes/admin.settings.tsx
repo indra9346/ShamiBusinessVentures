@@ -15,6 +15,13 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { supabase } from "@/integrations/supabase/client";
 import type { Json } from "@/integrations/supabase/types";
 import { useApp } from "@/lib/store";
+import {
+  STOREFRONT_DISPLAY_KEY,
+  defaultStorefrontDisplay,
+  parseStorefrontDisplay,
+  setStorefrontDisplay,
+  type StorefrontDisplay,
+} from "@/lib/storefront-display";
 
 export const Route = createFileRoute("/admin/settings")({
   head: () => ({
@@ -121,6 +128,7 @@ function AdminSettings() {
           <TabsTrigger value="tax">Tax & Invoicing</TabsTrigger>
           <TabsTrigger value="commerce">Commerce Rules</TabsTrigger>
           <TabsTrigger value="security">Security</TabsTrigger>
+          <TabsTrigger value="storefront">Storefront</TabsTrigger>
         </TabsList>
 
         <TabsContent value="business">
@@ -214,6 +222,10 @@ function AdminSettings() {
           </Panel>
         </TabsContent>
 
+        <TabsContent value="storefront">
+          <StorefrontDisplayPanel />
+        </TabsContent>
+
         <TabsContent value="security">
           <Panel title="Security & Access">
             <div className="grid gap-4 xl:max-w-3xl">
@@ -248,5 +260,79 @@ function AdminSettings() {
         </TabsContent>
       </Tabs>
     </PanelLayout>
+  );
+}
+
+const storefrontOptions: { key: keyof StorefrontDisplay; title: string; hint: string }[] = [
+  {
+    key: "showMrpSavings",
+    title: "Show MRP, discount and savings",
+    hint: "Adds the struck-through MRP, “% off” badge and “Save ₹N” to product cards, the product page, search and the cart. Each product's Pricing Display Mode still applies.",
+  },
+  {
+    key: "showRatings",
+    title: "Show ratings and reviews",
+    hint: "Star ratings and review counts on product cards and the product page, plus the shop's rating filter.",
+  },
+  {
+    key: "showVendor",
+    title: "Show vendor names",
+    hint: "The selling vendor above each product name, the product page's Vendor tab and the shop's vendor filter.",
+  },
+];
+
+/** Admin switches for what customers see on product cards; saved as a public setting. */
+function StorefrontDisplayPanel() {
+  const [value, setValue] = useState<StorefrontDisplay>(defaultStorefrontDisplay);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    void supabase.from("settings").select("value").eq("key", STOREFRONT_DISPLAY_KEY).maybeSingle().then(({ data, error }) => {
+      if (active && !error) setValue(parseStorefrontDisplay(data?.value));
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const save = async () => {
+    setSaving(true);
+    const { error } = await supabase
+      .from("settings")
+      .upsert([{ key: STOREFRONT_DISPLAY_KEY, value: { ...value }, is_public: true }], { onConflict: "key" });
+    setSaving(false);
+    if (error) {
+      toast.error("Could not save storefront display", { description: error.message });
+      return;
+    }
+    setStorefrontDisplay(value);
+    toast.success("Storefront display saved");
+  };
+
+  return (
+    <Panel title="Product Card Display">
+      <div className="grid gap-4 xl:max-w-3xl">
+        <p className="text-sm text-slate">
+          Product cards always show the product, pack size, stock and selling price. Switch on the extra details you want customers to see.
+        </p>
+        {storefrontOptions.map((option) => (
+          <div key={option.key} className="flex items-center justify-between gap-4 rounded-md border border-border p-4">
+            <div>
+              <p className="text-sm font-bold text-navy">{option.title}</p>
+              <p className="text-xs text-slate">{option.hint}</p>
+            </div>
+            <Switch
+              checked={value[option.key]}
+              onCheckedChange={(checked) => setValue((current) => ({ ...current, [option.key]: checked }))}
+              aria-label={option.title}
+            />
+          </div>
+        ))}
+        <Button className="bg-navy text-white hover:bg-navy/90 sm:w-fit" disabled={saving} onClick={() => void save()}>
+          <Save className="mr-1 h-4 w-4" /> {saving ? "Saving…" : "Save Display"}
+        </Button>
+      </div>
+    </Panel>
   );
 }
