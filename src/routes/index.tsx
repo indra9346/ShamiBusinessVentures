@@ -1,14 +1,14 @@
 import { useState, type FormEvent } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { ArrowRight, Search, ShoppingCart } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 import { SiteLayout } from "@/components/site/SiteLayout";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { inr, isStorefrontProduct, storeCategorySeed, type Product } from "@/lib/data";
+import { isStorefrontProduct, storeCategorySeed } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { useLanguage } from "@/lib/i18n";
-import { showCartNotification, showCustomerNotification } from "@/components/site/CartFloatingNotification";
 import { SearchAutosuggest } from "@/components/site/SearchAutosuggest";
+import { ProductCard } from "@/components/site/ProductCard";
+import { FlipkartCategoryBar } from "@/components/site/FlipkartCategoryBar";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -52,6 +52,9 @@ function Index() {
 
   return (
     <SiteLayout>
+      {/* Flipkart-style compact category strip */}
+      <FlipkartCategoryBar />
+
       {/* Search Bar with Real-Time Autosuggestions */}
       <section className="mx-auto max-w-7xl px-4 pt-4 sm:px-6 sm:pt-6">
         <div className="max-w-xl">
@@ -133,9 +136,9 @@ function Index() {
               View all
             </Link>
           </div>
-          <div className="grid grid-cols-2 gap-3 sm:gap-5 lg:grid-cols-3 xl:grid-cols-4">
+          <div className="grid grid-cols-2 gap-2.5 sm:gap-4 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
             {popularProducts.map((product) => (
-              <HomeProductCard key={product.id} product={product} />
+              <ProductCard key={product.id} product={product} />
             ))}
           </div>
           <div className="mt-8 text-center">
@@ -148,116 +151,5 @@ function Index() {
         </div>
       </section>
     </SiteLayout>
-  );
-}
-
-function HomeProductCard({ product }: { product: Product }) {
-  const { addToCart } = useApp();
-  const { t } = useLanguage();
-  const navigate = useNavigate();
-  const availableStock = Math.max(
-    0,
-    Math.floor((Number(product.stock) || 0) - (Number(product.reserved) || 0)),
-  );
-  const discount = product.mrp > product.price
-    ? Math.round(((product.mrp - product.price) / product.mrp) * 100)
-    : 0;
-
-  const cat = product.category.toLowerCase();
-  const fallbackImg = cat.includes("sugar")
-    ? "/products/sugar.jpg"
-    : cat.includes("oil")
-    ? "/products/oil.jpg"
-    : "/products/rice.jpg";
-
-  const add = () => {
-    if (availableStock === 0) return;
-    addToCart(product.id);
-    showCartNotification(t("Added to cart"), t(product.name), "add", product.image || fallbackImg);
-  };
-
-  const buy = () => {
-    if (availableStock === 0) return;
-    addToCart(product.id);
-    showCustomerNotification(
-      `${product.name} — CHECKOUT`,
-      "Redirecting to instant checkout...",
-      "success",
-      product.image || fallbackImg
-    );
-    navigate({ to: "/checkout", search: { productId: product.id } });
-  };
-
-  return (
-    <article className="flex min-w-0 flex-col overflow-hidden rounded-lg border border-border bg-card shadow-card transition-all hover:border-gold hover:shadow-elevated">
-      <Link
-        to="/product/$id"
-        params={{ id: product.id }}
-        className="relative block aspect-square overflow-hidden bg-background"
-      >
-        <img
-          src={product.image || fallbackImg}
-          alt={product.name}
-          width={600}
-          height={600}
-          loading="lazy"
-          onError={(e) => {
-            (e.currentTarget as HTMLImageElement).src = fallbackImg;
-          }}
-          className="h-full w-full object-cover transition-transform duration-500 hover:scale-105"
-        />
-        {discount > 0 && (
-          <span
-            className="absolute top-2 left-2 rounded-full bg-gold px-2 py-0.5 text-[10px] font-bold text-midnight shadow-xs"
-            data-no-translate
-          >
-            {discount}% OFF
-          </span>
-        )}
-      </Link>
-      <div className="flex min-w-0 flex-col p-3 sm:p-4">
-        <Link
-          to="/product/$id"
-          params={{ id: product.id }}
-          className="line-clamp-2 text-sm font-semibold leading-snug text-navy hover:text-gold sm:text-base"
-        >
-          {product.name}
-        </Link>
-        <div className="mt-2 flex flex-wrap items-baseline gap-x-2">
-          <span className="font-bold text-navy" data-no-translate>
-            {inr(product.price)}
-          </span>
-          {discount > 0 && (
-            <span className="text-xs text-slate line-through" data-no-translate>
-              {inr(product.mrp)}
-            </span>
-          )}
-        </div>
-        {availableStock === 0 && (
-          <p className="mt-1 text-xs font-medium text-danger">Currently unavailable</p>
-        )}
-        <div className="mt-auto grid grid-cols-2 gap-2 pt-3">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={add}
-            disabled={availableStock === 0}
-            className="h-9 px-2 font-bold"
-          >
-            <ShoppingCart className="h-3.5 w-3.5 mr-1" /> Add
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            onClick={buy}
-            disabled={availableStock === 0}
-            className="h-9 px-2 font-bold bg-navy text-white hover:bg-midnight"
-          >
-            Buy Now
-          </Button>
-        </div>
-      </div>
-    </article>
   );
 }

@@ -4,7 +4,8 @@ import { toast } from "sonner";
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { DataTable, Panel, StatusBadge } from "@/components/panel/widgets";
 import { adminNav } from "@/lib/panel-nav";
-import { inr } from "@/lib/data";
+import { getPricingDisplayMode, inr, type PricingDisplayMode } from "@/lib/data";
+import { PricingDisplayModeToggle } from "@/components/panel/PricingDisplayModeToggle";
 import { useApp } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -41,6 +42,7 @@ function AdminProductDetail() {
   const [stockValue, setStockValue] = useState("");
   const [priceOpen, setPriceOpen] = useState(false);
   const [priceValue, setPriceValue] = useState("");
+  const [pricingModeValue, setPricingModeValue] = useState<PricingDisplayMode>("strike_through");
 
   if (!product) {
     return (
@@ -55,7 +57,8 @@ function AdminProductDetail() {
 
   const productReviews = reviews.filter((r) => r.productId === product.id);
   const productOrders = orders.filter((o) => o.items.some((i) => i.product.id === product.id));
-  const disc = Math.round(((product.mrp - product.price) / product.mrp) * 100);
+  const disc = product.mrp > 0 ? Math.round(((product.mrp - product.price) / product.mrp) * 100) : 0;
+  const pricingMode = getPricingDisplayMode(product);
 
   return (
     <PanelLayout items={adminNav} tone="admin" title={product.name} subtitle={product.sku}>
@@ -133,13 +136,14 @@ function AdminProductDetail() {
           <div className="grid gap-6 sm:grid-cols-2">
             <Panel
               title="Pricing"
-              action={<Button size="sm" variant="outline" onClick={() => { setPriceValue(String(product.price)); setPriceOpen(true); }}>Edit Price</Button>}
+              action={<Button size="sm" variant="outline" onClick={() => { setPriceValue(String(product.price)); setPricingModeValue(pricingMode); setPriceOpen(true); }}>Edit Price</Button>}
             >
               <dl className="space-y-2 text-sm">
                 <div className="flex justify-between"><dt className="text-slate">MRP</dt><dd className="font-medium text-navy">{inr(product.mrp)}</dd></div>
                 <div className="flex justify-between"><dt className="text-slate">Sale Price</dt><dd className="font-medium text-navy">{inr(product.price)}</dd></div>
                 <div className="flex justify-between"><dt className="text-slate">Discount</dt><dd className="font-medium text-navy">{disc}%</dd></div>
                 <div className="flex justify-between"><dt className="text-slate">GST</dt><dd className="font-medium text-navy">{product.gst}%</dd></div>
+                <div className="flex justify-between gap-3"><dt className="text-slate">Storefront Display</dt><dd className="text-right font-medium text-navy">{pricingMode === "mrp_only" ? "Direct MRP Only" : "Discounted with Strikethrough"}</dd></div>
               </dl>
             </Panel>
             <Panel
@@ -216,9 +220,16 @@ function AdminProductDetail() {
         <DialogContent>
           <DialogHeader><DialogTitle>Update Price</DialogTitle></DialogHeader>
           <div><Label>New Sale Price</Label><Input type="number" value={priceValue} onChange={(e) => setPriceValue(e.target.value)} /></div>
+          <PricingDisplayModeToggle
+            id="detail-pricing-display-mode"
+            value={pricingModeValue}
+            onChange={setPricingModeValue}
+            mrp={product.mrp}
+            price={Number(priceValue) || product.price}
+          />
           <DialogFooter>
             <Button variant="outline" onClick={() => setPriceOpen(false)}>Cancel</Button>
-            <Button onClick={async () => { if (await updateProduct(product.id, { price: Number(priceValue) || product.price })) { toast.success(`Price updated to ${inr(Number(priceValue))}`); setPriceOpen(false); } }}>Save</Button>
+            <Button onClick={async () => { const nextPrice = Number(priceValue) || product.price; if (await updateProduct(product.id, { price: nextPrice, pricingDisplayMode: pricingModeValue })) { toast.success(`Price updated to ${inr(nextPrice)}`); setPriceOpen(false); } }}>Save</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

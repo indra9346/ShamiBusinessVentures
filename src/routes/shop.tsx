@@ -11,6 +11,7 @@ import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
 import { availableProductBrands, matchProductSearch, normalizeFacetValue, productMatchesBrand, scoreProductSearch } from "@/lib/search";
 import { SearchAutosuggest } from "@/components/site/SearchAutosuggest";
+import { FlipkartCategoryBar } from "@/components/site/FlipkartCategoryBar";
 import { categoryTree } from "@/lib/category-tree";
 
 type ShopSearch = { q?: string | undefined; category?: string | undefined; sort?: string | undefined };
@@ -246,6 +247,7 @@ function Shop() {
 
   return (
     <SiteLayout>
+      <FlipkartCategoryBar target="shop" active={cats.length === 1 ? cats[0] : search.category} />
       <div className="border-b border-border bg-ivory">
         <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8">
           <Breadcrumbs items={[{ label: "Shop" }]} />
@@ -647,7 +649,7 @@ function Shop() {
               className={cn(
                 "grid transition-all duration-300",
                 view === "grid"
-                  ? "grid-cols-2 gap-3 sm:gap-5 lg:grid-cols-3 xl:grid-cols-4"
+                  ? "grid-cols-2 gap-2.5 sm:gap-4 md:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5"
                   : "grid-cols-1 gap-3 sm:gap-4",
               )}
             >

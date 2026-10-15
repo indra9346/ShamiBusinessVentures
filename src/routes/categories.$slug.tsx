@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { ProductCard } from "@/components/site/ProductCard";
 import { ArrowLeft } from "lucide-react";
 import { SiteLayout, Breadcrumbs } from "@/components/site/SiteLayout";
+import { FlipkartCategoryBar } from "@/components/site/FlipkartCategoryBar";
 import { getCategoryNode, categorySlug } from "@/lib/category-tree";
 import { isStorefrontProduct, type Product } from "@/lib/data";
 import { availableProductBrands, normalizeFacetValue, productMatchesBrand } from "@/lib/search";
@@ -141,6 +142,7 @@ function CategoryLevel() {
 
   return (
     <SiteLayout>
+      <FlipkartCategoryBar active={slug} />
       <div className="border-b border-border bg-ivory">
         <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8">
           <Breadcrumbs items={[{ label: "Categories", to: "/categories" }, { label: displayName }]} />
@@ -254,7 +256,7 @@ function CategoryLevel() {
             )}
           </div>
         ) : (
-          <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">
+          <div className="grid grid-cols-2 gap-2.5 sm:gap-4 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
             {filteredProducts.map((product) => <ProductCard key={product.id} product={product} />)}
           </div>
         )}

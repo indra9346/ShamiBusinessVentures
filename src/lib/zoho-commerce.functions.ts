@@ -2047,12 +2047,21 @@ export const syncZohoProducts = createServerFn({ method: "POST" })
           return [row.id, payload] as const;
         }));
         const rowsToSave = batch.map((row) => {
-          const maxPurchaseQuantity = existingById.get(row.id)?.["maxPurchaseQuantity"];
-          return typeof maxPurchaseQuantity === "number"
+          const existing = existingById.get(row.id);
+          const maxPurchaseQuantity = existing?.["maxPurchaseQuantity"];
+          const pricingDisplayMode = existing?.["pricingDisplayMode"];
+          // Admin-only storefront settings live in the payload; keep them across Zoho re-syncs.
+          const preserved: Record<string, unknown> = {};
+          if (
+            typeof maxPurchaseQuantity === "number"
             && Number.isSafeInteger(maxPurchaseQuantity)
             && maxPurchaseQuantity >= 1
             && maxPurchaseQuantity <= 100000
-            ? { ...row, payload: { ...row.payload, maxPurchaseQuantity } }
+          ) preserved["maxPurchaseQuantity"] = maxPurchaseQuantity;
+          if (pricingDisplayMode === "mrp_only" || pricingDisplayMode === "strike_through")
+            preserved["pricingDisplayMode"] = pricingDisplayMode;
+          return Object.keys(preserved).length > 0
+            ? { ...row, payload: { ...row.payload, ...preserved } }
             : row;
         });
         const { error: saveError } = await db

@@ -4,7 +4,7 @@ import { Heart, Minus, Plus, ShieldCheck, Star, Truck, Store, ShoppingCart } fro
 import { toast } from "sonner";
 import { SiteLayout, Breadcrumbs, SectionHeading } from "@/components/site/SiteLayout";
 import { ProductCard } from "@/components/site/ProductCard";
-import { getAvailablePurchaseQuantity, getMaxPurchaseQuantity, inr, isStorefrontProduct } from "@/lib/data";
+import { getAvailablePurchaseQuantity, getDisplayDiscountPercent, getMaxPurchaseQuantity, getPricingDisplayMode, inr, isStorefrontProduct } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { supabase } from "@/integrations/supabase/client";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -87,7 +87,8 @@ function ProductDetail() {
   const purchaseLimit = currentPurchaseLimit;
   const configuredMax = getMaxPurchaseQuantity(product);
   const vendor = vendors.find((v) => v.id === product.vendorId);
-  const off = Math.round(((product.mrp - product.price) / product.mrp) * 100);
+  const off = getDisplayDiscountPercent(product);
+  const mrpOnly = getPricingDisplayMode(product) === "mrp_only";
   const productImg = product.image || `/products/${product.category.toLowerCase()}.jpg`;
   const gallery = [productImg, productImg, productImg];
   const related = products.filter((p) => isStorefrontProduct(p) && p.id !== product.id).slice(0, 4);
@@ -192,8 +193,15 @@ function ProductDetail() {
 
           <div className="mt-6 flex flex-wrap items-baseline gap-3">
             <span className="text-3xl font-extrabold text-navy">{inr(product.price)}</span>
-            <span className="text-lg text-slate line-through">{inr(product.mrp)}</span>
-            {off > 0 && <span className="rounded-full bg-gold/12 px-2.5 py-1 text-xs font-bold text-gold">{off}% off</span>}
+            {mrpOnly ? (
+              <span className="text-sm font-medium text-slate-500">MRP</span>
+            ) : (
+              <>
+                {product.mrp > product.price && <span className="text-lg text-slate line-through">{inr(product.mrp)}</span>}
+                {off > 0 && <span className="rounded-sm bg-emerald-600 px-2 py-0.5 text-xs font-bold text-white">{off}% OFF</span>}
+                {off > 0 && <span className="text-sm font-semibold text-emerald-700">Save {inr(product.mrp - product.price)}</span>}
+              </>
+            )}
           </div>
           <p className="mt-1 text-xs text-slate">GST calculated at checkout · Pack size {product.weight}</p>
 
@@ -390,7 +398,7 @@ function ProductDetail() {
       <div className="bg-ivory">
         <div className="mx-auto max-w-7xl px-6 py-14">
           <SectionHeading eyebrow="You may also like" title="Related Products" />
-          <div className="grid grid-cols-2 gap-3 sm:gap-5 lg:grid-cols-3 xl:grid-cols-4">
+          <div className="grid grid-cols-2 gap-2.5 sm:gap-4 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
             {related.map((p) => (
               <ProductCard key={p.id} product={p} />
             ))}

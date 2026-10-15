@@ -9,9 +9,12 @@ import { getAvailablePurchaseQuantity, getMaxPurchaseQuantity, type Product } fr
 export function AddToCartPicker({
   product,
   initialQty = 1,
+  compact = false,
 }: {
   product: Product;
   initialQty?: number;
+  /** Smaller trigger + tighter quantity panel for dense product grids. */
+  compact?: boolean;
 }) {
   const { addToCart, cart } = useApp();
   const [open, setOpen] = useState(false);
@@ -93,17 +96,22 @@ export function AddToCartPicker({
           setKeypadEntryStarted(false);
           setOpen(true);
         }}
-        className="flex w-full items-center justify-center gap-1.5 rounded-md bg-navy px-3 py-2.5 text-xs font-semibold text-white transition-colors hover:bg-midnight disabled:opacity-40"
+        className={
+          compact
+            ? "flex h-9 w-full items-center justify-center gap-1.5 rounded-md bg-navy px-2 text-[11px] sm:text-xs font-semibold text-white transition-colors hover:bg-midnight active:scale-[0.98] disabled:opacity-40"
+            : "flex w-full items-center justify-center gap-1.5 rounded-md bg-navy px-3 py-2.5 text-xs font-semibold text-white transition-colors hover:bg-midnight disabled:opacity-40"
+        }
       >
-        <ShoppingCart className="h-3.5 w-3.5" /> Add to Cart
+        <ShoppingCart className="h-3.5 w-3.5 shrink-0" /> {compact ? "Add" : "Add to Cart"}
       </button>
     );
   }
 
   return (
     <div
-      className="w-full rounded-xl border border-border bg-card p-3 shadow-card"
+      className={compact ? "w-full rounded-lg border border-border bg-card p-2 shadow-card" : "w-full rounded-xl border border-border bg-card p-3 shadow-card"}
       aria-label={`Choose quantity for ${product.name}`}
+      data-picker-open=""
     >
       <div className="flex items-center justify-between gap-2">
         <p className="text-sm font-bold text-success">
@@ -117,14 +125,14 @@ export function AddToCartPicker({
           Close
         </button>
       </div>
-      <div className="mt-3 grid grid-cols-5 gap-1.5">
+      <div className={compact ? "mt-2 grid grid-cols-5 gap-1" : "mt-3 grid grid-cols-5 gap-1.5"}>
         {[1, 2, 3, 4, 5, 6, 7, 8, 9, 0].map((value) => (
           <button
             key={value}
             type="button"
             onClick={() => appendKeypadDigit(value)}
             aria-pressed={Number(typedQty) === value}
-            className={`rounded-md border py-2 text-sm font-bold ${Number(typedQty) === value ? "border-gold bg-ivory text-navy" : "border-border text-charcoal hover:border-gold"}`}
+            className={`min-h-9 rounded-md border py-2 text-sm font-bold ${Number(typedQty) === value ? "border-gold bg-ivory text-navy" : "border-border text-charcoal hover:border-gold"}`}
           >
             {value}
           </button>

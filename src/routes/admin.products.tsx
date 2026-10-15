@@ -15,7 +15,8 @@ import { PanelLayout } from "@/components/panel/PanelLayout";
 import { DataTable, Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { Pager } from "@/components/panel/pager";
 import { adminNav } from "@/lib/panel-nav";
-import { DEFAULT_MAX_PURCHASE_QUANTITY, getMaxPurchaseQuantity, inr, type Product } from "@/lib/data";
+import { DEFAULT_MAX_PURCHASE_QUANTITY, DEFAULT_PRICING_DISPLAY_MODE, getMaxPurchaseQuantity, getPricingDisplayMode, inr, type PricingDisplayMode, type Product } from "@/lib/data";
+import { PricingDisplayModeToggle } from "@/components/panel/PricingDisplayModeToggle";
 import { useApp } from "@/lib/store";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -114,6 +115,7 @@ function emptyForm(
     requiredStock: "",
     image: "",
     status: "approved" as "approved" | "pending" | "rejected",
+    pricingDisplayMode: DEFAULT_PRICING_DISPLAY_MODE as PricingDisplayMode,
   };
 }
 
@@ -171,6 +173,7 @@ function AdminProductsPanel() {
     warehouseStock: "",
     requiredStock: "",
     status: "approved" as "approved" | "pending" | "rejected",
+    pricingDisplayMode: DEFAULT_PRICING_DISPLAY_MODE as PricingDisplayMode,
   });
   const [imageUploading, setImageUploading] = useState(false);
   const [editImageUploading, setEditImageUploading] = useState(false);
@@ -357,6 +360,7 @@ function AdminProductsPanel() {
       image: form.image.trim(),
       mrp,
       price,
+      pricingDisplayMode: form.pricingDisplayMode,
       gst: Number(form.gst),
       rating: 4.2,
       reviews: 0,
@@ -725,6 +729,13 @@ function AdminProductsPanel() {
                       />
                     </div>
                   </div>
+                  <PricingDisplayModeToggle
+                    id="add-pricing-display-mode"
+                    value={form.pricingDisplayMode}
+                    onChange={(pricingDisplayMode) => setForm({ ...form, pricingDisplayMode })}
+                    mrp={Number(form.mrp)}
+                    price={Number(form.price)}
+                  />
                   <div>
                     <Label>Weight / Capacity</Label>
                     <Input
@@ -941,6 +952,7 @@ function AdminProductsPanel() {
                       warehouseStock: String(p.warehouseStock ?? p.stock),
                       requiredStock: String(p.requiredStock ?? 0),
                       status: p.status,
+                      pricingDisplayMode: getPricingDisplayMode(p),
                     });
                   }}
                 >
@@ -1040,6 +1052,13 @@ function AdminProductsPanel() {
                 />
               </div>
             </div>
+            <PricingDisplayModeToggle
+              id="edit-pricing-display-mode"
+              value={editForm.pricingDisplayMode}
+              onChange={(pricingDisplayMode) => setEditForm({ ...editForm, pricingDisplayMode })}
+              mrp={Number(editForm.mrp)}
+              price={Number(editForm.price)}
+            />
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <Label>Weight / Capacity</Label>
@@ -1168,6 +1187,7 @@ function AdminProductsPanel() {
                   warehouseStock: Number(editForm.warehouseStock),
                   requiredStock: Number(editForm.requiredStock),
                   status: editForm.status,
+                  pricingDisplayMode: editForm.pricingDisplayMode,
                 });
                 if (saved) {
                   toast.success(`${editForm.name} updated`);

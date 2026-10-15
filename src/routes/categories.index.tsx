@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { SiteLayout, Breadcrumbs, SectionHeading } from "@/components/site/SiteLayout";
 import { CategoryCards, useVisibleCategories } from "@/components/site/CategoryCards";
+import { FlipkartCategoryBar } from "@/components/site/FlipkartCategoryBar";
 import { ProductCard } from "@/components/site/ProductCard";
 import { isStorefrontProduct } from "@/lib/data";
 import { useApp } from "@/lib/store";
@@ -27,6 +28,7 @@ function Categories() {
 
   return (
     <SiteLayout>
+      <FlipkartCategoryBar />
       <div className="border-b border-border bg-ivory">
         <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8">
           <Breadcrumbs items={[{ label: "Categories" }]} />
@@ -58,7 +60,7 @@ function Categories() {
                   </Link>
                 }
               />
-              <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">
+              <div className="grid grid-cols-2 gap-2.5 sm:gap-4 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
                 {items.map((p) => (
                   <ProductCard key={p.id} product={p} />
                 ))}

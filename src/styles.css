@@ -391,3 +391,58 @@
   transform-origin: center center;
 }
 
+
+/* ---------- Flipkart-style storefront helpers ---------- */
+@utility scrollbar-none {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* Header cart total "pop" when the cart value changes */
+@utility animate-cart-pop {
+  animation: cart-pop 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+@keyframes cart-pop {
+  0% {
+    transform: scale(1);
+  }
+  35% {
+    transform: scale(1.18);
+    filter: drop-shadow(0 0 8px rgba(250, 204, 21, 0.85));
+  }
+  70% {
+    transform: scale(0.96);
+  }
+  100% {
+    transform: scale(1);
+    filter: none;
+  }
+}
+
+/* Short sparkle ring that radiates from the cart icon on change */
+@utility animate-cart-ring {
+  animation: cart-ring 0.7s ease-out both;
+}
+
+@keyframes cart-ring {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(1.9);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-cart-pop,
+  .animate-cart-ring {
+    animation: none;
+  }
+}

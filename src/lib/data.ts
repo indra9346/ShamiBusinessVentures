@@ -50,7 +50,25 @@ export type Product = {
   created: string;
   updated: string;
   purchasePrice?: number;
+  /** How the storefront presents price. Missing = "strike_through" (backward compatible). */
+  pricingDisplayMode?: PricingDisplayMode;
 };
+
+export type PricingDisplayMode = "mrp_only" | "strike_through";
+export const DEFAULT_PRICING_DISPLAY_MODE: PricingDisplayMode = "strike_through";
+
+/** Resolves the effective pricing presentation for a product (defaults to strike-through). */
+export function getPricingDisplayMode(product: Pick<Product, "pricingDisplayMode">): PricingDisplayMode {
+  return product.pricingDisplayMode === "mrp_only" ? "mrp_only" : DEFAULT_PRICING_DISPLAY_MODE;
+}
+
+/** Discount % to show on the storefront — always 0 when the product is set to "Direct MRP Only". */
+export function getDisplayDiscountPercent(product: Pick<Product, "mrp" | "price" | "pricingDisplayMode">): number {
+  if (getPricingDisplayMode(product) === "mrp_only") return 0;
+  const mrp = Number(product.mrp) || 0;
+  const price = Number(product.price) || 0;
+  return mrp > price && mrp > 0 ? Math.max(0, Math.round(((mrp - price) / mrp) * 100)) : 0;
+}
 
 export const DEFAULT_MAX_PURCHASE_QUANTITY = 120;
 
