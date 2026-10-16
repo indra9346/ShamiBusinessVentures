@@ -1357,19 +1357,21 @@ async function withCommerceProductValues(
     );
     const product = response.product;
     if (!product) return item;
+    // Zoho's product response carries no modified time; a product-page save moves the item's.
     const productMs = Date.parse(str(product["last_modified_time"]));
+    const changedMs = Number.isFinite(productMs) ? productMs : Date.parse(str(item["last_modified_time"]));
     const knownMs = Date.parse(link.last_zoho_modified_at ?? "");
-    if (!Number.isFinite(productMs) || (Number.isFinite(knownMs) && productMs <= knownMs)) return item;
+    if (!Number.isFinite(changedMs) || (Number.isFinite(knownMs) && changedMs <= knownMs)) return item;
     const variants = (Array.isArray(product["variants"]) ? product["variants"] : []).map(plainObject);
     const variant = variants.find((v) => str(v["sku"]).trim().toLowerCase() === sku.toLowerCase()) ?? (variants.length === 1 ? variants[0] : undefined);
-    const description = htmlToText(str(product["product_description"]));
+    const description = htmlToText(str(product["product_description"])) || htmlToText(str(product["product_short_description"]));
     const variantReorder = variant ? finiteNumber(variant["reorder_level"]) : null;
     return {
       ...item,
       ...(description ? { description } : {}),
       ...(variantReorder !== null && str(variant?.["reorder_level"]) !== "" ? { reorder_level: variantReorder } : {}),
       // The newer of the two edits decides "latest wins".
-      last_modified_time: productMs > Date.parse(str(item["last_modified_time"])) ? str(product["last_modified_time"]) : item["last_modified_time"],
+      last_modified_time: Number.isFinite(productMs) && productMs > Date.parse(str(item["last_modified_time"])) ? str(product["last_modified_time"]) : item["last_modified_time"],
     };
   } catch {
     return item;
