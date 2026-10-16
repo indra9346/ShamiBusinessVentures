@@ -24,21 +24,20 @@ function stockState(product: Product, availableStock: number) {
 
 /**
  * Price block shared by grid + list layouts. The selling price is always shown, large and steady,
- * with the trade rate (e.g. "₹5,300/QTL") beside it when the admin priced the product from a rate.
+ * with the pack size chip (e.g. "50 kg bag") beside it; the trade rate sits on the line above.
  * MRP strike-through, "% off" and "Save ₹N" appear only when the admin switches on
  * "Show MRP & savings" (Settings → Storefront), and then follow the product's Pricing Display Mode.
  */
-function PriceBlock({ product, size = "sm", showSavings }: { product: Product; size?: "sm" | "lg"; showSavings: boolean }) {
+function PriceBlock({ product, size = "sm", showSavings, beside }: { product: Product; size?: "sm" | "lg"; showSavings: boolean; beside?: React.ReactNode }) {
   const mrpOnly = getPricingDisplayMode(product) === "mrp_only";
   const off = getDisplayDiscountPercent(product);
   const priceClass = size === "lg" ? "text-xl sm:text-2xl" : "text-lg sm:text-xl";
-  const rate = formatRateBasis(product);
   const price = (
-    <span className="inline-flex flex-wrap items-baseline gap-x-1">
+    <span className="inline-flex flex-wrap items-center gap-x-1.5 gap-y-1">
       <span className={cn(priceClass, "font-extrabold leading-none tracking-tight text-stone-900")}>
         {inrPrecise(product.price)}
       </span>
-      {rate && <span className="text-[11px] sm:text-xs font-semibold text-stone-600">({rate})</span>}
+      {beside}
     </span>
   );
 
@@ -180,6 +179,11 @@ export function ProductCard({
     </span>
   );
 
+  const rate = formatRateBasis(product);
+  const rateLabel = rate && (
+    <span className="text-[11px] sm:text-xs font-semibold text-stone-600">({rate})</span>
+  );
+
   const stockIndicator = (
     <span className={cn("inline-flex items-center gap-1 text-[10px] sm:text-[11px] font-semibold", stock.text)}>
       <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", stock.dot)} aria-hidden />
@@ -213,10 +217,10 @@ export function ProductCard({
             </Link>
             <div className="flex flex-wrap items-center gap-2">
               {display.showRatings && <RatingBadge product={product} />}
-              {unitChip}
+              {rateLabel}
             </div>
             <div className="py-1">
-              <PriceBlock product={product} size="lg" showSavings={display.showMrpSavings} />
+              <PriceBlock product={product} size="lg" showSavings={display.showMrpSavings} beside={unitChip} />
             </div>
             {stockIndicator}
           </div>
@@ -256,10 +260,10 @@ export function ProductCard({
         </Link>
         <div className="flex flex-wrap items-center gap-1.5">
           {display.showRatings && <RatingBadge product={product} />}
-          {unitChip}
+          {rateLabel}
         </div>
         <div className="mt-1 mb-0.5">
-          <PriceBlock product={product} showSavings={display.showMrpSavings} />
+          <PriceBlock product={product} showSavings={display.showMrpSavings} beside={unitChip} />
         </div>
         {stockIndicator}
 
