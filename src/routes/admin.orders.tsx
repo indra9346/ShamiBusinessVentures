@@ -1,5 +1,5 @@
 import { createFileRoute, Link, Outlet, useRouterState } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Download,
   IndianRupee,
@@ -7,7 +7,9 @@ import {
   PackageCheck,
   PackageX,
   Plus,
+  RefreshCw,
   ShoppingCart,
+  Zap,
 } from "lucide-react";
 import { toast } from "sonner";
 import { PanelLayout } from "@/components/panel/PanelLayout";
@@ -16,6 +18,7 @@ import { Pager } from "@/components/panel/pager";
 import { adminNav } from "@/lib/panel-nav";
 import { canCancelOrder, inr, orderStages, type OrderStatus } from "@/lib/data";
 import { useApp } from "@/lib/store";
+import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -74,6 +77,37 @@ function AdminOrders() {
   const [sort, setSort] = useState("date-desc");
   const [page, setPage] = useState(1);
   const [newOrderOpen, setNewOrderOpen] = useState(false);
+  const [zohoSync, setZohoSync] = useState<"idle" | "pulling" | "linking">("idle");
+  // Pull order changes made in Zoho (void, confirm, shipped…) whenever the admin opens Orders.
+  const pullZohoChanges = async (announce: boolean) => {
+    if (STATIC_DATA_MODE) return;
+    setZohoSync("pulling");
+    try {
+      const { syncZohoOrderChangesNow } = await import("@/lib/zoho-commerce.functions");
+      const result = await syncZohoOrderChangesNow();
+      if (announce) toast.success(`Checked ${result.checked} Zoho orders; ${result.changed} updated here`);
+    } catch (cause) {
+      if (announce) toast.error("Could not read Zoho order changes", { description: cause instanceof Error ? cause.message : undefined });
+    } finally {
+      setZohoSync("idle");
+    }
+  };
+  useEffect(() => {
+    void pullZohoChanges(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const turnOnInstantZohoUpdates = async () => {
+    setZohoSync("linking");
+    try {
+      const { registerZohoOrderWebhook } = await import("@/lib/zoho-commerce.functions");
+      const result = await registerZohoOrderWebhook();
+      toast.success(result.already ? "Instant Zoho updates are already on" : "Instant Zoho updates turned on");
+    } catch (cause) {
+      toast.error("Zoho did not turn on instant updates", { description: cause instanceof Error ? cause.message : undefined });
+    } finally {
+      setZohoSync("idle");
+    }
+  };
   const [customerId, setCustomerId] = useState(customers[0]?.id ?? "");
   const [delivery, setDelivery] = useState("Standard Freight — 2 to 4 days");
   const [paymentDueDate, setPaymentDueDate] = useState("");
@@ -258,6 +292,24 @@ function AdminOrders() {
             >
               + New / WhatsApp Order
             </Button>
+            <Button
+              variant="outline"
+              disabled={zohoSync !== "idle"}
+              onClick={() => void pullZohoChanges(true)}
+              title="Bring in order changes made in Zoho (void, confirm, shipped, delivered)"
+            >
+              <RefreshCw className={`mr-1.5 h-4 w-4 ${zohoSync === "pulling" ? "animate-spin" : ""}`} />
+              {zohoSync === "pulling" ? "Checking Zoho…" : "Sync from Zoho"}
+            </Button>
+            <Button
+              variant="outline"
+              disabled={zohoSync !== "idle"}
+              onClick={() => void turnOnInstantZohoUpdates()}
+              title="Ask Zoho Commerce to notify this site the moment a sales order changes"
+            >
+              <Zap className="mr-1.5 h-4 w-4" />
+              {zohoSync === "linking" ? "Turning on…" : "Instant Zoho updates"}
+            </Button>
             <Input
               placeholder="Search order, customer or phone"
               value={q}
@@ -356,6 +408,11 @@ function AdminOrders() {
                 {o.zohoSalesOrderId ? (
                   <span className="mt-0.5 inline-flex items-center gap-1 rounded bg-emerald-50 border border-emerald-200 px-1.5 py-0.2 text-[10px] font-semibold text-emerald-800">
                     Zoho: {o.zohoSalesOrderId}
+                    {o.zohoOrderStatus && (
+                      <span className={["void", "cancelled"].includes(o.zohoOrderStatus) && o.status !== "Cancelled" ? "font-bold text-danger" : ""}>
+                        {" · "}{o.zohoOrderStatus}
+                      </span>
+                    )}
                   </span>
                 ) : (
                   <span className="mt-0.5 inline-flex items-center gap-0.5 text-[10px] text-slate/70">

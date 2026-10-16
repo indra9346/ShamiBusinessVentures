@@ -137,7 +137,7 @@ export const startZohoAuthorization = createServerFn({ method: "POST" })
       response_type: "code",
       client_id: reqEnv("ZOHO_CLIENT_ID"),
       scope:
-        "ZohoCommerce.items.READ,ZohoCommerce.items.CREATE,ZohoCommerce.items.UPDATE,ZohoCommerce.coupons.READ,ZohoCommerce.coupons.CREATE,ZohoCommerce.coupons.UPDATE,ZohoCommerce.salesorders.READ,ZohoCommerce.salesorders.CREATE,ZohoCommerce.salesorders.UPDATE,ZohoCommerce.settings.READ,ZohoCommerce.settings.UPDATE,ZohoCommerce.sitesIndex.READ,ZohoInventory.contacts.READ,ZohoInventory.contacts.CREATE,ZohoInventory.contacts.UPDATE,ZohoInventory.items.READ,ZohoInventory.items.CREATE,ZohoInventory.items.UPDATE,ZohoInventory.salesorders.READ,ZohoInventory.salesorders.CREATE,ZohoInventory.salesorders.UPDATE,ZohoInventory.inventoryadjustments.READ,ZohoInventory.inventoryadjustments.CREATE",
+        "ZohoCommerce.items.READ,ZohoCommerce.items.CREATE,ZohoCommerce.items.UPDATE,ZohoCommerce.coupons.READ,ZohoCommerce.coupons.CREATE,ZohoCommerce.coupons.UPDATE,ZohoCommerce.salesorders.READ,ZohoCommerce.salesorders.CREATE,ZohoCommerce.salesorders.UPDATE,ZohoCommerce.settings.READ,ZohoCommerce.settings.UPDATE,ZohoCommerce.sitesIndex.READ,ZohoCommerce.webhooks.READ,ZohoCommerce.webhooks.CREATE,ZohoInventory.contacts.READ,ZohoInventory.contacts.CREATE,ZohoInventory.contacts.UPDATE,ZohoInventory.items.READ,ZohoInventory.items.CREATE,ZohoInventory.items.UPDATE,ZohoInventory.salesorders.READ,ZohoInventory.salesorders.CREATE,ZohoInventory.salesorders.UPDATE,ZohoInventory.inventoryadjustments.READ,ZohoInventory.inventoryadjustments.CREATE",
       redirect_uri: redirectUri,
       access_type: "offline",
       prompt: "consent",
@@ -1364,7 +1364,7 @@ async function uploadCatalogImageToZohoInventory(
 
 async function saveZohoReview(
   db: Awaited<ReturnType<typeof dbAdmin>>,
-  entityType: "customer" | "catalog",
+  entityType: "customer" | "catalog" | "order",
   entityId: string,
   reason: string,
 ) {
@@ -1581,6 +1581,295 @@ async function syncZohoCatalogItem(
   if (stockFollowUp) throw new NeedsReviewError(stockFollowUp);
 }
 
+type GrainBazarOrderItem = { product_id: string | null; product_name: string; sku: string | null; qty: number; unit_price: number; gst_rate: number };
+
+/** Zoho line items for Grain Bazar order lines, matched to Zoho items by SKU. */
+async function zohoLineItemsForOrder(
+  db: Awaited<ReturnType<typeof dbAdmin>>,
+  region: Region,
+  organizationId: string,
+  token: string,
+  items: GrainBazarOrderItem[],
+) {
+  const lineItems: Record<string, unknown>[] = [];
+  for (const item of items) {
+    if (!item.sku) throw new NeedsReviewError(`Product ${item.product_name} has no SKU for Zoho item matching`);
+    const result = await inventoryRequest<{ items?: Record<string, unknown>[] }>(region, organizationId, token, "items", "GET", undefined, { search_text: item.sku, per_page: "200" });
+    let matches = (result.items ?? []).filter((row) => str(row["sku"]).trim().toLowerCase() === item.sku?.trim().toLowerCase() && str(row["status"]).toLowerCase() !== "inactive");
+    if (matches.length === 0 && item.product_id) {
+      try {
+        await syncZohoCatalogItem(db, region, organizationId, token, item.product_id);
+        const retryResult = await inventoryRequest<{ items?: Record<string, unknown>[] }>(region, organizationId, token, "items", "GET", undefined, { search_text: item.sku, per_page: "200" });
+        matches = (retryResult.items ?? []).filter((row) => str(row["sku"]).trim().toLowerCase() === item.sku?.trim().toLowerCase() && str(row["status"]).toLowerCase() !== "inactive");
+      } catch (autoSyncErr) {
+        console.warn(`Could not auto-sync catalog product ${item.sku} during order sync:`, autoSyncErr);
+      }
+    }
+    if (matches.length !== 1) throw new NeedsReviewError(matches.length ? `SKU ${item.sku} matches multiple Zoho items` : `SKU ${item.sku} has no active Zoho Inventory item; map this product before order sync`);
+    lineItems.push({ item_id: str(matches[0]!["item_id"]), name: item.product_name, quantity: item.qty, rate: item.unit_price, tax_percentage: item.gst_rate });
+  }
+  return lineItems;
+}
+
+const ZOHO_CLOSED_ORDER_STATES = ["void", "cancelled", "closed"];
+
+/**
+ * Grain Bazar -> Zoho for an order already in Zoho: a Grain Bazar cancellation voids the Zoho
+ * order, a confirmed payment confirms a Zoho draft, and edited items/totals are written to Zoho.
+ * A Zoho order that was voided or closed in Zoho is never reopened from here.
+ */
+async function syncLinkedZohoOrder(
+  db: Awaited<ReturnType<typeof dbAdmin>>,
+  region: Region,
+  organizationId: string,
+  token: string,
+  order: Database["public"]["Tables"]["orders"]["Row"],
+  items: GrainBazarOrderItem[],
+) {
+  const zohoId = order.zoho_salesorder_id!;
+  const path = `salesorders/${encodeURIComponent(zohoId)}`;
+  const load = async () => {
+    const response = await inventoryRequest<{ salesorder?: Record<string, unknown> }>(region, organizationId, token, path, "GET");
+    if (!response.salesorder) throw new Error(`Zoho did not return sales order ${zohoId}`);
+    return response.salesorder;
+  };
+  let zoho = await load();
+  const zohoStatus = () => str(zoho["order_status"] ?? zoho["status"]).toLowerCase();
+
+  if (order.order_status === "Cancelled") {
+    if (!["void", "cancelled"].includes(zohoStatus())) {
+      await inventoryRequest(region, organizationId, token, `${path}/status/void`, "POST");
+      zoho = await load();
+    }
+  } else if (ZOHO_CLOSED_ORDER_STATES.includes(zohoStatus())) {
+    await saveZohoZohoState(db, order.id, zoho);
+    throw new NeedsReviewError(`Zoho sales order ${str(zoho["salesorder_number"])} is ${zohoStatus()} in Zoho, but Grain Bazar order ${order.order_no} is ${order.order_status}. Cancel it in Grain Bazar or create a new Zoho order.`);
+  } else {
+    const zohoTotal = Number(zoho["total"]);
+    const invoiced = str(zoho["invoiced_status"]).toLowerCase();
+    if (Number.isFinite(zohoTotal) && Math.abs(zohoTotal - Number(order.total)) > 0.01) {
+      if (invoiced && invoiced !== "not_invoiced" && invoiced !== "null")
+        throw new NeedsReviewError(`Grain Bazar order ${order.order_no} changed to ₹${Number(order.total).toFixed(2)}, but Zoho sales order ${str(zoho["salesorder_number"])} is already invoiced at ₹${zohoTotal.toFixed(2)}. Adjust the invoice in Zoho.`);
+      const lines = await zohoLineItemsForOrder(db, region, organizationId, token, items);
+      // Keep Zoho's line IDs for items still on the order so Zoho updates them in place.
+      const zohoLines = (Array.isArray(zoho["line_items"]) ? zoho["line_items"] : []).map(plainObject);
+      const used = new Set<string>();
+      const lineItems = lines.map((line) => {
+        const match = zohoLines.find((z) => str(z["item_id"]) === line["item_id"] && !used.has(str(z["line_item_id"])));
+        if (match) used.add(str(match["line_item_id"]));
+        return match ? { ...line, line_item_id: str(match["line_item_id"]) } : line;
+      });
+      await inventoryRequest(region, organizationId, token, path, "PUT", {
+        salesorder_number: str(zoho["salesorder_number"]),
+        customer_id: str(zoho["customer_id"]),
+        date: str(zoho["date"]),
+        line_items: lineItems,
+        discount: Number(order.discount) || 0,
+        discount_type: "entity_level",
+        is_discount_before_tax: true,
+        shipping_charge: Number(order.shipping) || 0,
+        is_inclusive_tax: false,
+        ...(str(zoho["place_of_supply"]) ? { place_of_supply: str(zoho["place_of_supply"]) } : {}),
+        ...(str(zoho["gst_treatment"]) ? { gst_treatment: str(zoho["gst_treatment"]) } : {}),
+        ...(str(zoho["gst_no"]) ? { gst_no: str(zoho["gst_no"]) } : {}),
+      }, { ignore_auto_number_generation: "true" });
+      zoho = await load();
+    }
+    const confirmedInApp = !["Placed", "Awaiting Payment"].includes(order.order_status);
+    if (confirmedInApp && zohoStatus() === "draft") {
+      await inventoryRequest(region, organizationId, token, `${path}/status/confirmed`, "POST");
+      zoho = await load();
+    }
+  }
+  await saveZohoZohoState(db, order.id, zoho);
+  await refreshSalesOrderSnapshotSafe(db, organizationId, zoho);
+  const finalTotal = Number(zoho["total"]);
+  if (order.order_status !== "Cancelled" && Number.isFinite(finalTotal) && Math.abs(finalTotal - Number(order.total)) > 2)
+    throw new NeedsReviewError(`Zoho sales order ${str(zoho["salesorder_number"])} totals ₹${finalTotal.toFixed(2)}; Grain Bazar order ${order.order_no} totals ₹${Number(order.total).toFixed(2)}. Review taxes, discount and shipping.`);
+}
+
+/** Records Zoho's status and change time on the Grain Bazar order (shown in the admin). */
+async function saveZohoZohoState(db: Awaited<ReturnType<typeof dbAdmin>>, orderId: string, zoho: Record<string, unknown>) {
+  const modified = str(zoho["last_modified_time"]);
+  await db.from("orders").update({
+    zoho_order_status: str(zoho["order_status"] ?? zoho["status"]).toLowerCase() || null,
+    ...(Number.isFinite(Date.parse(modified)) ? { zoho_last_modified_at: new Date(Date.parse(modified)).toISOString() } : {}),
+  }).eq("id", orderId);
+}
+
+async function refreshSalesOrderSnapshotSafe(db: Awaited<ReturnType<typeof dbAdmin>>, organizationId: string, zoho: Record<string, unknown>) {
+  try {
+    await refreshSalesOrderSnapshot(db, organizationId, zoho);
+  } catch {
+    // The snapshot is a convenience copy; the next "Sync account data" refreshes it.
+  }
+}
+
+/** Zoho shipment progress as a Grain Bazar status, from packages or the order's shipped status. */
+function zohoFulfillmentStatus(zoho: Record<string, unknown>): "Dispatched" | "Delivered" | null {
+  const packages = Array.isArray(zoho["packages"]) ? zoho["packages"] as Record<string, unknown>[] : [];
+  const statuses = packages.map((pkg) => {
+    const shipment = pkg["shipment_order"];
+    return shipment && typeof shipment === "object"
+      ? str((shipment as Record<string, unknown>)["status"]).toLowerCase()
+      : str(pkg["status"]).toLowerCase();
+  });
+  statuses.push(str(zoho["shipped_status"]).toLowerCase());
+  if (statuses.includes("delivered")) return "Delivered";
+  if (statuses.some((status) => ["shipped", "in_transit", "in transit", "fulfilled"].includes(status))) return "Dispatched";
+  return null;
+}
+
+/**
+ * Zoho -> Grain Bazar for one Zoho sales order (from a webhook, the catch-up check or the daily
+ * run). Applied once per Zoho change. Void/cancel cancels the Grain Bazar order when its rules
+ * allow it (before dispatch, nothing paid); shipments move it to Dispatched/Delivered; anything
+ * that would change money or contradict a later Grain Bazar state is flagged for review instead.
+ */
+async function applyZohoSalesOrderToApp(
+  db: Awaited<ReturnType<typeof dbAdmin>>,
+  organizationId: string,
+  zoho: Record<string, unknown>,
+): Promise<string> {
+  const zohoId = str(zoho["salesorder_id"]);
+  const number = str(zoho["salesorder_number"]);
+  if (!zohoId) return "ignored";
+  const columns = "id,order_no,order_status,total,zoho_salesorder_id,zoho_last_modified_at";
+  let { data: order } = await db.from("orders").select(columns).eq("zoho_salesorder_id", zohoId).maybeSingle();
+  if (!order && number.startsWith("GB-")) {
+    const byNumber = await db.from("orders").select(columns).eq("order_no", number.slice(3)).is("zoho_salesorder_id", null).maybeSingle();
+    order = byNumber.data;
+    if (order) await db.from("orders").update({ zoho_salesorder_id: zohoId }).eq("id", order.id).is("zoho_salesorder_id", null);
+  }
+  if (!order) return "not_grain_bazar";
+
+  const modifiedMs = Date.parse(str(zoho["last_modified_time"]));
+  const knownMs = Date.parse(order.zoho_last_modified_at ?? "");
+  if (Number.isFinite(modifiedMs) && Number.isFinite(knownMs) && modifiedMs <= knownMs) return "unchanged";
+
+  const status = str(zoho["order_status"] ?? zoho["status"]).toLowerCase();
+  let outcome = "recorded";
+  if (["void", "cancelled"].includes(status) && order.order_status !== "Cancelled") {
+    const { data: result, error } = await db.rpc("apply_zoho_order_cancellation", { _order_id: order.id });
+    if (error || (result && result.startsWith("blocked"))) {
+      const why = error?.message
+        ?? (result === "blocked_paid" ? "a payment was received (refund it first)" : `it is already ${order.order_status}`);
+      await saveZohoReview(db, "order", order.id, `Zoho sales order ${number} was ${status === "void" ? "voided" : "cancelled"} in Zoho, but Grain Bazar order ${order.order_no} was not cancelled because ${why}. Decide which is right and correct the other side.`);
+      outcome = "review";
+    } else {
+      outcome = "cancelled";
+    }
+  } else if (order.order_status !== "Cancelled") {
+    const fulfillment = zohoFulfillmentStatus(zoho);
+    if (fulfillment && fulfillment !== order.order_status) {
+      const { error } = await db.rpc("apply_zoho_order_fulfillment", { _order_id: order.id, _status: fulfillment });
+      if (!error) outcome = fulfillment.toLowerCase();
+    }
+    const zohoTotal = Number(zoho["total"]);
+    if (!["void", "cancelled"].includes(status) && Number.isFinite(zohoTotal) && Math.abs(zohoTotal - Number(order.total)) > 2) {
+      await saveZohoReview(db, "order", order.id, `Zoho sales order ${number} now totals ₹${zohoTotal.toFixed(2)}, but Grain Bazar order ${order.order_no} totals ₹${Number(order.total).toFixed(2)}. Items or prices were changed in Zoho; make the same change in Grain Bazar (or undo it in Zoho).`);
+      outcome = "review";
+    }
+  }
+  await saveZohoZohoState(db, order.id, zoho);
+  await refreshSalesOrderSnapshotSafe(db, organizationId, zoho);
+  return outcome;
+}
+
+/** Catch-up for Zoho -> Grain Bazar: applies the most recently changed Zoho sales orders. */
+async function applyRecentZohoOrderChanges(
+  db: Awaited<ReturnType<typeof dbAdmin>>,
+  region: Region,
+  organizationId: string,
+  token: string,
+) {
+  const result = await inventoryRequest<{ salesorders?: Record<string, unknown>[] }>(
+    region, organizationId, token, "salesorders", "GET", undefined,
+    { sort_column: "last_modified_time", sort_order: "D", per_page: "50", search_text: "GB-" },
+  );
+  const summary = { checked: 0, changed: 0 };
+  for (const row of result.salesorders ?? []) {
+    if (!str(row["salesorder_number"]).startsWith("GB-")) continue;
+    summary.checked += 1;
+    try {
+      // Fetch the full order (packages, line items) before applying it.
+      const full = await inventoryRequest<{ salesorder?: Record<string, unknown> }>(
+        region, organizationId, token, `salesorders/${encodeURIComponent(str(row["salesorder_id"]))}`, "GET",
+      );
+      const outcome = await applyZohoSalesOrderToApp(db, organizationId, full.salesorder ?? row);
+      if (!["unchanged", "not_grain_bazar", "ignored"].includes(outcome)) summary.changed += 1;
+    } catch (cause) {
+      console.warn(`Could not apply Zoho sales order ${str(row["salesorder_number"])}:`, cause);
+    }
+  }
+  return summary;
+}
+
+async function zohoOrderContext(db: Awaited<ReturnType<typeof dbAdmin>>) {
+  const { data: connection, error } = await db
+    .from("zoho_commerce_connection")
+    .select("organization_id,region,refresh_token_ciphertext,token_iv,token_tag")
+    .eq("id", true)
+    .maybeSingle();
+  if (error || !connection) throw new Error("Connect Zoho first");
+  const region = connection.region as Region;
+  return { region, organizationId: connection.organization_id, token: await accessToken(region, await decrypt(connection)) };
+}
+
+/** Shared secret in the webhook address, so only Zoho (holding the address) can call it. */
+export async function zohoWebhookKey() {
+  return (await sign("zoho-order-webhook-v1")).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "").slice(0, 40);
+}
+
+/** Webhook entry point: re-reads the order from Zoho (never trusting the payload) and applies it. */
+export async function handleZohoOrderWebhook(salesOrderId: string) {
+  const db = await dbAdmin();
+  const { region, organizationId, token } = await zohoOrderContext(db);
+  const response = await inventoryRequest<{ salesorder?: Record<string, unknown> }>(
+    region, organizationId, token, `salesorders/${encodeURIComponent(salesOrderId)}`, "GET",
+  );
+  if (!response.salesorder) return "missing";
+  return applyZohoSalesOrderToApp(db, organizationId, response.salesorder);
+}
+
+/** Admin: pull Zoho-side order changes now (run when the admin opens Orders or Zoho pages). */
+export const syncZohoOrderChangesNow = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    await ensureAdmin(context.supabase, context.userId);
+    const db = await dbAdmin();
+    const { region, organizationId, token } = await zohoOrderContext(db);
+    return applyRecentZohoOrderChanges(db, region, organizationId, token);
+  });
+
+/** Admin: ask Zoho Commerce to call Grain Bazar the moment a sales order changes. */
+export const registerZohoOrderWebhook = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    await ensureAdmin(context.supabase, context.userId);
+    const db = await dbAdmin();
+    const { region, organizationId, token } = await zohoOrderContext(db);
+    const origin = new URL(reqEnv("ZOHO_REDIRECT_URI")).origin;
+    const url = `${origin}/api/zoho/webhook?key=${await zohoWebhookKey()}`;
+    try {
+      const existing = await commerceRequest<{ webhooks?: Record<string, unknown>[] }>(region, organizationId, token, "settings/webhooks", "GET")
+        .catch(() => ({ webhooks: [] as Record<string, unknown>[] }));
+      if ((existing.webhooks ?? []).some((hook) => str(hook["url"]).startsWith(`${origin}/api/zoho/webhook`)))
+        return { registered: true, already: true };
+      await commerceRequest(region, organizationId, token, "settings/webhooks", "POST", {
+        url,
+        events: [
+          "salesorder.created", "salesorder.confirmed", "salesorder.cancelled",
+          "salesorder.declined", "salesorder.shipped", "salesorder.delivered",
+        ],
+      });
+      return { registered: true, already: false };
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "Zoho refused the webhook";
+      throw new Error(`${message}${zohoPermissionHint(message)}`);
+    }
+  });
+
 async function findZohoSalesOrdersByNumber(region: Region, organizationId: string, token: string, salesOrderNumber: string) {
   const result = await inventoryRequest<{ salesorders?: Record<string, unknown>[] }>(
     region, organizationId, token, "salesorders", "GET", undefined,
@@ -1608,12 +1897,7 @@ async function syncZohoOrder(db: Awaited<ReturnType<typeof dbAdmin>>, region: Re
   if (orderError || itemsError) throw new Error("Could not read the order and items from Grain Bazar");
   if (!order) return;
   if (order.zoho_salesorder_id) {
-    const existing = await inventoryRequest<{ salesorder?: Record<string, unknown>; sales_order?: Record<string, unknown> }>(
-      region, organizationId, token, `salesorders/${encodeURIComponent(order.zoho_salesorder_id)}`, "GET",
-    );
-    const zohoTotal = Number((existing.salesorder ?? existing.sales_order)?.["total"]);
-    if (Number.isFinite(zohoTotal) && Math.abs(zohoTotal - Number(order.total)) > 0.01)
-      throw new NeedsReviewError(`Zoho sales order ${order.zoho_salesorder_id} totals ₹${zohoTotal.toFixed(2)}; Grain Bazar order ${order.order_no} totals ₹${Number(order.total).toFixed(2)}. Reconcile tax, discount, and shipping before retrying.`);
+    await syncLinkedZohoOrder(db, region, organizationId, token, order, items ?? []);
     return;
   }
   let customerId = "";
@@ -1676,23 +1960,7 @@ async function syncZohoOrder(db: Awaited<ReturnType<typeof dbAdmin>>, region: Re
   if (!customerId) throw new NeedsReviewError("Could not resolve or create Zoho customer contact for order");
   if (!items?.length) throw new NeedsReviewError("Order has no line items");
 
-  const lineItems: Record<string, unknown>[] = [];
-  for (const item of items) {
-    if (!item.sku) throw new NeedsReviewError(`Product ${item.product_name} has no SKU for Zoho item matching`);
-    const result = await inventoryRequest<{ items?: Record<string, unknown>[] }>(region, organizationId, token, "items", "GET", undefined, { search_text: item.sku, per_page: "200" });
-    let matches = (result.items ?? []).filter((row) => str(row["sku"]).trim().toLowerCase() === item.sku?.trim().toLowerCase() && str(row["status"]).toLowerCase() !== "inactive");
-    if (matches.length === 0 && item.product_id) {
-      try {
-        await syncZohoCatalogItem(db, region, organizationId, token, item.product_id);
-        const retryResult = await inventoryRequest<{ items?: Record<string, unknown>[] }>(region, organizationId, token, "items", "GET", undefined, { search_text: item.sku, per_page: "200" });
-        matches = (retryResult.items ?? []).filter((row) => str(row["sku"]).trim().toLowerCase() === item.sku?.trim().toLowerCase() && str(row["status"]).toLowerCase() !== "inactive");
-      } catch (autoSyncErr) {
-        console.warn(`Could not auto-sync catalog product ${item.sku} during order sync:`, autoSyncErr);
-      }
-    }
-    if (matches.length !== 1) throw new NeedsReviewError(matches.length ? `SKU ${item.sku} matches multiple Zoho items` : `SKU ${item.sku} has no active Zoho Inventory item; map this product before order sync`);
-    lineItems.push({ item_id: str(matches[0]!["item_id"]), name: item.product_name, quantity: item.qty, rate: item.unit_price, tax_percentage: item.gst_rate });
-  }
+  const lineItems = await zohoLineItemsForOrder(db, region, organizationId, token, items);
   const safeNumber = `GB-${String(order.order_no).replace(/[^A-Za-z0-9-]/g, "-").slice(-40)}`;
   // A previous request may have reached Zoho even if the response was lost.
   // On retries, search Zoho first by the unique sales-order number.
@@ -1733,6 +2001,7 @@ async function syncZohoOrder(db: Awaited<ReturnType<typeof dbAdmin>>, region: Re
   if (!salesOrderId) throw new Error("Zoho created a sales order but returned no salesorder_id");
   const { error: saveError } = await db.from("orders").update({ zoho_salesorder_id: salesOrderId }).eq("id", order.id).is("zoho_salesorder_id", null);
   if (saveError) throw new Error("Zoho sales order created, but its ID could not be stored; retry will check Zoho's unique order number");
+  await saveZohoZohoState(db, order.id, created.salesorder ?? {});
   await assertVisibleInZohoCommerce(region, organizationId, token, salesOrderId, safeNumber);
   const zohoTotal = Number(created.salesorder?.["total"]);
   if (Number.isFinite(zohoTotal) && Math.abs(zohoTotal - Number(order.total)) > 2.00)
@@ -2108,7 +2377,8 @@ export async function processZohoSyncOutbox(limit = 20, options?: { force?: bool
   if (options?.inbound === false) return summary;
   const [contacts, fulfillment, catalog] = await Promise.all([
     pollZohoContactChanges(db, region, connection.organization_id, token, limit),
-    pollZohoOrderFulfillment(db, region, connection.organization_id, token, limit),
+    applyRecentZohoOrderChanges(db, region, connection.organization_id, token)
+      .then(() => pollZohoOrderFulfillment(db, region, connection.organization_id, token, limit)),
     pollZohoCatalogChanges(db, region, connection.organization_id, token, limit),
   ]);
   return {
@@ -2509,11 +2779,12 @@ export const syncSingleOrderToZoho = createServerFn({ method: "POST" })
   });
 
 /**
- * Called by checkout right after an order is placed, so it reaches Zoho Commerce at once
- * instead of at the daily run. Only the order's customer (or an admin) may trigger it. It never
- * fails the checkout: a Zoho refusal stays in the queue for Admin > Zoho and the daily run.
+ * Called right after an order is placed or changed (status, items, cancellation), so Zoho
+ * Commerce gets it at once instead of at the daily run. Only the order's customer (or an admin)
+ * may trigger it. It never fails the caller: a Zoho refusal stays in the queue for Admin > Zoho
+ * and the daily run.
  */
-export const pushPlacedOrderToZoho = createServerFn({ method: "POST" })
+export const pushOrderChangeToZoho = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator(z.object({ orderNo: z.string().trim().min(1).max(80) }))
   .handler(async ({ data, context }) => {
@@ -2528,7 +2799,6 @@ export const pushPlacedOrderToZoho = createServerFn({ method: "POST" })
       const { data: isAdmin } = await context.supabase.rpc("has_role", { _user_id: context.userId, _role: "admin" });
       if (!isAdmin) return { pushed: false };
     }
-    if (order.zoho_salesorder_id) return { pushed: true };
     if (!(await isZohoWriteSyncActive(db))) return { pushed: false };
     try {
       await pushOrderToZohoDirect(db, order.id);

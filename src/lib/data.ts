@@ -758,6 +758,8 @@ export type Order = {
   delivery: string;
   coupon?: string;
   zohoSalesOrderId?: string | null;
+  /** Zoho's own status for the linked sales order (draft, confirmed, void…). */
+  zohoOrderStatus?: string | null;
   dbOrderId?: string;
   /** Per-vendor status for split marketplace fulfillment. */
   vendorStatuses?: { vendorId: string; vendor: string; status: OrderStatus }[];

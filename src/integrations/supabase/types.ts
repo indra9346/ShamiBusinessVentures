@@ -511,6 +511,8 @@ export type Database = {
         Row: {
           zoho_salesorder_id: string | null
           zoho_last_polled_at: string | null
+          zoho_order_status: string | null
+          zoho_last_modified_at: string | null
           advance_due: number
           balance_due: number
           coupon: string | null
@@ -543,6 +545,8 @@ export type Database = {
         Insert: {
           zoho_salesorder_id?: string | null
           zoho_last_polled_at?: string | null
+          zoho_order_status?: string | null
+          zoho_last_modified_at?: string | null
           advance_due?: number
           balance_due?: number
           coupon?: string | null
@@ -575,6 +579,8 @@ export type Database = {
         Update: {
           zoho_salesorder_id?: string | null
           zoho_last_polled_at?: string | null
+          zoho_order_status?: string | null
+          zoho_last_modified_at?: string | null
           advance_due?: number
           balance_due?: number
           coupon?: string | null
@@ -905,6 +911,7 @@ export type Database = {
       apply_zoho_contact_update: { Args: { _user_id: string; _contact_type: string; _full_name: string | null; _phone: string | null; _company: string | null; _gstin: string | null; _address?: Json | null }; Returns: undefined }
       retry_zoho_sync_job: { Args: { _id: string }; Returns: undefined }
       apply_zoho_order_fulfillment: { Args: { _order_id: string; _status: string }; Returns: undefined }
+      apply_zoho_order_cancellation: { Args: { _order_id: string }; Returns: string }
       apply_zoho_catalog_item: { Args: { _product_id: string; _item: Json; _expected_updated_at: string }; Returns: undefined }
       finish_zoho_sync_job: { Args: { _id: string; _status: string; _error?: string | null }; Returns: undefined }
       submit_contact_enquiry: { Args: { _name: string; _email: string; _phone: string | null; _message: string; _metadata?: Json }; Returns: string }

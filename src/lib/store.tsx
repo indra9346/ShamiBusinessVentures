@@ -11,6 +11,14 @@ import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
+
+/** Sends a placed or changed order to Zoho in the background; the daily run is the backup. */
+function pushOrderToZohoInBackground(orderNo: string) {
+  if (STATIC_DATA_MODE) return;
+  void import("@/lib/zoho-commerce.functions")
+    .then(({ pushOrderChangeToZoho }) => pushOrderChangeToZoho({ data: { orderNo } }))
+    .catch((cause: unknown) => console.warn("Zoho will receive this order change on the next sync run", cause));
+}
 import {
   addresses as seedAddresses,
   batches as seedBatches,
@@ -388,6 +396,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
                 pin: String(shippingAddress["pin"] || ""), delivery: row.shipping_method === "Express" ? "Express Freight — next business day" : "Standard Freight — 2 to 4 days",
                 ...(row.coupon ? { coupon: row.coupon } : {}),
                 zohoSalesOrderId: ((row as Record<string, unknown>)["zoho_salesorder_id"] as string | null) || null,
+                zohoOrderStatus: ((row as Record<string, unknown>)["zoho_order_status"] as string | null) || null,
                 dbOrderId: row.id,
                 ...(vendorStatuses.length ? { vendorStatuses } : {}),
               };
@@ -1305,10 +1314,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             toast.error("Order was not placed", { description: message });
             throw new Error(message);
           }
-          // Send the order to Zoho Commerce now, in the background; the daily run is the backup.
-          void import("@/lib/zoho-commerce.functions")
-            .then(({ pushPlacedOrderToZoho }) => pushPlacedOrderToZoho({ data: { orderNo: id } }))
-            .catch((cause: unknown) => console.warn("Order saved; Zoho will receive it on the next sync run", cause));
+          pushOrderToZohoInBackground(id);
           const saved = data as { subtotal: number; discount: number; gst_amount: number; shipping: number; total: number; items: Array<{ product_id: string; unit_price: number }> };
           order.subtotal = Number(saved.subtotal);
           order.discount = Number(saved.discount);
@@ -1404,6 +1410,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             if (optimisticUpdate) setOrders((list) => list.map((order) => order.id === id ? existing : order));
             return false;
           }
+          pushOrderToZohoInBackground(id);
         }
         return true;
       },
@@ -1457,6 +1464,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             tax: Number(result.gst_amount ?? candidate.tax),
             amount: Number(result.total ?? candidate.amount),
           }));
+          pushOrderToZohoInBackground(orderId);
           return true;
         }
         const delta = nextQty - item.qty;
@@ -1504,6 +1512,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (!STATIC_DATA_MODE) {
           const { data, error } = await supabase.rpc("admin_confirm_manual_payment", { _order_no: id, _amount: amount, _utr: utr.trim() });
           if (error || !data) { toast.error("Could not record payment", { description: error?.message ?? "Order not found." }); return false; }
+          pushOrderToZohoInBackground(id);
           return true;
         }
         const order = orders.find((candidate) => candidate.id === id);
