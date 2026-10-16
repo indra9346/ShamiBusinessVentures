@@ -122,6 +122,11 @@ export function computeRatePrice(pricing: RatePricing | undefined | null): numbe
   return Number.isFinite(price) ? Math.round(price * 100) / 100 : null;
 }
 
+export const isVolumeUnit = (unit: MeasureUnit) => MEASURE_BASE[unit].dimension === "volume";
+
+/** Quantity in kg for weights, litres for volumes: 1 QTL → 100, 500 g → 0.5. */
+export const toBaseQuantity = (qty: number, unit: MeasureUnit) => qty * MEASURE_BASE[unit].inBase;
+
 /** The rate for 1 kg (or 1 L): ₹5,300 per QTL = ₹53 per kg. Null when it cannot be priced. */
 export function ratePerBaseUnit(pricing: RatePricing | undefined | null): { rate: number; unit: "kg" | "L" } | null {
   if (!pricing || computeRatePrice(pricing) === null) return null;

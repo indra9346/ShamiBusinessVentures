@@ -2,14 +2,14 @@ import { useId } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  MEASURE_UNITS,
   computeRatePrice,
   defaultRatePricing,
   formatPackSize,
   inrPrecise,
   isMeasureUnit,
-  measureUnitLabel,
+  isVolumeUnit,
   ratePerBaseUnit,
+  toBaseQuantity,
   type MeasureUnit,
   type Product,
   type RatePricing,
@@ -30,6 +30,15 @@ export type TradeFieldsState = {
 };
 
 const SELLING_UNITS = ["bag", "tin", "jar", "pouch", "carton", "box", "pcs", "kg", "L"];
+/** Pack sizes are entered in these units; the rate is always per QTL (weights) or per litre. */
+const PACK_UNITS: MeasureUnit[] = ["kg", "g", "L", "ml"];
+
+/** The fixed rate basis for a pack unit: 1 QTL (100 kg) for weights, 1 L for volumes. */
+function basisFor(packUnit: MeasureUnit): { basisQty: string; basisUnit: MeasureUnit } {
+  return isVolumeUnit(packUnit) ? { basisQty: "1", basisUnit: "L" } : { basisQty: "1", basisUnit: "QTL" };
+}
+
+const paise = (n: number) => Math.round(n * 100) / 100;
 /** Suggested pack sizes; any other value can be typed. */
 const PACK_SIZES_MASS = [1, 5, 10, 25, 26, 30, 50, 100];
 const PACK_SIZES_VOLUME = [1, 2, 5, 15];
@@ -52,13 +61,19 @@ export function emptyTradeFields(category: string): TradeFieldsState {
 
 export function tradeFieldsFromProduct(product: Product): TradeFieldsState {
   const rate = product.ratePricing ?? defaultRatePricing(product.category);
+  const storedPackUnit = isMeasureUnit(rate.packUnit) ? rate.packUnit : "kg";
+  // A pack entered as QTL or tonne opens in kg (1 QTL → 100 kg).
+  const packUnit = PACK_UNITS.includes(storedPackUnit) ? storedPackUnit : isVolumeUnit(storedPackUnit) ? "L" : "kg";
+  const packQty = packUnit === storedPackUnit ? rate.packQty : toBaseQuantity(rate.packQty, storedPackUnit);
+  const basis = basisFor(packUnit);
+  const perUnit = ratePerBaseUnit(rate);
+  const basisRate = perUnit ? paise(perUnit.rate * toBaseQuantity(1, basis.basisUnit)) : rate.basisRate;
   return {
     useRate: !!product.ratePricing,
-    packQty: String(rate.packQty),
-    packUnit: isMeasureUnit(rate.packUnit) ? rate.packUnit : "kg",
-    basisQty: String(rate.basisQty),
-    basisUnit: isMeasureUnit(rate.basisUnit) ? rate.basisUnit : "QTL",
-    basisRate: rate.basisRate ? String(rate.basisRate) : "",
+    packQty: String(packQty),
+    packUnit,
+    ...basis,
+    basisRate: basisRate ? String(basisRate) : "",
     brand: product.brand ?? "",
     manufacturer: product.manufacturer ?? "",
     unit: product.unit ?? "",
@@ -87,8 +102,8 @@ export function validateTradeFields(fields: TradeFieldsState): string | null {
     const units = pricing ? [pricing.packUnit, pricing.basisUnit] : [];
     const mixed = units.some((u) => u === "L" || u === "ml") && units.some((u) => u !== "L" && u !== "ml");
     return mixed
-      ? "Pack size and rate basis must both be weights (kg, g, QTL, tonne) or both volumes (L, ml)"
-      : "Enter the pack size, the rate basis and the rate (all above 0)";
+      ? "Pack size and rate must both be by weight or both by volume"
+      : "Enter the pack size and the rate (both above 0)";
   }
   return null;
 }
@@ -110,12 +125,12 @@ function UnitSelect({ id, value, onChange, label }: { id: string; value: Measure
     <select
       id={id}
       aria-label={label}
-      className="h-9 w-36 shrink-0 rounded-md border border-input bg-background px-2 text-sm"
+      className="h-9 w-24 shrink-0 rounded-md border border-input bg-background px-2 text-sm"
       value={value}
       onChange={(e) => onChange(e.target.value as MeasureUnit)}
     >
-      {MEASURE_UNITS.map((unit) => (
-        <option key={unit} value={unit}>{measureUnitLabel(unit)}</option>
+      {PACK_UNITS.map((unit) => (
+        <option key={unit} value={unit}>{unit}</option>
       ))}
     </select>
   );
@@ -146,6 +161,12 @@ export function ProductTradeFields({
 
   const update = (patch: Partial<TradeFieldsState>) => {
     const next = { ...value, ...patch };
+    if (patch.packUnit) {
+      // The rate follows the pack: per QTL for weights, per litre for volumes. A per-QTL rate
+      // means nothing for litres, so switching between weight and volume clears it.
+      Object.assign(next, basisFor(patch.packUnit));
+      if (isVolumeUnit(patch.packUnit) !== isVolumeUnit(value.packUnit)) next.basisRate = "";
+    }
     onChange(next);
     const nextPricing = ratePricingFromFields(next);
     const nextPrice = computeRatePrice(nextPricing);
@@ -162,7 +183,7 @@ export function ProductTradeFields({
             checked={value.useRate}
             onChange={(e) => update({ useRate: e.target.checked })}
           />
-          Work out the selling price from a rate (per QTL, kg or litre)
+          Work out the selling price from the rate per quintal (QTL)
         </label>
         {value.useRate && (
           <>
@@ -182,16 +203,8 @@ export function ProductTradeFields({
                 </div>
               </div>
               <div>
-                <Label htmlFor={`${id}-basis`}>Rate per</Label>
-                <div className="flex gap-1.5">
-                  <Input id={`${id}-basis`} type="number" inputMode="decimal" min={0} step="any" className="min-w-20 flex-1"
-                    value={value.basisQty} onChange={(e) => update({ basisQty: e.target.value })} />
-                  <UnitSelect id={`${id}-basis-unit`} label="Rate unit" value={value.basisUnit} onChange={(basisUnit) => update({ basisUnit })} />
-                </div>
-              </div>
-              <div className="sm:col-span-2">
                 <Label htmlFor={`${id}-rate`}>
-                  Rate (₹ for {value.basisQty || "1"} {value.basisUnit === "QTL" ? "QTL = 100 kg" : value.basisUnit})
+                  {isVolumeUnit(value.packUnit) ? "Rate (₹ per litre)" : "Rate (₹ per QTL = 100 kg)"}
                 </Label>
                 <Input id={`${id}-rate`} type="number" inputMode="decimal" min={0} step="0.01" placeholder="e.g. 5300"
                   value={value.basisRate} onChange={(e) => update({ basisRate: e.target.value })} />
@@ -200,10 +213,10 @@ export function ProductTradeFields({
             <p className="rounded-md bg-panel px-3 py-2 text-sm text-charcoal" aria-live="polite">
               {price !== null && pricing && perUnit ? (
                 <>
-                  {inrPrecise(pricing.basisRate)} for {pricing.basisQty} {pricing.basisUnit === "QTL" ? "QTL (100 kg)" : pricing.basisUnit} ={" "}
+                  {inrPrecise(pricing.basisRate)} per {pricing.basisUnit === "QTL" ? "QTL (100 kg)" : "litre"} ={" "}
                   <span className="font-semibold">{inrPrecise(perUnit.rate)} per {perUnit.unit}</span> × {formatPackSize(pricing)} ={" "}
                   <span className="font-bold text-stone-900">{inrPrecise(price)}</span>. Shown to customers as{" "}
-                  {inrPrecise(price)} ({inrPrecise(pricing.basisRate)}/{pricing.basisQty === 1 ? pricing.basisUnit : `${pricing.basisQty} ${pricing.basisUnit}`}).
+                  {inrPrecise(price)} ({inrPrecise(pricing.basisRate)}/{pricing.basisUnit}).
                 </>
               ) : (
                 validateTradeFields(value) ?? "Enter the rate to work out the price."
