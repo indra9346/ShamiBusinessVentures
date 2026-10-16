@@ -4,6 +4,7 @@ import { Label } from "@/components/ui/label";
 import {
   computeRatePrice,
   defaultRatePricing,
+  deriveRatePricing,
   formatPackSize,
   inrPrecise,
   isMeasureUnit,
@@ -60,7 +61,8 @@ export function emptyTradeFields(category: string): TradeFieldsState {
 }
 
 export function tradeFieldsFromProduct(product: Product): TradeFieldsState {
-  const rate = product.ratePricing ?? defaultRatePricing(product.category);
+  // Older products open with the rate worked out from their price and pack weight.
+  const rate = product.ratePricing ?? deriveRatePricing(product) ?? defaultRatePricing(product.category);
   const storedPackUnit = isMeasureUnit(rate.packUnit) ? rate.packUnit : "kg";
   // A pack entered as QTL or tonne opens in kg (1 QTL → 100 kg).
   const packUnit = PACK_UNITS.includes(storedPackUnit) ? storedPackUnit : isVolumeUnit(storedPackUnit) ? "L" : "kg";

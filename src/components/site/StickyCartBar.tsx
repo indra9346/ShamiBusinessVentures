@@ -3,6 +3,7 @@ import { Link, useRouterState } from "@tanstack/react-router";
 import { ArrowRight, ShoppingBag } from "lucide-react";
 import { inr } from "@/lib/data";
 import { useApp } from "@/lib/store";
+import { useCartPreview } from "@/lib/cart-preview";
 import { cn } from "@/lib/utils";
 
 /** Storefront routes where the bar would duplicate the page's own summary. */
@@ -15,7 +16,17 @@ const HIDDEN_PREFIXES = ["/cart", "/checkout", "/admin", "/vendor", "/login", "/
  * with one-tap View Cart / Checkout.
  */
 export function StickyCartBar() {
-  const { cartItems, cartCount, subtotal } = useApp();
+  const { cartItems: savedItems, cartCount: savedCount, subtotal: savedSubtotal } = useApp();
+  // While the add-to-cart keypad is open, show the cart as it will be after "Add".
+  const preview = useCartPreview();
+  const previewing = !!preview && preview.qty > 0;
+  const cartItems = !previewing
+    ? savedItems
+    : savedItems.some((line) => line.product.id === preview.product.id)
+      ? savedItems.map((line) => line.product.id === preview.product.id ? { ...line, qty: line.qty + preview.qty } : line)
+      : [...savedItems, { product: preview.product, qty: preview.qty }];
+  const cartCount = savedCount + (previewing ? preview.qty : 0);
+  const subtotal = savedSubtotal + (previewing ? preview.product.price * preview.qty : 0);
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const hidden = HIDDEN_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
   const visible = cartCount > 0 && !hidden;
@@ -61,7 +72,8 @@ export function StickyCartBar() {
         aria-label="Your cart"
         aria-hidden={!visible}
         className={cn(
-          "fixed inset-x-0 bottom-0 z-40 transition-transform duration-300 ease-out",
+          "fixed inset-x-0 bottom-0 transition-transform duration-300 ease-out",
+          previewing ? "pointer-events-none z-[60]" : "z-40",
           visible ? "translate-y-0" : "pointer-events-none translate-y-full",
         )}
         style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
@@ -94,7 +106,9 @@ export function StickyCartBar() {
                   className={cn("block text-base font-extrabold text-navy sm:text-lg", pulseKey > 0 && "animate-cart-pop origin-left")}
                 >
                   {inr(subtotal)}
-                  <span className="ml-1.5 text-[11px] font-medium text-slate">+ GST at checkout</span>
+                  <span className="ml-1.5 text-[11px] font-medium text-slate">
+                    {previewing ? `incl. ${preview.qty} new` : "+ GST at checkout"}
+                  </span>
                 </span>
               </span>
             </Link>

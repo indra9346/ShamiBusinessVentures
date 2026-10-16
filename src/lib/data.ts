@@ -141,8 +141,32 @@ export function formatPackSize(pricing: Pick<RatePricing, "packQty" | "packUnit"
 }
 
 /** "₹5,300/QTL" or "₹1,950/15 L" — the trade rate beside the selling price. Null when not set. */
-export function formatRateBasis(product: Pick<Product, "ratePricing">): string | null {
-  const pricing = product.ratePricing;
+const WEIGHT_UNITS: Record<string, MeasureUnit> = {
+  kg: "kg", kgs: "kg", g: "g", gm: "g", gms: "g", qtl: "QTL",
+  l: "L", ltr: "L", ltrs: "L", litre: "L", litres: "L", liter: "L", liters: "L", ml: "ml",
+};
+
+/**
+ * The rate for a product priced before trade rates existed, worked out from its price and a
+ * plain pack weight ("25 kg", "500 g", "15 L bag"): ₹615 for 5 kg = ₹12,300/QTL. Weights that
+ * are not a single pack size ("4 x 5 L", "Carton of 12") give null rather than a guess.
+ */
+export function deriveRatePricing(product: Pick<Product, "weight" | "price">): RatePricing | null {
+  const match = /^\s*(\d+(?:\.\d+)?)\s*([a-z]+)\s*(?:bag|bags|tin|can|jar|pouch|pack|packet|bottle)?\s*$/i
+    .exec(product.weight ?? "");
+  const unit = match ? WEIGHT_UNITS[match[2]!.toLowerCase()] : undefined;
+  const packQty = match ? Number(match[1]) : 0;
+  const price = Number(product.price);
+  if (!unit || !(packQty > 0) || !(price > 0)) return null;
+  const packUnit: MeasureUnit = unit === "QTL" ? "kg" : unit;
+  const qty = unit === "QTL" ? packQty * 100 : packQty;
+  const basisUnit: MeasureUnit = isVolumeUnit(packUnit) ? "L" : "QTL";
+  const basisRate = Math.round((price / toBaseQuantity(qty, packUnit)) * toBaseQuantity(1, basisUnit) * 100) / 100;
+  return { packQty: qty, packUnit, basisQty: 1, basisUnit, basisRate };
+}
+
+export function formatRateBasis(product: Pick<Product, "ratePricing" | "weight" | "price">): string | null {
+  const pricing = product.ratePricing ?? deriveRatePricing(product);
   if (!pricing || computeRatePrice(pricing) === null) return null;
   const per = pricing.basisQty === 1
     ? pricing.basisUnit

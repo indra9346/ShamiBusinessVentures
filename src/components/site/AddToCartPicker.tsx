@@ -12,6 +12,7 @@ import { toast } from "sonner";
 import { showCartNotification } from "@/components/site/CartFloatingNotification";
 import { useApp } from "@/lib/store";
 import { getAvailablePurchaseQuantity, getMaxPurchaseQuantity, type Product } from "@/lib/data";
+import { setCartPreview } from "@/lib/cart-preview";
 
 export function AddToCartPicker({
   product,
@@ -41,6 +42,17 @@ export function AddToCartPicker({
   const bagWeight = Number.parseFloat(product.weight.replace(/[^\d.]/g, "")) || 0;
   const unit = product.weight.toLowerCase().includes("kg") ? "kg" : "bags";
   const selectedWeight = bagWeight * qty;
+
+  // While the keypad is open, the cart bar shows the cart as it will be after "Add".
+  const validQty = /^\d+$/.test(typedQty) && qty >= 1 && qty <= purchaseLimit ? qty : 0;
+  useEffect(() => {
+    if (!open) return;
+    setCartPreview(validQty > 0 ? { product, qty: validQty } : null);
+  }, [open, product, validQty]);
+  useEffect(() => {
+    if (!open) return;
+    return () => setCartPreview(null);
+  }, [open]);
 
   useEffect(() => {
     setQty((current) => Math.min(Math.max(1, current), purchaseLimit || 1));
