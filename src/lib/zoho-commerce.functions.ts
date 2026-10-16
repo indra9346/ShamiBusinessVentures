@@ -2163,6 +2163,8 @@ export const inspectZohoProductSync = createServerFn({ method: "POST" })
             last_modified_time: product["last_modified_time"],
             product_description: str(product["product_description"]).slice(0, 300),
             product_short_description: str(product["product_short_description"]).slice(0, 300),
+            descriptionText: htmlToText(str(product["product_description"])) || htmlToText(str(product["product_short_description"])),
+            lastSeen: plainObject(mirror?.payload)["zohoSeen"] ?? null,
             variants: (Array.isArray(product["variants"]) ? product["variants"] : []).map(plainObject)
               .map((v) => ({ sku: v["sku"], reorder_level: v["reorder_level"], rate: v["rate"] })),
           };
