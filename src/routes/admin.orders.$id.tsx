@@ -27,6 +27,7 @@ import { canCancelOrder, inr, orderStages, type OrderStatus } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { syncSingleOrderToZoho } from "@/lib/zoho-commerce.functions";
+import { PickupPointCard } from "@/components/site/PickupPointCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -562,6 +563,7 @@ function AdminOrderDetail() {
               </dd>
             </div>
           </dl>
+          <PickupPointCard pin={order.pin} heading="Customer collects from" className="mt-3" />
         </Panel>
 
         {/* 3. Payment Information */}

@@ -15,6 +15,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { supabase } from "@/integrations/supabase/client";
 import type { Json } from "@/integrations/supabase/types";
 import { useApp } from "@/lib/store";
+import { PickupPointsPanel } from "@/components/panel/PickupPointsPanel";
 import {
   STOREFRONT_DISPLAY_KEY,
   defaultStorefrontDisplay,
@@ -129,6 +130,7 @@ function AdminSettings() {
           <TabsTrigger value="commerce">Commerce Rules</TabsTrigger>
           <TabsTrigger value="security">Security</TabsTrigger>
           <TabsTrigger value="storefront">Storefront</TabsTrigger>
+          <TabsTrigger value="pickup">Pickup</TabsTrigger>
         </TabsList>
 
         <TabsContent value="business">
@@ -222,6 +224,9 @@ function AdminSettings() {
           </Panel>
         </TabsContent>
 
+        <TabsContent value="pickup">
+          <PickupPointsPanel />
+        </TabsContent>
         <TabsContent value="storefront">
           <StorefrontDisplayPanel />
         </TabsContent>

@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
-import { CheckCircle2, Circle, PhoneCall, Truck } from "lucide-react";
+import { CheckCircle2, Circle, Truck } from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { Panel, StatusBadge } from "@/components/panel/widgets";
 import { accountNav } from "@/lib/account-nav";
@@ -15,6 +15,8 @@ import {
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { orderBelongsToUser } from "@/lib/account-identity";
+import { usePickupSettings } from "@/lib/pickup-points";
+import { PickupPointCard } from "@/components/site/PickupPointCard";
 
 export const Route = createFileRoute("/account/track")({
   head: () => ({
@@ -22,7 +24,7 @@ export const Route = createFileRoute("/account/track")({
       { title: "Track Order | Shami Business Ventures" },
       {
         name: "description",
-        content: "Track the live status and courier details of your Shami orders.",
+        content: "Track the live status and pickup details of your Shami orders.",
       },
       { property: "og:title", content: "Track Order | Shami" },
       { property: "og:description", content: "Live order tracking with delivery stage timeline." },
@@ -31,13 +33,6 @@ export const Route = createFileRoute("/account/track")({
   }),
   component: AccountTrack,
 });
-
-const couriers = [
-  "ShamiXpress Freight",
-  "BlueDart Surface",
-  "Delhivery Business",
-  "Ekart Logistics",
-];
 
 function AccountTrack() {
   const { user, orders } = useApp();
@@ -49,9 +44,7 @@ function AccountTrack() {
   const [selected, setSelected] = useState(active[0]?.id ?? "");
   const order = myOrders.find((o) => o.id === selected) ?? active[0];
   const currentIdx = order ? orderStages.indexOf(order.status) : -1;
-  const courier = order
-    ? couriers[order.id.charCodeAt(order.id.length - 1) % couriers.length]
-    : couriers[0];
+  const pickup = usePickupSettings();
 
   return (
     <PanelLayout
@@ -122,17 +115,18 @@ function AccountTrack() {
               </ol>
             )}
 
-            <div className="rounded-lg border border-border bg-ivory p-4">
-              <p className="flex items-center gap-2 text-sm font-semibold text-navy">
-                <Truck className="h-4 w-4 text-gold" /> Courier: {courier}
-              </p>
-              <p className="mt-1 flex items-center gap-2 text-sm text-slate">
-                <PhoneCall className="h-4 w-4 text-gold" /> Support: +91 1800 202 4040
-              </p>
-              <p className="mt-1 text-xs text-slate">
-                Delivering to {order.address}, {order.city}, {order.state} {order.pin}
-              </p>
-            </div>
+            {pickup.homeDelivery ? (
+              <div className="rounded-lg border border-border bg-ivory p-4">
+                <p className="flex items-center gap-2 text-sm font-semibold text-navy">
+                  <Truck className="h-4 w-4 text-gold" /> Home delivery
+                </p>
+                <p className="mt-1 text-xs text-slate">
+                  Delivering to {order.address}, {order.city}, {order.state} {order.pin}
+                </p>
+              </div>
+            ) : (
+              <PickupPointCard pin={order.pin} heading="Collect this order from" />
+            )}
           </div>
         )}
       </Panel>

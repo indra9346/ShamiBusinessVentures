@@ -16,8 +16,20 @@ import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 function pushOrderToZohoInBackground(orderNo: string) {
   if (STATIC_DATA_MODE) return;
   void import("@/lib/zoho-commerce.functions")
-    .then(({ pushOrderChangeToZoho }) => pushOrderChangeToZoho({ data: { orderNo } }))
+    .then(async ({ pushOrderChangeToZoho, pushOrderStockToZoho }) => {
+      await pushOrderChangeToZoho({ data: { orderNo } });
+      // The order moved stock; send the products' new stock to Zoho too.
+      await pushOrderStockToZoho({ data: { orderNo } });
+    })
     .catch((cause: unknown) => console.warn("Zoho will receive this order change on the next sync run", cause));
+}
+
+/** Sends admin product edits to Zoho in the background; the daily run is the backup. */
+function pushProductsToZohoInBackground(productIds: string[]) {
+  if (STATIC_DATA_MODE || productIds.length === 0) return;
+  void import("@/lib/zoho-commerce.functions")
+    .then(({ pushProductChangeToZoho }) => pushProductChangeToZoho({ data: { productIds } }))
+    .catch((cause: unknown) => console.warn("Zoho will receive this product change on the next sync run", cause));
 }
 import {
   addresses as seedAddresses,
@@ -1091,6 +1103,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setProducts((list) => [p, ...list.filter((item) => item.id !== p.id)]);
         const saved = await saveProduct(p, user?.role === "vendor");
         if (!saved) setProducts((list) => list.filter((item) => item.id !== p.id));
+        else if (user?.role === "admin") pushProductsToZohoInBackground([p.id]);
         return saved;
       },
       updateProduct: async (id, patch) => {
@@ -1110,6 +1123,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setProducts((list) => list.map((p) => (p.id === id ? updated : p)));
         const ok = await saveProduct(updated, user?.role === "vendor");
         if (!ok) setProducts((list) => list.map((item) => item.id === id ? existing : item));
+        else if (user?.role === "admin") pushProductsToZohoInBackground([id]);
         return ok;
       },
       deleteProduct: async (id) => {

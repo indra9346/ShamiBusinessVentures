@@ -22,6 +22,7 @@ import {
 import { cn } from "@/lib/utils";
 import { downloadInvoice } from "@/lib/export-utils";
 import { orderBelongsToUser } from "@/lib/account-identity";
+import { PickupPointCard } from "@/components/site/PickupPointCard";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -227,6 +228,7 @@ function AccountOrderDetail() {
               <dd className="font-medium text-navy">{order.pin}</dd>
             </div>
           </dl>
+          <PickupPointCard pin={order.pin} heading="Collect this order from" className="mt-4" />
         </Panel>
         <Panel title="Payment">
           <dl className="space-y-2 text-sm">

@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { SiteLayout, Breadcrumbs } from "@/components/site/SiteLayout";
 import { inr } from "@/lib/data";
 import { useApp } from "@/lib/store";
+import { PickupPointCard } from "@/components/site/PickupPointCard";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -406,6 +407,7 @@ function Checkout() {
                       </p>
                     </button>
                   ))}
+                  {selectedAddress && <PickupPointCard pin={selectedAddress.pin} />}
                   {!addressFormOpen && (
                     <button
                       type="button"

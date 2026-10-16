@@ -3,6 +3,8 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import type { Database, Json } from "@/integrations/supabase/types";
+import { PICKUP_SETTINGS_KEY, parsePickupSettings, pickupPointForPin } from "@/lib/pickup-points";
+import { isMeasureUnit, toBaseQuantity } from "@/lib/data";
 
 const REGIONS = {
   com: ["https://accounts.zoho.com", "https://commerce.zoho.com", "https://www.zohoapis.com"],
@@ -137,7 +139,7 @@ export const startZohoAuthorization = createServerFn({ method: "POST" })
       response_type: "code",
       client_id: reqEnv("ZOHO_CLIENT_ID"),
       scope:
-        "ZohoCommerce.items.READ,ZohoCommerce.items.CREATE,ZohoCommerce.items.UPDATE,ZohoCommerce.coupons.READ,ZohoCommerce.coupons.CREATE,ZohoCommerce.coupons.UPDATE,ZohoCommerce.salesorders.READ,ZohoCommerce.salesorders.CREATE,ZohoCommerce.salesorders.UPDATE,ZohoCommerce.settings.READ,ZohoCommerce.settings.UPDATE,ZohoCommerce.sitesIndex.READ,ZohoCommerce.webhooks.READ,ZohoCommerce.webhooks.CREATE,ZohoInventory.contacts.READ,ZohoInventory.contacts.CREATE,ZohoInventory.contacts.UPDATE,ZohoInventory.items.READ,ZohoInventory.items.CREATE,ZohoInventory.items.UPDATE,ZohoInventory.salesorders.READ,ZohoInventory.salesorders.CREATE,ZohoInventory.salesorders.UPDATE,ZohoInventory.inventoryadjustments.READ,ZohoInventory.inventoryadjustments.CREATE",
+        "ZohoCommerce.items.READ,ZohoCommerce.items.CREATE,ZohoCommerce.items.UPDATE,ZohoCommerce.coupons.READ,ZohoCommerce.coupons.CREATE,ZohoCommerce.coupons.UPDATE,ZohoCommerce.salesorders.READ,ZohoCommerce.salesorders.CREATE,ZohoCommerce.salesorders.UPDATE,ZohoCommerce.settings.READ,ZohoCommerce.settings.UPDATE,ZohoCommerce.sitesIndex.READ,ZohoCommerce.webhooks.READ,ZohoCommerce.webhooks.CREATE,ZohoInventory.contacts.READ,ZohoInventory.contacts.CREATE,ZohoInventory.contacts.UPDATE,ZohoInventory.items.READ,ZohoInventory.items.CREATE,ZohoInventory.items.UPDATE,ZohoInventory.salesorders.READ,ZohoInventory.salesorders.CREATE,ZohoInventory.salesorders.UPDATE,ZohoInventory.inventoryadjustments.READ,ZohoInventory.inventoryadjustments.CREATE,ZohoInventory.settings.READ",
       redirect_uri: redirectUri,
       access_type: "offline",
       prompt: "consent",
@@ -1236,30 +1238,118 @@ async function catalogFingerprint(product: CatalogProduct) {
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", enc.encode(stable)));
   // The suffix identifies the image alone, so a sync can skip re-uploading an unchanged image.
   const imageDigest = new Uint8Array(await crypto.subtle.digest("SHA-256", enc.encode(shared.image)));
-  return `${b64(digest)}:${b64(imageDigest).slice(0, 16)}`;
+  return `${b64(digest)}:${b64(imageDigest).slice(0, 16)}:${await editableDigest(product)}`;
+}
+
+/** The product fields Zoho may also edit (never stock: Grain Bazar is the stock master). */
+function catalogEditableValues(product: CatalogProduct) {
+  const payload = plainObject(product.payload);
+  return {
+    name: str(payload["name"]).trim(),
+    sku: str(payload["sku"]).trim(),
+    price: finiteNumber(payload["price"]),
+    purchasePrice: finiteNumber(payload["purchasePrice"]),
+    minimumStock: finiteNumber(payload["minimumStock"]),
+    description: str(payload["description"]).trim(),
+    active: product.active,
+  };
+}
+
+function zohoEditableValues(item: Record<string, unknown>) {
+  const status = str(item["status"]).toLowerCase();
+  return {
+    name: str(item["name"]).trim(),
+    sku: str(item["sku"]).trim(),
+    price: finiteNumber(item["rate"]),
+    purchasePrice: finiteNumber(item["purchase_rate"]),
+    minimumStock: finiteNumber(item["reorder_level"]),
+    description: str(item["description"]).trim(),
+    active: status ? status !== "inactive" : null,
+  };
+}
+
+async function editableDigest(product: CatalogProduct) {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", enc.encode(JSON.stringify(catalogEditableValues(product)))));
+  return b64(digest).slice(0, 22);
 }
 
 /**
- * Fingerprint format used before stock/HSN were synced (no ":" suffix). Links saved then are
- * compared with this so an unchanged product is not mistaken for an app-side edit.
+ * Which side's item values are right when Zoho's copy differs from Grain Bazar's:
+ * "same" (nothing to do), "zoho" (apply Zoho's edit here) or "app" (Grain Bazar's push wins).
+ * If only Zoho changed since the last sync, Zoho wins; if both changed, the latest edit wins.
  */
-async function legacyCatalogFingerprint(product: CatalogProduct) {
-  const { name, sku, rate, purchaseRate, reorderLevel, description, image } = catalogSharedValues(product);
-  const stable = JSON.stringify({
-    vendorId: product.vendor_id,
-    category: product.category,
-    status: product.status,
-    active: product.active,
-    name, sku, rate, purchaseRate, reorderLevel, description, image,
+async function zohoItemDecision(product: CatalogProduct, link: ZohoItemLink, item: Record<string, unknown>) {
+  const zoho = zohoEditableValues(item);
+  const app = catalogEditableValues(product);
+  const differs = (Object.keys(zoho) as (keyof typeof zoho)[]).some((key) => {
+    const value = zoho[key];
+    return value !== null && value !== "" && value !== app[key];
   });
-  return b64(new Uint8Array(await crypto.subtle.digest("SHA-256", enc.encode(stable))));
+  if (!differs) return "same" as const;
+  const parts = (link.app_fingerprint ?? "").split(":");
+  if (parts.length >= 3 && parts[2] === await editableDigest(product)) return "zoho" as const;
+  const zohoMs = Date.parse(str(item["last_modified_time"]));
+  const appMs = Date.parse(product.updated_at);
+  return Number.isFinite(zohoMs) && Number.isFinite(appMs) && zohoMs > appMs ? "zoho" as const : "app" as const;
 }
 
-/** True when the product still matches the fingerprint saved at its last sync. */
-async function catalogMatchesFingerprint(product: CatalogProduct, saved: string) {
-  return saved.includes(":")
-    ? saved === await catalogFingerprint(product)
-    : saved === await legacyCatalogFingerprint(product);
+/** Applies Zoho's item values (not stock) to the product; keeps a QTL rate in step with a new price. */
+async function applyZohoItemToProduct(db: Awaited<ReturnType<typeof dbAdmin>>, product: CatalogProduct, item: Record<string, unknown>) {
+  const { error } = await db.rpc("apply_zoho_catalog_item", {
+    _product_id: product.id,
+    _item: item as Json,
+    _expected_updated_at: product.updated_at,
+  });
+  if (error) throw new Error("Zoho item was fetched, but Grain Bazar could not safely apply the update");
+  const load = () => db.from("catalog_products")
+    .select("id,vendor_id,category,status,active,payload,created_at,updated_at")
+    .eq("id", product.id).single();
+  let { data: applied } = await load();
+  if (!applied) throw new Error("Zoho item was applied, but Grain Bazar could not confirm the resulting product");
+  const payload = plainObject(applied.payload);
+  const rate = plainObject(payload["ratePricing"]);
+  const price = finiteNumber(payload["price"]);
+  if (price && isMeasureUnit(rate["packUnit"]) && isMeasureUnit(rate["basisUnit"]) && Number(rate["packQty"]) > 0 && Number(rate["basisQty"]) > 0) {
+    const perBase = price / toBaseQuantity(Number(rate["packQty"]), rate["packUnit"]);
+    const basisRate = Math.round(perBase * toBaseQuantity(Number(rate["basisQty"]), rate["basisUnit"]) * 100) / 100;
+    if (basisRate !== Number(rate["basisRate"])) {
+      await db.from("catalog_products")
+        .update({ payload: { ...payload, ratePricing: { ...rate, basisRate } } as Json })
+        .eq("id", product.id);
+      applied = (await load()).data ?? applied;
+    }
+  }
+  return applied;
+}
+
+/** Zoho -> Grain Bazar for one linked item (webhook, catch-up, daily run). */
+async function applyZohoItemChange(db: Awaited<ReturnType<typeof dbAdmin>>, link: ZohoItemLink, item: Record<string, unknown>) {
+  const zohoModifiedAt = str(item["last_modified_time"]);
+  const zohoMs = Date.parse(zohoModifiedAt);
+  const knownMs = Date.parse(link.last_zoho_modified_at ?? "");
+  if (!Number.isFinite(zohoMs) || (Number.isFinite(knownMs) && zohoMs <= knownMs)) {
+    await db.from("zoho_item_links").update({ last_polled_at: new Date().toISOString() }).eq("product_id", link.product_id);
+    return "unchanged" as const;
+  }
+  const { data: product } = await db.from("catalog_products")
+    .select("id,vendor_id,category,status,active,payload,created_at,updated_at")
+    .eq("id", link.product_id).maybeSingle();
+  if (!product) return "unchanged" as const;
+  const decision = await zohoItemDecision(product, link, item);
+  if (decision === "app") {
+    // Grain Bazar's edit is newer: send it to Zoho now rather than taking Zoho's older value.
+    await db.rpc("enqueue_zoho_sync", { _entity_type: "catalog", _entity_id: product.id });
+    return "app_newer" as const;
+  }
+  const applied = decision === "zoho" ? await applyZohoItemToProduct(db, product, item) : product;
+  const { error } = await db.from("zoho_item_links").update({
+    updated_at: new Date().toISOString(),
+    last_polled_at: new Date().toISOString(),
+    last_zoho_modified_at: zohoModifiedAt,
+    app_fingerprint: await catalogFingerprint(applied),
+  }).eq("product_id", link.product_id);
+  if (error) throw new Error("Zoho item was applied, but its reconciliation cursor could not be saved");
+  return decision === "zoho" ? "applied" as const : "unchanged" as const;
 }
 
 function fingerprintImagePart(fingerprint: string | null | undefined) {
@@ -1430,6 +1520,16 @@ async function syncZohoCatalogItem(
       if (error) throw new Error("Zoho item was deactivated, but its mapping could not be saved");
     }
     return;
+  }
+
+  if (link?.zoho_item_id) {
+    const pre = await inventoryRequest<{ item?: Record<string, unknown> }>(
+      region, organizationId, token, `items/${encodeURIComponent(link.zoho_item_id)}`, "GET",
+    );
+    if (pre.item && await applyZohoItemChange(db, link, pre.item) === "applied") {
+      // Zoho's edit is in Grain Bazar now; push from the updated product (stock and the rest).
+      return syncZohoCatalogItem(db, region, organizationId, token, productId, ctx);
+    }
   }
 
   const shared = catalogSharedValues(product);
@@ -1832,6 +1932,107 @@ export async function handleZohoOrderWebhook(salesOrderId: string) {
   return applyZohoSalesOrderToApp(db, organizationId, response.salesorder);
 }
 
+/** Pushes products to Zoho now and settles their queued catalog jobs. */
+async function syncCatalogProductsDirect(db: Awaited<ReturnType<typeof dbAdmin>>, productIds: string[]) {
+  const { region, organizationId, token } = await zohoOrderContext(db);
+  const runCtx = newZohoRunContext();
+  const outcome = { pushed: 0, review: 0 };
+  for (const productId of [...new Set(productIds)].slice(0, 20)) {
+    const settle = (status: "complete" | "needs_review", message: string | null) => db.from("zoho_sync_outbox")
+      .update({ status, last_error: message, updated_at: new Date().toISOString() })
+      .eq("entity_type", "catalog").eq("entity_id", productId).in("status", ["pending", "failed"]);
+    try {
+      await syncZohoCatalogItem(db, region, organizationId, token, productId, runCtx);
+      await settle("complete", null);
+      outcome.pushed += 1;
+    } catch (cause) {
+      const message = (cause instanceof Error ? cause.message : "Zoho rejected the product").slice(0, 900);
+      await settle("needs_review", message);
+      outcome.review += 1;
+    }
+  }
+  return outcome;
+}
+
+/** After checkout: the order's products changed stock; send them to Zoho now. Owner or admin only. */
+export const pushOrderStockToZoho = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator(z.object({ orderNo: z.string().trim().min(1).max(80) }))
+  .handler(async ({ data, context }) => {
+    const db = await dbAdmin();
+    const { data: order } = await db.from("orders").select("id,user_id").eq("order_no", data.orderNo).maybeSingle();
+    if (!order) return { pushed: 0 };
+    if (order.user_id !== context.userId) {
+      const { data: isAdmin } = await context.supabase.rpc("has_role", { _user_id: context.userId, _role: "admin" });
+      if (!isAdmin) return { pushed: 0 };
+    }
+    if (!(await isZohoWriteSyncActive(db))) return { pushed: 0 };
+    const { data: items } = await db.from("order_items").select("product_id").eq("order_id", order.id);
+    const ids = (items ?? []).map((item) => item.product_id).filter((id): id is string => !!id);
+    try {
+      return await syncCatalogProductsDirect(db, ids);
+    } catch {
+      return { pushed: 0 };
+    }
+  });
+
+/** Admin product edits: send them to Zoho now instead of waiting for the daily run. */
+export const pushProductChangeToZoho = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator(z.object({ productIds: z.array(z.string().trim().min(1).max(80)).min(1).max(20) }))
+  .handler(async ({ data, context }) => {
+    await ensureAdmin(context.supabase, context.userId);
+    const db = await dbAdmin();
+    if (!(await isZohoWriteSyncActive(db))) return { pushed: 0, review: 0 };
+    return syncCatalogProductsDirect(db, data.productIds);
+  });
+
+/** Webhook entry point for Zoho items: re-reads the item from Zoho and applies it. */
+export async function handleZohoItemWebhook(itemId: string) {
+  const db = await dbAdmin();
+  const { data: link } = await db.from("zoho_item_links")
+    .select("product_id,zoho_item_id,updated_at,last_polled_at,last_zoho_modified_at,app_fingerprint")
+    .eq("zoho_item_id", itemId).maybeSingle();
+  if (!link) return "not_grain_bazar";
+  const { region, organizationId, token } = await zohoOrderContext(db);
+  const response = await inventoryRequest<{ item?: Record<string, unknown> }>(
+    region, organizationId, token, `items/${encodeURIComponent(itemId)}`, "GET",
+  );
+  if (!response.item) return "missing";
+  return applyZohoItemChange(db, link as ZohoItemLink, response.item);
+}
+
+/** Catch-up for Zoho -> Grain Bazar items: applies the most recently changed linked items. */
+async function applyRecentZohoItemChanges(db: Awaited<ReturnType<typeof dbAdmin>>, region: Region, organizationId: string, token: string) {
+  const result = await inventoryRequest<{ items?: Record<string, unknown>[] }>(
+    region, organizationId, token, "items", "GET", undefined,
+    { sort_column: "last_modified_time", sort_order: "D", per_page: "50" },
+  );
+  const rows = result.items ?? [];
+  const ids = rows.map((row) => str(row["item_id"])).filter(Boolean);
+  if (!ids.length) return { checked: 0, changed: 0 };
+  const { data: links } = await db.from("zoho_item_links")
+    .select("product_id,zoho_item_id,updated_at,last_polled_at,last_zoho_modified_at,app_fingerprint")
+    .in("zoho_item_id", ids);
+  const summary = { checked: 0, changed: 0 };
+  for (const link of (links ?? []) as ZohoItemLink[]) {
+    const row = rows.find((item) => str(item["item_id"]) === link.zoho_item_id);
+    const rowMs = Date.parse(str(row?.["last_modified_time"]));
+    const knownMs = Date.parse(link.last_zoho_modified_at ?? "");
+    if (Number.isFinite(rowMs) && Number.isFinite(knownMs) && rowMs <= knownMs) continue;
+    summary.checked += 1;
+    try {
+      const full = await inventoryRequest<{ item?: Record<string, unknown> }>(
+        region, organizationId, token, `items/${encodeURIComponent(link.zoho_item_id)}`, "GET",
+      );
+      if (full.item && await applyZohoItemChange(db, link, full.item) === "applied") summary.changed += 1;
+    } catch (cause) {
+      console.warn(`Could not apply Zoho item ${link.zoho_item_id}:`, cause);
+    }
+  }
+  return summary;
+}
+
 /** Admin: pull Zoho-side order changes now (run when the admin opens Orders or Zoho pages). */
 export const syncZohoOrderChangesNow = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -1839,7 +2040,11 @@ export const syncZohoOrderChangesNow = createServerFn({ method: "POST" })
     await ensureAdmin(context.supabase, context.userId);
     const db = await dbAdmin();
     const { region, organizationId, token } = await zohoOrderContext(db);
-    return applyRecentZohoOrderChanges(db, region, organizationId, token);
+    const [orders, items] = await Promise.all([
+      applyRecentZohoOrderChanges(db, region, organizationId, token),
+      applyRecentZohoItemChanges(db, region, organizationId, token).catch(() => ({ checked: 0, changed: 0 })),
+    ]);
+    return { checked: orders.checked + items.checked, changed: orders.changed + items.changed };
   });
 
 /**
@@ -1878,6 +2083,34 @@ export const registerZohoOrderWebhook = createServerFn({ method: "POST" })
       return { registered: true, already: false };
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : "Zoho refused the webhook";
+      throw new Error(`${message}${zohoPermissionHint(message)}`);
+    }
+  });
+
+/** Zoho location of the pickup godown serving the order's PIN code ("" when none is set). */
+async function zohoLocationForOrder(db: Awaited<ReturnType<typeof dbAdmin>>, shippingAddress: Json | null) {
+  const address = plainObject(shippingAddress);
+  const pin = str(address["pin"] ?? address["zip"]);
+  const { data } = await db.from("settings").select("value").eq("key", PICKUP_SETTINGS_KEY).maybeSingle();
+  if (!data) return "";
+  return pickupPointForPin(parsePickupSettings(data.value), pin)?.zohoLocationId ?? "";
+}
+
+/** Admin: Zoho Inventory locations (warehouses), for linking a pickup godown. */
+export const listZohoLocations = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    await ensureAdmin(context.supabase, context.userId);
+    const db = await dbAdmin();
+    const { region, organizationId, token } = await zohoOrderContext(db);
+    try {
+      const result = await inventoryRequest<{ locations?: Record<string, unknown>[] }>(region, organizationId, token, "locations", "GET");
+      return (result.locations ?? []).map((location) => ({
+        id: str(location["location_id"]),
+        name: str(location["location_name"]),
+      })).filter((location) => location.id);
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "Zoho refused the location list";
       throw new Error(`${message}${zohoPermissionHint(message)}`);
     }
   });
@@ -1992,12 +2225,15 @@ async function syncZohoOrder(db: Awaited<ReturnType<typeof dbAdmin>>, region: Re
   ];
   if (orderGstInfo.note) notesParts.push(orderGstInfo.note);
 
+  // Pickup orders are created under the godown's Zoho location, so stock leaves that warehouse.
+  const locationId = await zohoLocationForOrder(db, order.shipping_address);
   const payload: Record<string, unknown> = {
+    ...(locationId ? { location_id: locationId } : {}),
     salesorder_number: safeNumber,
     reference_number: String(order.order_no).slice(0, 100),
     customer_id: customerId,
     date: datePart(order.created_at, new Date().toISOString().slice(0, 10)),
-    line_items: lineItems,
+    line_items: locationId ? lineItems.map((line) => ({ ...line, location_id: locationId })) : lineItems,
     discount: Number(order.discount) || 0,
     discount_type: "entity_level",
     is_discount_before_tax: true,
@@ -2178,56 +2414,8 @@ async function pollZohoCatalogChanges(
       );
       const item = response.item;
       if (!item) throw new Error("Zoho Inventory response did not include the mapped item");
-      const zohoModifiedAt = str(item["last_modified_time"]);
-      const zohoModifiedMs = Date.parse(zohoModifiedAt);
-      const knownModifiedMs = Date.parse(link.last_zoho_modified_at ?? "");
-      const isNewZohoEdit = Number.isFinite(zohoModifiedMs) &&
-        (!Number.isFinite(knownModifiedMs) || zohoModifiedMs > knownModifiedMs);
-      if (!isNewZohoEdit) {
-        await db.from("zoho_item_links").update({ last_polled_at: new Date().toISOString() })
-          .eq("product_id", link.product_id);
-        continue;
-      }
-
-      const { data: product, error: productError } = await db.from("catalog_products")
-        .select("id,vendor_id,category,status,active,payload,created_at,updated_at")
-        .eq("id", link.product_id).maybeSingle();
-      if (productError || !product) throw new Error("Could not compare the Zoho item to the mapped Grain Bazar product");
-      if (link.app_fingerprint && !await catalogMatchesFingerprint(product, link.app_fingerprint)) {
-        await saveZohoReview(
-          db,
-          "catalog",
-          product.id,
-          `Zoho item ${link.zoho_item_id} and Grain Bazar product ${product.id} changed since the last sync; review before choosing a winner.`,
-        );
-        await db.from("zoho_item_links").update({
-          last_polled_at: new Date().toISOString(),
-          last_zoho_modified_at: zohoModifiedAt,
-        }).eq("product_id", link.product_id);
-        result.needsReview += 1;
-        continue;
-      }
-
-      const { error: applyError } = await db.rpc("apply_zoho_catalog_item", {
-        _product_id: product.id,
-        _item: item as Json,
-        _expected_updated_at: product.updated_at,
-      });
-      if (applyError)
-        throw new Error("Zoho item was fetched, but Grain Bazar could not safely apply the update");
-      const { data: applied, error: appliedError } = await db.from("catalog_products")
-        .select("id,vendor_id,category,status,active,payload,created_at,updated_at")
-        .eq("id", product.id).single();
-      if (appliedError || !applied)
-        throw new Error("Zoho item was applied, but Grain Bazar could not confirm the resulting product");
-      const { error: cursorError } = await db.from("zoho_item_links").update({
-        updated_at: new Date().toISOString(),
-        last_polled_at: new Date().toISOString(),
-        last_zoho_modified_at: zohoModifiedAt,
-        app_fingerprint: await catalogFingerprint(applied),
-      }).eq("product_id", link.product_id);
-      if (cursorError)
-        throw new Error("Zoho item was applied, but its reconciliation cursor could not be saved");
+      const outcome = await applyZohoItemChange(db, link, item);
+      if (outcome !== "applied") continue;
       result.updated += 1;
     } catch {
       // Do not advance the remote cursor after a failed or unsafe apply. A
