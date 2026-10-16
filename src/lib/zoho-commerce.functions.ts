@@ -2133,6 +2133,27 @@ export const inspectZohoProductSync = createServerFn({ method: "POST" })
       savedDigest: (link.app_fingerprint ?? "").split(":")[2] ?? null,
       decision: await zohoItemDecision(product, link as ZohoItemLink, item),
       withCommerce: zohoEditableValues(await withCommerceProductValues(db, { region, organizationId, token }, link as ZohoItemLink, item)),
+      commerceProduct: await (async () => {
+        const sku = str(item["sku"]).trim();
+        const { data: mirror } = await db.from("catalog_products").select("id,payload")
+          .like("id", "zoho-%").eq("payload->>sku", sku).limit(1).maybeSingle();
+        const productId = str(plainObject(plainObject(mirror?.payload)["zoho"])["productId"]) || str(item["group_id"]);
+        if (!productId) return { found: false, mirrorRow: mirror?.id ?? null, groupId: item["group_id"] ?? null };
+        try {
+          const response = await commerceRequest<{ product?: Record<string, unknown> }>(region, organizationId, token, `products/${encodeURIComponent(productId)}`, "GET");
+          const product = response.product ?? {};
+          return {
+            found: true, productId, mirrorRow: mirror?.id ?? null, groupId: item["group_id"] ?? null,
+            last_modified_time: product["last_modified_time"],
+            product_description: str(product["product_description"]).slice(0, 300),
+            product_short_description: str(product["product_short_description"]).slice(0, 300),
+            variants: (Array.isArray(product["variants"]) ? product["variants"] : []).map(plainObject)
+              .map((v) => ({ sku: v["sku"], reorder_level: v["reorder_level"], rate: v["rate"] })),
+          };
+        } catch (cause) {
+          return { found: false, productId, error: cause instanceof Error ? cause.message : "error" };
+        }
+      })(),
     });
   });
 
