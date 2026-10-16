@@ -1323,7 +1323,66 @@ async function applyZohoItemToProduct(db: Awaited<ReturnType<typeof dbAdmin>>, p
 }
 
 /** Zoho -> Grain Bazar for one linked item (webhook, catch-up, daily run). */
-async function applyZohoItemChange(db: Awaited<ReturnType<typeof dbAdmin>>, link: ZohoItemLink, item: Record<string, unknown>) {
+type ZohoApiContext = { region: Region; organizationId: string; token: string };
+
+const htmlToText = (html: string) => html
+  .replace(/<br\s*\/?>(\s*)/gi, "\n").replace(/<\/p>/gi, "\n").replace(/<[^>]+>/g, "")
+  .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+  .replace(/\n{3,}/g, "\n\n").trim();
+
+/**
+ * Edits made on the Zoho Commerce product page (description, variant reorder level) live on the
+ * Commerce product, not on the inventory item. When that product changed after the last sync,
+ * its values are folded into the item copy that is compared and applied.
+ */
+async function withCommerceProductValues(
+  db: Awaited<ReturnType<typeof dbAdmin>>,
+  api: ZohoApiContext | undefined,
+  link: ZohoItemLink,
+  item: Record<string, unknown>,
+) {
+  if (!api) return item;
+  const sku = str(item["sku"]).trim();
+  let productId = "";
+  if (sku) {
+    const { data: mirror } = await db.from("catalog_products").select("payload")
+      .like("id", "zoho-%").eq("payload->>sku", sku).limit(1).maybeSingle();
+    productId = str(plainObject(plainObject(mirror?.payload)["zoho"])["productId"]);
+  }
+  productId ||= str(item["group_id"]);
+  if (!productId) return item;
+  try {
+    const response = await commerceRequest<{ product?: Record<string, unknown> }>(
+      api.region, api.organizationId, api.token, `products/${encodeURIComponent(productId)}`, "GET",
+    );
+    const product = response.product;
+    if (!product) return item;
+    const productMs = Date.parse(str(product["last_modified_time"]));
+    const knownMs = Date.parse(link.last_zoho_modified_at ?? "");
+    if (!Number.isFinite(productMs) || (Number.isFinite(knownMs) && productMs <= knownMs)) return item;
+    const variants = (Array.isArray(product["variants"]) ? product["variants"] : []).map(plainObject);
+    const variant = variants.find((v) => str(v["sku"]).trim().toLowerCase() === sku.toLowerCase()) ?? (variants.length === 1 ? variants[0] : undefined);
+    const description = htmlToText(str(product["product_description"]));
+    const variantReorder = variant ? finiteNumber(variant["reorder_level"]) : null;
+    return {
+      ...item,
+      ...(description ? { description } : {}),
+      ...(variantReorder !== null && str(variant?.["reorder_level"]) !== "" ? { reorder_level: variantReorder } : {}),
+      // The newer of the two edits decides "latest wins".
+      last_modified_time: productMs > Date.parse(str(item["last_modified_time"])) ? str(product["last_modified_time"]) : item["last_modified_time"],
+    };
+  } catch {
+    return item;
+  }
+}
+
+async function applyZohoItemChange(
+  db: Awaited<ReturnType<typeof dbAdmin>>,
+  link: ZohoItemLink,
+  rawItem: Record<string, unknown>,
+  api?: ZohoApiContext,
+) {
+  const item = await withCommerceProductValues(db, api, link, rawItem);
   const zohoModifiedAt = str(item["last_modified_time"]);
   const zohoMs = Date.parse(zohoModifiedAt);
   const knownMs = Date.parse(link.last_zoho_modified_at ?? "");
@@ -1526,7 +1585,7 @@ async function syncZohoCatalogItem(
     const pre = await inventoryRequest<{ item?: Record<string, unknown> }>(
       region, organizationId, token, `items/${encodeURIComponent(link.zoho_item_id)}`, "GET",
     );
-    if (pre.item && await applyZohoItemChange(db, link, pre.item) === "applied") {
+    if (pre.item && await applyZohoItemChange(db, link, pre.item, { region, organizationId, token }) === "applied") {
       // Zoho's edit is in Grain Bazar now; push from the updated product (stock and the rest).
       return syncZohoCatalogItem(db, region, organizationId, token, productId, ctx);
     }
@@ -1999,7 +2058,7 @@ export async function handleZohoItemWebhook(itemId: string) {
     region, organizationId, token, `items/${encodeURIComponent(itemId)}`, "GET",
   );
   if (!response.item) return "missing";
-  return applyZohoItemChange(db, link as ZohoItemLink, response.item);
+  return applyZohoItemChange(db, link as ZohoItemLink, response.item, { region, organizationId, token });
 }
 
 /** Catch-up for Zoho -> Grain Bazar items: applies the most recently changed linked items. */
@@ -2021,15 +2080,13 @@ async function applyRecentZohoItemChanges(db: Awaited<ReturnType<typeof dbAdmin>
   const summary = { checked: 0, changed: 0 };
   for (const link of (links ?? []) as ZohoItemLink[]) {
     const row = rows.find((item) => str(item["item_id"]) === link.zoho_item_id);
-    const rowMs = Date.parse(str(row?.["last_modified_time"]));
-    const knownMs = Date.parse(link.last_zoho_modified_at ?? "");
-    if (Number.isFinite(rowMs) && Number.isFinite(knownMs) && rowMs <= knownMs) continue;
     summary.checked += 1;
+    void row;
     try {
       const full = await inventoryRequest<{ item?: Record<string, unknown> }>(
         region, organizationId, token, `items/${encodeURIComponent(link.zoho_item_id)}`, "GET",
       );
-      if (full.item && await applyZohoItemChange(db, link, full.item) === "applied") summary.changed += 1;
+      if (full.item && await applyZohoItemChange(db, link, full.item, { region, organizationId, token }) === "applied") summary.changed += 1;
     } catch (cause) {
       console.warn(`Could not apply Zoho item ${link.zoho_item_id}:`, cause);
     }
@@ -2075,6 +2132,7 @@ export const inspectZohoProductSync = createServerFn({ method: "POST" })
       editableDigestNow: await editableDigest(product),
       savedDigest: (link.app_fingerprint ?? "").split(":")[2] ?? null,
       decision: await zohoItemDecision(product, link as ZohoItemLink, item),
+      withCommerce: zohoEditableValues(await withCommerceProductValues(db, { region, organizationId, token }, link as ZohoItemLink, item)),
     });
   });
 
@@ -2468,7 +2526,7 @@ async function pollZohoCatalogChanges(
       );
       const item = response.item;
       if (!item) throw new Error("Zoho Inventory response did not include the mapped item");
-      const outcome = await applyZohoItemChange(db, link, item);
+      const outcome = await applyZohoItemChange(db, link, item, { region, organizationId, token });
       if (outcome !== "applied") continue;
       result.updated += 1;
     } catch {
