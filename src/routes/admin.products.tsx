@@ -18,7 +18,7 @@ import { PanelLayout } from "@/components/panel/PanelLayout";
 import { DataTable, Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { Pager } from "@/components/panel/pager";
 import { adminNav } from "@/lib/panel-nav";
-import { DEFAULT_MAX_PURCHASE_QUANTITY, DEFAULT_PRICING_DISPLAY_MODE, getMaxPurchaseQuantity, getPricingDisplayMode, inr, type PricingDisplayMode, type Product } from "@/lib/data";
+import { DEFAULT_MAX_PURCHASE_QUANTITY, DEFAULT_PRICING_DISPLAY_MODE, getMaxPurchaseQuantity, getPricingDisplayMode, inr, isZohoMirrorProduct, type PricingDisplayMode, type Product } from "@/lib/data";
 import { PricingDisplayModeToggle } from "@/components/panel/PricingDisplayModeToggle";
 import { useApp } from "@/lib/store";
 import { Input } from "@/components/ui/input";
@@ -172,6 +172,7 @@ function AdminProductsPanel() {
   const [vendorId, setVendorId] = useState("all");
   const [status, setStatus] = useState("all");
   const [sort, setSort] = useState("created-desc");
+  const [showZoho, setShowZoho] = useState(false);
   const [page, setPage] = useState(1);
 
   const [addOpen, setAddOpen] = useState(false);
@@ -250,8 +251,15 @@ function AdminProductsPanel() {
   const [stockEditing, setStockEditing] = useState<Product | null>(null);
   const [stockValue, setStockValue] = useState("");
 
+  const zohoCount = useMemo(() => products.filter(isZohoMirrorProduct).length, [products]);
+  // Zoho Commerce imports duplicate app SKUs with stale stock; hide them unless asked for.
+  const scoped = useMemo(
+    () => (showZoho ? products : products.filter((p) => !isZohoMirrorProduct(p))),
+    [products, showZoho],
+  );
+
   const filtered = useMemo(() => {
-    let list = products.filter((p) => {
+    let list = scoped.filter((p) => {
       const s = q.trim().toLowerCase();
       const matchesQ = !s || p.name.toLowerCase().includes(s) || p.sku.toLowerCase().includes(s);
       const matchesCat = category === "all" || p.category === category;
@@ -267,14 +275,14 @@ function AdminProductsPanel() {
       return 0;
     });
     return list;
-  }, [products, q, category, vendorId, status, sort]);
+  }, [scoped, q, category, vendorId, status, sort]);
 
   const pages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const pageSafe = Math.min(page, pages);
   const rows = filtered.slice((pageSafe - 1) * PAGE_SIZE, pageSafe * PAGE_SIZE);
 
-  const lowStock = products.filter((p) => p.stock > 0 && p.stock < 30).length;
-  const outStock = products.filter((p) => p.stock === 0).length;
+  const lowStock = scoped.filter((p) => p.stock > 0 && p.stock < 30).length;
+  const outStock = scoped.filter((p) => p.stock === 0).length;
 
   const submitQuickAdd = async () => {
     if (!quickForm.name.trim() || !quickForm.qty) {
@@ -473,7 +481,7 @@ function AdminProductsPanel() {
       subtitle="Marketplace-wide catalogue"
     >
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Total Products" value={String(products.length)} icon={Package} highlight />
+        <StatCard label="Total Products" value={String(scoped.length)} icon={Package} highlight />
         <StatCard label="Low Stock" value={String(lowStock)} icon={AlertTriangle} />
         <StatCard label="Out of Stock" value={String(outStock)} icon={PackageX} />
         <StatCard label="Total Vendors" value={String(vendors.length)} icon={Boxes} />
@@ -556,6 +564,19 @@ function AdminProductsPanel() {
                 <SelectItem value="rejected">Rejected</SelectItem>
               </SelectContent>
             </Select>
+            {zohoCount > 0 && (
+              <label className="flex h-9 items-center gap-2 rounded-md border border-input px-3 text-xs text-slate">
+                <Switch
+                  checked={showZoho}
+                  aria-label="Show Zoho-imported items"
+                  onCheckedChange={(v) => {
+                    setShowZoho(v);
+                    setPage(1);
+                  }}
+                />
+                Show Zoho-imported items ({zohoCount})
+              </label>
+            )}
             <Select value={sort} onValueChange={setSort}>
               <SelectTrigger className="h-9 w-40">
                 <SelectValue placeholder="Sort" />
@@ -903,6 +924,7 @@ function AdminProductsPanel() {
           ]}
           rows={rows.map((p) => {
             const lowAt = p.minimumStock ?? 30;
+            const zoho = isZohoMirrorProduct(p);
             const fifo = getFIFOCost(p.id);
             return [
               <div className="flex min-w-0 items-center gap-3">
@@ -925,6 +947,11 @@ function AdminProductsPanel() {
               <div className="min-w-0 leading-snug">
                 <p className="truncate font-medium text-charcoal">{p.category || "—"}</p>
                 <p className="truncate text-xs text-slate">{p.vendor || "—"}</p>
+                {zoho && (
+                  <span className="mt-1 inline-flex rounded-full border border-navy/15 bg-navy/6 px-2 py-0.5 text-[10px] font-semibold text-navy">
+                    Read-only · from Zoho
+                  </span>
+                )}
               </div>,
               <div className="leading-snug">
                 <p className="font-bold tabular-nums text-navy">{inr(p.price)}</p>
@@ -949,7 +976,12 @@ function AdminProductsPanel() {
                   Min {lowAt} · Max/order {getMaxPurchaseQuantity(p)}
                 </p>
               </div>,
-              <div className="flex flex-col items-start gap-2">
+              zoho ? (
+                <div className="flex flex-col items-start gap-1 text-xs text-slate">
+                  <StatusBadge status={p.status} />
+                  {p.active ? "Active in Zoho" : "Inactive in Zoho"}
+                </div>
+              ) : <div className="flex flex-col items-start gap-2">
                 <Select
                   value={p.status}
                   onValueChange={async (v) => {
@@ -982,7 +1014,11 @@ function AdminProductsPanel() {
                 </label>
               </div>,
               <span className="text-xs text-slate">{formatCreated(p.created)}</span>,
-              <div className="inline-flex items-center gap-1">
+              zoho ? (
+                <span className="text-xs text-slate" title="Imported from Zoho Commerce; edit it in Zoho">
+                  Read-only
+                </span>
+              ) : <div className="inline-flex items-center gap-1">
                 <Button
                   variant="outline"
                   size="icon"

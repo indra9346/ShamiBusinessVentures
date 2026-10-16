@@ -171,8 +171,11 @@ export const storefrontCategories = categories
   .map((c) => ({ ...c, subs: c.name === "Sugar" ? ["S1 Sugar"] : c.subs }));
 export const isStorefrontCategory = (name: string) =>
   storefrontCategories.some((c) => c.name === name || c.subs.includes(name));
+/** Read-only copies imported from Zoho Commerce (vendor_id "zoho:<org>"); the app's own products are the stock master. */
+export const isZohoMirrorProduct = (p: Pick<Product, "vendorId">) =>
+  (p.vendorId ?? "").startsWith("zoho:");
 export const isStorefrontProduct = (p: Product) =>
-  p.status === "approved" && p.active !== false;
+  p.status === "approved" && p.active !== false && !isZohoMirrorProduct(p);
 
 
 const catImage: Record<string, string> = {
