@@ -270,7 +270,8 @@ export function AddToCartPicker({
     <>
       {trigger}
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-[calc(100vw-2rem)] gap-3 rounded-xl p-4 sm:max-w-xs sm:p-5">
+        {/* On phones the keypad sits low, like a phone keypad, just above the live cart bar. */}
+        <DialogContent className="max-w-[calc(100vw-2rem)] gap-3 rounded-xl p-4 max-sm:top-auto max-sm:translate-y-0 max-sm:bottom-[calc(5.25rem+env(safe-area-inset-bottom))] sm:max-w-xs sm:p-5">
           <DialogHeader className="space-y-0.5 text-left">
             <DialogTitle className="line-clamp-2 text-sm font-bold leading-snug text-navy">
               {product.name}

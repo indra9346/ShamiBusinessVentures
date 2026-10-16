@@ -5,6 +5,7 @@ import { inr } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { useCartPreview } from "@/lib/cart-preview";
 import { cn } from "@/lib/utils";
+import { CartReviewSheet } from "@/components/site/CartReviewSheet";
 
 /** Storefront routes where the bar would duplicate the page's own summary. */
 const HIDDEN_PREFIXES = ["/cart", "/checkout", "/admin", "/vendor", "/login", "/register", "/reset-password"];
@@ -12,8 +13,9 @@ const HIDDEN_PREFIXES = ["/cart", "/checkout", "/admin", "/vendor", "/login", "/
 /**
  * "You're shopping" bar — slides up from the bottom the moment the cart has at least one
  * item and stays fixed while the customer keeps browsing. Shows live count, weight and
- * total (straight from the store context, so it updates the instant quantities change),
- * with one-tap View Cart / Checkout.
+ * total (straight from the store context, so it updates the instant quantities change).
+ * Checkout first opens the cart review (every product with − / + and a keypad); from there
+ * the same button becomes "Proceed to checkout".
  */
 export function StickyCartBar() {
   const { cartItems: savedItems, cartCount: savedCount, subtotal: savedSubtotal } = useApp();
@@ -30,6 +32,8 @@ export function StickyCartBar() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const hidden = HIDDEN_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
   const visible = cartCount > 0 && !hidden;
+  const [reviewOpen, setReviewOpen] = useState(false);
+  useEffect(() => { setReviewOpen(false); }, [pathname]);
 
   const [pulseKey, setPulseKey] = useState(0);
   const previous = useRef<number | null>(null);
@@ -73,7 +77,7 @@ export function StickyCartBar() {
         aria-hidden={!visible}
         className={cn(
           "fixed inset-x-0 bottom-0 transition-transform duration-300 ease-out",
-          previewing ? "pointer-events-none z-[60]" : "z-40",
+          previewing ? "pointer-events-none z-[60]" : reviewOpen ? "z-[60]" : "z-40",
           visible ? "translate-y-0" : "pointer-events-none translate-y-full",
         )}
         style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
@@ -119,16 +123,30 @@ export function StickyCartBar() {
             >
               View Cart
             </Link>
-            <Link
-              to="/checkout"
-              search={{}}
-              className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-md bg-gold px-4 text-sm font-bold text-midnight shadow-sm transition-all hover:bg-gold-light active:scale-[0.98]"
-            >
-              Checkout <ArrowRight className="h-4 w-4" />
-            </Link>
+            {reviewOpen ? (
+              <Link
+                to="/checkout"
+                search={{}}
+                onClick={() => setReviewOpen(false)}
+                className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-md bg-gold px-4 text-sm font-bold text-midnight shadow-sm transition-all hover:bg-gold-light active:scale-[0.98]"
+              >
+                <span className="sm:hidden">Continue</span>
+                <span className="hidden sm:inline">Proceed to checkout</span>
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setReviewOpen(true)}
+                className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-md bg-gold px-4 text-sm font-bold text-midnight shadow-sm transition-all hover:bg-gold-light active:scale-[0.98]"
+              >
+                Checkout <ArrowRight className="h-4 w-4" />
+              </button>
+            )}
           </div>
         </div>
       </div>
+      <CartReviewSheet open={reviewOpen && visible && !previewing} onClose={() => setReviewOpen(false)} />
     </>
   );
 }
