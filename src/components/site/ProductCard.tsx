@@ -1,6 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { Heart, Package, Star } from "lucide-react";
-import { getDisplayDiscountPercent, getPricingDisplayMode, inr, type Product } from "@/lib/data";
+import { formatRateBasis, getDisplayDiscountPercent, getPricingDisplayMode, inr, inrPrecise, type Product } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { useStorefrontDisplay } from "@/lib/storefront-display";
@@ -23,17 +23,22 @@ function stockState(product: Product, availableStock: number) {
 }
 
 /**
- * Price block shared by grid + list layouts. The selling price is always shown, large, with a
- * soft blink. MRP strike-through, "% off" and "Save ₹N" appear only when the admin switches on
+ * Price block shared by grid + list layouts. The selling price is always shown, large and steady,
+ * with the trade rate (e.g. "₹5,300/QTL") beside it when the admin priced the product from a rate.
+ * MRP strike-through, "% off" and "Save ₹N" appear only when the admin switches on
  * "Show MRP & savings" (Settings → Storefront), and then follow the product's Pricing Display Mode.
  */
 function PriceBlock({ product, size = "sm", showSavings }: { product: Product; size?: "sm" | "lg"; showSavings: boolean }) {
   const mrpOnly = getPricingDisplayMode(product) === "mrp_only";
   const off = getDisplayDiscountPercent(product);
   const priceClass = size === "lg" ? "text-xl sm:text-2xl" : "text-lg sm:text-xl";
+  const rate = formatRateBasis(product);
   const price = (
-    <span className={cn(priceClass, "animate-price-blink font-extrabold leading-none tracking-tight text-navy")}>
-      {inr(product.price)}
+    <span className="inline-flex flex-wrap items-baseline gap-x-1">
+      <span className={cn(priceClass, "font-extrabold leading-none tracking-tight text-stone-900")}>
+        {inrPrecise(product.price)}
+      </span>
+      {rate && <span className="text-[11px] sm:text-xs font-semibold text-stone-600">({rate})</span>}
     </span>
   );
 

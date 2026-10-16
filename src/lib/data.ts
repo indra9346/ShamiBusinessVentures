@@ -9,6 +9,14 @@ import premiumOilCategoryImg from "@/assets/category-oil-premium.jpg";
 export const inr = (n: number) =>
   "₹" + Math.round(n).toLocaleString("en-IN", { maximumFractionDigits: 2 });
 
+/** Like inr, but keeps paise when there are any: ₹2,650 and ₹43.50. */
+export const inrPrecise = (n: number) => {
+  const paise = Math.round(n * 100);
+  return paise % 100 === 0
+    ? inr(paise / 100)
+    : "₹" + (paise / 100).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+};
+
 /* ---------- deterministic pseudo random ---------- */
 let seed = 20260818;
 const rnd = () => {
@@ -52,7 +60,85 @@ export type Product = {
   purchasePrice?: number;
   /** How the storefront presents price. Missing = "strike_through" (backward compatible). */
   pricingDisplayMode?: PricingDisplayMode;
+  /** Selling price worked out from a trade rate, e.g. 50 kg bag at ₹5,300 per QTL. */
+  ratePricing?: RatePricing | undefined;
+  /** Zoho item fields. */
+  manufacturer?: string | undefined;
+  /** Selling unit shown in Zoho, e.g. bag, tin, pcs. */
+  unit?: string | undefined;
+  /** HSN/SAC code. */
+  hsn?: string | undefined;
 };
+
+/* ---------- trade-rate pricing (QTL, kg, litre) ---------- */
+export const MEASURE_UNITS = ["kg", "g", "QTL", "tonne", "L", "ml"] as const;
+export type MeasureUnit = (typeof MEASURE_UNITS)[number];
+
+/** Each unit in its base unit: mass in kg (1 QTL = 100 kg), volume in litres. */
+const MEASURE_BASE: Record<MeasureUnit, { dimension: "mass" | "volume"; inBase: number; label: string }> = {
+  g: { dimension: "mass", inBase: 0.001, label: "g" },
+  kg: { dimension: "mass", inBase: 1, label: "kg" },
+  QTL: { dimension: "mass", inBase: 100, label: "QTL (100 kg)" },
+  tonne: { dimension: "mass", inBase: 1000, label: "tonne (1000 kg)" },
+  ml: { dimension: "volume", inBase: 0.001, label: "ml" },
+  L: { dimension: "volume", inBase: 1, label: "L" },
+};
+
+export const measureUnitLabel = (unit: MeasureUnit) => MEASURE_BASE[unit].label;
+export const isMeasureUnit = (value: unknown): value is MeasureUnit =>
+  typeof value === "string" && value in MEASURE_BASE;
+
+export type RatePricing = {
+  /** Pack size, e.g. 50 (kg). */
+  packQty: number;
+  packUnit: MeasureUnit;
+  /** Rate basis, e.g. 1 (QTL). */
+  basisQty: number;
+  basisUnit: MeasureUnit;
+  /** Price in ₹ for basisQty basisUnit, e.g. 5300. */
+  basisRate: number;
+};
+
+/** Default rate basis: oil is quoted per litre, grains per quintal. */
+export function defaultRatePricing(category: string): RatePricing {
+  return /oil/i.test(category)
+    ? { packQty: 1, packUnit: "L", basisQty: 1, basisUnit: "L", basisRate: 0 }
+    : { packQty: 50, packUnit: "kg", basisQty: 1, basisUnit: "QTL", basisRate: 0 };
+}
+
+/**
+ * Pack price from the trade rate, to the paisa: rate × pack ÷ basis, both in the same base unit.
+ * 50 kg at ₹5,300/QTL = 5300 × 50 ÷ 100 = ₹2,650. Null when the inputs cannot be priced
+ * (missing values, or kg against litres).
+ */
+export function computeRatePrice(pricing: RatePricing | undefined | null): number | null {
+  if (!pricing) return null;
+  const pack = MEASURE_BASE[pricing.packUnit];
+  const basis = MEASURE_BASE[pricing.basisUnit];
+  if (!pack || !basis || pack.dimension !== basis.dimension) return null;
+  const { packQty, basisQty, basisRate } = pricing;
+  if (!(packQty > 0) || !(basisQty > 0) || !(basisRate > 0)) return null;
+  const price = (basisRate * packQty * pack.inBase) / (basisQty * basis.inBase);
+  return Number.isFinite(price) ? Math.round(price * 100) / 100 : null;
+}
+
+/** "50 kg", "2.5 L" — the pack size as shown on the product. */
+export function formatPackSize(pricing: Pick<RatePricing, "packQty" | "packUnit">) {
+  return `${pricing.packQty.toLocaleString("en-IN", { maximumFractionDigits: 3 })} ${pricing.packUnit}`;
+}
+
+/** "₹5,300/QTL" or "₹1,950/15 L" — the trade rate beside the selling price. Null when not set. */
+export function formatRateBasis(product: Pick<Product, "ratePricing">): string | null {
+  const pricing = product.ratePricing;
+  if (!pricing || computeRatePrice(pricing) === null) return null;
+  const per = pricing.basisQty === 1
+    ? pricing.basisUnit
+    : `${pricing.basisQty.toLocaleString("en-IN", { maximumFractionDigits: 3 })} ${pricing.basisUnit}`;
+  return `${inrPrecise(pricing.basisRate)}/${per}`;
+}
+
+/** GST slabs offered by Zoho (intra-state GSTn, inter-state IGSTn). */
+export const GST_RATES = [0, 5, 12, 18, 28, 40] as const;
 
 export type PricingDisplayMode = "mrp_only" | "strike_through";
 export const DEFAULT_PRICING_DISPLAY_MODE: PricingDisplayMode = "strike_through";

@@ -4,7 +4,7 @@ import { Heart, Minus, Plus, ShieldCheck, Star, Truck, Store, ShoppingCart } fro
 import { toast } from "sonner";
 import { SiteLayout, Breadcrumbs, SectionHeading } from "@/components/site/SiteLayout";
 import { ProductCard } from "@/components/site/ProductCard";
-import { getAvailablePurchaseQuantity, getDisplayDiscountPercent, getMaxPurchaseQuantity, getPricingDisplayMode, inr, isStorefrontProduct } from "@/lib/data";
+import { getAvailablePurchaseQuantity, getDisplayDiscountPercent, getMaxPurchaseQuantity, getPricingDisplayMode, formatRateBasis, inr, inrPrecise, isStorefrontProduct } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { useStorefrontDisplay } from "@/lib/storefront-display";
 import { supabase } from "@/integrations/supabase/client";
@@ -202,7 +202,10 @@ function ProductDetail() {
           </div>
 
           <div className="mt-6 flex flex-wrap items-baseline gap-3">
-            <span className="animate-price-blink text-3xl font-extrabold text-navy sm:text-4xl">{inr(product.price)}</span>
+            <span className="text-3xl font-extrabold text-stone-900 sm:text-4xl">{inrPrecise(product.price)}</span>
+            {formatRateBasis(product) && (
+              <span className="text-sm font-semibold text-stone-600">({formatRateBasis(product)})</span>
+            )}
             {!display.showMrpSavings ? null : mrpOnly ? (
               <span className="text-sm font-medium text-stone-500">MRP</span>
             ) : (

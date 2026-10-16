@@ -20,6 +20,14 @@ import { Pager } from "@/components/panel/pager";
 import { adminNav } from "@/lib/panel-nav";
 import { DEFAULT_MAX_PURCHASE_QUANTITY, DEFAULT_PRICING_DISPLAY_MODE, getMaxPurchaseQuantity, getPricingDisplayMode, inr, isZohoMirrorProduct, type PricingDisplayMode, type Product } from "@/lib/data";
 import { PricingDisplayModeToggle } from "@/components/panel/PricingDisplayModeToggle";
+import {
+  ProductTradeFields,
+  emptyTradeFields,
+  productPatchFromFields,
+  tradeFieldsFromProduct,
+  validateTradeFields,
+  type TradeFieldsState,
+} from "@/components/panel/ProductTradeFields";
 import { useApp } from "@/lib/store";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -178,6 +186,16 @@ function AdminProductsPanel() {
   const [addOpen, setAddOpen] = useState(false);
   const [form, setForm] = useState(
     emptyForm(categoryChoices[0]?.name, categoryChoices[0]?.subs[0], vendors[0]?.id),
+  );
+  const [trade, setTrade] = useState<TradeFieldsState>(() => emptyTradeFields(categoryChoices[0]?.name ?? "Rice"));
+  const [editTrade, setEditTrade] = useState<TradeFieldsState>(() => emptyTradeFields("Rice"));
+  const brandChoices = useMemo(
+    () => [...new Set(products.map((p) => p.brand?.trim()).filter((b): b is string => !!b))].sort(),
+    [products],
+  );
+  const manufacturerChoices = useMemo(
+    () => [...new Set(products.map((p) => p.manufacturer?.trim()).filter((m): m is string => !!m))].sort(),
+    [products],
   );
   useEffect(() => {
     if (!form.vendorId && vendors.length > 0)
@@ -350,8 +368,13 @@ function AdminProductsPanel() {
   };
 
   const submitAdd = async () => {
-    if (!form.name.trim() || !form.mrp || !form.price) {
-      toast.error("Please fill product name, MRP and price");
+    const tradeError = validateTradeFields(trade);
+    if (tradeError) {
+      toast.error(tradeError);
+      return;
+    }
+    if (!form.name.trim() || !form.price) {
+      toast.error("Please fill the product name and selling price");
       return;
     }
     if (!form.image.trim()) {
@@ -362,8 +385,9 @@ function AdminProductsPanel() {
       toast.error("Wait for the product image upload to finish");
       return;
     }
-    const mrp = Number(form.mrp);
     const price = Number(form.price);
+    // Retail price (MRP) is optional, as in Zoho; blank means the selling price.
+    const mrp = form.mrp.trim() ? Number(form.mrp) : price;
     const stock = Number(form.stock || 0);
     if (!Number.isFinite(mrp) || mrp <= 0 || !Number.isFinite(price) || price <= 0 || price > mrp) {
       toast.error("Enter valid prices; selling price must not exceed MRP");
@@ -389,11 +413,12 @@ function AdminProductsPanel() {
       return;
     }
     const id = `P-${crypto.randomUUID()}`;
+    const tradePatch = productPatchFromFields(trade);
     const product: Product = {
       id,
       name: form.name,
       sku: `SBV-${form.category.slice(0, 2).toUpperCase()}-${crypto.randomUUID().replaceAll("-", "").slice(0, 8).toUpperCase()}`,
-      brand: "Shami Select",
+      brand: tradePatch.brand,
       vendor: vendor.business,
       vendorId: vendor.id,
       category: form.category,
@@ -417,7 +442,11 @@ function AdminProductsPanel() {
       active: true,
       tags: [],
       description: "Newly added product pending catalogue review.",
-      specs: [{ label: "Brand", value: "Shami Select" }],
+      specs: [{ label: "Brand", value: tradePatch.brand }],
+      ...(tradePatch.ratePricing ? { ratePricing: tradePatch.ratePricing } : {}),
+      ...(tradePatch.manufacturer ? { manufacturer: tradePatch.manufacturer } : {}),
+      ...(tradePatch.unit ? { unit: tradePatch.unit } : {}),
+      ...(tradePatch.hsn ? { hsn: tradePatch.hsn } : {}),
       created: new Date().toLocaleDateString("en-IN", {
         day: "2-digit",
         month: "short",
@@ -433,6 +462,7 @@ function AdminProductsPanel() {
     toast.success(`${product.name} added to catalogue`);
     setAddOpen(false);
     setForm(emptyForm(categoryChoices[0]?.name, categoryChoices[0]?.subs[0], vendors[0]?.id));
+    setTrade(emptyTradeFields(categoryChoices[0]?.name ?? "Rice"));
   };
 
   const handleExportProducts = () => {
@@ -689,6 +719,9 @@ function AdminProductsPanel() {
                             category: v,
                             subcategory: categoryChoices.find((c) => c.name === v)?.subs[0] ?? v,
                           }));
+                          setTrade((current) => current.basisRate
+                            ? current
+                            : { ...emptyTradeFields(v), brand: current.brand, manufacturer: current.manufacturer, hsn: current.hsn });
                           void loadTaxSettings()
                             .then((settings) => {
                               const gst = defaultGstForCategory(settings, v);
@@ -757,21 +790,31 @@ function AdminProductsPanel() {
                       </SelectContent>
                     </Select>
                   </div>
+                  <ProductTradeFields
+                    value={trade}
+                    onChange={setTrade}
+                    onPrice={(price, packSize) => setForm((current) => ({ ...current, price: String(price), weight: packSize }))}
+                    brands={brandChoices}
+                    manufacturers={manufacturerChoices}
+                  />
                   <div className="grid grid-cols-3 gap-3">
                     <div>
-                      <Label>MRP</Label>
-                      <Input
-                        type="number"
-                        value={form.mrp}
-                        onChange={(e) => setForm({ ...form, mrp: e.target.value })}
-                      />
-                    </div>
-                    <div>
-                      <Label>Price</Label>
+                      <Label>Selling price (₹)</Label>
                       <Input
                         type="number"
                         value={form.price}
+                        readOnly={trade.useRate}
+                        title={trade.useRate ? "Worked out from the rate above" : undefined}
                         onChange={(e) => setForm({ ...form, price: e.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <Label>Retail price / MRP (₹, optional)</Label>
+                      <Input
+                        type="number"
+                        value={form.mrp}
+                        placeholder={form.price || "Same as selling price"}
+                        onChange={(e) => setForm({ ...form, mrp: e.target.value })}
                       />
                     </div>
                     <div>
@@ -1027,6 +1070,7 @@ function AdminProductsPanel() {
                   aria-label={`Edit ${p.name}`}
                   onClick={() => {
                     setEditing(p);
+                    setEditTrade(tradeFieldsFromProduct(p));
                     setEditForm({
                       name: p.name,
                       mrp: String(p.mrp),
@@ -1126,21 +1170,31 @@ function AdminProductsPanel() {
                 onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
               />
             </div>
+            <ProductTradeFields
+              value={editTrade}
+              onChange={setEditTrade}
+              onPrice={(price, packSize) => setEditForm((current) => ({ ...current, price: String(price), weight: packSize }))}
+              brands={brandChoices}
+              manufacturers={manufacturerChoices}
+            />
             <div className="grid grid-cols-3 gap-3">
               <div>
-                <Label>MRP</Label>
-                <Input
-                  type="number"
-                  value={editForm.mrp}
-                  onChange={(e) => setEditForm({ ...editForm, mrp: e.target.value })}
-                />
-              </div>
-              <div>
-                <Label>Price</Label>
+                <Label>Selling price (₹)</Label>
                 <Input
                   type="number"
                   value={editForm.price}
+                  readOnly={editTrade.useRate}
+                  title={editTrade.useRate ? "Worked out from the rate above" : undefined}
                   onChange={(e) => setEditForm({ ...editForm, price: e.target.value })}
+                />
+              </div>
+              <div>
+                <Label>Retail price / MRP (₹, optional)</Label>
+                <Input
+                  type="number"
+                  value={editForm.mrp}
+                  placeholder={editForm.price || "Same as selling price"}
+                  onChange={(e) => setEditForm({ ...editForm, mrp: e.target.value })}
                 />
               </div>
               <div>
@@ -1285,13 +1339,20 @@ function AdminProductsPanel() {
                   toast.error("Enter a GST rate between 0% and 100%");
                   return;
                 }
-                const mrp = Number(editForm.mrp);
+                const tradeError = validateTradeFields(editTrade);
+                if (tradeError) {
+                  toast.error(tradeError);
+                  return;
+                }
                 const price = Number(editForm.price);
+                const mrp = editForm.mrp.trim() ? Number(editForm.mrp) : price;
                 if (!Number.isFinite(mrp) || mrp <= 0 || !Number.isFinite(price) || price <= 0 || price > mrp) {
                   toast.error("Enter valid prices; selling price must not exceed MRP");
                   return;
                 }
+                const tradePatch = productPatchFromFields(editTrade);
                 const saved = await updateProduct(editing.id, {
+                  ...tradePatch,
                   name: editForm.name,
                   mrp,
                   price,

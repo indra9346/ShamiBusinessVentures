@@ -1143,6 +1143,39 @@ type ZohoItemLink = {
   app_fingerprint: string | null;
 };
 
+const zohoTaxCache = new Map<string, { at: number; taxes: Record<string, unknown>[] }>();
+
+/**
+ * Zoho India tax preferences for a GST slab: intra-state "GSTn" (CGST + SGST group) and
+ * inter-state "IGSTn". Null when the organization has no matching pair, so the item keeps
+ * whatever tax Zoho already has instead of failing the sync.
+ */
+async function zohoGstTaxPreferences(region: Region, organizationId: string, token: string, gst: number) {
+  const key = `${region}:${organizationId}`;
+  let cached = zohoTaxCache.get(key);
+  if (!cached || Date.now() - cached.at > 10 * 60_000) {
+    try {
+      const result = await inventoryRequest<{ taxes?: Record<string, unknown>[] }>(
+        region, organizationId, token, "settings/taxes", "GET",
+      );
+      cached = { at: Date.now(), taxes: result.taxes ?? [] };
+      zohoTaxCache.set(key, cached);
+    } catch {
+      return null;
+    }
+  }
+  const matches = (prefix: "GST" | "IGST") => cached!.taxes.filter((tax) =>
+    Number(tax["tax_percentage"]) === gst &&
+    new RegExp(`^${prefix}\\s*${gst}(\\b|\\s|$)`, "i").test(str(tax["tax_name"]).trim()));
+  const intra = matches("GST");
+  const inter = matches("IGST");
+  if (intra.length !== 1 || inter.length !== 1) return null;
+  return [
+    { tax_id: str(intra[0]!["tax_id"]), tax_specification: "intra" },
+    { tax_id: str(inter[0]!["tax_id"]), tax_specification: "inter" },
+  ];
+}
+
 function plainObject(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -1170,14 +1203,35 @@ function catalogSharedValues(product: CatalogProduct) {
   };
 }
 
+/**
+ * Zoho item details set from the admin product form (brand, manufacturer, unit, GST).
+ * Null for products saved before that form existed, so their Zoho-side values are left alone.
+ */
+function catalogItemDetails(product: CatalogProduct) {
+  const payload = plainObject(product.payload);
+  const fromForm = payload["ratePricing"] !== undefined
+    || payload["manufacturer"] !== undefined
+    || payload["unit"] !== undefined;
+  if (!fromForm) return null;
+  return {
+    brand: str(payload["brand"]).trim(),
+    manufacturer: str(payload["manufacturer"]).trim(),
+    unit: str(payload["unit"]).trim(),
+    gst: finiteNumber(payload["gst"]),
+  };
+}
+
 async function catalogFingerprint(product: CatalogProduct) {
   const shared = catalogSharedValues(product);
+  const details = catalogItemDetails(product);
   const stable = JSON.stringify({
     vendorId: product.vendor_id,
     category: product.category,
     status: product.status,
     active: product.active,
     ...shared,
+    // Older products keep their exact fingerprint, so Zoho-side edits are not flagged as conflicts.
+    ...(details ? { details } : {}),
   });
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", enc.encode(stable)));
   // The suffix identifies the image alone, so a sync can skip re-uploading an unchanged image.
@@ -1430,7 +1484,15 @@ async function syncZohoCatalogItem(
     }
   }
 
+  const details = catalogItemDetails(product);
+  const taxPreferences = details?.gst !== null && details?.gst !== undefined
+    ? await zohoGstTaxPreferences(region, organizationId, token, details.gst)
+    : null;
   const itemPayload: Record<string, unknown> = {
+    ...(details?.brand ? { brand: details.brand } : {}),
+    ...(details?.manufacturer ? { manufacturer: details.manufacturer } : {}),
+    ...(details?.unit ? { unit: details.unit } : {}),
+    ...(taxPreferences ? { item_tax_preferences: taxPreferences } : {}),
     name: shared.name,
     sku: shared.sku,
     rate: shared.rate,
@@ -1465,7 +1527,7 @@ async function syncZohoCatalogItem(
       region, organizationId, token, "items", "POST", {
         ...itemPayload,
         item_type: "inventory",
-        unit: "pcs",
+        unit: details?.unit || "pcs",
         ...(shared.stock !== null && shared.stock > 0 ? {
           initial_stock: shared.stock,
           initial_stock_rate: shared.purchaseRate ?? shared.rate,
