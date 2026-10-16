@@ -93,6 +93,9 @@ function AdminOrderDetail() {
     updateOrderDelivery,
   } = useApp();
   const order = orders.find((o) => o.id === id);
+  // Hooks stay above the early return: orders load after the first render.
+  const [pushedZohoId, setPushedZohoId] = useState<string | null>(null);
+  const [syncingZoho, setSyncingZoho] = useState(false);
 
   if (!order) {
     return (
@@ -132,15 +135,14 @@ function AdminOrderDetail() {
     order.items.some((i) => i.vendorId === v.id || i.vendor === v.business),
   );
 
-  const [zohoSalesOrderId, setZohoSalesOrderId] = useState<string | null>(order.zohoSalesOrderId || null);
-  const [syncingZoho, setSyncingZoho] = useState(false);
+  const zohoSalesOrderId = pushedZohoId ?? (order.zohoSalesOrderId || null);
 
   const handleSyncToZoho = async () => {
     setSyncingZoho(true);
     try {
       const res = await syncSingleOrderToZoho({ data: { orderNo: order.id } });
       if (res.zohoSalesOrderId) {
-        setZohoSalesOrderId(res.zohoSalesOrderId);
+        setPushedZohoId(res.zohoSalesOrderId);
         toast.success(`Order synced to Zoho Sales Order ${res.zohoSalesOrderId}!`);
       } else {
         toast.success("Order sync job queued for Zoho Commerce");
