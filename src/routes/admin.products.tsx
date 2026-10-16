@@ -18,7 +18,7 @@ import { PanelLayout } from "@/components/panel/PanelLayout";
 import { DataTable, Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { Pager } from "@/components/panel/pager";
 import { adminNav } from "@/lib/panel-nav";
-import { DEFAULT_MAX_PURCHASE_QUANTITY, DEFAULT_PRICING_DISPLAY_MODE, getMaxPurchaseQuantity, getPricingDisplayMode, inr, isZohoMirrorProduct, type PricingDisplayMode, type Product } from "@/lib/data";
+import { DEFAULT_MAX_PURCHASE_QUANTITY, DEFAULT_PRICING_DISPLAY_MODE, getMaxPurchaseQuantity, getPricingDisplayMode, inr, isZohoMirrorProduct, storeCategorySeed, type PricingDisplayMode, type Product } from "@/lib/data";
 import { PricingDisplayModeToggle } from "@/components/panel/PricingDisplayModeToggle";
 import {
   ProductTradeFields,
@@ -170,6 +170,8 @@ function AdminProductsPanel() {
     vendors,
     addProduct,
     updateProduct,
+    addCategory,
+    updateCategory,
     deleteProduct,
     duplicateProduct,
     getFIFOCost,
@@ -189,6 +191,100 @@ function AdminProductsPanel() {
   );
   const [trade, setTrade] = useState<TradeFieldsState>(() => emptyTradeFields(categoryChoices[0]?.name ?? "Rice"));
   const [editTrade, setEditTrade] = useState<TradeFieldsState>(() => emptyTradeFields("Rice"));
+  const NEW_CATEGORY = "__new_category__";
+  const NEW_SUBCATEGORY = "__new_subcategory__";
+  const [newCategory, setNewCategory] = useState<{ name: string; sub: string } | null>(null);
+  const [newSub, setNewSub] = useState<string | null>(null);
+  const [creatingCategory, setCreatingCategory] = useState(false);
+  // A closing select moves focus back on its own; once it has, move it to the new name field.
+  const [focusRequest, setFocusRequest] = useState<{ id: string } | null>(null);
+  useEffect(() => {
+    if (!focusRequest) return;
+    const timer = window.setTimeout(() => document.getElementById(focusRequest.id)?.focus(), 80);
+    return () => window.clearTimeout(timer);
+  }, [focusRequest]);
+  const chooseCategory = (v: string, sub?: string) => {
+    setForm((current) => ({
+      ...current,
+      category: v,
+      subcategory: sub ?? categoryChoices.find((c) => c.name === v)?.subs[0] ?? v,
+    }));
+    setTrade((current) => current.basisRate
+      ? current
+      : { ...emptyTradeFields(v), brand: current.brand, manufacturer: current.manufacturer, hsn: current.hsn });
+    void loadTaxSettings()
+      .then((settings) => {
+        const gst = defaultGstForCategory(settings, v);
+        setForm((current) =>
+          current.category === v ? { ...current, gst: String(gst) } : current,
+        );
+      })
+      .catch((error: unknown) =>
+        toast.error("Could not load GST defaults", {
+          description:
+            error instanceof Error
+              ? error.message
+              : "Using the current product rate.",
+        }),
+      );
+  };
+  const createCategory = async () => {
+    if (!newCategory) return;
+    const name = newCategory.name.trim().replace(/\s+/g, " ");
+    const sub = newCategory.sub.trim().replace(/\s+/g, " ") || name;
+    if (!name) { toast.error("Enter a category name"); return; }
+    const existing = categories.find((c) => c.name.trim().toLowerCase() === name.toLowerCase());
+    if (existing) {
+      // Same name already exists: select it (and add the subcategory if it is new) instead of duplicating.
+      const hasSub = existing.grades.some((g) => g.trim().toLowerCase() === sub.toLowerCase());
+      if (!hasSub && newCategory.sub.trim()) {
+        setCreatingCategory(true);
+        const ok = await updateCategory(existing.id, { grades: [...existing.grades, sub] }).finally(() => setCreatingCategory(false));
+        if (!ok) return;
+      }
+      chooseCategory(existing.name, existing.grades.find((g) => g.trim().toLowerCase() === sub.toLowerCase()) ?? (newCategory.sub.trim() ? sub : existing.grades[0]));
+      toast.info(`“${existing.name}” already exists, selected it`);
+      setNewCategory(null);
+      return;
+    }
+    setCreatingCategory(true);
+    try {
+      const image = form.image || categories.find((c) => c.image)?.image || storeCategorySeed[0]!.image;
+      const ok = await addCategory({ name, tagline: `${name} products`, image, grades: [sub], enabled: true });
+      if (!ok) return;
+      chooseCategory(name, sub);
+      setNewCategory(null);
+      toast.success(`Category “${name}” created`, { description: "Change its image and tagline anytime in Admin → Categories." });
+    } catch (error) {
+      toast.error("Could not create this category", { description: error instanceof Error ? error.message : "Please retry." });
+    } finally {
+      setCreatingCategory(false);
+    }
+  };
+  const createSubcategory = async () => {
+    const name = (newSub ?? "").trim().replace(/\s+/g, " ");
+    if (!name) { toast.error("Enter a subcategory name"); return; }
+    const current = categories.find((c) => c.name === form.category);
+    if (!current) { toast.error("Choose a category first"); return; }
+    const existing = current.grades.find((g) => g.trim().toLowerCase() === name.toLowerCase());
+    if (existing) {
+      setForm((f) => ({ ...f, subcategory: existing }));
+      setNewSub(null);
+      return;
+    }
+    setCreatingCategory(true);
+    try {
+      const ok = await updateCategory(current.id, { grades: [...current.grades, name] });
+      if (!ok) return;
+      setForm((f) => ({ ...f, subcategory: name }));
+      setNewSub(null);
+      toast.success(`Subcategory “${name}” added to ${current.name}`);
+    } catch (error) {
+      toast.error("Could not add this subcategory", { description: error instanceof Error ? error.message : "Please retry." });
+    } finally {
+      setCreatingCategory(false);
+    }
+  };
   const brandChoices = useMemo(
     () => [...new Set(products.map((p) => p.brand?.trim()).filter((b): b is string => !!b))].sort(),
     [products],
@@ -714,29 +810,13 @@ function AdminProductsPanel() {
                       <Select
                         value={form.category}
                         onValueChange={(v) => {
-                          setForm((current) => ({
-                            ...current,
-                            category: v,
-                            subcategory: categoryChoices.find((c) => c.name === v)?.subs[0] ?? v,
-                          }));
-                          setTrade((current) => current.basisRate
-                            ? current
-                            : { ...emptyTradeFields(v), brand: current.brand, manufacturer: current.manufacturer, hsn: current.hsn });
-                          void loadTaxSettings()
-                            .then((settings) => {
-                              const gst = defaultGstForCategory(settings, v);
-                              setForm((current) =>
-                                current.category === v ? { ...current, gst: String(gst) } : current,
-                              );
-                            })
-                            .catch((error: unknown) =>
-                              toast.error("Could not load GST defaults", {
-                                description:
-                                  error instanceof Error
-                                    ? error.message
-                                    : "Using the current product rate.",
-                              }),
-                            );
+                          if (v === NEW_CATEGORY) {
+                            setFocusRequest({ id: "new-category-name" });
+                            setNewCategory({ name: "", sub: "" });
+                            return;
+                          }
+                          setNewCategory(null);
+                          chooseCategory(v);
                         }}
                       >
                         <SelectTrigger>
@@ -748,6 +828,9 @@ function AdminProductsPanel() {
                               {c.name}
                             </SelectItem>
                           ))}
+                          <SelectItem value={NEW_CATEGORY} className="font-semibold text-navy">
+                            + New category…
+                          </SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
@@ -770,11 +853,47 @@ function AdminProductsPanel() {
                       </Select>
                     </div>
                   </div>
+                  {newCategory && (
+                    <div className="space-y-2 rounded-md border border-gold/50 bg-ivory/60 p-3">
+                      <p className="text-sm font-semibold text-navy">New category</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <Label className="text-xs">Category name</Label>
+                          <Input
+                            id="new-category-name"
+                            placeholder="e.g. Pulses"
+                            value={newCategory.name}
+                            onChange={(e) => setNewCategory({ ...newCategory, name: e.target.value })}
+                            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void createCategory(); } }}
+                          />
+                        </div>
+                        <div>
+                          <Label className="text-xs">First subcategory</Label>
+                          <Input
+                            placeholder="e.g. Toor Dal (optional)"
+                            value={newCategory.sub}
+                            onChange={(e) => setNewCategory({ ...newCategory, sub: e.target.value })}
+                            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void createCategory(); } }}
+                          />
+                        </div>
+                      </div>
+                      <div className="flex justify-end gap-2">
+                        <Button type="button" size="sm" variant="outline" onClick={() => setNewCategory(null)}>Cancel</Button>
+                        <Button type="button" size="sm" className="bg-navy text-white hover:bg-navy/90" disabled={creatingCategory} onClick={() => void createCategory()}>
+                          {creatingCategory ? "Creating…" : "Create category"}
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                   <div>
                     <Label>Subcategory</Label>
                     <Select
                       value={form.subcategory}
-                      onValueChange={(v) => setForm({ ...form, subcategory: v })}
+                      onValueChange={(v) => {
+                        if (v === NEW_SUBCATEGORY) { setFocusRequest({ id: "new-subcategory-name" }); setNewSub(""); return; }
+                        setNewSub(null);
+                        setForm({ ...form, subcategory: v });
+                      }}
                     >
                       <SelectTrigger>
                         <SelectValue placeholder="Choose subcategory" />
@@ -787,8 +906,26 @@ function AdminProductsPanel() {
                             </SelectItem>
                           ),
                         )}
+                        <SelectItem value={NEW_SUBCATEGORY} className="font-semibold text-navy">
+                          + New subcategory…
+                        </SelectItem>
                       </SelectContent>
                     </Select>
+                    {newSub !== null && (
+                      <div className="mt-2 flex gap-2">
+                        <Input
+                          id="new-subcategory-name"
+                          placeholder={`New subcategory in ${form.category}`}
+                          value={newSub}
+                          onChange={(e) => setNewSub(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void createSubcategory(); } }}
+                        />
+                        <Button type="button" size="sm" variant="outline" onClick={() => setNewSub(null)}>Cancel</Button>
+                        <Button type="button" size="sm" className="bg-navy text-white hover:bg-navy/90" disabled={creatingCategory} onClick={() => void createSubcategory()}>
+                          Add
+                        </Button>
+                      </div>
+                    )}
                   </div>
                   <ProductTradeFields
                     value={trade}
