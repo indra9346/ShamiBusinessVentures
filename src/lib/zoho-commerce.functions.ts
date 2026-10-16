@@ -941,6 +941,39 @@ async function inventoryRequest<T>(
   return data;
 }
 
+async function commerceRequest<T>(
+  region: Region,
+  organizationId: string,
+  token: string,
+  resource: string,
+  method: "GET" | "POST" | "PUT",
+  body?: Record<string, unknown>,
+): Promise<T> {
+  const response = await fetch(`${REGIONS[region][1]}/store/api/v1/${resource}`, {
+    method,
+    headers: {
+      Authorization: `Zoho-oauthtoken ${token}`,
+      "X-com-zoho-store-organizationid": organizationId,
+      ...(method !== "GET" ? { "content-type": "application/json" } : {}),
+    },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+    signal: AbortSignal.timeout(20_000),
+  });
+  const data = (await response.json().catch(() => ({}))) as T & { code?: number; message?: string };
+  if (!response.ok || data.code !== 0)
+    throw new Error(data.message ?? `Zoho Commerce ${resource} failed (${response.status})`);
+  return data;
+}
+
+/** Turns Zoho's permission and plan-limit refusals into the step that fixes them. */
+export function zohoPermissionHint(message: string) {
+  if (/used up your available sales orders|create more orders|monthly limit/i.test(message))
+    return " This is the Zoho organization's sales-order plan limit; Zoho must raise it (Zoho billing or support) before more orders can be created.";
+  if (/not authori[sz]ed|invalid[_ ]?scope|oauth|permission/i.test(message))
+    return ' Open Admin > Zoho, click "Reauthorize Zoho" and accept every permission Zoho lists.';
+  return "";
+}
+
 function splitContactName(fullName: string) {
   const parts = fullName.trim().split(/\s+/).filter(Boolean);
   return { first_name: parts[0] ?? "Grain Bazar Customer", last_name: parts.slice(1).join(" ") };
@@ -1486,6 +1519,24 @@ async function syncZohoCatalogItem(
   if (stockFollowUp) throw new NeedsReviewError(stockFollowUp);
 }
 
+async function findZohoSalesOrdersByNumber(region: Region, organizationId: string, token: string, salesOrderNumber: string) {
+  const result = await inventoryRequest<{ salesorders?: Record<string, unknown>[] }>(
+    region, organizationId, token, "salesorders", "GET", undefined,
+    { salesorder_number: salesOrderNumber, per_page: "200" },
+  );
+  return (result.salesorders ?? []).filter((row) => str(row["salesorder_number"]) === salesOrderNumber);
+}
+
+/** Inventory and Commerce share one organization; a pushed order must also be listed in Commerce > Orders. */
+async function assertVisibleInZohoCommerce(region: Region, organizationId: string, token: string, salesOrderId: string, salesOrderNumber: string) {
+  try {
+    await commerceRequest(region, organizationId, token, `salesorders/${encodeURIComponent(salesOrderId)}`, "GET");
+  } catch (cause) {
+    const message = cause instanceof Error ? cause.message : "unknown error";
+    throw new NeedsReviewError(`Sales order ${salesOrderNumber} was created in Zoho Inventory (ID ${salesOrderId}) but Zoho Commerce did not return it: ${message}.${zohoPermissionHint(message)}`);
+  }
+}
+
 async function syncZohoOrder(db: Awaited<ReturnType<typeof dbAdmin>>, region: Region, organizationId: string, token: string, job: ZohoSyncJob) {
   const orderId = job.entity_id;
   const [{ data: order, error: orderError }, { data: items, error: itemsError }] = await Promise.all([
@@ -1584,14 +1635,7 @@ async function syncZohoOrder(db: Awaited<ReturnType<typeof dbAdmin>>, region: Re
   // A previous request may have reached Zoho even if the response was lost.
   // On retries, search Zoho first by the unique sales-order number.
   if (job.attempts > 1) {
-    const matches: Record<string, unknown>[] = [];
-    for (let page = 1; page <= 100; page += 1) {
-      const result = await inventoryRequest<{ salesorders?: Record<string, unknown>[] }>(region, organizationId, token, "salesorders", "GET", undefined, { page: String(page), per_page: "200" });
-      const pageRows = result.salesorders ?? [];
-      matches.push(...pageRows.filter((row) => str(row["salesorder_number"]) === safeNumber));
-      if (pageRows.length < 200) break;
-      if (page === 100) throw new NeedsReviewError("Zoho sales-order lookup reached the safety limit during duplicate prevention");
-    }
+    const matches = await findZohoSalesOrdersByNumber(region, organizationId, token, safeNumber);
     if (matches.length > 1) throw new NeedsReviewError(`More than one Zoho sales order uses ${safeNumber}`);
     if (matches.length === 1) {
       const existingId = str(matches[0]!["salesorder_id"]);
@@ -1627,6 +1671,7 @@ async function syncZohoOrder(db: Awaited<ReturnType<typeof dbAdmin>>, region: Re
   if (!salesOrderId) throw new Error("Zoho created a sales order but returned no salesorder_id");
   const { error: saveError } = await db.from("orders").update({ zoho_salesorder_id: salesOrderId }).eq("id", order.id).is("zoho_salesorder_id", null);
   if (saveError) throw new Error("Zoho sales order created, but its ID could not be stored; retry will check Zoho's unique order number");
+  await assertVisibleInZohoCommerce(region, organizationId, token, salesOrderId, safeNumber);
   const zohoTotal = Number(created.salesorder?.["total"]);
   if (Number.isFinite(zohoTotal) && Math.abs(zohoTotal - Number(order.total)) > 2.00)
     throw new NeedsReviewError(`Zoho accepted order ${safeNumber}, but total ₹${zohoTotal.toFixed(2)} differs from Grain Bazar ₹${Number(order.total).toFixed(2)}. Review taxes, discount, and shipping before processing.`);
@@ -2345,25 +2390,362 @@ export const syncSingleOrderToZoho = createServerFn({ method: "POST" })
       .eq("order_no", data.orderNo)
       .maybeSingle();
     if (error || !order) throw new Error("Order not found for Zoho synchronization");
+    const { data: connection, error: connectionError } = await db
+      .from("zoho_commerce_connection")
+      .select("organization_id,region,refresh_token_ciphertext,token_iv,token_tag")
+      .eq("id", true)
+      .maybeSingle();
+    if (connectionError || !connection) throw new Error("Connect and authorize Zoho before pushing orders");
+    const region = connection.region as Region;
+    const token = await accessToken(region, await decrypt(connection));
 
-    const { error: enqueueError } = await db.rpc("enqueue_zoho_sync", {
-      _entity_type: "order",
-      _entity_id: order.id,
-    });
-    if (enqueueError) throw new Error("Could not queue order for Zoho synchronization");
-
-    const res = await processZohoSyncNow({ data: { limit: 10, force: true } });
+    // Push this order directly instead of waiting behind the shared queue, and report
+    // Zoho's real answer. attempts: 2 first looks for an earlier half-finished push.
+    const openJobs = () => db.from("zoho_sync_outbox").select("id")
+      .eq("entity_type", "order").eq("entity_id", order.id)
+      .in("status", ["pending", "failed", "needs_review"]);
+    try {
+      await syncZohoOrder(db, region, connection.organization_id, token, {
+        id: "direct", entity_type: "order", entity_id: order.id, attempts: 2,
+      } as ZohoSyncJob);
+    } catch (cause) {
+      const message = (cause instanceof Error ? cause.message : "Zoho rejected the order").slice(0, 900);
+      const { data: jobs } = await openJobs();
+      if (jobs?.length) {
+        await db.from("zoho_sync_outbox")
+          .update({ status: "needs_review", last_error: message, updated_at: new Date().toISOString() })
+          .in("id", jobs.map((job) => job.id));
+      } else {
+        await db.from("zoho_sync_outbox").insert({
+          entity_type: "order", entity_id: order.id, event_type: "upsert", status: "needs_review", last_error: message,
+        });
+      }
+      throw new Error(`${message}${zohoPermissionHint(message)}`);
+    }
+    const { data: jobs } = await openJobs();
+    if (jobs?.length) {
+      await db.from("zoho_sync_outbox")
+        .update({ status: "complete", last_error: null, updated_at: new Date().toISOString() })
+        .in("id", jobs.map((job) => job.id));
+    }
     const { data: updated } = await db
       .from("orders")
       .select("zoho_salesorder_id")
       .eq("id", order.id)
       .maybeSingle();
-
-    return {
-      success: true,
-      zohoSalesOrderId: updated?.zoho_salesorder_id ?? null,
-      processed: res.processed,
-      complete: res.complete,
-    };
+    if (!updated?.zoho_salesorder_id)
+      throw new Error("Zoho finished without returning a sales order ID; check Admin > Zoho");
+    return { success: true, zohoSalesOrderId: updated.zoho_salesorder_id };
   });
 
+
+/* ---------------------------------------------------------------------------
+ * Two-way sales order editing (Admin > Zoho > Sales orders).
+ * Zoho is the record of truth for these orders: every save first reloads the
+ * order from Zoho and refuses to overwrite a newer Zoho edit, then writes the
+ * change, reads the result back, and stores it in the Grain Bazar snapshot so
+ * both panels show the same, most recent version.
+ * ------------------------------------------------------------------------- */
+
+const zohoAddressSchema = z.object({
+  attention: z.string().trim().max(100),
+  address: z.string().trim().min(1).max(500),
+  city: z.string().trim().min(1).max(100),
+  state: z.string().trim().min(1).max(100),
+  zip: z.string().trim().min(1).max(20),
+  country: z.string().trim().min(1).max(100),
+  phone: z.string().trim().max(50),
+});
+
+const salesOrderIdSchema = z.string().trim().regex(/^\d{1,30}$/, "Invalid Zoho sales order ID");
+
+export type ZohoEditableSalesOrder = {
+  salesOrderId: string;
+  salesOrderNumber: string;
+  lastModified: string;
+  orderStatus: string;
+  customerName: string;
+  date: string;
+  shipmentDate: string;
+  referenceNumber: string;
+  notes: string;
+  terms: string;
+  discountType: string;
+  discount: number;
+  discountIsPercent: boolean;
+  shippingCharge: number;
+  adjustment: number;
+  adjustmentDescription: string;
+  total: number;
+  currencyCode: string;
+  lineItems: { lineItemId: string; name: string; sku: string; quantity: number; rate: number; itemTotal: number }[];
+  billingAddress: z.infer<typeof zohoAddressSchema>;
+  shippingAddress: z.infer<typeof zohoAddressSchema>;
+  linkedOrderNo: string | null;
+};
+
+function zohoAddress(value: unknown): z.infer<typeof zohoAddressSchema> {
+  const address = plainObject(value);
+  return {
+    attention: str(address["attention"]),
+    address: str(address["address"] ?? address["street"]),
+    city: str(address["city"]),
+    state: str(address["state"]),
+    zip: str(address["zip"] ?? address["zip_code"]),
+    country: str(address["country"]),
+    phone: str(address["phone"]),
+  };
+}
+
+function editableSalesOrder(order: Record<string, unknown>, linkedOrderNo: string | null): ZohoEditableSalesOrder {
+  const rawDiscount = order["discount"];
+  const discountIsPercent = typeof rawDiscount === "string" && rawDiscount.trim().endsWith("%")
+    || order["is_discount_percent"] === true;
+  return {
+    salesOrderId: str(order["salesorder_id"]),
+    salesOrderNumber: str(order["salesorder_number"]),
+    lastModified: str(order["last_modified_time"]),
+    orderStatus: str(order["order_status"] ?? order["status"]),
+    customerName: str(order["customer_name"]),
+    date: str(order["date"]),
+    shipmentDate: str(order["shipment_date"]),
+    referenceNumber: str(order["reference_number"]),
+    notes: str(order["notes"]),
+    terms: str(order["terms"]),
+    discountType: str(order["discount_type"]) || "entity_level",
+    discount: num(typeof rawDiscount === "string" ? rawDiscount.replace("%", "") : rawDiscount),
+    discountIsPercent,
+    shippingCharge: num(order["shipping_charge"]),
+    adjustment: num(order["adjustment"]),
+    adjustmentDescription: str(order["adjustment_description"]),
+    total: num(order["total"]),
+    currencyCode: str(order["currency_code"]) || "INR",
+    lineItems: (Array.isArray(order["line_items"]) ? order["line_items"] : []).map((raw) => {
+      const item = plainObject(raw);
+      return {
+        lineItemId: str(item["line_item_id"]),
+        name: str(item["name"] ?? item["description"]),
+        sku: str(item["sku"]),
+        quantity: num(item["quantity"]),
+        rate: num(item["rate"]),
+        itemTotal: num(item["item_total"]),
+      };
+    }),
+    billingAddress: zohoAddress(order["billing_address"]),
+    shippingAddress: zohoAddress(order["shipping_address"]),
+    linkedOrderNo,
+  };
+}
+
+async function zohoSalesOrderContext(db: Awaited<ReturnType<typeof dbAdmin>>) {
+  const { data: connection, error } = await db
+    .from("zoho_commerce_connection")
+    .select("organization_id,region,refresh_token_ciphertext,token_iv,token_tag")
+    .eq("id", true)
+    .maybeSingle();
+  if (error || !connection) throw new Error("Connect Zoho before editing its sales orders");
+  const region = connection.region as Region;
+  if (!(region in REGIONS)) throw new Error("The Zoho data center is not supported");
+  return { region, organizationId: connection.organization_id, token: await accessToken(region, await decrypt(connection)) };
+}
+
+async function loadZohoSalesOrder(region: Region, organizationId: string, token: string, salesOrderId: string) {
+  const response = await inventoryRequest<{ salesorder?: Record<string, unknown> }>(
+    region, organizationId, token, `salesorders/${encodeURIComponent(salesOrderId)}`, "GET",
+  );
+  if (!response.salesorder) throw new Error("Zoho did not return this sales order");
+  return response.salesorder;
+}
+
+/** Writes Zoho's latest copy into the Grain Bazar snapshot row so the list shows it at once. */
+async function refreshSalesOrderSnapshot(
+  db: Awaited<ReturnType<typeof dbAdmin>>,
+  organizationId: string,
+  order: Record<string, unknown>,
+) {
+  const salesOrderId = str(order["salesorder_id"]);
+  const { data: state } = await db
+    .from("zoho_commerce_sync_state")
+    .select("current_batch_id")
+    .eq("organization_id", organizationId)
+    .eq("resource", "sales_orders")
+    .maybeSingle();
+  if (!state?.current_batch_id || !salesOrderId) return;
+  const { data: existing } = await db
+    .from("zoho_commerce_sync_data")
+    .select("payload")
+    .eq("organization_id", organizationId)
+    .eq("resource", "sales_orders")
+    .eq("batch_id", state.current_batch_id)
+    .eq("external_id", salesOrderId)
+    .maybeSingle();
+  const payload = { ...plainObject(existing?.payload), ...order } as Json;
+  if (existing) {
+    await db
+      .from("zoho_commerce_sync_data")
+      .update({ payload, captured_at: new Date().toISOString() })
+      .eq("organization_id", organizationId)
+      .eq("resource", "sales_orders")
+      .eq("batch_id", state.current_batch_id)
+      .eq("external_id", salesOrderId);
+  } else {
+    await db.from("zoho_commerce_sync_data").insert({
+      organization_id: organizationId,
+      resource: "sales_orders",
+      batch_id: state.current_batch_id,
+      external_id: salesOrderId,
+      payload,
+    });
+  }
+}
+
+async function linkedGrainBazarOrderNo(db: Awaited<ReturnType<typeof dbAdmin>>, salesOrderId: string) {
+  const { data } = await db.from("orders").select("order_no").eq("zoho_salesorder_id", salesOrderId).maybeSingle();
+  return data?.order_no ? String(data.order_no) : null;
+}
+
+export const getZohoSalesOrderForEdit = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator(z.object({ salesOrderId: salesOrderIdSchema }))
+  .handler(async ({ data, context }) => {
+    await ensureAdmin(context.supabase, context.userId);
+    const db = await dbAdmin();
+    const { region, organizationId, token } = await zohoSalesOrderContext(db);
+    try {
+      const order = await loadZohoSalesOrder(region, organizationId, token, data.salesOrderId);
+      await refreshSalesOrderSnapshot(db, organizationId, order);
+      return { order: editableSalesOrder(order, await linkedGrainBazarOrderNo(db, data.salesOrderId)) };
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "Could not load the Zoho sales order";
+      throw new Error(`${message}${zohoPermissionHint(message)}`);
+    }
+  });
+
+const salesOrderChangesSchema = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  shipmentDate: z.string().regex(/^(\d{4}-\d{2}-\d{2})?$/).optional(),
+  referenceNumber: z.string().trim().max(100).optional(),
+  notes: z.string().max(5000).optional(),
+  terms: z.string().max(5000).optional(),
+  discount: z.number().min(0).max(100_000_000).optional(),
+  shippingCharge: z.number().min(0).max(100_000_000).optional(),
+  adjustment: z.number().min(-100_000_000).max(100_000_000).optional(),
+  adjustmentDescription: z.string().trim().max(100).optional(),
+  lineItems: z.array(z.object({
+    lineItemId: z.string().regex(/^\d{1,30}$/),
+    quantity: z.number().positive().max(10_000_000),
+    rate: z.number().min(0).max(100_000_000),
+  })).max(500).optional(),
+  billingAddress: zohoAddressSchema.optional(),
+  shippingAddress: zohoAddressSchema.optional(),
+  status: z.enum(["confirmed", "void", "cancelled"]).optional(),
+});
+
+export const updateZohoSalesOrder = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator(z.object({
+    salesOrderId: salesOrderIdSchema,
+    /** last_modified_time the admin edited from; a newer Zoho edit is never overwritten. */
+    expectedLastModified: z.string().max(60),
+    changes: salesOrderChangesSchema,
+  }))
+  .handler(async ({ data, context }) => {
+    await ensureAdmin(context.supabase, context.userId);
+    const db = await dbAdmin();
+    const { region, organizationId, token } = await zohoSalesOrderContext(db);
+    const { changes } = data;
+    const step = { name: "reading the order from Zoho" };
+    try {
+      const current = await loadZohoSalesOrder(region, organizationId, token, data.salesOrderId);
+      if (str(current["last_modified_time"]) !== data.expectedLastModified) {
+        await refreshSalesOrderSnapshot(db, organizationId, current);
+        return {
+          conflict: true as const,
+          order: editableSalesOrder(current, await linkedGrainBazarOrderNo(db, data.salesOrderId)),
+        };
+      }
+
+      const fieldChange = [
+        "date", "shipmentDate", "referenceNumber", "notes", "terms", "discount",
+        "shippingCharge", "adjustment", "adjustmentDescription", "lineItems",
+      ].some((key) => changes[key as keyof typeof changes] !== undefined);
+      if (fieldChange) {
+        step.name = "saving the order fields in Zoho";
+        const currentLines = (Array.isArray(current["line_items"]) ? current["line_items"] : []).map(plainObject);
+        const edits = new Map((changes.lineItems ?? []).map((line) => [line.lineItemId, line]));
+        for (const id of edits.keys())
+          if (!currentLines.some((line) => str(line["line_item_id"]) === id))
+            throw new Error("A line item was removed in Zoho; reload the order and try again");
+        const discountType = str(current["discount_type"]) || "entity_level";
+        if (changes.discount !== undefined && discountType !== "entity_level")
+          throw new Error("This order uses per-item discounts; change them in Zoho");
+        const rawDiscount = current["discount"];
+        const keepDiscount = typeof rawDiscount === "string" ? rawDiscount : num(rawDiscount);
+        const body: Record<string, unknown> = {
+          salesorder_number: str(current["salesorder_number"]),
+          customer_id: str(current["customer_id"]),
+          date: changes.date ?? str(current["date"]),
+          shipment_date: changes.shipmentDate ?? str(current["shipment_date"]),
+          reference_number: changes.referenceNumber ?? str(current["reference_number"]),
+          notes: changes.notes ?? str(current["notes"]),
+          terms: changes.terms ?? str(current["terms"]),
+          discount_type: discountType,
+          is_discount_before_tax: current["is_discount_before_tax"] !== false,
+          ...(discountType === "entity_level" ? { discount: changes.discount ?? keepDiscount } : {}),
+          shipping_charge: changes.shippingCharge ?? num(current["shipping_charge"]),
+          adjustment: changes.adjustment ?? num(current["adjustment"]),
+          adjustment_description: changes.adjustmentDescription ?? str(current["adjustment_description"]),
+          line_items: currentLines.map((line) => {
+            const edit = edits.get(str(line["line_item_id"]));
+            const taxId = str(line["tax_id"]);
+            return {
+              line_item_id: str(line["line_item_id"]),
+              item_id: str(line["item_id"]),
+              name: str(line["name"]),
+              description: str(line["description"]),
+              quantity: edit?.quantity ?? num(line["quantity"]),
+              rate: edit?.rate ?? num(line["rate"]),
+              ...(str(line["unit"]) ? { unit: str(line["unit"]) } : {}),
+              ...(taxId ? { tax_id: taxId } : {}),
+              ...(discountType === "item_level" && line["discount"] !== undefined ? { discount: line["discount"] } : {}),
+              ...(str(line["location_id"]) ? { location_id: str(line["location_id"]) } : {}),
+              ...(str(line["warehouse_id"]) ? { warehouse_id: str(line["warehouse_id"]) } : {}),
+            };
+          }),
+          ...(str(current["place_of_supply"]) ? { place_of_supply: str(current["place_of_supply"]) } : {}),
+          ...(str(current["gst_treatment"]) ? { gst_treatment: str(current["gst_treatment"]) } : {}),
+          ...(str(current["gst_no"]) ? { gst_no: str(current["gst_no"]) } : {}),
+        };
+        await inventoryRequest(
+          region, organizationId, token, `salesorders/${encodeURIComponent(data.salesOrderId)}`, "PUT", body,
+          { ignore_auto_number_generation: "true" },
+        );
+      }
+      for (const [type, address] of [["billing", changes.billingAddress], ["shipping", changes.shippingAddress]] as const) {
+        if (!address) continue;
+        step.name = `saving the ${type} address in Zoho Commerce`;
+        await commerceRequest(
+          region, organizationId, token,
+          `salesorders/${encodeURIComponent(data.salesOrderId)}/address/${type}`, "PUT", address,
+        );
+      }
+      if (changes.status) {
+        step.name = `marking the order ${changes.status} in Zoho Commerce`;
+        await commerceRequest(
+          region, organizationId, token,
+          `salesorders/${encodeURIComponent(data.salesOrderId)}/status/${changes.status}`, "POST",
+        );
+      }
+
+      step.name = "reading the saved order back from Zoho";
+      const saved = await loadZohoSalesOrder(region, organizationId, token, data.salesOrderId);
+      await refreshSalesOrderSnapshot(db, organizationId, saved);
+      return {
+        conflict: false as const,
+        order: editableSalesOrder(saved, await linkedGrainBazarOrderNo(db, data.salesOrderId)),
+      };
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "Zoho rejected the change";
+      throw new Error(`Zoho refused while ${step.name}: ${message}.${zohoPermissionHint(message)}`);
+    }
+  });

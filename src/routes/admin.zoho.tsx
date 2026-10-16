@@ -57,7 +57,9 @@ import {
   startZohoAuthorization,
   syncZohoCommerceReadMirror,
   syncZohoProducts,
+  type ZohoEditableSalesOrder,
 } from "@/lib/zoho-commerce.functions";
+import { ZohoSalesOrderEditor } from "@/components/panel/ZohoSalesOrderEditor";
 
 export const Route = createFileRoute("/admin/zoho")({ component: ZohoCommerceAdmin });
 
@@ -79,6 +81,32 @@ type MirrorState = {
   last_error: string | null;
 };
 type MirrorRecord = { external_id: string; payload: Record<string, unknown>; captured_at: string };
+
+/** Zoho's latest copy of an edited order, in the snapshot's field names. */
+function salesOrderPayloadPatch(order: ZohoEditableSalesOrder): Record<string, unknown> {
+  return {
+    order_status: order.orderStatus,
+    date: order.date,
+    shipment_date: order.shipmentDate,
+    reference_number: order.referenceNumber,
+    notes: order.notes,
+    terms: order.terms,
+    shipping_charge: order.shippingCharge,
+    adjustment: order.adjustment,
+    total: order.total,
+    last_modified_time: order.lastModified,
+    billing_address: order.billingAddress,
+    shipping_address: order.shippingAddress,
+    line_items: order.lineItems.map((line) => ({
+      line_item_id: line.lineItemId,
+      name: line.name,
+      sku: line.sku,
+      quantity: line.quantity,
+      rate: line.rate,
+      item_total: line.itemTotal,
+    })),
+  };
+}
 type SyncQueueJob = {
   id: string;
   entity_type: string;
@@ -1099,7 +1127,7 @@ function ZohoCommerceAdmin() {
                 <div>
                   <p className="font-semibold">Zoho Sales Order Monthly Limit Reached ({quotaFailedJobs.length} orders blocked)</p>
                   <p className="mt-1 text-xs text-amber-900 leading-relaxed">
-                    Zoho Inventory&apos;s free plan includes a quota of 50 sales orders per month. These orders cannot be written to Zoho until your Zoho subscription is upgraded or the monthly quota resets on the 1st of next month. You can dismiss them from the queue so they no longer block your sync status.
+                    Zoho refused to create these sales orders because the organization has used its sales-order allowance for this period. Re-authorizing does not change this; Zoho (billing or support) has to raise the allowance, or it resets at the start of the next period. Then click &quot;Retry&quot; on each order. You can also dismiss them so they no longer block your sync status.
                   </p>
                 </div>
               </div>
@@ -1259,7 +1287,7 @@ function ZohoCommerceAdmin() {
                                 Zoho Monthly Limit Reached:
                               </p>
                               <p className="mt-0.5">
-                                Your Zoho Inventory organization reached its free limit of 50 sales orders/month. Upgrade your Zoho plan or click &quot;Dismiss&quot; to skip this order.
+                                Zoho said: &ldquo;{job.last_error}&rdquo; Zoho must raise the organization&apos;s sales-order allowance, then click &quot;Retry&quot;. &quot;Dismiss&quot; skips this order.
                               </p>
                             </div>
                           ) : isGstError ? (
@@ -1364,10 +1392,11 @@ function ZohoCommerceAdmin() {
 
         <Panel title="Synced Zoho data">
           <p className="mb-4 rounded-md border border-emerald-100 bg-emerald-50/70 px-3 py-2.5 text-sm leading-relaxed text-slate">
-            This page shows a read-only snapshot imported from Zoho. It does not edit Zoho records.
-            Use <strong>Open this order in Zoho</strong> for the official editing and navigation options;
-            use <strong>Sync account data</strong> to import the latest Zoho values. <strong>Refresh
-            saved data</strong> only reloads the last saved snapshot.
+            This page shows a snapshot imported from Zoho. Sales orders can be edited here with
+            <strong> Edit this order</strong>: it loads the latest copy from Zoho, saves straight to Zoho
+            Commerce, and never overwrites a newer change made in Zoho. Use <strong>Sync account data</strong>
+            to import the latest Zoho values for everything else. <strong>Refresh saved data</strong> only
+            reloads the last saved snapshot.
           </p>
           <div className="mb-4 flex flex-wrap items-center gap-2 border-b border-border pb-4">
             {Object.entries(RESOURCE_LABELS).map(([key, label]) => {
@@ -1574,7 +1603,7 @@ function ZohoCommerceAdmin() {
                             </summary>
                             <div className="space-y-3 border-t border-border px-4 py-4">
                               <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-emerald-100 bg-emerald-50/70 px-3 py-2.5">
-                                <p className="text-sm text-slate">This is a read-only copy. Use the matching Zoho record to edit status, payment, shipping, or other Zoho fields.</p>
+                                <p className="text-sm text-slate">Edits here are saved in Zoho Commerce. Payments, packages and invoices are still managed in Zoho.</p>
                                 <a
                                   href={`${zohoCommerceBase(region)}/app/${encodeURIComponent(organizationId)}#/salesorders/${encodeURIComponent(record.external_id)}`}
                                   target="_blank"
@@ -1584,6 +1613,16 @@ function ZohoCommerceAdmin() {
                                   <ExternalLink className="h-4 w-4" /> Open this order in Zoho
                                 </a>
                               </div>
+                              <ZohoSalesOrderEditor
+                                salesOrderId={record.external_id}
+                                onSaved={(order) => setMirrorRecords((current) => ({
+                                  ...current,
+                                  sales_orders: (current["sales_orders"] ?? []).map((item) =>
+                                    item.external_id === record.external_id
+                                      ? { ...item, captured_at: new Date().toISOString(), payload: { ...item.payload, ...salesOrderPayloadPatch(order) } }
+                                      : item),
+                                }))}
+                              />
                               <OrderFields payload={p} externalId={record.external_id} />
                               <details className="rounded-md border border-border bg-card">
                                 <summary className="cursor-pointer px-3 py-2.5 text-sm font-medium text-slate">
