@@ -1340,14 +1340,20 @@ async function withCommerceProductValues(
   api: ZohoApiContext | undefined,
   link: ZohoItemLink,
   item: Record<string, unknown>,
+  /** false for read-only diagnostics: do not move the "last seen" marker. */
+  record = true,
 ) {
   if (!api) return item;
   const sku = str(item["sku"]).trim();
   let productId = "";
+  let mirrorId = "";
+  let mirrorPayload: Record<string, unknown> = {};
   if (sku) {
-    const { data: mirror } = await db.from("catalog_products").select("payload")
+    const { data: mirror } = await db.from("catalog_products").select("id,payload")
       .like("id", "zoho-%").eq("payload->>sku", sku).limit(1).maybeSingle();
-    productId = str(plainObject(plainObject(mirror?.payload)["zoho"])["productId"]);
+    mirrorId = mirror?.id ?? "";
+    mirrorPayload = plainObject(mirror?.payload);
+    productId = str(plainObject(mirrorPayload["zoho"])["productId"]);
   }
   productId ||= str(item["group_id"]);
   if (!productId) return item;
@@ -1357,21 +1363,29 @@ async function withCommerceProductValues(
     );
     const product = response.product;
     if (!product) return item;
-    // Zoho's product response carries no modified time; a product-page save moves the item's.
-    const productMs = Date.parse(str(product["last_modified_time"]));
-    const changedMs = Number.isFinite(productMs) ? productMs : Date.parse(str(item["last_modified_time"]));
-    const knownMs = Date.parse(link.last_zoho_modified_at ?? "");
-    if (!Number.isFinite(changedMs) || (Number.isFinite(knownMs) && changedMs <= knownMs)) return item;
     const variants = (Array.isArray(product["variants"]) ? product["variants"] : []).map(plainObject);
     const variant = variants.find((v) => str(v["sku"]).trim().toLowerCase() === sku.toLowerCase()) ?? (variants.length === 1 ? variants[0] : undefined);
     const description = htmlToText(str(product["product_description"])) || htmlToText(str(product["product_short_description"]));
-    const variantReorder = variant ? finiteNumber(variant["reorder_level"]) : null;
+    const variantReorder = variant && str(variant["reorder_level"]) !== "" ? finiteNumber(variant["reorder_level"]) : null;
+
+    // Zoho's product response has no modified time, and a product-page save does not always
+    // move the item's. So Grain Bazar remembers the Commerce values it last saw (on the
+    // product's Zoho Commerce copy) and treats any difference as a Zoho edit.
+    const seen = plainObject(mirrorPayload["zohoSeen"]);
+    const hasSeen = typeof seen["description"] === "string";
+    const productChanged = hasSeen && (seen["description"] !== description || (seen["reorderLevel"] ?? null) !== variantReorder);
+    if (record && mirrorId && (!hasSeen || productChanged)) {
+      await db.from("catalog_products")
+        .update({ payload: { ...mirrorPayload, zohoSeen: { description, reorderLevel: variantReorder, at: new Date().toISOString() } } as Json })
+        .eq("id", mirrorId);
+    }
+    if (!productChanged) return item;
     return {
       ...item,
       ...(description ? { description } : {}),
-      ...(variantReorder !== null && str(variant?.["reorder_level"]) !== "" ? { reorder_level: variantReorder } : {}),
-      // The newer of the two edits decides "latest wins".
-      last_modified_time: Number.isFinite(productMs) && productMs > Date.parse(str(item["last_modified_time"])) ? str(product["last_modified_time"]) : item["last_modified_time"],
+      ...(variantReorder !== null ? { reorder_level: variantReorder } : {}),
+      // Seen now: newer than anything synced before, so "latest wins" treats it as the latest edit.
+      last_modified_time: new Date().toISOString(),
     };
   } catch {
     return item;
@@ -2134,7 +2148,7 @@ export const inspectZohoProductSync = createServerFn({ method: "POST" })
       editableDigestNow: await editableDigest(product),
       savedDigest: (link.app_fingerprint ?? "").split(":")[2] ?? null,
       decision: await zohoItemDecision(product, link as ZohoItemLink, item),
-      withCommerce: zohoEditableValues(await withCommerceProductValues(db, { region, organizationId, token }, link as ZohoItemLink, item)),
+      withCommerce: zohoEditableValues(await withCommerceProductValues(db, { region, organizationId, token }, link as ZohoItemLink, item, false)),
       commerceProduct: await (async () => {
         const sku = str(item["sku"]).trim();
         const { data: mirror } = await db.from("catalog_products").select("id,payload")
@@ -2987,6 +3001,8 @@ export const syncZohoProducts = createServerFn({ method: "POST" })
           ) preserved["maxPurchaseQuantity"] = maxPurchaseQuantity;
           if (pricingDisplayMode === "mrp_only" || pricingDisplayMode === "strike_through")
             preserved["pricingDisplayMode"] = pricingDisplayMode;
+          // Keeps the "last seen Commerce values" marker that detects product-page edits.
+          if (existing?.["zohoSeen"] && typeof existing["zohoSeen"] === "object") preserved["zohoSeen"] = existing["zohoSeen"];
           return Object.keys(preserved).length > 0
             ? { ...row, payload: { ...row.payload, ...preserved } }
             : row;
