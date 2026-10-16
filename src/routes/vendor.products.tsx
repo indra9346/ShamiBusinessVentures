@@ -56,7 +56,7 @@ function VendorProducts() {
 
 function VendorProductsPanel() {
   const routeSearch = Route.useSearch();
-  const { updateProduct, deleteProduct, duplicateProduct, categories } = useApp();
+  const { updateProduct, deleteProduct, categories } = useApp();
   const { vendorProducts } = useVendorScope();
   const [q, setQ] = useState(routeSearch.q ?? "");
   const [category, setCategory] = useState("all");
@@ -199,15 +199,6 @@ function VendorProductsPanel() {
                   }}
                 >
                   Stock
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    void duplicateProduct(p.id).then((ok) => { if (ok) toast.success(`${p.name} duplicated`); });
-                  }}
-                >
-                  Duplicate
                 </Button>
                 <AlertDialog>
                   <AlertDialogTrigger asChild>

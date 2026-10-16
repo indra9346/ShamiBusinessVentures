@@ -146,7 +146,6 @@ type AppState = {
   addProduct: (p: Product) => Promise<boolean>;
   updateProduct: (id: string, patch: Partial<Product>) => Promise<boolean>;
   deleteProduct: (id: string) => Promise<boolean>;
-  duplicateProduct: (id: string) => Promise<boolean>;
 
   batches: PurchaseBatch[];
   addBatch: (b: Omit<PurchaseBatch, "id">) => Promise<boolean>;
@@ -1135,23 +1134,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }
         setProducts((list) => list.filter((p) => p.id !== id));
         return true;
-      },
-      duplicateProduct: async (id) => {
-        const p = products.find((x) => x.id === id);
-        if (!p) return false;
-        const copy: Product = {
-            ...p,
-            id: `P${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`,
-            name: `${p.name} (Copy)`,
-            sku: `${p.sku}-C-${crypto.randomUUID().slice(0, 6).toUpperCase()}`,
-            sold: 0,
-            created: today(),
-            updated: today(),
-          };
-        setProducts((list) => [copy, ...list]);
-        const saved = await saveProduct(copy, user?.role === "vendor");
-        if (!saved) setProducts((list) => list.filter((item) => item.id !== copy.id));
-        return saved;
       },
 
       batches,

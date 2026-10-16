@@ -4,7 +4,6 @@ import { toast } from "sonner";
 import {
   AlertTriangle,
   Boxes,
-  Copy,
   Download,
   ImagePlus,
   Minus,
@@ -173,7 +172,6 @@ function AdminProductsPanel() {
     addCategory,
     updateCategory,
     deleteProduct,
-    duplicateProduct,
     getFIFOCost,
   } = useApp();
   const categoryChoices = categories.map((c) => ({ name: c.name, subs: c.grades }));
@@ -1239,20 +1237,6 @@ function AdminProductsPanel() {
                   }}
                 >
                   <Boxes className="h-3.5 w-3.5" />
-                </Button>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="h-8 w-8"
-                  title="Duplicate"
-                  aria-label={`Duplicate ${p.name}`}
-                  onClick={() => {
-                    void duplicateProduct(p.id).then((ok) => {
-                      if (ok) toast.success(`${p.name} duplicated`);
-                    });
-                  }}
-                >
-                  <Copy className="h-3.5 w-3.5" />
                 </Button>
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
