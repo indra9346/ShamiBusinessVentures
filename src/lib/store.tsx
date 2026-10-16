@@ -1305,6 +1305,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
             toast.error("Order was not placed", { description: message });
             throw new Error(message);
           }
+          // Send the order to Zoho Commerce now, in the background; the daily run is the backup.
+          void import("@/lib/zoho-commerce.functions")
+            .then(({ pushPlacedOrderToZoho }) => pushPlacedOrderToZoho({ data: { orderNo: id } }))
+            .catch((cause: unknown) => console.warn("Order saved; Zoho will receive it on the next sync run", cause));
           const saved = data as { subtotal: number; discount: number; gst_amount: number; shipping: number; total: number; items: Array<{ product_id: string; unit_price: number }> };
           order.subtotal = Number(saved.subtotal);
           order.discount = Number(saved.discount);

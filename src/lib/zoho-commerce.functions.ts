@@ -2440,6 +2440,59 @@ export const syncZohoProducts = createServerFn({ method: "POST" })
     }
   });
 
+/**
+ * Pushes one order to Zoho now instead of waiting behind the shared queue, and settles its
+ * queue entries: complete on success, needs_review with Zoho's answer on failure (so the
+ * error shows in Admin > Zoho). Returns the Zoho sales order ID or throws Zoho's message.
+ */
+async function pushOrderToZohoDirect(db: Awaited<ReturnType<typeof dbAdmin>>, orderId: string) {
+  const { data: connection, error: connectionError } = await db
+    .from("zoho_commerce_connection")
+    .select("organization_id,region,refresh_token_ciphertext,token_iv,token_tag")
+    .eq("id", true)
+    .maybeSingle();
+  if (connectionError || !connection) throw new Error("Connect and authorize Zoho before pushing orders");
+  const region = connection.region as Region;
+  const token = await accessToken(region, await decrypt(connection));
+
+  const openJobs = () => db.from("zoho_sync_outbox").select("id")
+    .eq("entity_type", "order").eq("entity_id", orderId)
+    .in("status", ["pending", "failed", "needs_review"]);
+  try {
+    // attempts: 2 first looks for an earlier half-finished push by the GB- number.
+    await syncZohoOrder(db, region, connection.organization_id, token, {
+      id: "direct", entity_type: "order", entity_id: orderId, attempts: 2,
+    } as ZohoSyncJob);
+  } catch (cause) {
+    const message = (cause instanceof Error ? cause.message : "Zoho rejected the order").slice(0, 900);
+    const { data: jobs } = await openJobs();
+    if (jobs?.length) {
+      await db.from("zoho_sync_outbox")
+        .update({ status: "needs_review", last_error: message, updated_at: new Date().toISOString() })
+        .in("id", jobs.map((job) => job.id));
+    } else {
+      await db.from("zoho_sync_outbox").insert({
+        entity_type: "order", entity_id: orderId, event_type: "upsert", status: "needs_review", last_error: message,
+      });
+    }
+    throw new Error(`${message}${zohoPermissionHint(message)}`);
+  }
+  const { data: jobs } = await openJobs();
+  if (jobs?.length) {
+    await db.from("zoho_sync_outbox")
+      .update({ status: "complete", last_error: null, updated_at: new Date().toISOString() })
+      .in("id", jobs.map((job) => job.id));
+  }
+  const { data: updated } = await db
+    .from("orders")
+    .select("zoho_salesorder_id")
+    .eq("id", orderId)
+    .maybeSingle();
+  if (!updated?.zoho_salesorder_id)
+    throw new Error("Zoho finished without returning a sales order ID; check Admin > Zoho");
+  return updated.zoho_salesorder_id;
+}
+
 export const syncSingleOrderToZoho = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator(z.object({ orderNo: z.string() }))
@@ -2448,56 +2501,42 @@ export const syncSingleOrderToZoho = createServerFn({ method: "POST" })
     const db = await dbAdmin();
     const { data: order, error } = await db
       .from("orders")
-      .select("id, order_no, zoho_salesorder_id")
+      .select("id")
       .eq("order_no", data.orderNo)
       .maybeSingle();
     if (error || !order) throw new Error("Order not found for Zoho synchronization");
-    const { data: connection, error: connectionError } = await db
-      .from("zoho_commerce_connection")
-      .select("organization_id,region,refresh_token_ciphertext,token_iv,token_tag")
-      .eq("id", true)
-      .maybeSingle();
-    if (connectionError || !connection) throw new Error("Connect and authorize Zoho before pushing orders");
-    const region = connection.region as Region;
-    const token = await accessToken(region, await decrypt(connection));
+    return { success: true, zohoSalesOrderId: await pushOrderToZohoDirect(db, order.id) };
+  });
 
-    // Push this order directly instead of waiting behind the shared queue, and report
-    // Zoho's real answer. attempts: 2 first looks for an earlier half-finished push.
-    const openJobs = () => db.from("zoho_sync_outbox").select("id")
-      .eq("entity_type", "order").eq("entity_id", order.id)
-      .in("status", ["pending", "failed", "needs_review"]);
-    try {
-      await syncZohoOrder(db, region, connection.organization_id, token, {
-        id: "direct", entity_type: "order", entity_id: order.id, attempts: 2,
-      } as ZohoSyncJob);
-    } catch (cause) {
-      const message = (cause instanceof Error ? cause.message : "Zoho rejected the order").slice(0, 900);
-      const { data: jobs } = await openJobs();
-      if (jobs?.length) {
-        await db.from("zoho_sync_outbox")
-          .update({ status: "needs_review", last_error: message, updated_at: new Date().toISOString() })
-          .in("id", jobs.map((job) => job.id));
-      } else {
-        await db.from("zoho_sync_outbox").insert({
-          entity_type: "order", entity_id: order.id, event_type: "upsert", status: "needs_review", last_error: message,
-        });
-      }
-      throw new Error(`${message}${zohoPermissionHint(message)}`);
-    }
-    const { data: jobs } = await openJobs();
-    if (jobs?.length) {
-      await db.from("zoho_sync_outbox")
-        .update({ status: "complete", last_error: null, updated_at: new Date().toISOString() })
-        .in("id", jobs.map((job) => job.id));
-    }
-    const { data: updated } = await db
+/**
+ * Called by checkout right after an order is placed, so it reaches Zoho Commerce at once
+ * instead of at the daily run. Only the order's customer (or an admin) may trigger it. It never
+ * fails the checkout: a Zoho refusal stays in the queue for Admin > Zoho and the daily run.
+ */
+export const pushPlacedOrderToZoho = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator(z.object({ orderNo: z.string().trim().min(1).max(80) }))
+  .handler(async ({ data, context }) => {
+    const db = await dbAdmin();
+    const { data: order, error } = await db
       .from("orders")
-      .select("zoho_salesorder_id")
-      .eq("id", order.id)
+      .select("id,user_id,zoho_salesorder_id")
+      .eq("order_no", data.orderNo)
       .maybeSingle();
-    if (!updated?.zoho_salesorder_id)
-      throw new Error("Zoho finished without returning a sales order ID; check Admin > Zoho");
-    return { success: true, zohoSalesOrderId: updated.zoho_salesorder_id };
+    if (error || !order) return { pushed: false };
+    if (order.user_id !== context.userId) {
+      const { data: isAdmin } = await context.supabase.rpc("has_role", { _user_id: context.userId, _role: "admin" });
+      if (!isAdmin) return { pushed: false };
+    }
+    if (order.zoho_salesorder_id) return { pushed: true };
+    if (!(await isZohoWriteSyncActive(db))) return { pushed: false };
+    try {
+      await pushOrderToZohoDirect(db, order.id);
+      return { pushed: true };
+    } catch (cause) {
+      console.warn(`Instant Zoho push for ${data.orderNo} deferred to the queue:`, cause);
+      return { pushed: false };
+    }
   });
 
 
