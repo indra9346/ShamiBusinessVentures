@@ -2046,13 +2046,14 @@ export const inspectZohoProductSync = createServerFn({ method: "POST" })
     const { data: product } = await db.from("catalog_products")
       .select("id,vendor_id,category,status,active,payload,created_at,updated_at")
       .eq("id", data.productId).maybeSingle();
-    if (!link || !product) return { link, product: !!product };
+    if (!link || !product) return JSON.stringify({ link, product: !!product });
     const { region, organizationId, token } = await zohoOrderContext(db);
     const response = await inventoryRequest<{ item?: Record<string, unknown> }>(
       region, organizationId, token, `items/${encodeURIComponent(link.zoho_item_id)}`, "GET",
     );
     const item = response.item ?? {};
-    return {
+    // Returned as text: Zoho's raw values are untyped.
+    return JSON.stringify({
       link: { ...link, app_fingerprint_parts: (link.app_fingerprint ?? "").split(":").length },
       productUpdatedAt: product.updated_at,
       app: catalogEditableValues(product),
@@ -2067,7 +2068,7 @@ export const inspectZohoProductSync = createServerFn({ method: "POST" })
       editableDigestNow: await editableDigest(product),
       savedDigest: (link.app_fingerprint ?? "").split(":")[2] ?? null,
       decision: await zohoItemDecision(product, link as ZohoItemLink, item),
-    };
+    });
   });
 
 /** Admin: pull Zoho-side order changes now (run when the admin opens Orders or Zoho pages). */
