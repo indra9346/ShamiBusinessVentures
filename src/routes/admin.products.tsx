@@ -1323,6 +1323,33 @@ function AdminProductsPanel() {
             </div>
           </div>
           <DialogFooter>
+            <Button
+              variant="ghost"
+              className="mr-auto text-xs text-slate"
+              onClick={async () => {
+                if (!editing) return;
+                try {
+                  const { inspectZohoProductSync } = await import("@/lib/zoho-commerce.functions");
+                  const report = JSON.parse(await inspectZohoProductSync({ data: { productId: editing.id } })) as {
+                    app?: Record<string, unknown>; zoho?: Record<string, unknown>; decision?: string; link?: unknown;
+                  };
+                  if (!report.app || !report.zoho) {
+                    toast.info("This product is not linked to a Zoho item yet");
+                    return;
+                  }
+                  const fields = ["price", "minimumStock", "name", "sku", "active"] as const;
+                  const lines = fields.map((field) => `${field}: here ${String(report.app?.[field])} · Zoho ${String(report.zoho?.[field])}`);
+                  toast.info(`Zoho comparison · next sync: ${report.decision === "zoho" ? "take Zoho's values" : report.decision === "app" ? "send Grain Bazar's values" : "already the same"}`, {
+                    description: lines.join("\n"),
+                    duration: 15000,
+                  });
+                } catch (cause) {
+                  toast.error("Could not compare with Zoho", { description: cause instanceof Error ? cause.message : undefined });
+                }
+              }}
+            >
+              Compare with Zoho
+            </Button>
             <Button variant="outline" onClick={() => setEditing(null)}>
               Cancel
             </Button>

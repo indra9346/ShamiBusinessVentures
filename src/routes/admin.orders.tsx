@@ -85,7 +85,8 @@ function AdminOrders() {
     try {
       const { syncZohoOrderChangesNow } = await import("@/lib/zoho-commerce.functions");
       const result = await syncZohoOrderChangesNow();
-      if (announce) toast.success(`Checked ${result.checked} Zoho orders; ${result.changed} updated here`);
+      if (result.itemsError) toast.error("Zoho item changes could not be read", { description: result.itemsError });
+      if (announce) toast.success(`Zoho: ${result.ordersChanged} order and ${result.itemsChanged} product updates applied here`);
     } catch (cause) {
       if (announce) toast.error("Could not read Zoho order changes", { description: cause instanceof Error ? cause.message : undefined });
     } finally {

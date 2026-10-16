@@ -2004,11 +2004,15 @@ export async function handleZohoItemWebhook(itemId: string) {
 
 /** Catch-up for Zoho -> Grain Bazar items: applies the most recently changed linked items. */
 async function applyRecentZohoItemChanges(db: Awaited<ReturnType<typeof dbAdmin>>, region: Region, organizationId: string, token: string) {
-  const result = await inventoryRequest<{ items?: Record<string, unknown>[] }>(
-    region, organizationId, token, "items", "GET", undefined,
-    { sort_column: "last_modified_time", sort_order: "D", per_page: "50" },
-  );
-  const rows = result.items ?? [];
+  // All linked items (the catalogue is small); Zoho's item list does not sort by modified time.
+  const rows: Record<string, unknown>[] = [];
+  for (let page = 1; page <= 5; page += 1) {
+    const result = await inventoryRequest<{ items?: Record<string, unknown>[] }>(
+      region, organizationId, token, "items", "GET", undefined, { page: String(page), per_page: "200" },
+    );
+    rows.push(...(result.items ?? []));
+    if ((result.items ?? []).length < 200) break;
+  }
   const ids = rows.map((row) => str(row["item_id"])).filter(Boolean);
   if (!ids.length) return { checked: 0, changed: 0 };
   const { data: links } = await db.from("zoho_item_links")
@@ -2080,9 +2084,18 @@ export const syncZohoOrderChangesNow = createServerFn({ method: "POST" })
     const { region, organizationId, token } = await zohoOrderContext(db);
     const [orders, items] = await Promise.all([
       applyRecentZohoOrderChanges(db, region, organizationId, token),
-      applyRecentZohoItemChanges(db, region, organizationId, token).catch(() => ({ checked: 0, changed: 0 })),
+      applyRecentZohoItemChanges(db, region, organizationId, token)
+        .then((result) => ({ ...result, error: "" }))
+        .catch((cause: unknown) => ({ checked: 0, changed: 0, error: cause instanceof Error ? cause.message : "Zoho items could not be read" })),
     ]);
-    return { checked: orders.checked + items.checked, changed: orders.changed + items.changed };
+    return {
+      checked: orders.checked + items.checked,
+      changed: orders.changed + items.changed,
+      ordersChanged: orders.changed,
+      itemsChecked: items.checked,
+      itemsChanged: items.changed,
+      itemsError: items.error,
+    };
   });
 
 /**
