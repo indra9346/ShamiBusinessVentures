@@ -6,7 +6,12 @@ import { cn } from "@/lib/utils";
  * Where the customer collects this order: the godown serving the delivery PIN code, with its
  * address, instructions and a Google Maps "Get directions" link. Hidden once home delivery is on.
  */
-export function PickupPointCard({ pin, className, heading = "Pick up your order from" }: { pin: string | null | undefined; className?: string; heading?: string }) {
+export function PickupPointCard({ pin, className, heading = "Pick up your order from" }: {
+  /** Delivery PIN code; null shows the default godown (no PIN known yet). */
+  pin: string | null | undefined;
+  className?: string;
+  heading?: string;
+}) {
   const settings = usePickupSettings();
   if (settings.homeDelivery) return null;
   const point = pickupPointForPin(settings, pin);
@@ -33,7 +38,7 @@ export function PickupPointCard({ pin, className, heading = "Pick up your order 
               <Phone className="h-3.5 w-3.5" /> {point.phone}
             </a>
           )}
-          {!servesPin && (
+          {pin && !servesPin && (
             <p className="text-xs font-medium text-amber-800">
               Home delivery is not available yet. This is our nearest godown; we will call you to arrange pickup.
             </p>

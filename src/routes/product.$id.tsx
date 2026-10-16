@@ -7,6 +7,8 @@ import { ProductCard } from "@/components/site/ProductCard";
 import { getAvailablePurchaseQuantity, getDisplayDiscountPercent, getMaxPurchaseQuantity, getPricingDisplayMode, formatRateBasis, inr, inrPrecise, isStorefrontProduct } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { useStorefrontDisplay } from "@/lib/storefront-display";
+import { usePickupSettings } from "@/lib/pickup-points";
+import { PickupPointCard } from "@/components/site/PickupPointCard";
 import { supabase } from "@/integrations/supabase/client";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
@@ -54,6 +56,7 @@ function ProductDetail() {
   const { product: loadedProduct, catalogUnavailable } = Route.useLoaderData();
   const { addToCart, toggleWishlist, wishlist, products, reviews, vendors } = useApp();
   const display = useStorefrontDisplay();
+  const pickup = usePickupSettings();
   const product = products.find((candidate) => candidate.id === loadedProduct?.id) ?? loadedProduct;
   const currentPurchaseLimit = product ? getAvailablePurchaseQuantity(product) : 1;
   const [qty, setQty] = useState(1);
@@ -329,7 +332,7 @@ function ProductDetail() {
 
           <div className="mt-8 grid gap-3 rounded-lg border border-border bg-ivory p-5 text-sm sm:grid-cols-3">
             {[
-              [Truck, "Delivery in 2–4 days"],
+              [pickup.homeDelivery ? Truck : Store, pickup.homeDelivery ? "Delivery in 2–4 days" : "Pickup from our godown"],
               [ShieldCheck, "FSSAI certified batch"],
               [Store, "GST invoice provided"],
             ].map(([Icon, label]) => {
@@ -350,7 +353,7 @@ function ProductDetail() {
             <TabsTrigger value="desc">Description</TabsTrigger>
             <TabsTrigger value="spec">Specifications</TabsTrigger>
             {display.showVendor && <TabsTrigger value="vendor">Vendor</TabsTrigger>}
-            <TabsTrigger value="delivery">Delivery</TabsTrigger>
+            <TabsTrigger value="delivery">{pickup.homeDelivery ? "Delivery" : "Pickup"}</TabsTrigger>
             {display.showRatings && <TabsTrigger value="reviews">Reviews</TabsTrigger>}
           </TabsList>
           <TabsContent value="desc" className="rounded-lg border border-border bg-card p-6 text-sm leading-relaxed text-charcoal">
@@ -364,7 +367,7 @@ function ProductDetail() {
                 ["Pack size", product.weight],
                 ["SKU", product.sku],
                 ["Brand", product.brand],
-                ["Tax", "5% GST included"],
+                ["Tax", `${product.gst}% GST, added at checkout`],
               ].map(([k, v]) => (
                 <div key={k} className="flex justify-between border-b border-border pb-2">
                   <dt className="text-slate">{k}</dt>
@@ -382,8 +385,15 @@ function ProductDetail() {
               {vendor ? `${vendor.products} active listings · ${vendor.orders} orders fulfilled · ` : ""}Verified vendor.
             </p>
           </TabsContent>
-          <TabsContent value="delivery" className="rounded-lg border border-border bg-card p-6 text-sm text-charcoal">
-            Standard freight delivery in 2–4 business days. Free delivery applies to eligible orders above ₹10,000.
+          <TabsContent value="delivery" className="space-y-3 rounded-lg border border-border bg-card p-6 text-sm text-charcoal">
+            {pickup.homeDelivery ? (
+              <p>Standard freight delivery in 2–4 business days. Free delivery applies to eligible orders above ₹10,000.</p>
+            ) : (
+              <>
+                <p>Home delivery is not available yet. Collect your order from our godown; checkout shows the godown for your PIN code with directions.</p>
+                <PickupPointCard pin={null} heading="Our godown" />
+              </>
+            )}
             Online payment options are shown at checkout (UPI, Credit/Debit Card, Net Banking); Cash on Delivery is not available.
           </TabsContent>
           <TabsContent value="reviews" className="rounded-lg border border-border bg-card p-6">
