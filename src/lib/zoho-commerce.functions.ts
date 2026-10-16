@@ -1842,6 +1842,18 @@ export const syncZohoOrderChangesNow = createServerFn({ method: "POST" })
     return applyRecentZohoOrderChanges(db, region, organizationId, token);
   });
 
+/**
+ * Admin: the protected webhook address, for a Zoho Books/Inventory Workflow Rule
+ * (Sales Order, created or edited -> webhook) when Commerce webhooks are not available.
+ */
+export const getZohoWebhookAddress = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    await ensureAdmin(context.supabase, context.userId);
+    const origin = new URL(reqEnv("ZOHO_REDIRECT_URI")).origin;
+    return { url: `${origin}/api/zoho/webhook?key=${await zohoWebhookKey()}` };
+  });
+
 /** Admin: ask Zoho Commerce to call Grain Bazar the moment a sales order changes. */
 export const registerZohoOrderWebhook = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])

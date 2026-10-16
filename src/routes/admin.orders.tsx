@@ -102,10 +102,20 @@ function AdminOrders() {
       const { registerZohoOrderWebhook } = await import("@/lib/zoho-commerce.functions");
       const result = await registerZohoOrderWebhook();
       toast.success(result.already ? "Instant Zoho updates are already on" : "Instant Zoho updates turned on");
-    } catch (cause) {
-      toast.error("Zoho did not turn on instant updates", { description: cause instanceof Error ? cause.message : undefined });
+    } catch {
+      // Commerce webhooks need extra Zoho rights; a Books/Inventory Workflow Rule does the same job.
+      await showWebhookAddress();
     } finally {
       setZohoSync("idle");
+    }
+  };
+  const [webhookAddress, setWebhookAddress] = useState<string | null>(null);
+  const showWebhookAddress = async () => {
+    try {
+      const { getZohoWebhookAddress } = await import("@/lib/zoho-commerce.functions");
+      setWebhookAddress((await getZohoWebhookAddress()).url);
+    } catch (cause) {
+      toast.error("Could not load the Zoho webhook address", { description: cause instanceof Error ? cause.message : undefined });
     }
   };
   const [customerId, setCustomerId] = useState(customers[0]?.id ?? "");
@@ -731,6 +741,40 @@ function AdminOrders() {
             </Button>
             <Button onClick={createOrder}>Create Order</Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!webhookAddress} onOpenChange={(open) => !open && setWebhookAddress(null)}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Instant updates from Zoho</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-slate">
+            Create a Zoho webhook with this address and a Workflow Rule on Sales Orders (when created or
+            edited). Zoho then sends every new, edited, confirmed, voided or shipped sales order here at once.
+            Keep the address private: it carries the key that lets Zoho in.
+          </p>
+          <div className="flex gap-2">
+            <Input readOnly value={webhookAddress ?? ""} className="font-mono text-xs" onFocus={(e) => e.currentTarget.select()} />
+            <Button
+              type="button"
+              onClick={() => {
+                if (!webhookAddress) return;
+                void navigator.clipboard.writeText(webhookAddress).then(
+                  () => toast.success("Webhook address copied"),
+                  () => toast.error("Copy failed; select the address and copy it"),
+                );
+              }}
+            >
+              Copy
+            </Button>
+          </div>
+          <ol className="list-decimal space-y-1 pl-5 text-sm text-charcoal">
+            <li>Zoho Books → Settings → Workflow Actions → Webhooks → New Webhook.</li>
+            <li>Module: Sales Order · Method: POST · URL: paste the address above · Body: Default Payload · Save.</li>
+            <li>Settings → Workflow Rules → New Workflow Rule · Module: Sales Order · Event Based · Created or Edited · When any field is updated · Edited each time.</li>
+            <li>Actions: Type Webhooks → choose the webhook from step 2 · Save.</li>
+          </ol>
         </DialogContent>
       </Dialog>
     </PanelLayout>
