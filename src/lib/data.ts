@@ -122,6 +122,14 @@ export function computeRatePrice(pricing: RatePricing | undefined | null): numbe
   return Number.isFinite(price) ? Math.round(price * 100) / 100 : null;
 }
 
+/** The rate for 1 kg (or 1 L): ₹5,300 per QTL = ₹53 per kg. Null when it cannot be priced. */
+export function ratePerBaseUnit(pricing: RatePricing | undefined | null): { rate: number; unit: "kg" | "L" } | null {
+  if (!pricing || computeRatePrice(pricing) === null) return null;
+  const basis = MEASURE_BASE[pricing.basisUnit];
+  const rate = pricing.basisRate / (pricing.basisQty * basis.inBase);
+  return { rate, unit: basis.dimension === "mass" ? "kg" : "L" };
+}
+
 /** "50 kg", "2.5 L" — the pack size as shown on the product. */
 export function formatPackSize(pricing: Pick<RatePricing, "packQty" | "packUnit">) {
   return `${pricing.packQty.toLocaleString("en-IN", { maximumFractionDigits: 3 })} ${pricing.packUnit}`;

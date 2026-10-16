@@ -9,6 +9,7 @@ import {
   inrPrecise,
   isMeasureUnit,
   measureUnitLabel,
+  ratePerBaseUnit,
   type MeasureUnit,
   type Product,
   type RatePricing,
@@ -29,6 +30,9 @@ export type TradeFieldsState = {
 };
 
 const SELLING_UNITS = ["bag", "tin", "jar", "pouch", "carton", "box", "pcs", "kg", "L"];
+/** Suggested pack sizes; any other value can be typed. */
+const PACK_SIZES_MASS = [1, 5, 10, 25, 26, 30, 50, 100];
+const PACK_SIZES_VOLUME = [1, 2, 5, 15];
 
 export function emptyTradeFields(category: string): TradeFieldsState {
   const rate = defaultRatePricing(category);
@@ -138,6 +142,7 @@ export function ProductTradeFields({
   const id = useId();
   const pricing = ratePricingFromFields(value);
   const price = computeRatePrice(pricing);
+  const perUnit = ratePerBaseUnit(pricing);
 
   const update = (patch: Partial<TradeFieldsState>) => {
     const next = { ...value, ...patch };
@@ -166,7 +171,13 @@ export function ProductTradeFields({
                 <Label htmlFor={`${id}-pack`}>Pack size</Label>
                 <div className="flex gap-1.5">
                   <Input id={`${id}-pack`} type="number" inputMode="decimal" min={0} step="any" className="min-w-20 flex-1"
+                    list={`${id}-pack-sizes`} placeholder="Type or pick"
                     value={value.packQty} onChange={(e) => update({ packQty: e.target.value })} />
+                  <datalist id={`${id}-pack-sizes`}>
+                    {(value.packUnit === "L" || value.packUnit === "ml" ? PACK_SIZES_VOLUME : PACK_SIZES_MASS).map((size) => (
+                      <option key={size} value={size} />
+                    ))}
+                  </datalist>
                   <UnitSelect id={`${id}-pack-unit`} label="Pack size unit" value={value.packUnit} onChange={(packUnit) => update({ packUnit })} />
                 </div>
               </div>
@@ -179,16 +190,18 @@ export function ProductTradeFields({
                 </div>
               </div>
               <div className="sm:col-span-2">
-                <Label htmlFor={`${id}-rate`}>Rate (₹)</Label>
+                <Label htmlFor={`${id}-rate`}>
+                  Rate (₹ for {value.basisQty || "1"} {value.basisUnit === "QTL" ? "QTL = 100 kg" : value.basisUnit})
+                </Label>
                 <Input id={`${id}-rate`} type="number" inputMode="decimal" min={0} step="0.01" placeholder="e.g. 5300"
                   value={value.basisRate} onChange={(e) => update({ basisRate: e.target.value })} />
               </div>
             </div>
             <p className="rounded-md bg-panel px-3 py-2 text-sm text-charcoal" aria-live="polite">
-              {price !== null && pricing ? (
+              {price !== null && pricing && perUnit ? (
                 <>
-                  Selling price: <span className="font-semibold">{inrPrecise(pricing.basisRate)}</span> ×{" "}
-                  {formatPackSize(pricing)} ÷ {pricing.basisQty} {pricing.basisUnit} ={" "}
+                  {inrPrecise(pricing.basisRate)} for {pricing.basisQty} {pricing.basisUnit === "QTL" ? "QTL (100 kg)" : pricing.basisUnit} ={" "}
+                  <span className="font-semibold">{inrPrecise(perUnit.rate)} per {perUnit.unit}</span> × {formatPackSize(pricing)} ={" "}
                   <span className="font-bold text-stone-900">{inrPrecise(price)}</span>. Shown to customers as{" "}
                   {inrPrecise(price)} ({inrPrecise(pricing.basisRate)}/{pricing.basisQty === 1 ? pricing.basisUnit : `${pricing.basisQty} ${pricing.basisUnit}`}).
                 </>
