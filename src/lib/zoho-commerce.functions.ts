@@ -2033,6 +2033,43 @@ async function applyRecentZohoItemChanges(db: Awaited<ReturnType<typeof dbAdmin>
   return summary;
 }
 
+/** Admin diagnostics: how one product compares with its Zoho item, and what a sync would do. */
+export const inspectZohoProductSync = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator(z.object({ productId: z.string().trim().min(1).max(80) }))
+  .handler(async ({ data, context }) => {
+    await ensureAdmin(context.supabase, context.userId);
+    const db = await dbAdmin();
+    const { data: link } = await db.from("zoho_item_links")
+      .select("product_id,zoho_item_id,updated_at,last_polled_at,last_zoho_modified_at,app_fingerprint")
+      .eq("product_id", data.productId).maybeSingle();
+    const { data: product } = await db.from("catalog_products")
+      .select("id,vendor_id,category,status,active,payload,created_at,updated_at")
+      .eq("id", data.productId).maybeSingle();
+    if (!link || !product) return { link, product: !!product };
+    const { region, organizationId, token } = await zohoOrderContext(db);
+    const response = await inventoryRequest<{ item?: Record<string, unknown> }>(
+      region, organizationId, token, `items/${encodeURIComponent(link.zoho_item_id)}`, "GET",
+    );
+    const item = response.item ?? {};
+    return {
+      link: { ...link, app_fingerprint_parts: (link.app_fingerprint ?? "").split(":").length },
+      productUpdatedAt: product.updated_at,
+      app: catalogEditableValues(product),
+      zoho: zohoEditableValues(item),
+      zohoRaw: {
+        last_modified_time: item["last_modified_time"],
+        reorder_level: item["reorder_level"],
+        locations: Array.isArray(item["locations"])
+          ? (item["locations"] as Record<string, unknown>[]).map((l) => ({ name: l["location_name"], reorder: l["location_reorder_level"] ?? l["reorder_level"] }))
+          : undefined,
+      },
+      editableDigestNow: await editableDigest(product),
+      savedDigest: (link.app_fingerprint ?? "").split(":")[2] ?? null,
+      decision: await zohoItemDecision(product, link as ZohoItemLink, item),
+    };
+  });
+
 /** Admin: pull Zoho-side order changes now (run when the admin opens Orders or Zoho pages). */
 export const syncZohoOrderChangesNow = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
