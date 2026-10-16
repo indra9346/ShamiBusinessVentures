@@ -2065,6 +2065,9 @@ export const inspectZohoProductSync = createServerFn({ method: "POST" })
       zohoRaw: {
         last_modified_time: item["last_modified_time"],
         reorder_level: item["reorder_level"],
+        descriptionFields: Object.fromEntries(Object.entries(item)
+          .filter(([key, value]) => /desc|reorder/i.test(key) && (typeof value === "string" || typeof value === "number"))
+          .map(([key, value]) => [key, String(value).slice(0, 300)])),
         locations: Array.isArray(item["locations"])
           ? (item["locations"] as Record<string, unknown>[]).map((l) => ({ name: l["location_name"], reorder: l["location_reorder_level"] ?? l["reorder_level"] }))
           : undefined,
