@@ -11,6 +11,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { UseMyLocationButton, type CapturedLocation } from "@/components/site/UseMyLocationButton";
+import { PickContactButton } from "@/components/site/PickContactButton";
+
+const ADDRESS_AUTOCOMPLETE: Record<string, string> = {
+  label: "off", name: "name", phone: "tel-national", line: "street-address",
+  city: "address-level2", state: "address-level1", pin: "postal-code", landmark: "off",
+};
 
 export const Route = createFileRoute("/account/addresses")({
   head: () => ({
@@ -28,7 +34,7 @@ export const Route = createFileRoute("/account/addresses")({
 const blank = { label: "", name: "", phone: "", line: "", city: "", state: "Karnataka", pin: "", landmark: "" };
 
 function AccountAddresses() {
-  const { addresses, addAddress, updateAddress, deleteAddress, setDefaultAddress } = useApp();
+  const { addresses, addAddress, updateAddress, deleteAddress, setDefaultAddress, user } = useApp();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -59,7 +65,8 @@ function AccountAddresses() {
             className="bg-navy text-white hover:bg-navy/90"
             onClick={() => {
               setEditing(null);
-              setForm(blank);
+              // A new address starts with the account's own name and phone.
+              setForm({ ...blank, label: addresses.length ? "" : "Home", name: user?.name ?? "", phone: user?.phone ?? "" });
               setPoint(null);
               setOpen(true);
             }}
@@ -126,7 +133,10 @@ function AccountAddresses() {
           <DialogHeader>
             <DialogTitle>{editing ? "Edit Address" : "Add New Address"}</DialogTitle>
           </DialogHeader>
-          <UseMyLocationButton onLocated={fillFromLocation} />
+          <div className="flex flex-wrap items-start gap-2">
+            <UseMyLocationButton onLocated={fillFromLocation} />
+            <PickContactButton onPicked={({ name, phone }) => setForm((f) => ({ ...f, name: name || f.name, phone: phone || f.phone }))} />
+          </div>
           <div className="grid gap-3 sm:grid-cols-2">
             {([
               ["label", "Label"], ["name", "Full Name"], ["phone", "Phone"], ["line", "Address Line"],
@@ -134,7 +144,7 @@ function AccountAddresses() {
             ] as const).map(([k, label]) => (
               <div key={k} className="grid gap-1.5">
                 <Label>{label}</Label>
-                <Input value={form[k]} onChange={(e) => set(k, e.target.value)} />
+                <Input name={k} autoComplete={ADDRESS_AUTOCOMPLETE[k]} value={form[k]} onChange={(e) => set(k, e.target.value)} />
               </div>
             ))}
           </div>

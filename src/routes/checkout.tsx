@@ -12,6 +12,12 @@ import { branchForPin, defaultBranchOf, useBranches } from "@/lib/branches";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
 import { UseMyLocationButton, type CapturedLocation } from "@/components/site/UseMyLocationButton";
+import { PickContactButton } from "@/components/site/PickContactButton";
+
+const ADDRESS_AUTOCOMPLETE: Record<string, string> = {
+  label: "off", name: "name", phone: "tel-national", line: "street-address",
+  city: "address-level2", state: "address-level1", pin: "postal-code", landmark: "off",
+};
 
 export const Route = createFileRoute("/checkout")({
   validateSearch: z.object({ productId: z.string().optional() }),
@@ -62,6 +68,8 @@ function Checkout() {
   }, [hydrated, authReady, user, navigate, productId]);
   const [step, setStep] = useState(0);
   const [addr, setAddr] = useState(addresses[0]?.id ?? "");
+  // The customer's default address is used automatically; the list and form open only on request.
+  const [changingAddress, setChangingAddress] = useState(false);
   const [addressFormOpen, setAddressFormOpen] = useState(addresses.length === 0);
   useEffect(() => {
     if (!addr && addresses.length > 0)
@@ -438,7 +446,24 @@ function Checkout() {
           <div className="rounded-lg border border-border bg-card p-4 sm:p-6 shadow-card">
             {step === 0 && (
               <>
-                <h2 className="text-lg font-bold text-navy">Delivery Address</h2>
+                <h2 className="text-lg font-bold text-navy">Your address</h2>
+                {selectedAddress && !changingAddress && !addressFormOpen && (
+                  <div className="mt-5 space-y-3">
+                    <div className="rounded-lg border border-gold bg-ivory p-4">
+                      <p className="text-xs font-bold tracking-wider text-gold uppercase">{selectedAddress.label}{selectedAddress.default ? " · default" : ""}</p>
+                      <p className="mt-1 font-semibold text-navy">{selectedAddress.name} · {selectedAddress.phone}</p>
+                      <p className="text-sm text-slate">
+                        {[selectedAddress.line, selectedAddress.city, `${selectedAddress.state} ${selectedAddress.pin}`.trim()].filter(Boolean).join(", ")}
+                        {selectedAddress.landmark ? ` (${selectedAddress.landmark})` : ""}
+                      </p>
+                      <button type="button" onClick={() => setChangingAddress(true)} className="mt-2 text-sm font-semibold text-navy underline hover:text-gold">
+                        Use a different address
+                      </button>
+                    </div>
+                    <PickupPointCard pin={selectedAddress.pin} />
+                  </div>
+                )}
+                {(!selectedAddress || changingAddress || addressFormOpen) && (
                 <div className="mt-5 space-y-3">
                   {addresses.length === 0 && !addressFormOpen && (
                     <p className="rounded-lg border border-dashed border-border p-4 text-sm text-slate">
@@ -448,7 +473,7 @@ function Checkout() {
                   {addresses.map((a) => (
                     <button
                       key={a.id}
-                      onClick={() => setAddr(a.id)}
+                      onClick={() => { setAddr(a.id); setChangingAddress(false); }}
                       className={cn(
                         "w-full rounded-lg border p-4 text-left transition-colors",
                         addr === a.id ? "border-gold bg-ivory" : "border-border hover:border-gold",
@@ -461,7 +486,8 @@ function Checkout() {
                         {a.name} · {a.phone}
                       </p>
                       <p className="text-sm text-slate">
-                        {a.line}, {a.city}, {a.state} {a.pin} ({a.landmark})
+                        {[a.line, a.city, `${a.state} ${a.pin}`.trim()].filter(Boolean).join(", ")}
+                        {a.landmark ? ` (${a.landmark})` : ""}
                       </p>
                     </button>
                   ))}
@@ -478,7 +504,10 @@ function Checkout() {
                   {addressFormOpen && (
                     <div className="rounded-lg border border-border bg-ivory p-4">
                       <h3 className="font-semibold text-navy">Add your delivery address</h3>
-                      <UseMyLocationButton className="mt-3" onLocated={fillFromLocation} />
+                      <div className="mt-3 flex flex-wrap items-start gap-2">
+                        <UseMyLocationButton onLocated={fillFromLocation} />
+                        <PickContactButton onPicked={({ name, phone }) => setAddressForm((form) => ({ ...form, name: name || form.name, phone: phone || form.phone }))} />
+                      </div>
                       <div className="mt-3 grid gap-3 sm:grid-cols-2">
                         {(
                           [
@@ -499,6 +528,8 @@ function Checkout() {
                               onChange={(event) =>
                                 setAddressForm((form) => ({ ...form, [key]: event.target.value }))
                               }
+                              name={key}
+                              autoComplete={ADDRESS_AUTOCOMPLETE[key]}
                               inputMode={key === "phone" || key === "pin" ? "numeric" : undefined}
                               maxLength={key === "pin" ? 6 : undefined}
                               className="mt-1 h-10 w-full rounded-md border border-border bg-card px-3 text-sm text-navy outline-none focus:border-gold"
@@ -528,6 +559,7 @@ function Checkout() {
                     </div>
                   )}
                 </div>
+              )}
               </>
             )}
 

@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import type { ReverseGeocodeResult } from "@/lib/geocode.functions";
+import { showAuthNotice } from "@/components/site/AuthNotice";
 
 export type CapturedLocation = ReverseGeocodeResult & {
   latitude: number;
@@ -43,7 +44,7 @@ export function UseMyLocationButton({ onLocated, className }: { onLocated: (loca
         description: `${[address.city, address.state, address.pin].filter(Boolean).join(", ")} · accurate to about ${Math.round(accuracy)} m. Check the house/flat number.`,
       });
     } catch (cause) {
-      toast.error("Could not find your address", { description: cause instanceof Error ? cause.message : "Please type it in." });
+      showAuthNotice("Could not find your address", cause instanceof Error ? cause.message : "Please type it in.");
     } finally {
       setState("idle");
     }
@@ -51,11 +52,11 @@ export function UseMyLocationButton({ onLocated, className }: { onLocated: (loca
 
   const locate = () => {
     if (typeof window === "undefined" || !("geolocation" in navigator)) {
-      toast.error("This browser cannot share your location", { description: "Please type your address." });
+      showAuthNotice("This browser cannot share your location", "Please type your address.");
       return;
     }
     if (!window.isSecureContext) {
-      toast.error("Location needs a secure (https) page");
+      showAuthNotice("Location needs a secure (https) page");
       return;
     }
     setState("locating");
@@ -84,7 +85,8 @@ export function UseMyLocationButton({ onLocated, className }: { onLocated: (loca
           : error.code === error.TIMEOUT
             ? "Your location took too long to find. Move near a window or turn on GPS, then try again."
             : "Your location is not available right now. Turn on location/GPS and try again.";
-        toast.error("Could not get your location", { description: message });
+        // A calm notice that stays readable (the permission steps are long).
+        showAuthNotice("Could not get your location", message);
       },
       { enableHighAccuracy: true, maximumAge: 0, timeout: MAX_WAIT_MS },
     );

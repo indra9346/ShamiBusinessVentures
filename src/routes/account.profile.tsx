@@ -41,15 +41,15 @@ function AccountProfile() {
         <div className="grid gap-4 lg:grid-cols-2">
           <div className="grid gap-1.5">
             <Label>Full Name</Label>
-            <Input value={name} onChange={(e) => setName(e.target.value)} />
+            <Input name="name" autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} />
           </div>
           <div className="grid gap-1.5">
             <Label>Email</Label>
-            <Input value={email} onChange={(e) => setEmail(e.target.value)} />
+            <Input name="email" type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} />
           </div>
           <div className="grid gap-1.5">
             <Label>Phone</Label>
-            <Input value={phone} onChange={(e) => setPhone(e.target.value)} />
+            <Input name="phone" type="tel" inputMode="numeric" autoComplete="tel-national" value={phone} onChange={(e) => setPhone(e.target.value)} />
           </div>
           <div className="grid gap-1.5">
             <Label>Account Type</Label>
