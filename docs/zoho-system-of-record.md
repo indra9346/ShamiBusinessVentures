@@ -104,7 +104,9 @@ re-authorizes Zoho).
   matched Zoho item is linked to another product, so stock never flips between duplicates.
 - HSN on order lines: from the Grain Bazar product, else the Zoho item record.
 - Optional official notification: Books "Email a sales order" for each new website order to
-  configured staff addresses; off by default; failures logged, never block the sync.
+  configured staff addresses; off by default; failures logged, never block the sync. Zoho marks a
+  draft sales order Open when it is emailed (observed live), so enabling this confirms new website
+  orders in Zoho on arrival. Test sends use an in-page confirmation (no browser pop-up).
 - Structured JSON logs (`source: "zoho-sync"`), no tokens or customer details.
 - Tests: `npm run test:zoho` (16 tests, incl. Zoho's documented signature examples).
 
@@ -147,4 +149,5 @@ re-authorizes Zoho).
 | Customers parity (final) | 9 of 9 linked after fixing contact updates (Zoho refused a replaced person list) and choosing between duplicate Zoho contacts by the customer's own orders; 0 to review |
 | Order reconciliation (final, 30 days) | 14 checked · 14 in sync · 0 to review |
 | Zoho re-authorization with ZohoBooks.salesorders.CREATE | Done by the owner (consent screen showed Zoho Books: Sales Orders CREATE) |
-| Official new-order notification | **Not yet sent** — needs recipients and the owner's go-ahead for a real test email (Admin → Zoho diagnostics → Zoho order emails → Send test email) |
+| Official new-order notification (test, GB-ORD-26889, 22:09 IST) | **Delivered.** Site: "Zoho accepted the test email"; inbox: from `message-service@sender.zoho-books.in` (Shami Business Ventures), sales order PDF attached; Zoho history: "Sales Order emailed to …" |
+| Side effect observed | Zoho marked the **draft** sales order **Open** when it was emailed ("Sales Order marked as open"), and the signed webhook to the site returned 200. With order emails On, new website orders become Open in Zoho on arrival. |
