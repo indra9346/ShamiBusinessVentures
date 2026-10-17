@@ -1797,8 +1797,13 @@ async function syncZohoCatalogItem(
       }
     }
     if (shared.stock !== null && !stockFollowUp && str(resultItem?.["item_type"]) === "inventory") {
+      // Zoho's update response leaves out committed stock (open sales orders), so it would read
+      // as on-hand; the item record has the true available-for-sale to correct against.
+      const current = await inventoryRequest<{ item?: Record<string, unknown> }>(
+        region, organizationId, token, `items/${encodeURIComponent(itemId)}`, "GET",
+      );
       await syncZohoItemStock(
-        region, organizationId, token, itemId, shared.sku, shared.stock, zohoAvailableForSale(resultItem),
+        region, organizationId, token, itemId, shared.sku, shared.stock, zohoAvailableForSale(current.item ?? resultItem),
         await defaultStockLocationId(db),
       );
     }
