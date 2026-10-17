@@ -7,6 +7,7 @@ import { SiteLayout, Breadcrumbs } from "@/components/site/SiteLayout";
 import { inr } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { PickupPointCard } from "@/components/site/PickupPointCard";
+import { usePickupSettings } from "@/lib/pickup-points";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -158,8 +159,10 @@ function Checkout() {
     : cartItems;
   const unresolvedCartLines = cartItems.length < cart.length;
   const subtotal = checkoutItems.reduce((sum, line) => sum + line.product.price * line.qty, 0);
+  // Pickup-only (until home delivery is switched on): no freight, same rule as the database.
+  const { homeDelivery } = usePickupSettings();
   const shipCost =
-    subtotal < shippingRates.freeAbove
+    homeDelivery && subtotal < shippingRates.freeAbove
       ? ship === "Express"
         ? shippingRates.express
         : shippingRates.standard
@@ -474,11 +477,23 @@ function Checkout() {
 
             {step === 1 && (
               <>
-                <h2 className="text-lg font-bold text-navy">Delivery Option</h2>
-                <div className="mt-5 space-y-3">
+                <h2 className="text-lg font-bold text-navy">{homeDelivery ? "Delivery Option" : "Pickup"}</h2>
+                {!homeDelivery && (
+                  <div className="mt-5 space-y-3">
+                    <div className="flex items-center justify-between rounded-lg border border-gold bg-ivory p-4">
+                      <span>
+                        <span className="block font-semibold text-navy">Pickup from our godown</span>
+                        <span className="text-sm text-slate">Collect your order in person. Home delivery is coming soon.</span>
+                      </span>
+                      <span className="font-bold text-gold">Free</span>
+                    </div>
+                    <PickupPointCard pin={selectedAddress?.pin ?? null} />
+                  </div>
+                )}
+                {homeDelivery && <div className="mt-5 space-y-3">
                   {[
-                    ["Standard", "2–4 business days", subtotal > 10000 ? "Free" : inr(250)],
-                    ["Express", "Next business day", inr(650)],
+                    ["Standard", "2–4 business days", subtotal >= shippingRates.freeAbove ? "Free" : inr(shippingRates.standard)],
+                    ["Express", "Next business day", subtotal >= shippingRates.freeAbove ? "Free" : inr(shippingRates.express)],
                   ].map(([name, desc, cost]) => (
                     <button
                       key={name}
@@ -495,7 +510,7 @@ function Checkout() {
                       <span className="font-bold text-gold">{cost}</span>
                     </button>
                   ))}
-                </div>
+                </div>}
               </>
             )}
 
@@ -648,7 +663,7 @@ function Checkout() {
             <div className="mt-4 space-y-2.5 text-sm">
               {[
                 ["Subtotal", inr(summary.subtotal)],
-                ["Delivery", summary.shipCost === 0 ? "Free" : inr(summary.shipCost)],
+                [homeDelivery ? "Delivery" : "Pickup", summary.shipCost === 0 ? "Free" : inr(summary.shipCost)],
                 ["GST", inr(summary.tax)],
                 ...(summary.discount > 0
                   ? [["Coupon discount", `- ${inr(summary.discount)}`]]
