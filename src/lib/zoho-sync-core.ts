@@ -182,6 +182,7 @@ export function reconcileCatalog(
   const linkedIds = new Set(links.values());
   const issues: CatalogRow[] = [];
   let inSync = 0;
+  let inactiveUnlinked = 0;
   // Two Grain Bazar products with one SKU would both write to the same Zoho item.
   const skuCount = new Map<string, number>();
   for (const product of products) {
@@ -196,6 +197,8 @@ export function reconcileCatalog(
     }
     const zohoId = links.get(product.id);
     if (!zohoId) {
+      // Inactive products are never pushed to Zoho, so no link is expected for them.
+      if (!product.active) { inactiveUnlinked += 1; continue; }
       issues.push({ productId: product.id, name: product.name, issue: "not_linked", detail: `SKU ${product.sku || "-"} has no Zoho item link yet` });
       continue;
     }
@@ -216,7 +219,7 @@ export function reconcileCatalog(
     if (issues.length === before) inSync += 1;
   }
   const zohoOnly = zohoItems.filter((item) => !linkedIds.has(item.item_id)).length;
-  return { checked: products.length, inSync, issues, zohoOnly };
+  return { checked: products.length, inSync, issues, zohoOnly, inactiveUnlinked };
 }
 
 export type CustomerForParity = { id: string; name: string; hasOrders: boolean };

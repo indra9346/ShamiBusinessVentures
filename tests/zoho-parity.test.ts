@@ -126,3 +126,10 @@ test("catalog parity: two products with one SKU are flagged, not compared", () =
   assert.deepEqual(report.issues.map((row) => [row.productId, row.issue]), [["1", "duplicate_sku"], ["2", "duplicate_sku"]]);
   assert.equal(report.inSync, 1);
 });
+
+test("catalog parity: an inactive product without a link is not an issue", () => {
+  const report = reconcileCatalog([product("1", { active: false }), product("2")], new Map([["2", "z2"]]), [item("2")]);
+  assert.deepEqual(report.issues, []);
+  assert.equal(report.inactiveUnlinked, 1);
+  assert.equal(report.inSync, 1);
+});

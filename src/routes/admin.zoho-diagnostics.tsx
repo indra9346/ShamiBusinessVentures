@@ -199,6 +199,7 @@ function CatalogParityPanel() {
               <strong className={report.catalog.issues.length ? "text-amber-700" : "text-emerald-700"}>{report.catalog.issues.length}</strong> to review
               {report.catalog.zohoOnly > 0 && ` · ${report.catalog.zohoOnly} Zoho items not used by the website`}
               {report.zohoImported > 0 && ` · ${report.zohoImported} Zoho-imported copies not compared`}
+              {report.catalog.inactiveUnlinked > 0 && ` · ${report.catalog.inactiveUnlinked} inactive (not sent to Zoho)`}
             </p>
             <p className="text-navy">
               Customers: <strong>{report.customers.checked}</strong> accounts · <strong>{report.customers.linked}</strong> linked to Zoho ·{" "}
