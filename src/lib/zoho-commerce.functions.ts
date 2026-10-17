@@ -3583,3 +3583,52 @@ export const updateZohoSalesOrder = createServerFn({ method: "POST" })
       throw new Error(`Zoho refused while ${step.name}: ${message}.${zohoPermissionHint(message)}`);
     }
   });
+
+/**
+ * Admin diagnostics: how Zoho labels the sales channel on a Grain Bazar order versus a Zoho
+ * Commerce order, and whether the organization exposes sales channels over the API. Read-only.
+ */
+export const probeZohoSalesChannel = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    await ensureAdmin(context.supabase, context.userId);
+    const db = await dbAdmin();
+    const { region, organizationId, token } = await zohoOrderContext(db);
+    const pick = (record: Record<string, unknown> | undefined) => Object.fromEntries(
+      Object.entries(record ?? {}).filter(([key]) => /channel|source|integration|platform|is_.*commerce/i.test(key)),
+    );
+    const report: Record<string, unknown> = {};
+    const { data: gbOrder } = await db.from("orders").select("order_no,zoho_salesorder_id")
+      .not("zoho_salesorder_id", "is", null).order("created_at", { ascending: false }).limit(1).maybeSingle();
+    if (gbOrder?.zoho_salesorder_id) {
+      try {
+        const gb = await inventoryRequest<{ salesorder?: Record<string, unknown> }>(
+          region, organizationId, token, `salesorders/${encodeURIComponent(gbOrder.zoho_salesorder_id)}`, "GET");
+        report["grainBazarOrder"] = { orderNo: gbOrder.order_no, number: gb.salesorder?.["salesorder_number"], fields: pick(gb.salesorder) };
+      } catch (cause) {
+        report["grainBazarOrder"] = { error: cause instanceof Error ? cause.message : String(cause) };
+      }
+    }
+    try {
+      const list = await inventoryRequest<{ salesorders?: Record<string, unknown>[] }>(
+        region, organizationId, token, "salesorders", "GET", undefined, { search_text: "CLK-SO", per_page: "5" });
+      const first = (list.salesorders ?? [])[0];
+      report["commerceListRow"] = pick(first);
+      if (first?.["salesorder_id"]) {
+        const full = await inventoryRequest<{ salesorder?: Record<string, unknown> }>(
+          region, organizationId, token, `salesorders/${encodeURIComponent(String(first["salesorder_id"]))}`, "GET");
+        report["commerceOrder"] = { number: full.salesorder?.["salesorder_number"], fields: pick(full.salesorder) };
+      }
+    } catch (cause) {
+      report["commerceOrder"] = { error: cause instanceof Error ? cause.message : String(cause) };
+    }
+    for (const resource of ["saleschannels", "settings/saleschannels", "integrations/saleschannels"]) {
+      try {
+        const result = await inventoryRequest<Record<string, unknown>>(region, organizationId, token, resource, "GET");
+        report[resource] = Object.fromEntries(Object.entries(result).filter(([key]) => !["code", "message"].includes(key)));
+      } catch (cause) {
+        report[resource] = { error: cause instanceof Error ? cause.message : String(cause) };
+      }
+    }
+    return JSON.stringify(report, null, 2);
+  });

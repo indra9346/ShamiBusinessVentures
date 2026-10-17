@@ -49,6 +49,7 @@ import { Route as AdminReviewsRouteImport } from './routes/admin.reviews'
 import { Route as AdminSettingsRouteImport } from './routes/admin.settings'
 import { Route as AdminVendorsRouteImport } from './routes/admin.vendors'
 import { Route as AdminZohoRouteImport } from './routes/admin.zoho'
+import { Route as AdminZohoDiagnosticsRouteImport } from './routes/admin.zoho-diagnostics'
 import { Route as CategoriesIndexRouteImport } from './routes/categories.index'
 import { Route as CategoriesSlugRouteImport } from './routes/categories.$slug'
 import { Route as ProductIdRouteImport } from './routes/product.$id'
@@ -278,6 +279,11 @@ const AdminZohoRoute = AdminZohoRouteImport.update({
   path: '/admin/zoho',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdminZohoDiagnosticsRoute = AdminZohoDiagnosticsRouteImport.update({
+  id: '/admin/zoho-diagnostics',
+  path: '/admin/zoho-diagnostics',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const CategoriesIndexRoute = CategoriesIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -459,6 +465,7 @@ export interface FileRoutesByFullPath {
   '/admin/settings': typeof AdminSettingsRoute
   '/admin/vendors': typeof AdminVendorsRouteWithChildren
   '/admin/zoho': typeof AdminZohoRoute
+  '/admin/zoho-diagnostics': typeof AdminZohoDiagnosticsRoute
   '/categories/$slug': typeof CategoriesSlugRouteWithChildren
   '/product/$id': typeof ProductIdRoute
   '/vendor/dashboard': typeof VendorDashboardRoute
@@ -528,6 +535,7 @@ export interface FileRoutesByTo {
   '/admin/settings': typeof AdminSettingsRoute
   '/admin/vendors': typeof AdminVendorsRouteWithChildren
   '/admin/zoho': typeof AdminZohoRoute
+  '/admin/zoho-diagnostics': typeof AdminZohoDiagnosticsRoute
   '/categories/$slug': typeof CategoriesSlugRouteWithChildren
   '/product/$id': typeof ProductIdRoute
   '/vendor/dashboard': typeof VendorDashboardRoute
@@ -599,6 +607,7 @@ export interface FileRoutesById {
   '/admin/settings': typeof AdminSettingsRoute
   '/admin/vendors': typeof AdminVendorsRouteWithChildren
   '/admin/zoho': typeof AdminZohoRoute
+  '/admin/zoho-diagnostics': typeof AdminZohoDiagnosticsRoute
   '/categories/$slug': typeof CategoriesSlugRouteWithChildren
   '/product/$id': typeof ProductIdRoute
   '/vendor/dashboard': typeof VendorDashboardRoute
@@ -671,6 +680,7 @@ export interface FileRouteTypes {
     | '/admin/settings'
     | '/admin/vendors'
     | '/admin/zoho'
+    | '/admin/zoho-diagnostics'
     | '/categories/$slug'
     | '/product/$id'
     | '/vendor/dashboard'
@@ -740,6 +750,7 @@ export interface FileRouteTypes {
     | '/admin/settings'
     | '/admin/vendors'
     | '/admin/zoho'
+    | '/admin/zoho-diagnostics'
     | '/categories/$slug'
     | '/product/$id'
     | '/vendor/dashboard'
@@ -810,6 +821,7 @@ export interface FileRouteTypes {
     | '/admin/settings'
     | '/admin/vendors'
     | '/admin/zoho'
+    | '/admin/zoho-diagnostics'
     | '/categories/$slug'
     | '/product/$id'
     | '/vendor/dashboard'
@@ -873,6 +885,7 @@ export interface RootRouteChildren {
   AdminSettingsRoute: typeof AdminSettingsRoute
   AdminVendorsRoute: typeof AdminVendorsRouteWithChildren
   AdminZohoRoute: typeof AdminZohoRoute
+  AdminZohoDiagnosticsRoute: typeof AdminZohoDiagnosticsRoute
   ProductIdRoute: typeof ProductIdRoute
   VendorDashboardRoute: typeof VendorDashboardRoute
   VendorEarningsRoute: typeof VendorEarningsRoute
@@ -1173,6 +1186,13 @@ declare module '@tanstack/react-router' {
       path: '/admin/zoho'
       fullPath: '/admin/zoho'
       preLoaderRoute: typeof AdminZohoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/zoho-diagnostics': {
+      id: '/admin/zoho-diagnostics'
+      path: '/admin/zoho-diagnostics'
+      fullPath: '/admin/zoho-diagnostics'
+      preLoaderRoute: typeof AdminZohoDiagnosticsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/categories/': {
@@ -1553,6 +1573,7 @@ const rootRouteChildren: RootRouteChildren = {
   AdminSettingsRoute: AdminSettingsRoute,
   AdminVendorsRoute: AdminVendorsRouteWithChildren,
   AdminZohoRoute: AdminZohoRoute,
+  AdminZohoDiagnosticsRoute: AdminZohoDiagnosticsRoute,
   ProductIdRoute: ProductIdRoute,
   VendorDashboardRoute: VendorDashboardRoute,
   VendorEarningsRoute: VendorEarningsRoute,
