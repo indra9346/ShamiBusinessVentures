@@ -5,17 +5,8 @@ import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ResponsiveContai
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { DataTable, Filters, Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { vendorNav } from "@/lib/panel-nav";
-import { getOrderItemTotal, inr, type Order } from "@/lib/data";
+import { compactInr, getOrderItemTotal, inr, type Order } from "@/lib/data";
 import { useVendorScope } from "@/lib/store";
-
-/** Short rupee labels for chart axes: ₹0, ₹850, ₹2.6k, ₹1.2L, ₹3.4Cr. */
-function compactInr(value: number) {
-  const trim = (n: number) => String(Math.round(n * 10) / 10);
-  if (value >= 1e7) return `₹${trim(value / 1e7)}Cr`;
-  if (value >= 1e5) return `₹${trim(value / 1e5)}L`;
-  if (value >= 1e3) return `₹${trim(value / 1e3)}k`;
-  return `₹${Math.round(value)}`;
-}
 
 const orderTime = (order: Order) => new Date(order.createdAt ?? order.date).getTime() || 0;
 

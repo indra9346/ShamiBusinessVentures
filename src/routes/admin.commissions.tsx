@@ -6,7 +6,7 @@ import { IndianRupee, Percent, TrendingUp, Wallet } from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { DataTable, Panel, StatCard } from "@/components/panel/widgets";
 import { adminNav } from "@/lib/panel-nav";
-import { getVendorPaidSales, inr } from "@/lib/data";
+import { compactInr, getVendorPaidSales, inr } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -86,7 +86,7 @@ function AdminCommissions() {
             <BarChart data={rows}>
               <CartesianGrid stroke="var(--border)" vertical={false} />
               <XAxis dataKey="business" stroke="var(--slate)" fontSize={11} interval={0} angle={-20} textAnchor="end" height={70} />
-              <YAxis stroke="var(--slate)" fontSize={12} tickFormatter={(v: number) => `${v / 1000}k`} />
+              <YAxis stroke="var(--slate)" fontSize={12} width={56} allowDecimals={false} tickFormatter={compactInr} />
               <Tooltip formatter={(v: number) => inr(v)} />
               <Bar dataKey="earned" fill="var(--gold)" radius={[4, 4, 0, 0]} />
             </BarChart>

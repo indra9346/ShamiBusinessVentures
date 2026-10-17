@@ -6,7 +6,7 @@ import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YA
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { DataTable, Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { vendorNav } from "@/lib/panel-nav";
-import { getOrderItemTotal, inr } from "@/lib/data";
+import { compactInr, getOrderItemTotal, inr } from "@/lib/data";
 import { useApp, useVendorScope } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -129,7 +129,7 @@ function VendorEarnings() {
               </defs>
               <CartesianGrid stroke="var(--border)" vertical={false} />
               <XAxis dataKey="month" stroke="var(--slate)" fontSize={12} />
-              <YAxis stroke="var(--slate)" fontSize={12} tickFormatter={(v: number) => `${v / 100000}L`} />
+              <YAxis stroke="var(--slate)" fontSize={12} width={56} allowDecimals={false} tickFormatter={compactInr} />
               <Tooltip formatter={(v: number) => inr(v)} />
               <Area type="monotone" dataKey="revenue" stroke="var(--gold)" strokeWidth={3} fill="url(#rev-vendor)" />
             </AreaChart>

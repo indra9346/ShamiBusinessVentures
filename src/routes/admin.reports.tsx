@@ -21,7 +21,7 @@ import { PanelLayout } from "@/components/panel/PanelLayout";
 import { DataTable, Panel, StatCard } from "@/components/panel/widgets";
 import { adminNav } from "@/lib/panel-nav";
 import { useApp } from "@/lib/store";
-import { getOrderItemTotal, getOrderPaymentsReceived, getVendorPaidSales, inr } from "@/lib/data";
+import { compactInr, getOrderItemTotal, getOrderPaymentsReceived, getVendorPaidSales, inr } from "@/lib/data";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -346,7 +346,9 @@ function AdminReports() {
                 <YAxis
                   stroke="#857A6B"
                   fontSize={12}
-                  tickFormatter={(v: number) => `${Math.round(v / 1000)}k`}
+                  width={56}
+                  allowDecimals={false}
+                  tickFormatter={compactInr}
                 />
                 <Tooltip
                   formatter={(v: number) => (reportType === "Revenue" ? inr(v) : String(v))}

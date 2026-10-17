@@ -10,7 +10,12 @@ import { useApp } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { supabase } from "@/integrations/supabase/client";
+
+const GSTIN_PATTERN = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
 
 export const Route = createFileRoute("/admin/vendors/$id")({
   head: ({ params }) => ({
@@ -28,6 +33,8 @@ export const Route = createFileRoute("/admin/vendors/$id")({
 function AdminVendorDetail() {
   const { id } = Route.useParams();
   const { vendors, products, orders, reviews, setVendorStatus } = useApp();
+  const [businessForm, setBusinessForm] = useState<{ gstin: string; city: string; address: string } | null>(null);
+  const [savingBusiness, setSavingBusiness] = useState(false);
   const [kycDocuments, setKycDocuments] = useState<Array<{ id: string; document_type: string; object_path: string; status: string; admin_notes: string | null; created_at: string }>>([]);
   const [kycNotes, setKycNotes] = useState<Record<string, string>>({});
   const [kycLoading, setKycLoading] = useState(true);
@@ -127,6 +134,13 @@ function AdminVendorDetail() {
             <Button
               variant="outline"
               size="sm"
+              onClick={() => setBusinessForm({ gstin: vendor.gst || "", city: vendor.city || "", address: vendor.businessAddress || "" })}
+            >
+              Edit details
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
               disabled={vendor.status === "approved" || vendor.status === "active"}
               onClick={() => {
                 void setVendorStatus(vendor.id, "approved").then((ok) => { if (ok) toast.success(`${vendor.business} approved`); });
@@ -150,7 +164,10 @@ function AdminVendorDetail() {
         <div className="grid gap-2 text-sm sm:grid-cols-3">
           <p><span className="text-slate">Email:</span> <span className="font-medium text-navy">{vendor.email}</span></p>
           <p><span className="text-slate">Phone:</span> <span className="font-medium text-navy">{vendor.phone}</span></p>
-          <p><span className="text-slate">GST:</span> <span className="font-medium text-navy">{vendor.gst}</span></p>
+          <p>
+            <span className="text-slate">GST:</span> <span className="font-medium text-navy">{vendor.gst || "—"}</span>
+            {vendor.gst && !GSTIN_PATTERN.test(vendor.gst) && <span className="ml-1 text-xs font-semibold text-danger">(invalid, please correct)</span>}
+          </p>
           <p><span className="text-slate">City:</span> <span className="font-medium text-navy">{vendor.city || "—"}</span></p>
           <p className="sm:col-span-2"><span className="text-slate">Business address:</span> <span className="font-medium text-navy">{vendor.businessAddress || "—"}</span></p>
           <p><span className="text-slate">Bank:</span> <span className="font-medium text-navy">{vendor.bank}</span></p>
@@ -244,6 +261,54 @@ function AdminVendorDetail() {
           </TabsContent>
         </Tabs>
       </div>
+      <Dialog open={!!businessForm} onOpenChange={(open) => { if (!open) setBusinessForm(null); }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Edit business details</DialogTitle></DialogHeader>
+          {businessForm && (
+            <div className="space-y-3">
+              <div className="grid gap-1.5">
+                <Label htmlFor="vendor-gstin">GSTIN (leave blank if not registered)</Label>
+                <Input id="vendor-gstin" maxLength={15} value={businessForm.gstin}
+                  onChange={(e) => setBusinessForm({ ...businessForm, gstin: e.target.value.toUpperCase() })} placeholder="29ABCDE1234F1Z5" />
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="vendor-city">City</Label>
+                <Input id="vendor-city" value={businessForm.city} onChange={(e) => setBusinessForm({ ...businessForm, city: e.target.value })} />
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="vendor-address">Business address</Label>
+                <Textarea id="vendor-address" rows={3} value={businessForm.address} onChange={(e) => setBusinessForm({ ...businessForm, address: e.target.value })} />
+              </div>
+              <p className="text-xs text-slate">Saved details also update the vendor's contact in Zoho.</p>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBusinessForm(null)}>Cancel</Button>
+            <Button
+              className="bg-navy text-white hover:bg-navy/90"
+              disabled={savingBusiness}
+              onClick={async () => {
+                if (!businessForm) return;
+                const gstin = businessForm.gstin.trim().toUpperCase();
+                if (gstin && !GSTIN_PATTERN.test(gstin)) { toast.error("Enter a valid 15-character GSTIN, or leave it blank"); return; }
+                if (businessForm.city.trim().length < 2) { toast.error("Enter the vendor's city"); return; }
+                if (businessForm.address.trim().length < 8) { toast.error("Enter the vendor's full business address"); return; }
+                setSavingBusiness(true);
+                const { data, error } = await supabase.rpc("admin_update_vendor_business", {
+                  _vendor_id: vendor.id, _gstin: gstin, _city: businessForm.city.trim(), _address: businessForm.address.trim(),
+                });
+                setSavingBusiness(false);
+                if (error || !data) { toast.error("Could not save business details", { description: error?.message ?? "Vendor not found." }); return; }
+                toast.success("Business details saved");
+                setBusinessForm(null);
+                window.location.reload();
+              }}
+            >
+              {savingBusiness ? "Saving…" : "Save details"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </PanelLayout>
   );
 }

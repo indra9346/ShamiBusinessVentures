@@ -9,6 +9,15 @@ import premiumOilCategoryImg from "@/assets/category-oil-premium.jpg";
 export const inr = (n: number) =>
   "₹" + Math.round(n).toLocaleString("en-IN", { maximumFractionDigits: 2 });
 
+/** Short rupee labels for chart axes: ₹0, ₹850, ₹2.6k, ₹1.2L, ₹3.4Cr. */
+export function compactInr(value: number) {
+  const trim = (n: number) => String(Math.round(n * 10) / 10);
+  if (value >= 1e7) return `₹${trim(value / 1e7)}Cr`;
+  if (value >= 1e5) return `₹${trim(value / 1e5)}L`;
+  if (value >= 1e3) return `₹${trim(value / 1e3)}k`;
+  return `₹${Math.round(value)}`;
+}
+
 /** Like inr, but keeps paise when there are any: ₹2,650 and ₹43.50. */
 export const inrPrecise = (n: number) => {
   const paise = Math.round(n * 100);
