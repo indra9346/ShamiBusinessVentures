@@ -1,4 +1,4 @@
-import { toast } from "sonner";
+import { showAuthNotice } from "@/components/site/AuthNotice";
 import { supabase } from "@/integrations/supabase/client";
 
 export type ProvisionedRole = "admin" | "vendor";
@@ -20,9 +20,12 @@ export async function signInProvisionedAccount(email: string, password: string, 
     });
 
     if (authError || !authData.user) {
-      toast.error("Could not sign in", {
-        description: authError?.message ?? "Check the email and password, then try again.",
-      });
+      showAuthNotice(
+        /invalid login credentials/i.test(authError?.message ?? "") ? "Incorrect email or password" : "Could not sign in",
+        /invalid login credentials/i.test(authError?.message ?? "")
+          ? "Check both and try again, or use \"Set or reset password\"."
+          : authError?.message ?? "Check the email and password, then try again.",
+      );
       return null;
     }
     authenticated = true;
@@ -35,7 +38,7 @@ export async function signInProvisionedAccount(email: string, password: string, 
     if (roleResult.error || !roleResult.data) {
       await supabase.auth.signOut();
       authenticated = false;
-      toast.error(`This account is not authorized for ${role} access`);
+      showAuthNotice(`This account is not authorized for ${role} access`);
       return null;
     }
 
@@ -43,18 +46,16 @@ export async function signInProvisionedAccount(email: string, password: string, 
     if (profileResult.error || !profile || (role === "vendor" && !profile.vendor_id)) {
       await supabase.auth.signOut();
       authenticated = false;
-      toast.error("This account’s profile is incomplete", {
-        description: role === "vendor"
+      showAuthNotice("This account’s profile is incomplete", role === "vendor"
           ? "Ask an administrator to assign a unique vendor ID before signing in."
-          : "Ask an administrator to complete the account profile.",
-      });
+          : "Ask an administrator to complete the account profile.");
       return null;
     }
 
     if (role === "vendor" && !["active", "approved"].includes((profile.status ?? "").trim().toLowerCase())) {
       await supabase.auth.signOut();
       authenticated = false;
-      toast.error("This vendor account is not active");
+      showAuthNotice("This vendor account is not active");
       return null;
     }
 
@@ -66,9 +67,7 @@ export async function signInProvisionedAccount(email: string, password: string, 
     };
   } catch {
     if (authenticated) await supabase.auth.signOut();
-    toast.error("Unable to verify this staff account", {
-      description: "Check your connection and try again. If the problem continues, contact the administrator.",
-    });
+    showAuthNotice("Unable to verify this staff account", "Check your connection and try again. If the problem continues, contact the administrator.");
     return null;
   }
 }

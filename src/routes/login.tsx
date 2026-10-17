@@ -2,6 +2,7 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { z } from "zod";
 import { toast } from "sonner";
+import { showAuthNotice } from "@/components/site/AuthNotice";
 import { AuthCard } from "@/components/site/AuthCard";
 import { OtpRequestStep, OtpVerifyStep } from "@/components/site/OtpForm";
 import { useEmailOtp } from "@/lib/otp";
@@ -39,7 +40,7 @@ function LoginPage() {
   useEffect(() => {
     if (!authReady || user?.role !== "customer") return;
     if (next === "/checkout") void navigate({ to: "/checkout", search: { productId }, replace: true });
-    else void navigate({ to: "/account", replace: true });
+    else void navigate({ to: "/shop", replace: true });
   }, [authReady, user?.role, next, productId, navigate]);
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
@@ -69,16 +70,12 @@ function LoginPage() {
 
       if (profileError || !profile) {
         await supabase.auth.signOut();
-        toast.error("Could not verify your customer profile", {
-          description: profileError?.message ?? "Contact Shami support to restore your account profile.",
-        });
+        showAuthNotice("Could not verify your customer profile", profileError?.message ?? "Contact Shami support to restore your account profile.");
         return;
       }
       if (!["active", "approved"].includes((profile.status ?? "").trim().toLowerCase())) {
         await supabase.auth.signOut();
-        toast.error("This customer account is not active", {
-          description: "Contact Shami support if you think this is a mistake.",
-        });
+        showAuthNotice("This customer account is not active", "Contact Shami support if you think this is a mistake.");
         return;
       }
 
@@ -107,7 +104,8 @@ function LoginPage() {
     if (next === "/checkout") {
       navigate({ to: "/checkout", search: { productId }, replace: true });
     } else {
-      navigate({ to: "/account", replace: true });
+      // Signed in: straight to the products to start shopping.
+      navigate({ to: "/shop", replace: true });
     }
   };
 

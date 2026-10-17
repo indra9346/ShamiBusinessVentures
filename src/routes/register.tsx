@@ -63,7 +63,7 @@ function RegisterPage() {
       ...(cleanPhone ? { phone: cleanPhone } : {}),
     });
     toast.success("Your account is verified");
-    navigate({ to: "/account", replace: true });
+    navigate({ to: "/shop", replace: true });
   };
 
   return <AuthCard title="Create Account" subtitle="Verify your email or mobile number to create your customer account" footer={<span>Already registered? <Link to="/login" className="font-semibold text-gold hover:underline">Sign in</Link></span>}>

@@ -119,7 +119,13 @@ export function CartReviewSheet({ open, onClose }: { open: boolean; onClose: () 
                     >
                       {qty === 1 ? <Trash2 className="h-3.5 w-3.5" /> : <Minus className="h-3.5 w-3.5" />}
                     </button>
-                    <span className="min-w-8 text-center text-sm font-bold tabular-nums text-navy" aria-live="polite">{qty}</span>
+                    <QtyInput
+                      value={qty}
+                      max={limit}
+                      label={`Quantity of ${product.name}`}
+                      onFocus={() => select(product.id)}
+                      onCommit={(next) => change(product, next)}
+                    />
                     <button
                       type="button"
                       aria-label={`One more ${product.name}`}
@@ -169,5 +175,51 @@ export function CartReviewSheet({ open, onClose }: { open: boolean; onClose: () 
         </div>
       </section>
     </>
+  );
+}
+
+/**
+ * A quantity box that can be typed into (digits only). A valid number is applied as it is
+ * typed, capped at the product's purchase limit; leaving it blank or 0 restores the last value.
+ */
+function QtyInput({ value, max, label, onCommit, onFocus }: {
+  value: number;
+  max: number;
+  label: string;
+  onCommit: (qty: number) => void;
+  onFocus?: () => void;
+}) {
+  const [draft, setDraft] = useState(String(value));
+  useEffect(() => setDraft(String(value)), [value]);
+  return (
+    <input
+      type="text"
+      inputMode="numeric"
+      pattern="[0-9]*"
+      aria-label={label}
+      value={draft}
+      onFocus={(event) => {
+        onFocus?.();
+        // Select after the click settles, so typing replaces the number instead of adding to it.
+        const field = event.currentTarget;
+        window.requestAnimationFrame(() => field.select());
+      }}
+      onChange={(event) => {
+        const digits = event.target.value.replace(/\D/g, "").slice(0, 6);
+        const next = Number(digits);
+        if (!digits || next < 1) { setDraft(digits); return; }
+        // Above the purchase limit: show and apply the limit at once.
+        const capped = Math.min(next, Math.max(1, max));
+        setDraft(String(capped));
+        onCommit(capped);
+      }}
+      onBlur={() => {
+        const next = Number(draft);
+        if (!draft || next < 1) setDraft(String(value));
+        else if (next > max) setDraft(String(Math.max(1, max)));
+      }}
+      onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
+      className="h-8 w-12 rounded-md border border-border bg-background text-center text-sm font-bold tabular-nums text-navy focus:border-gold focus:outline-none focus:ring-2 focus:ring-gold/40"
+    />
   );
 }

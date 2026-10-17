@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { showAuthNotice } from "@/components/site/AuthNotice";
 import { supabase } from "@/integrations/supabase/client";
 import type { Role } from "@/lib/store";
 import { STATIC_DATA_MODE, STATIC_DEMO_OTP } from "@/lib/demo-mode";
@@ -54,11 +55,11 @@ export function useEmailOtp({ shouldCreateUser = true, requiredRole }: OtpOption
     async (destination: string, via: OtpChannel = channel, metadata?: OtpMetadata) => {
       const cleanEmail = destination.trim().toLowerCase();
       if (via === "email" && !isValidEmail(cleanEmail)) {
-        toast.error("Enter a valid email address");
+        showAuthNotice("Enter a valid email address");
         return false;
       }
       if (via === "phone" && !isValidPhone(destination)) {
-        toast.error("Enter a valid 10-digit Indian mobile number");
+        showAuthNotice("Enter a valid 10-digit Indian mobile number");
         return false;
       }
 
@@ -96,7 +97,7 @@ export function useEmailOtp({ shouldCreateUser = true, requiredRole }: OtpOption
               },
             });
       } catch {
-        toast.error("Could not connect to the verification service");
+        showAuthNotice("Could not connect to the verification service");
         return false;
       } finally {
         setSending(false);
@@ -106,27 +107,18 @@ export function useEmailOtp({ shouldCreateUser = true, requiredRole }: OtpOption
         const msg = result.error.message || "";
         const errCode = (result.error as { code?: string }).code || "";
         if (errCode === "phone_provider_disabled" || msg.toLowerCase().includes("unsupported phone provider")) {
-          toast.error("SMS Provider Not Configured in Supabase", {
-            description: "Phone OTP requires enabling an SMS provider (e.g. Twilio) or test numbers in your Supabase Auth dashboard. You can use Email OTP to sign in.",
-            duration: 8000,
-          });
+          showAuthNotice("SMS Provider Not Configured in Supabase", "Phone OTP requires enabling an SMS provider (e.g. Twilio) or test numbers in your Supabase Auth dashboard. You can use Email OTP to sign in.");
           return false;
         }
         if (errCode === "otp_disabled" || msg.toLowerCase().includes("signups not allowed for otp")) {
-          toast.error("No Account Found", {
-            description: "No registered customer account exists with this phone or email. Please register first.",
-            duration: 6000,
-          });
+          showAuthNotice("No Account Found", "No registered customer account exists with this phone or email. Please register first.");
           return false;
         }
         if (errCode === "over_sms_send_rate_limit" || msg.toLowerCase().includes("rate limit")) {
-          toast.error("Too Many Requests", {
-            description: "Please wait a few moments before requesting another OTP code.",
-            duration: 6000,
-          });
+          showAuthNotice("Too Many Requests", "Please wait a few moments before requesting another OTP code.");
           return false;
         }
-        toast.error("Could not send the verification code", { description: result.error.message });
+        showAuthNotice("Could not send the verification code", result.error.message);
         return false;
       }
 
@@ -148,11 +140,11 @@ export function useEmailOtp({ shouldCreateUser = true, requiredRole }: OtpOption
   const verify = useCallback(async () => {
     const expectedLength = otpLengthForChannel(channel);
     if (!new RegExp(`^\\d{${expectedLength}}$`).test(code)) {
-      toast.error(`Enter the ${expectedLength}-digit verification code`);
+      showAuthNotice(`Enter the ${expectedLength}-digit verification code`);
       return false;
     }
     if (expiresIn <= 0 || !destinationRef.current) {
-      toast.error("This code has expired", { description: "Request a new verification code." });
+      showAuthNotice("This code has expired", "Request a new verification code.");
       return false;
     }
 
@@ -160,7 +152,7 @@ export function useEmailOtp({ shouldCreateUser = true, requiredRole }: OtpOption
     if (STATIC_DATA_MODE) {
       setVerifying(false);
       if (code !== STATIC_DEMO_OTP[channel]) {
-        toast.error(`For static preview, enter ${STATIC_DEMO_OTP[channel]}`);
+        showAuthNotice(`For static preview, enter ${STATIC_DEMO_OTP[channel]}`);
         return false;
       }
       return true;
@@ -171,16 +163,14 @@ export function useEmailOtp({ shouldCreateUser = true, requiredRole }: OtpOption
         ? await supabase.auth.verifyOtp({ email: destinationRef.current, token: code, type: "email" })
         : await supabase.auth.verifyOtp({ phone: destinationRef.current, token: code, type: "sms" });
     } catch {
-      toast.error("Could not connect to the verification service");
+      showAuthNotice("Could not connect to the verification service");
       return false;
     } finally {
       setVerifying(false);
     }
 
     if (result.error || !result.data.user) {
-      toast.error("The verification code could not be confirmed", {
-        description: result.error?.message ?? "Request a new code and try again.",
-      });
+      showAuthNotice("The verification code could not be confirmed", result.error?.message ?? "Request a new code and try again.");
       return false;
     }
 
@@ -200,7 +190,7 @@ export function useEmailOtp({ shouldCreateUser = true, requiredRole }: OtpOption
       }
       if (!hasAuthorizedRole) {
         await supabase.auth.signOut();
-        toast.error(`This account is not authorized for ${requiredRole} access`);
+        showAuthNotice(`This account is not authorized for ${requiredRole} access`);
         return false;
       }
     }

@@ -15,6 +15,7 @@ import { AppProvider } from "@/lib/store";
 import { LanguageProvider } from "@/lib/i18n";
 import { Toaster } from "@/components/ui/sonner";
 import { CartFloatingNotifier } from "@/components/site/CartFloatingNotification";
+import { AuthNoticeHost } from "@/components/site/AuthNotice";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 
 function NotFoundComponent() {
@@ -144,6 +145,7 @@ function RootComponent() {
           <Outlet />
           <CartFloatingNotifier />
           <Toaster position="top-right" richColors />
+          <AuthNoticeHost />
         </AppProvider>
       </LanguageProvider>
     </QueryClientProvider>
