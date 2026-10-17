@@ -255,8 +255,9 @@ function Checkout() {
           discount,
           tax,
           shipping: shipCost,
-          delivery:
-            ship === "Express"
+          delivery: !homeDelivery
+            ? "Pickup from our godown"
+            : ship === "Express"
               ? "Express Freight — next business day"
               : "Standard Freight — 2 to 4 days",
         });
@@ -608,7 +609,7 @@ function Checkout() {
                 </div>
                 <dl className="mt-5 space-y-1.5 text-sm text-slate">
                   <div>Address: {selectedAddress?.line}</div>
-                  <div>Delivery: {ship} Freight</div>
+                  <div>{homeDelivery ? `Delivery: ${ship} Freight` : "Pickup: from our godown (free)"}</div>
                   <div>Payment: {method}</div>
                   {appliedCoupon && <div>Coupon: {appliedCoupon.code}</div>}
                 </dl>
