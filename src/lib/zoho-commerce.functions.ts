@@ -2351,7 +2351,12 @@ export const registerZohoOrderWebhook = createServerFn({ method: "POST" })
   });
 
 /** Zoho location of the pickup godown serving the order's PIN code ("" when none is set). */
-async function zohoLocationForOrder(db: Awaited<ReturnType<typeof dbAdmin>>, shippingAddress: Json | null) {
+/** The Zoho location (warehouse) of the order's godown branch; the old pickup setting as a fallback. */
+async function zohoLocationForOrder(db: Awaited<ReturnType<typeof dbAdmin>>, shippingAddress: Json | null, branchId?: string | null) {
+  if (branchId) {
+    const { data: branch } = await db.from("branches").select("zoho_location_id").eq("id", branchId).maybeSingle();
+    if (branch?.zoho_location_id) return branch.zoho_location_id;
+  }
   const address = plainObject(shippingAddress);
   const pin = str(address["pin"] ?? address["zip"]);
   const { data } = await db.from("settings").select("value").eq("key", PICKUP_SETTINGS_KEY).maybeSingle();
@@ -2489,7 +2494,7 @@ async function syncZohoOrder(db: Awaited<ReturnType<typeof dbAdmin>>, region: Re
   if (orderGstInfo.note) notesParts.push(orderGstInfo.note);
 
   // Pickup orders are created under the godown's Zoho location, so stock leaves that warehouse.
-  const locationId = await zohoLocationForOrder(db, order.shipping_address);
+  const locationId = await zohoLocationForOrder(db, order.shipping_address, (order as { branch_id?: string | null }).branch_id);
   const payload: Record<string, unknown> = {
     ...(locationId ? { location_id: locationId } : {}),
     salesorder_number: safeNumber,

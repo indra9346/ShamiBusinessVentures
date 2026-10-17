@@ -11,6 +11,7 @@ import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
+import { branchStockOf, defaultBranchOf, useAdminBranch, useBranches } from "@/lib/branches";
 
 /** Sends a placed or changed order to Zoho in the background; the daily run is the backup. */
 function pushOrderToZohoInBackground(orderNo: string) {
@@ -217,6 +218,9 @@ const AppContext = createContext<AppState | null>(null);
 const KEY = "sbv-state-v2";
 
 export function AppProvider({ children }: { children: ReactNode }) {
+  // Godown branches: an administrator working in one branch sees that branch's orders and stock.
+  const branchState = useBranches();
+  const [adminBranchId] = useAdminBranch();
   const [user, setUser] = useState<SessionUser | null>(null);
   const [cart, setCart] = useState<CartLine[]>([]);
   const [wishlistsByUser, setWishlistsByUser] = useState<Record<string, string[]>>({});
@@ -408,7 +412,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
                 ...(latestPayment?.txn_ref ? { utr: latestPayment.txn_ref } : {}),
                 status: allowedStatuses.includes(row.order_status as OrderStatus) ? row.order_status as OrderStatus : "Placed",
                 address: String(shippingAddress["line"] || ""), city: String(shippingAddress["city"] || ""), state: String(shippingAddress["state"] || ""),
-                pin: String(shippingAddress["pin"] || ""), delivery: row.shipping_method === "Express" ? "Express Freight — next business day" : "Standard Freight — 2 to 4 days",
+                pin: String(shippingAddress["pin"] || ""),
+                delivery: row.shipping_method === "Pickup" ? "Pickup from godown" : row.shipping_method === "Express" ? "Express Freight — next business day" : "Standard Freight — 2 to 4 days",
+                ...(row.branch_id ? { branchId: row.branch_id } : {}),
                 ...(row.coupon ? { coupon: row.coupon } : {}),
                 zohoSalesOrderId: ((row as Record<string, unknown>)["zoho_salesorder_id"] as string | null) || null,
                 zohoOrderStatus: ((row as Record<string, unknown>)["zoho_order_status"] as string | null) || null,
@@ -1107,7 +1113,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setProducts((list) => [p, ...list.filter((item) => item.id !== p.id)]);
         const saved = await saveProduct(p, user?.role === "vendor");
         if (!saved) setProducts((list) => list.filter((item) => item.id !== p.id));
-        else pushProductsToZohoInBackground([p.id]);
+        else {
+          // New stock is booked to the default godown; move it to the branch being worked in.
+          const defaultBranch = defaultBranchOf(branchState.branches);
+          if (user?.role === "admin" && !STATIC_DATA_MODE && adminBranchId !== "all" && defaultBranch && adminBranchId !== defaultBranch.id && p.stock > 0) {
+            await supabase.rpc("admin_set_branch_stock", { _branch_id: adminBranchId, _product_id: p.id, _stock: p.stock });
+            await supabase.rpc("admin_set_branch_stock", { _branch_id: defaultBranch.id, _product_id: p.id, _stock: 0 });
+          }
+          pushProductsToZohoInBackground([p.id]);
+        }
         return saved;
       },
       updateProduct: async (id, patch) => {
@@ -1123,6 +1137,30 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
         const existing = products.find((product) => product.id === id);
         if (!existing) return false;
+        // Admin stock is kept per godown: the change goes to the branch being worked in.
+        if (user?.role === "admin" && patch.stock !== undefined && !STATIC_DATA_MODE && !existing.vendorId.startsWith("zoho:")) {
+          const activeBranches = branchState.branches.filter((branch) => branch.active);
+          const targetBranch = adminBranchId !== "all" ? adminBranchId : activeBranches.length === 1 ? activeBranches[0]!.id : null;
+          if (!targetBranch) {
+            toast.error("Choose a branch first", { description: "Stock is kept per godown. Pick the branch at the top of the admin panel, then change its stock." });
+            return false;
+          }
+          const { data: total, error } = await supabase.rpc("admin_set_branch_stock", {
+            _branch_id: targetBranch, _product_id: id, _stock: Math.max(0, Math.round(Number(patch.stock) || 0)),
+          });
+          if (error || total === null) {
+            toast.error("Could not update stock", { description: error?.message ?? "Please retry." });
+            return false;
+          }
+          setProducts((list) => list.map((p) => (p.id === id ? { ...p, stock: Number(total), updated: today() } : p)));
+          const rest = { ...patch };
+          delete rest.stock;
+          if (Object.keys(rest).length === 0) {
+            pushProductsToZohoInBackground([id]);
+            return true;
+          }
+          patch = { ...rest, stock: Number(total) };
+        }
         // A vendor's stock count is not a listing change: the product stays live (no re-review).
         const stockOnly = Object.keys(patch).length === 1 && patch.stock !== undefined;
         if (user?.role === "vendor" && stockOnly && !STATIC_DATA_MODE) {
@@ -1340,7 +1378,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             _customer_phone: order.phone || null,
             _customer_gstin: order.gstin || null,
             _shipping_address: addressPayload,
-            _shipping_method: delivery?.toLowerCase().includes("express") ? "Express" : "Standard",
+            _shipping_method: delivery?.toLowerCase().startsWith("pickup") ? "Pickup" : delivery?.toLowerCase().includes("express") ? "Express" : "Standard",
             _payment_method: method,
             _items: lines.map((line) => ({ product_id: line.product.id, qty: line.qty })),
             _coupon: coupon ?? null,
@@ -1469,7 +1507,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const existing = orders.find((order) => order.id === orderId);
         setOrders((list) => list.map((order) => order.id === orderId ? { ...order, delivery } : order));
         if (!STATIC_DATA_MODE) void supabase.from("orders").update({
-          shipping_method: delivery.toLowerCase().includes("express") ? "Express" : "Standard",
+          shipping_method: delivery.toLowerCase().startsWith("pickup") ? "Pickup" : delivery.toLowerCase().includes("express") ? "Express" : "Standard",
         }).eq("order_no", orderId).then(({ error }) => {
           if (error) {
             toast.error("Could not update delivery method", { description: error.message });
@@ -1799,9 +1837,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
         return true;
       },
     };
-  }, [hydrated, authReady, user, cart, wishlist, wishlistsByUser, categories, products, batches, orders, vendors, customers, reviews, returns, coupons, notifications, addresses, addressesByUser, productCatalogStatus, categoryCatalogStatus, saveProduct, logout]);
+  }, [branchState, adminBranchId, hydrated, authReady, user, cart, wishlist, wishlistsByUser, categories, products, batches, orders, vendors, customers, reviews, returns, coupons, notifications, addresses, addressesByUser, productCatalogStatus, categoryCatalogStatus, saveProduct, logout]);
 
-  return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
+  // An administrator working in one godown sees that branch's orders, and stock as that branch's count.
+  const scopedValue = useMemo<AppState>(() => {
+    if (user?.role !== "admin" || adminBranchId === "all" || !branchState.ready) return value;
+    const defaultBranch = defaultBranchOf(branchState.branches);
+    return {
+      ...value,
+      orders: value.orders.filter((order) => (order.branchId ?? defaultBranch?.id) === adminBranchId),
+      products: value.products.map((product) => product.vendorId.startsWith("zoho:")
+        ? product
+        : { ...product, stock: branchStockOf(branchState, product.id, adminBranchId) }),
+    };
+  }, [value, user?.role, adminBranchId, branchState]);
+
+  return <AppContext.Provider value={scopedValue}>{children}</AppContext.Provider>;
 }
 
 const today = () =>

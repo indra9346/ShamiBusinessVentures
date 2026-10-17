@@ -18,6 +18,7 @@ import {
   Tags,
   Users,
   Wallet,
+  Warehouse,
 } from "lucide-react";
 
 export const vendorNav = [
@@ -36,6 +37,7 @@ export const vendorNav = [
 
 export const adminNav = [
   { label: "Dashboard", to: "/admin/dashboard", icon: LayoutDashboard },
+  { label: "Branches", to: "/admin/branches", icon: Warehouse },
   { label: "Vendors", to: "/admin/vendors", icon: Building2 },
   { label: "Customers", to: "/admin/customers", icon: Users },
   { label: "Enquiries", to: "/admin/enquiries", icon: Inbox },

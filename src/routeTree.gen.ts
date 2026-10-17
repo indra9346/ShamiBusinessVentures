@@ -30,6 +30,7 @@ import { Route as AccountReviewsRouteImport } from './routes/account.reviews'
 import { Route as AccountSettingsRouteImport } from './routes/account.settings'
 import { Route as AccountTrackRouteImport } from './routes/account.track'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
+import { Route as AdminBranchesRouteImport } from './routes/admin.branches'
 import { Route as AdminCategoriesRouteImport } from './routes/admin.categories'
 import { Route as AdminCommissionsRouteImport } from './routes/admin.commissions'
 import { Route as AdminCouponsRouteImport } from './routes/admin.coupons'
@@ -182,6 +183,11 @@ const AccountTrackRoute = AccountTrackRouteImport.update({
 const AdminIndexRoute = AdminIndexRouteImport.update({
   id: '/admin/',
   path: '/admin/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminBranchesRoute = AdminBranchesRouteImport.update({
+  id: '/admin/branches',
+  path: '/admin/branches',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AdminCategoriesRoute = AdminCategoriesRouteImport.update({
@@ -446,6 +452,7 @@ export interface FileRoutesByFullPath {
   '/account/reviews': typeof AccountReviewsRoute
   '/account/settings': typeof AccountSettingsRoute
   '/account/track': typeof AccountTrackRoute
+  '/admin/branches': typeof AdminBranchesRoute
   '/admin/categories': typeof AdminCategoriesRoute
   '/admin/commissions': typeof AdminCommissionsRoute
   '/admin/coupons': typeof AdminCouponsRoute
@@ -516,6 +523,7 @@ export interface FileRoutesByTo {
   '/account/reviews': typeof AccountReviewsRoute
   '/account/settings': typeof AccountSettingsRoute
   '/account/track': typeof AccountTrackRoute
+  '/admin/branches': typeof AdminBranchesRoute
   '/admin/categories': typeof AdminCategoriesRoute
   '/admin/commissions': typeof AdminCommissionsRoute
   '/admin/coupons': typeof AdminCouponsRoute
@@ -588,6 +596,7 @@ export interface FileRoutesById {
   '/account/reviews': typeof AccountReviewsRoute
   '/account/settings': typeof AccountSettingsRoute
   '/account/track': typeof AccountTrackRoute
+  '/admin/branches': typeof AdminBranchesRoute
   '/admin/categories': typeof AdminCategoriesRoute
   '/admin/commissions': typeof AdminCommissionsRoute
   '/admin/coupons': typeof AdminCouponsRoute
@@ -661,6 +670,7 @@ export interface FileRouteTypes {
     | '/account/reviews'
     | '/account/settings'
     | '/account/track'
+    | '/admin/branches'
     | '/admin/categories'
     | '/admin/commissions'
     | '/admin/coupons'
@@ -731,6 +741,7 @@ export interface FileRouteTypes {
     | '/account/reviews'
     | '/account/settings'
     | '/account/track'
+    | '/admin/branches'
     | '/admin/categories'
     | '/admin/commissions'
     | '/admin/coupons'
@@ -802,6 +813,7 @@ export interface FileRouteTypes {
     | '/account/reviews'
     | '/account/settings'
     | '/account/track'
+    | '/admin/branches'
     | '/admin/categories'
     | '/admin/commissions'
     | '/admin/coupons'
@@ -866,6 +878,7 @@ export interface RootRouteChildren {
   ResetPasswordRoute: typeof ResetPasswordRoute
   ShopRoute: typeof ShopRoute
   WishlistRoute: typeof WishlistRoute
+  AdminBranchesRoute: typeof AdminBranchesRoute
   AdminCategoriesRoute: typeof AdminCategoriesRoute
   AdminCommissionsRoute: typeof AdminCommissionsRoute
   AdminCouponsRoute: typeof AdminCouponsRoute
@@ -1053,6 +1066,13 @@ declare module '@tanstack/react-router' {
       path: '/admin'
       fullPath: '/admin/'
       preLoaderRoute: typeof AdminIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/branches': {
+      id: '/admin/branches'
+      path: '/admin/branches'
+      fullPath: '/admin/branches'
+      preLoaderRoute: typeof AdminBranchesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/admin/categories': {
@@ -1554,6 +1574,7 @@ const rootRouteChildren: RootRouteChildren = {
   ResetPasswordRoute: ResetPasswordRoute,
   ShopRoute: ShopRoute,
   WishlistRoute: WishlistRoute,
+  AdminBranchesRoute: AdminBranchesRoute,
   AdminCategoriesRoute: AdminCategoriesRoute,
   AdminCommissionsRoute: AdminCommissionsRoute,
   AdminCouponsRoute: AdminCouponsRoute,

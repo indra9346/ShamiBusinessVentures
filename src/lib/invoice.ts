@@ -10,6 +10,7 @@ import {
   pickupPointForPin,
   type PickupSettings,
 } from "@/lib/pickup-points";
+import { DEMO_BRANCH, branchFromRow, defaultBranchOf, type Branch } from "@/lib/branches";
 
 /**
  * Grain Bazar tax invoice (A4, vector PDF). Layout follows the company's Zoho tax invoice
@@ -74,14 +75,16 @@ const round2 = (value: number) => Math.round((value + Number.EPSILON) * 100) / 1
 const money = (value: number) => Number(value || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const rupees = (value: number) => `Rs. ${money(value)}`;
 
-type InvoiceContext = { company: InvoiceCompany; prefix: string; pickup: PickupSettings };
+type InvoiceContext = { company: InvoiceCompany; prefix: string; pickup: PickupSettings; branches: Branch[] };
 
 async function loadInvoiceContext(): Promise<InvoiceContext> {
-  const fallback: InvoiceContext = { company: DEFAULT_INVOICE_COMPANY, prefix: "GB/INV/", pickup: defaultPickupSettings };
+  const fallback: InvoiceContext = { company: DEFAULT_INVOICE_COMPANY, prefix: "GB/INV/", pickup: defaultPickupSettings, branches: [DEMO_BRANCH] };
   if (STATIC_DATA_MODE) return fallback;
   try {
-    const { data } = await supabase.from("settings").select("key,value").eq("is_public", true)
-      .in("key", ["company", "tax", PICKUP_SETTINGS_KEY]);
+    const [{ data }, { data: branchRows }] = await Promise.all([
+      supabase.from("settings").select("key,value").eq("is_public", true).in("key", ["company", "tax", PICKUP_SETTINGS_KEY]),
+      supabase.from("branches").select("*"),
+    ]);
     const byKey = new Map((data ?? []).map((row) => [row.key, asRecord(row.value)]));
     const saved = byKey.get("company") ?? {};
     const company: InvoiceCompany = { ...DEFAULT_INVOICE_COMPANY };
@@ -102,6 +105,7 @@ async function loadInvoiceContext(): Promise<InvoiceContext> {
       company,
       prefix: prefix || fallback.prefix,
       pickup: byKey.has(PICKUP_SETTINGS_KEY) ? parsePickupSettings(byKey.get(PICKUP_SETTINGS_KEY)) : defaultPickupSettings,
+      branches: (branchRows ?? []).map((row) => branchFromRow(row as Record<string, unknown>)),
     };
   } catch {
     return fallback;
@@ -198,10 +202,17 @@ export async function buildInvoicePdf(order: Order, options: InvoiceOptions = {}
 
   // Place of supply: goods collected at the godown are supplied in the godown's state; delivered
   // goods in the delivery state. Same state as the seller -> CGST + SGST, otherwise IGST.
-  const pickupPoint = context.pickup.homeDelivery ? null : pickupPointForPin(context.pickup, order.pin);
+  // The order's godown: collected there when the order is a pickup (or was placed while only
+  // pickup was offered); otherwise delivered to the customer's address.
+  const orderBranch = context.branches.find((branch) => branch.id === order.branchId) ?? defaultBranchOf(context.branches);
+  const isPickup = /^pickup/i.test(order.delivery || "") || (order.shipping === 0 && !(orderBranch?.deliveryEnabled ?? context.pickup.homeDelivery));
+  const legacyPoint = pickupPointForPin(context.pickup, order.pin);
+  const pickupPoint = !isPickup ? null : orderBranch
+    ? { name: orderBranch.name, address: orderBranch.address, phone: orderBranch.phone, instructions: orderBranch.instructions }
+    : legacyPoint;
   const customerGstState = /^[0-9]{2}/.test(order.gstin ?? "") ? order.gstin!.slice(0, 2) : "";
   const deliveryStateCode = STATE_CODES[(order.state || "").trim().toLowerCase()] ?? "";
-  const supplyCode = pickupPoint ? company.stateCode : customerGstState || deliveryStateCode || company.stateCode;
+  const supplyCode = pickupPoint ? orderBranch?.stateCode || company.stateCode : customerGstState || deliveryStateCode || company.stateCode;
   const supplyName = stateNameForCode(supplyCode) || (pickupPoint ? company.stateName : order.state) || company.stateName;
   const intraState = supplyCode === company.stateCode;
 

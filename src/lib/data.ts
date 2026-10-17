@@ -770,6 +770,8 @@ export type Order = {
   pin: string;
   delivery: string;
   coupon?: string;
+  /** The godown branch this order belongs to (stock, pickup, Zoho location). */
+  branchId?: string;
   zohoSalesOrderId?: string | null;
   /** Zoho's own status for the linked sales order (draft, confirmed, void…). */
   zohoOrderStatus?: string | null;

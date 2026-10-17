@@ -8,6 +8,7 @@ import { inr } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { PickupPointCard } from "@/components/site/PickupPointCard";
 import { usePickupSettings } from "@/lib/pickup-points";
+import { branchForPin, defaultBranchOf, useBranches } from "@/lib/branches";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -85,7 +86,7 @@ function Checkout() {
       }));
     }
   }, [user?.name, user?.phone]);
-  const [ship, setShip] = useState("Standard");
+  const [ship, setShip] = useState<"Pickup" | "Delivery">("Pickup");
   const [method, setMethod] = useState("UPI");
   const [couponCode, setCouponCode] = useState("");
   const [placedId, setPlacedId] = useState<string | null>(null);
@@ -161,14 +162,19 @@ function Checkout() {
     : cartItems;
   const unresolvedCartLines = cartItems.length < cart.length;
   const subtotal = checkoutItems.reduce((sum, line) => sum + line.product.price * line.qty, 0);
-  // Pickup-only (until home delivery is switched on): no freight, same rule as the database.
+  // Pickup or home delivery, as the customer's godown offers (same rules as the database):
+  // pickup is free; delivery uses the godown's charge, free above its threshold.
   const { homeDelivery } = usePickupSettings();
-  const shipCost =
-    homeDelivery && subtotal < shippingRates.freeAbove
-      ? ship === "Express"
-        ? shippingRates.express
-        : shippingRates.standard
-      : 0;
+  const { branches, features } = useBranches();
+  const addressPin = addresses.find((a) => a.id === addr)?.pin ?? "";
+  const fulfilBranch = features.branchRouting ? branchForPin(branches, addressPin) : defaultBranchOf(branches);
+  const canPickup = fulfilBranch ? fulfilBranch.pickupEnabled : true;
+  const canDeliver = fulfilBranch ? fulfilBranch.deliveryEnabled : homeDelivery;
+  const fulfil: "Pickup" | "Delivery" = ship === "Delivery" && canDeliver ? "Delivery" : canPickup ? "Pickup" : "Delivery";
+  const deliveryFee = fulfilBranch
+    ? fulfilBranch.freeDeliveryAbove !== null && subtotal >= fulfilBranch.freeDeliveryAbove ? 0 : fulfilBranch.deliveryFee
+    : 0;
+  const shipCost = fulfil === "Delivery" ? deliveryFee : 0;
   const tax = checkoutItems.reduce(
     (sum, line) => sum + Math.round((line.product.price * line.qty * line.product.gst) / 100),
     0,
@@ -255,11 +261,7 @@ function Checkout() {
           discount,
           tax,
           shipping: shipCost,
-          delivery: !homeDelivery
-            ? "Pickup from our godown"
-            : ship === "Express"
-              ? "Express Freight — next business day"
-              : "Standard Freight — 2 to 4 days",
+          delivery: fulfil === "Pickup" ? "Pickup from our godown" : "Home delivery",
         });
       } catch {
         return;
@@ -488,40 +490,45 @@ function Checkout() {
 
             {step === 1 && (
               <>
-                <h2 className="text-lg font-bold text-navy">{homeDelivery ? "Delivery Option" : "Pickup"}</h2>
-                {!homeDelivery && (
-                  <div className="mt-5 space-y-3">
-                    <div className="flex items-center justify-between rounded-lg border border-gold bg-ivory p-4">
-                      <span>
-                        <span className="block font-semibold text-navy">Pickup from our godown</span>
-                        <span className="text-sm text-slate">Collect your order in person. Home delivery is coming soon.</span>
-                      </span>
-                      <span className="font-bold text-gold">Free</span>
-                    </div>
-                    <PickupPointCard pin={selectedAddress?.pin ?? null} />
-                  </div>
-                )}
-                {homeDelivery && <div className="mt-5 space-y-3">
-                  {[
-                    ["Standard", "2–4 business days", subtotal >= shippingRates.freeAbove ? "Free" : inr(shippingRates.standard)],
-                    ["Express", "Next business day", subtotal >= shippingRates.freeAbove ? "Free" : inr(shippingRates.express)],
-                  ].map(([name, desc, cost]) => (
+                <h2 className="text-lg font-bold text-navy">{canPickup && canDeliver ? "Pickup or home delivery" : canDeliver ? "Home delivery" : "Pickup"}</h2>
+                <div className="mt-5 space-y-3">
+                  {canPickup && (
                     <button
-                      key={name}
-                      onClick={() => setShip(name!)}
+                      type="button"
+                      onClick={() => setShip("Pickup")}
                       className={cn(
                         "flex w-full items-center justify-between rounded-lg border p-4 text-left",
-                        ship === name ? "border-gold bg-ivory" : "border-border hover:border-gold",
+                        fulfil === "Pickup" ? "border-gold bg-ivory" : "border-border hover:border-gold",
                       )}
                     >
                       <span>
-                        <span className="block font-semibold text-navy">{name} Freight</span>
-                        <span className="text-sm text-slate">{desc}</span>
+                        <span className="block font-semibold text-navy">Pickup from our godown</span>
+                        <span className="text-sm text-slate">Collect your order in person.{canDeliver ? "" : " Home delivery is coming soon."}</span>
                       </span>
-                      <span className="font-bold text-gold">{cost}</span>
+                      <span className="font-bold text-gold">Free</span>
                     </button>
-                  ))}
-                </div>}
+                  )}
+                  {canDeliver && (
+                    <button
+                      type="button"
+                      onClick={() => setShip("Delivery")}
+                      className={cn(
+                        "flex w-full items-center justify-between rounded-lg border p-4 text-left",
+                        fulfil === "Delivery" ? "border-gold bg-ivory" : "border-border hover:border-gold",
+                      )}
+                    >
+                      <span>
+                        <span className="block font-semibold text-navy">Home delivery</span>
+                        <span className="text-sm text-slate">
+                          Delivered to {selectedAddress?.line || "your address"}
+                          {fulfilBranch?.freeDeliveryAbove != null ? ` · free above ${inr(fulfilBranch.freeDeliveryAbove)}` : ""}
+                        </span>
+                      </span>
+                      <span className="font-bold text-gold">{deliveryFee === 0 ? "Free" : inr(deliveryFee)}</span>
+                    </button>
+                  )}
+                  {fulfil === "Pickup" && <PickupPointCard pin={selectedAddress?.pin ?? null} />}
+                </div>
               </>
             )}
 
@@ -610,7 +617,7 @@ function Checkout() {
                 </div>
                 <dl className="mt-5 space-y-1.5 text-sm text-slate">
                   <div>Address: {selectedAddress?.line}</div>
-                  <div>{homeDelivery ? `Delivery: ${ship} Freight` : "Pickup: from our godown (free)"}</div>
+                  <div>{fulfil === "Delivery" ? `Home delivery: ${shipCost === 0 ? "free" : inr(shipCost)}` : "Pickup: from our godown (free)"}</div>
                   <div>Payment: {method}</div>
                   {appliedCoupon && <div>Coupon: {appliedCoupon.code}</div>}
                 </dl>
@@ -626,8 +633,8 @@ function Checkout() {
                 <p className="mt-2 text-sm text-slate">
                   Order ID <span className="font-bold text-gold">{placedId}</span> · Total{" "}
                   {inr(summary.total)} · Payment pending. Online payment is not enabled yet; payment
-                  must be arranged and verified separately. Delivery estimate:{" "}
-                  {ship === "Express" ? "1 day" : "2–4 days"}.
+                  must be arranged and verified separately.{" "}
+                  {fulfil === "Pickup" ? "We will let you know when it is ready to collect." : "Delivery in 2–4 business days."}
                 </p>
                 <div className="mt-6 flex flex-wrap justify-center gap-3">
                   {placedId && (
@@ -674,7 +681,7 @@ function Checkout() {
             <div className="mt-4 space-y-2.5 text-sm">
               {[
                 ["Subtotal", inr(summary.subtotal)],
-                [homeDelivery ? "Delivery" : "Pickup", summary.shipCost === 0 ? "Free" : inr(summary.shipCost)],
+                [fulfil === "Delivery" ? "Delivery" : "Pickup", summary.shipCost === 0 ? "Free" : inr(summary.shipCost)],
                 ["GST", inr(summary.tax)],
                 ...(summary.discount > 0
                   ? [["Coupon discount", `- ${inr(summary.discount)}`]]

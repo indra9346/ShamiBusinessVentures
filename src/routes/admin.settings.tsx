@@ -15,7 +15,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { supabase } from "@/integrations/supabase/client";
 import type { Json } from "@/integrations/supabase/types";
 import { useApp } from "@/lib/store";
-import { PickupPointsPanel } from "@/components/panel/PickupPointsPanel";
 import {
   STOREFRONT_DISPLAY_KEY,
   defaultStorefrontDisplay,
@@ -230,7 +229,10 @@ function AdminSettings() {
         </TabsContent>
 
         <TabsContent value="pickup">
-          <PickupPointsPanel />
+          <Panel title="Pickup & delivery">
+            <p className="text-sm text-slate">Godowns, the PIN codes they serve, pickup and home delivery are now managed per branch.</p>
+            <Link to="/admin/branches" className="mt-3 inline-flex rounded-md bg-navy px-4 py-2 text-sm font-semibold text-white hover:bg-navy/90">Open Branches</Link>
+          </Panel>
         </TabsContent>
         <TabsContent value="storefront">
           <StorefrontDisplayPanel />

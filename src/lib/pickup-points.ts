@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { defaultBranchOf, useBranches, type Branch } from "@/lib/branches";
 import { supabase } from "@/integrations/supabase/client";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 
@@ -123,16 +124,41 @@ export function setPickupSettings(value: PickupSettings) {
   for (const listener of listeners) listener(value);
 }
 
-/** Current pickup godowns; one shared fetch per page load. */
+/**
+ * Pickup godowns as the storefront needs them, from the Branches table (Admin > Branches).
+ * Home delivery is on when the default godown offers it (until PIN matching is switched on).
+ */
+export function pickupSettingsFromBranches(branches: Branch[]): PickupSettings {
+  const fallback = defaultBranchOf(branches);
+  return {
+    homeDelivery: !!fallback?.deliveryEnabled,
+    points: branches.map((branch) => ({
+      id: branch.id,
+      name: branch.name,
+      address: branch.address,
+      mapUrl: branch.mapUrl,
+      instructions: branch.instructions,
+      phone: branch.phone,
+      pincodes: branch.servesPincodes,
+      zohoLocationId: branch.zohoLocationId,
+      zohoLocationName: branch.zohoLocationName,
+      isDefault: branch.isDefault,
+      active: branch.active && branch.pickupEnabled,
+    })),
+  };
+}
+
+/** Current pickup godowns (live from the Branches table). */
 export function usePickupSettings(): PickupSettings {
-  const [value, setValue] = useState(cached);
+  const { ready, branches } = useBranches();
+  const [legacy, setLegacy] = useState(cached);
   useEffect(() => {
-    listeners.add(setValue);
-    setValue(cached);
-    void load();
+    listeners.add(setLegacy);
+    setLegacy(cached);
+    if (!ready) void load();
     return () => {
-      listeners.delete(setValue);
+      listeners.delete(setLegacy);
     };
-  }, []);
-  return value;
+  }, [ready]);
+  return useMemo(() => (ready && branches.length ? pickupSettingsFromBranches(branches) : legacy), [ready, branches, legacy]);
 }

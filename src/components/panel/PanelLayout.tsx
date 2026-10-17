@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { LanguageSwitcher } from "@/components/site/LanguageSwitcher";
 import { supabase } from "@/integrations/supabase/client";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
+import { AdminBranchSelect } from "@/components/panel/AdminBranchSelect";
 
 export type NavItem = {
   label: string;
@@ -497,6 +498,7 @@ export function PanelLayout({
               </div>
             </div>
             <div className="flex items-center gap-2 sm:gap-3">
+              {tone === "admin" && <AdminBranchSelect />}
               <LanguageSwitcher />
               <div className="relative hidden md:block">
                 <Search className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-slate" />

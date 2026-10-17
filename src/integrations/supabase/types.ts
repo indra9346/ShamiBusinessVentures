@@ -14,6 +14,18 @@ export type Database = {
   }
   public: {
     Tables: {
+      branches: {
+        Row: { id: string; code: string; name: string; address: string; city: string; state: string; state_code: string; pincode: string; phone: string; email: string; map_url: string; instructions: string; gstin: string; zoho_location_id: string; zoho_location_name: string; serves_pincodes: string[]; pickup_enabled: boolean; delivery_enabled: boolean; delivery_fee: number; free_delivery_above: number | null; is_default: boolean; active: boolean; sort_order: number; created_at: string; updated_at: string }
+        Insert: { id: string; code: string; name: string; address?: string; city?: string; state?: string; state_code?: string; pincode?: string; phone?: string; email?: string; map_url?: string; instructions?: string; gstin?: string; zoho_location_id?: string; zoho_location_name?: string; serves_pincodes?: string[]; pickup_enabled?: boolean; delivery_enabled?: boolean; delivery_fee?: number; free_delivery_above?: number | null; is_default?: boolean; active?: boolean; sort_order?: number; created_at?: string; updated_at?: string }
+        Update: { id?: string; code?: string; name?: string; address?: string; city?: string; state?: string; state_code?: string; pincode?: string; phone?: string; email?: string; map_url?: string; instructions?: string; gstin?: string; zoho_location_id?: string; zoho_location_name?: string; serves_pincodes?: string[]; pickup_enabled?: boolean; delivery_enabled?: boolean; delivery_fee?: number; free_delivery_above?: number | null; is_default?: boolean; active?: boolean; sort_order?: number; created_at?: string; updated_at?: string }
+        Relationships: []
+      }
+      branch_stock: {
+        Row: { branch_id: string; product_id: string; stock: number; updated_at: string }
+        Insert: { branch_id: string; product_id: string; stock?: number; updated_at?: string }
+        Update: { branch_id?: string; product_id?: string; stock?: number; updated_at?: string }
+        Relationships: []
+      }
       zoho_oauth_states: {
         Row: { state_hash: string; user_id: string; organization_id: string; region: string; expires_at: string; created_at: string }
         Insert: { state_hash: string; user_id: string; organization_id: string; region: string; expires_at: string; created_at?: string }
@@ -510,6 +522,7 @@ export type Database = {
       orders: {
         Row: {
           zoho_salesorder_id: string | null
+          branch_id: string | null
           zoho_last_polled_at: string | null
           zoho_order_status: string | null
           zoho_last_modified_at: string | null
@@ -543,6 +556,7 @@ export type Database = {
           vendor_ids: string[]
         }
         Insert: {
+          branch_id?: string | null
           zoho_salesorder_id?: string | null
           zoho_last_polled_at?: string | null
           zoho_order_status?: string | null
@@ -577,6 +591,7 @@ export type Database = {
           vendor_ids?: string[]
         }
         Update: {
+          branch_id?: string | null
           zoho_salesorder_id?: string | null
           zoho_last_polled_at?: string | null
           zoho_order_status?: string | null
@@ -971,6 +986,8 @@ export type Database = {
       vendor_update_order_fulfillment: { Args: { _order_no: string; _status: string }; Returns: boolean }
       vendor_set_product_stock: { Args: { _product_id: string; _stock: number }; Returns: boolean }
       vendor_set_product_active: { Args: { _product_id: string; _active: boolean }; Returns: boolean }
+      admin_set_branch_stock: { Args: { _branch_id: string; _product_id: string; _stock: number }; Returns: number }
+      default_branch_id: { Args: Record<string, never>; Returns: string }
       admin_update_vendor_business: { Args: { _vendor_id: string; _gstin: string; _city: string; _address: string }; Returns: boolean }
       admin_update_order_status: { Args: { _order_no: string; _status: string }; Returns: boolean }
       cancel_marketplace_order: { Args: { _order_no: string }; Returns: boolean }
