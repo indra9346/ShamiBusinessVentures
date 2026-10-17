@@ -135,6 +135,21 @@ function RootShell({ children }: { children: ReactNode }) {
 
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
+  // After a new deployment, an open tab may ask for page files that no longer exist; reload
+  // once to pick up the new version instead of showing an error.
+  useEffect(() => {
+    const onPreloadError = (event: Event) => {
+      event.preventDefault();
+      try {
+        if (sessionStorage.getItem("gb-reloaded-for-update") === "1") return;
+        sessionStorage.setItem("gb-reloaded-for-update", "1");
+      } catch { /* storage blocked */ }
+      window.location.reload();
+    };
+    window.addEventListener("vite:preloadError", onPreloadError);
+    try { window.setTimeout(() => sessionStorage.removeItem("gb-reloaded-for-update"), 10000); } catch { /* storage blocked */ }
+    return () => window.removeEventListener("vite:preloadError", onPreloadError);
+  }, []);
 
   return (
     <QueryClientProvider client={queryClient}>
