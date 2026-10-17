@@ -1641,7 +1641,13 @@ async function syncZohoCatalogItem(
       str(item["sku"]).trim().toLowerCase() === shared.sku.toLowerCase() &&
       finiteNumber(item["rate"]) === shared.rate &&
       (shared.stock === null || (tracked && zohoStock === shared.stock));
-    if (inSync) return;
+    if (inSync) {
+      // The item is current, but the Commerce product page may still need the description.
+      if (shared.description) {
+        await pushCommerceDescription(db, { region, organizationId, token }, shared.sku, str(item?.["group_id"]), shared.description);
+      }
+      return;
+    }
   }
 
   // Use the vendor's existing Zoho contact; only create/update it when none is linked yet.
