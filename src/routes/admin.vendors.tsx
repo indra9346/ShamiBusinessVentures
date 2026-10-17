@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { downloadCSV } from "@/lib/export-utils";
 import { supabase } from "@/integrations/supabase/client";
+import { MarketplaceSwitch } from "@/components/panel/MarketplaceSwitch";
 import { Textarea } from "@/components/ui/textarea";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
@@ -156,6 +157,7 @@ function AdminVendorsPanel() {
 
   return (
     <PanelLayout items={adminNav} tone="admin" title="Vendors" subtitle="Marketplace seller network">
+      <MarketplaceSwitch />
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard label="Total Vendors" value={String(vendors.length)} icon={Building2} highlight />
         <StatCard label="Approved" value={String(approved)} icon={CheckCircle2} />

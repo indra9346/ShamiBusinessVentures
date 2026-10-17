@@ -14,6 +14,7 @@ import { LanguageSwitcher } from "@/components/site/LanguageSwitcher";
 import { supabase } from "@/integrations/supabase/client";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { AdminBranchSelect } from "@/components/panel/AdminBranchSelect";
+import { useBranches } from "@/lib/branches";
 
 export type NavItem = {
   label: string;
@@ -60,6 +61,7 @@ export function PanelLayout({
     vendors,
     orders,
   } = useApp();
+  const branchState = useBranches();
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const [verifiedRole, setVerifiedRole] = useState(false);
@@ -699,7 +701,14 @@ export function PanelLayout({
             </div>
           </div>
         </header>
-        <main className="min-w-0 flex-1 p-4 sm:p-6">{children}</main>
+        <main className="min-w-0 flex-1 p-4 sm:p-6">
+          {tone === "vendor" && !STATIC_DATA_MODE && branchState.ready && !branchState.features.marketplaceVendors ? (
+            <div className="mx-auto max-w-xl rounded-lg border border-gold/40 bg-ivory/70 p-6 text-center">
+              <h2 className="text-lg font-bold text-navy">The vendor marketplace is not open yet</h2>
+              <p className="mt-2 text-sm text-slate">Grain Bazar is currently selling its own products only. Your vendor account is kept; this panel opens again when Grain Bazar starts the marketplace.</p>
+            </div>
+          ) : children}
+        </main>
       </div>
     </div>
   );

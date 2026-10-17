@@ -27,7 +27,8 @@ export function parseStorefrontDisplay(value: unknown): StorefrontDisplay {
   return {
     showMrpSavings: v["showMrpSavings"] === true,
     showRatings: v["showRatings"] === true,
-    showVendor: v["showVendor"] === true,
+    // Customers never see which vendor supplies a product; Grain Bazar is always the seller.
+    showVendor: false,
   };
 }
 

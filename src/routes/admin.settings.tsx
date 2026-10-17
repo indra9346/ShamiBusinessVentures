@@ -286,11 +286,6 @@ const storefrontOptions: { key: keyof StorefrontDisplay; title: string; hint: st
     title: "Show ratings and reviews",
     hint: "Star ratings and review counts on product cards and the product page, plus the shop's rating filter.",
   },
-  {
-    key: "showVendor",
-    title: "Show vendor names",
-    hint: "The selling vendor above each product name, the product page's Vendor tab and the shop's vendor filter.",
-  },
 ];
 
 /** Admin switches for what customers see on product cards; saved as a public setting. */

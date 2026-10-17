@@ -15,9 +15,9 @@ export type Database = {
   public: {
     Tables: {
       branches: {
-        Row: { id: string; code: string; name: string; address: string; city: string; state: string; state_code: string; pincode: string; phone: string; email: string; map_url: string; instructions: string; gstin: string; zoho_location_id: string; zoho_location_name: string; serves_pincodes: string[]; pickup_enabled: boolean; delivery_enabled: boolean; delivery_fee: number; free_delivery_above: number | null; is_default: boolean; active: boolean; sort_order: number; created_at: string; updated_at: string }
-        Insert: { id: string; code: string; name: string; address?: string; city?: string; state?: string; state_code?: string; pincode?: string; phone?: string; email?: string; map_url?: string; instructions?: string; gstin?: string; zoho_location_id?: string; zoho_location_name?: string; serves_pincodes?: string[]; pickup_enabled?: boolean; delivery_enabled?: boolean; delivery_fee?: number; free_delivery_above?: number | null; is_default?: boolean; active?: boolean; sort_order?: number; created_at?: string; updated_at?: string }
-        Update: { id?: string; code?: string; name?: string; address?: string; city?: string; state?: string; state_code?: string; pincode?: string; phone?: string; email?: string; map_url?: string; instructions?: string; gstin?: string; zoho_location_id?: string; zoho_location_name?: string; serves_pincodes?: string[]; pickup_enabled?: boolean; delivery_enabled?: boolean; delivery_fee?: number; free_delivery_above?: number | null; is_default?: boolean; active?: boolean; sort_order?: number; created_at?: string; updated_at?: string }
+        Row: { id: string; code: string; name: string; address: string; city: string; state: string; state_code: string; pincode: string; phone: string; email: string; map_url: string; instructions: string; gstin: string; zoho_location_id: string; zoho_location_name: string; serves_pincodes: string[]; pickup_enabled: boolean; delivery_enabled: boolean; delivery_fee: number; free_delivery_above: number | null; is_default: boolean; active: boolean; sort_order: number; created_at: string; updated_at: string; vendor_id: string | null }
+        Insert: { id: string; code: string; name: string; address?: string; city?: string; state?: string; state_code?: string; pincode?: string; phone?: string; email?: string; map_url?: string; instructions?: string; gstin?: string; zoho_location_id?: string; zoho_location_name?: string; serves_pincodes?: string[]; pickup_enabled?: boolean; delivery_enabled?: boolean; delivery_fee?: number; free_delivery_above?: number | null; is_default?: boolean; active?: boolean; sort_order?: number; created_at?: string; updated_at?: string; vendor_id?: string | null }
+        Update: { id?: string; code?: string; name?: string; address?: string; city?: string; state?: string; state_code?: string; pincode?: string; phone?: string; email?: string; map_url?: string; instructions?: string; gstin?: string; zoho_location_id?: string; zoho_location_name?: string; serves_pincodes?: string[]; pickup_enabled?: boolean; delivery_enabled?: boolean; delivery_fee?: number; free_delivery_above?: number | null; is_default?: boolean; active?: boolean; sort_order?: number; created_at?: string; updated_at?: string; vendor_id?: string | null }
         Relationships: []
       }
       branch_stock: {
@@ -933,7 +933,11 @@ export type Database = {
       can_read_order: { Args: { _order: string }; Returns: boolean }
       current_vendor_id: { Args: never; Returns: string }
       admin_set_profile_status: { Args: { _profile_id: string; _status: string }; Returns: boolean }
-      admin_set_vendor_commission: { Args: { _vendor_id: string; _rate: number }; Returns: boolean }
+      admin_set_vendor_commission: { Args: { _vendor_id: string; _rate: number | null }; Returns: boolean }
+      admin_apply_commission_rules: { Args: Record<string, never>; Returns: number }
+      vendor_fulfilment_branch: { Args: { _vendor_id: string }; Returns: string | null }
+      vendor_fulfilment_points: { Args: Record<string, never>; Returns: { vendor_id: string; branch_id: string }[] }
+      vendor_set_fulfilment: { Args: { _mode: string; _branch_id: string | null; _details: Json }; Returns: boolean }
       admin_set_review_status: { Args: { _id: string; _status: string }; Returns: boolean }
       admin_delete_review: { Args: { _id: string }; Returns: boolean }
       customer_delete_own_review: { Args: { _id: string }; Returns: boolean }

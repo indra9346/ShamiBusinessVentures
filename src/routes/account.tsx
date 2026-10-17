@@ -128,11 +128,11 @@ function Account() {
             </div>
           ) : (
             <DataTable
-              columns={["Order", "Date", "Vendor", "Amount", "Payment", "Status", "Actions"]}
+              columns={["Order", "Date", "Items", "Amount", "Payment", "Status", "Actions"]}
               rows={ordersList.slice(0, 6).map((o) => [
                 <span className="font-semibold text-navy">{o.id}</span>,
                 o.date,
-                o.items[0]?.vendor ?? "—",
+                `${o.items.reduce((sum, item) => sum + item.qty, 0)} item${o.items.reduce((sum, item) => sum + item.qty, 0) === 1 ? "" : "s"}`,
                 inr(o.amount),
                 <StatusBadge status={o.payment} />,
                 <StatusBadge status={o.status} />,

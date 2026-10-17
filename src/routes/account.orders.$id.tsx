@@ -177,17 +177,17 @@ function AccountOrderDetail() {
         )}
       </Panel>
 
-      {order.vendorStatuses && order.vendorStatuses.length > 0 && (
-        <Panel title="Vendor Shipments" className="mt-5">
+      {order.vendorStatuses && order.vendorStatuses.length > 1 && (
+        <Panel title="Shipments" className="mt-5">
           <div className="space-y-3">
-            {order.vendorStatuses.map((fulfillment) => (
+            {order.vendorStatuses.map((fulfillment, index) => (
               <div key={fulfillment.vendorId} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border px-3 py-2">
-                <span className="text-sm font-semibold text-navy">{fulfillment.vendor}</span>
+                <span className="text-sm font-semibold text-navy">Shipment {index + 1}</span>
                 <StatusBadge status={fulfillment.status} />
               </div>
             ))}
           </div>
-          <p className="mt-3 text-xs text-slate">The overall timeline advances when all vendor shipments reach the next stage.</p>
+          <p className="mt-3 text-xs text-slate">The overall timeline advances when every shipment reaches the next stage.</p>
         </Panel>
       )}
 
@@ -279,7 +279,7 @@ function AccountOrderDetail() {
                         />
                         <div>
                           <p className="font-medium text-navy">{it.product.name}</p>
-                          <p className="text-xs text-slate">{it.vendor}</p>
+                          <p className="text-xs text-slate">Qty {it.qty}</p>
                         </div>
                       </div>
                     </td>

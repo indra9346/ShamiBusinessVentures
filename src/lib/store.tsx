@@ -11,7 +11,7 @@ import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
-import { branchStockOf, defaultBranchOf, useAdminBranch, useBranches } from "@/lib/branches";
+import { branchForPin, branchStockOf, defaultBranchOf, useAdminBranch, useBranches } from "@/lib/branches";
 
 /** Sends a placed or changed order to Zoho in the background; the daily run is the backup. */
 function pushOrderToZohoInBackground(orderNo: string) {
@@ -1841,6 +1841,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // An administrator working in one godown sees that branch's orders, and stock as that branch's count.
   const scopedValue = useMemo<AppState>(() => {
+    // Shoppers: with PIN matching ON, each product shows the stock of the godown serving the
+    // customer's default address (or, for a marketplace vendor, of that vendor's fulfilment point).
+    if (user?.role !== "admin" && user?.role !== "vendor" && branchState.ready && (branchState.features.branchRouting || branchState.vendorPoints.size > 0)) {
+      const pin = (value.addresses.find((address) => address.default) ?? value.addresses[0])?.pin ?? "";
+      const serving = branchState.features.branchRouting ? branchForPin(branchState.branches, pin) : null;
+      return {
+        ...value,
+        products: value.products.map((product) => {
+          if (product.vendorId.startsWith("zoho:")) return product;
+          const point = branchState.vendorPoints.get(product.vendorId);
+          if (point) return { ...product, stock: branchStockOf(branchState, product.id, point) };
+          return serving ? { ...product, stock: branchStockOf(branchState, product.id, serving.id) } : product;
+        }),
+      };
+    }
     if (user?.role !== "admin" || adminBranchId === "all" || !branchState.ready) return value;
     const defaultBranch = defaultBranchOf(branchState.branches);
     return {

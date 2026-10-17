@@ -175,6 +175,28 @@ function Checkout() {
     ? fulfilBranch.freeDeliveryAbove !== null && subtotal >= fulfilBranch.freeDeliveryAbove ? 0 : fulfilBranch.deliveryFee
     : 0;
   const shipCost = fulfil === "Delivery" ? deliveryFee : 0;
+
+  // Marketplace ON: items fulfilled from different points (a vendor's own place, a godown) are
+  // placed as separate orders, one per point, like separate shipments.
+  const [vendorPoints, setVendorPoints] = useState<Record<string, string | null>>({});
+  useEffect(() => {
+    if (!features.marketplaceVendors) return;
+    const vendorIds = [...new Set(checkoutItems.map((line) => line.product.vendorId).filter(Boolean))]
+      .filter((id) => !(id in vendorPoints));
+    if (!vendorIds.length) return;
+    void Promise.all(vendorIds.map(async (id) => {
+      const { data } = await supabase.rpc("vendor_fulfilment_branch", { _vendor_id: id });
+      return [id, data ?? null] as const;
+    })).then((entries) => setVendorPoints((current) => ({ ...current, ...Object.fromEntries(entries) })));
+  }, [features.marketplaceVendors, checkoutItems, vendorPoints]);
+  const orderGroups = features.marketplaceVendors
+    ? Object.values(checkoutItems.reduce<Record<string, { point: string | null; lines: typeof checkoutItems }>>((groups, line) => {
+      const point = vendorPoints[line.product.vendorId] ?? null;
+      const key = point ?? "grain-bazar";
+      (groups[key] ??= { point, lines: [] }).lines.push(line);
+      return groups;
+    }, {}))
+    : [{ point: null, lines: checkoutItems }];
   const tax = checkoutItems.reduce(
     (sum, line) => sum + Math.round((line.product.price * line.qty * line.product.gst) / 100),
     0,
@@ -249,38 +271,44 @@ function Checkout() {
       }
       if (placingOrder) return;
       setPlacingOrder(true);
-      let order: Awaited<ReturnType<typeof placeOrder>>;
+      const placed: Awaited<ReturnType<typeof placeOrder>>[] = [];
       try {
-        order = await placeOrder({
-          lines: checkoutItems,
-          method,
-          payment: "Pending",
-          ...(selectedAddress ? { shippingAddress: selectedAddress } : {}),
-          ...(appliedCoupon ? { coupon: appliedCoupon.code } : {}),
-          subtotal,
-          discount,
-          tax,
-          shipping: shipCost,
-          delivery: fulfil === "Pickup" ? "Pickup from our godown" : "Home delivery",
-        });
+        for (const group of orderGroups) {
+          // A partner point may offer only one of pickup / delivery; the database checks it.
+          const point = group.point ? branches.find((branch) => branch.id === group.point) : null;
+          const groupFulfil = point ? (fulfil === "Delivery" && point.deliveryEnabled) || !point.pickupEnabled ? "Delivery" : "Pickup" : fulfil;
+          placed.push(await placeOrder({
+            lines: group.lines,
+            method,
+            payment: "Pending",
+            ...(selectedAddress ? { shippingAddress: selectedAddress } : {}),
+            ...(appliedCoupon && orderGroups.length === 1 ? { coupon: appliedCoupon.code } : {}),
+            subtotal,
+            discount,
+            tax,
+            shipping: shipCost,
+            delivery: groupFulfil === "Pickup" ? "Pickup from our godown" : "Home delivery",
+          }));
+        }
       } catch {
-        return;
+        if (!placed.length) return;
       } finally {
         setPlacingOrder(false);
       }
       // The database reprices and revalidates stock atomically. Show the
       // authoritative values returned by that transaction on confirmation.
+      const sum = (pick: (order: (typeof placed)[number]) => number) => placed.reduce((total, order) => total + pick(order), 0);
       setConfirmationSummary({
-        subtotal: order.subtotal,
-        shipCost: order.shipping,
-        tax: order.tax,
-        discount: order.discount,
-        total: order.amount,
+        subtotal: sum((order) => order.subtotal),
+        shipCost: sum((order) => order.shipping),
+        tax: sum((order) => order.tax),
+        discount: sum((order) => order.discount),
+        total: sum((order) => order.amount),
       });
       if (productId) removeFromCart(productId);
       else clearCart();
-      setPlacedId(order.id);
-      toast.success("Order placed", { description: `${order.id} confirmed` });
+      setPlacedId(placed.map((order) => order.id).join(", "));
+      toast.success(placed.length > 1 ? `${placed.length} orders placed` : "Order placed", { description: `${placed.map((order) => order.id).join(", ")} confirmed` });
       setStep(step + 1);
       return;
     }
@@ -608,7 +636,7 @@ function Checkout() {
                       <div className="min-w-0 flex-1">
                         <p className="truncate font-medium text-navy">{product.name}</p>
                         <p className="text-xs text-slate">
-                          {product.vendor} · Qty {qty}
+                          Qty {qty}
                         </p>
                       </div>
                       <p className="font-semibold text-navy">{inr(product.price * qty)}</p>
@@ -637,13 +665,18 @@ function Checkout() {
                   {fulfil === "Pickup" ? "We will let you know when it is ready to collect." : "Delivery in 2–4 business days."}
                 </p>
                 <div className="mt-6 flex flex-wrap justify-center gap-3">
-                  {placedId && (
+                  {placedId && !placedId.includes(",") && (
                     <Link
                       to="/account/orders/$id"
                       params={{ id: placedId }}
                       className="rounded-md bg-navy px-6 py-3 text-sm font-semibold text-white hover:bg-midnight"
                     >
                       View Order
+                    </Link>
+                  )}
+                  {placedId?.includes(",") && (
+                    <Link to="/account/orders" className="rounded-md bg-navy px-6 py-3 text-sm font-semibold text-white hover:bg-midnight">
+                      View Orders
                     </Link>
                   )}
                   <Link

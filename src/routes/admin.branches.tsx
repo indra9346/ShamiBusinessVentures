@@ -150,7 +150,9 @@ function AdminBranches() {
     toast.success(`${branch.name} is now the default branch`);
   };
 
-  const active = branches.filter((branch) => branch.active);
+  const godowns = branches.filter((branch) => !branch.vendorId);
+  const partnerPoints = branches.filter((branch) => branch.vendorId);
+  const active = godowns.filter((branch) => branch.active);
   return (
     <PanelLayout items={adminNav} tone="admin" title="Branches" subtitle="Godowns, the PIN codes they serve, pickup and delivery">
       <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -179,7 +181,7 @@ function AdminBranches() {
         </Button>
       </div>
       <div className="grid gap-4 lg:grid-cols-2">
-        {branches.map((branch) => {
+        {godowns.map((branch) => {
           const stat = stats.get(branch.id);
           return (
             <Panel key={branch.id} title={`${branch.name}${branch.isDefault ? "  ·  Default" : ""}`}>
@@ -208,6 +210,20 @@ function AdminBranches() {
           );
         })}
       </div>
+
+      {partnerPoints.length > 0 && (
+        <Panel title="Vendor pickup / delivery points (marketplace)" className="mt-6">
+          <p className="mb-3 text-xs text-slate">Set by vendors who fulfil from their own place. Customers see them as "Partner pickup point", never the vendor's name.</p>
+          <div className="space-y-2 text-sm">
+            {partnerPoints.map((point) => (
+              <div key={point.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border px-3 py-2">
+                <span><span className="font-semibold text-navy">{point.vendorId}</span> · {point.address} · PIN {point.servesPincodes.join(", ")}</span>
+                <span className="text-xs text-slate">{point.pickupEnabled ? "Pickup" : ""}{point.pickupEnabled && point.deliveryEnabled ? " + " : ""}{point.deliveryEnabled ? `Delivery ${point.deliveryFee ? inr(point.deliveryFee) : "free"}` : ""}{point.active ? "" : " · off"}</span>
+              </div>
+            ))}
+          </div>
+        </Panel>
+      )}
 
       <Dialog open={!!form} onOpenChange={(open) => { if (!open) setForm(null); }}>
         <DialogContent className="max-h-[92vh] max-w-2xl overflow-y-auto">

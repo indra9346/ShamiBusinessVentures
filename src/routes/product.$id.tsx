@@ -43,9 +43,9 @@ export const Route = createFileRoute("/product/$id")({
     return {
       meta: [
         { title: `${p.name} — ${inr(p.price)} | Shami Business Ventures` },
-        { name: "description", content: `${p.name} from ${p.vendor}. ${p.weight} pack at ${inr(p.price)}.` },
+        { name: "description", content: `${p.name} from Grain Bazar. ${p.weight} pack at ${inr(p.price)}.` },
         { property: "og:title", content: `${p.name} | Shami` },
-        { property: "og:description", content: `${p.weight} · ${inr(p.price)} · Sold by ${p.vendor}` },
+        { property: "og:description", content: `${p.weight} · ${inr(p.price)} · Sold by Grain Bazar` },
       ],
     };
   },

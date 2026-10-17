@@ -31,6 +31,8 @@ export type Branch = {
   isDefault: boolean;
   active: boolean;
   sortOrder: number;
+  /** Set when this is a marketplace vendor's own pickup/delivery point (not a Grain Bazar godown). */
+  vendorId: string | null;
 };
 
 /** Platform switches, stored in the public "platform_features" setting. Both start OFF. */
@@ -51,7 +53,7 @@ export const DEMO_BRANCH: Branch = {
   email: "shamibusinessventurespvtltd@gmail.com", mapUrl: "", instructions: "Bring your order number. Collect during working hours.",
   gstin: "", zohoLocationId: "", zohoLocationName: "CLK Shami Business Ventures",
   servesPincodes: ["577522", "577536", "577537", "577538", "577543"], pickupEnabled: true, deliveryEnabled: false,
-  deliveryFee: 0, freeDeliveryAbove: null, isDefault: true, active: true, sortOrder: 0,
+  deliveryFee: 0, freeDeliveryAbove: null, isDefault: true, active: true, sortOrder: 0, vendorId: null,
 };
 
 type Row = Record<string, unknown>;
@@ -69,6 +71,7 @@ export function branchFromRow(row: Row): Branch {
     pickupEnabled: row["pickup_enabled"] !== false, deliveryEnabled: row["delivery_enabled"] === true,
     deliveryFee: Number(row["delivery_fee"]) || 0, freeDeliveryAbove: Number.isFinite(free) ? free : null,
     isDefault: row["is_default"] === true, active: row["active"] !== false, sortOrder: Number(row["sort_order"]) || 0,
+    vendorId: typeof row["vendor_id"] === "string" && row["vendor_id"] ? row["vendor_id"] : null,
   };
 }
 
@@ -78,11 +81,13 @@ export type BranchState = {
   /** product id -> branch id -> stock */
   stock: Map<string, Map<string, number>>;
   features: PlatformFeatures;
+  /** Marketplace ON: vendor id -> the branch their items are fulfilled from. */
+  vendorPoints: Map<string, string>;
 };
 
 let cache: BranchState = STATIC_DATA_MODE
-  ? { ready: true, branches: [DEMO_BRANCH], stock: new Map(), features: defaultFeatures }
-  : { ready: false, branches: [], stock: new Map(), features: defaultFeatures };
+  ? { ready: true, branches: [DEMO_BRANCH], stock: new Map(), features: defaultFeatures, vendorPoints: new Map() }
+  : { ready: false, branches: [], stock: new Map(), features: defaultFeatures, vendorPoints: new Map() };
 const listeners = new Set<(state: BranchState) => void>();
 let loading: Promise<void> | null = null;
 let subscribed = false;
@@ -107,11 +112,18 @@ export async function reloadBranches() {
   }
   const value = featureResult.data?.value && typeof featureResult.data.value === "object" && !Array.isArray(featureResult.data.value)
     ? featureResult.data.value as Row : {};
+  const features = { branchRouting: value["branch_routing"] === true, marketplaceVendors: value["marketplace_vendors"] === true };
+  const vendorPoints = new Map<string, string>();
+  if (features.marketplaceVendors) {
+    const { data: points } = await supabase.rpc("vendor_fulfilment_points");
+    for (const point of points ?? []) vendorPoints.set(point.vendor_id, point.branch_id);
+  }
   publish({
     ready: true,
     branches: (branchResult.data ?? []).map((row) => branchFromRow(row as Row)),
     stock,
-    features: { branchRouting: value["branch_routing"] === true, marketplaceVendors: value["marketplace_vendors"] === true },
+    features,
+    vendorPoints,
   });
 }
 
@@ -142,11 +154,11 @@ export function useBranches(): BranchState {
   return state;
 }
 
-export const defaultBranchOf = (branches: Branch[]) => branches.find((branch) => branch.isDefault && branch.active) ?? branches.find((branch) => branch.active) ?? null;
+export const defaultBranchOf = (branches: Branch[]) => branches.find((branch) => branch.isDefault && branch.active) ?? branches.find((branch) => branch.active && !branch.vendorId) ?? null;
 
 /** The godown serving a PIN code: one that lists it, else the default godown. */
 export function branchForPin(branches: Branch[], pin: string | null | undefined) {
-  const active = branches.filter((branch) => branch.active);
+  const active = branches.filter((branch) => branch.active && !branch.vendorId);
   const clean = (pin ?? "").replace(/\D/g, "");
   return (clean ? active.find((branch) => branch.servesPincodes.includes(clean)) : undefined) ?? defaultBranchOf(branches);
 }

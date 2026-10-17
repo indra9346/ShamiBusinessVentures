@@ -8,6 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { StatusBadge } from "@/components/panel/widgets";
 import { supabase } from "@/integrations/supabase/client";
+import { useBranches } from "@/lib/branches";
+import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { useApp } from "@/lib/store";
 
 export const Route = createFileRoute("/vendor/register")({
@@ -19,6 +21,7 @@ type Application = { id: string; status: string; admin_notes: string | null; ven
 
 function VendorRegistration() {
   const { user } = useApp();
+  const branchState = useBranches();
   const [application, setApplication] = useState<Application | null>(null);
   const [business, setBusiness] = useState("");
   const [owner, setOwner] = useState(user?.name ?? "");
@@ -89,6 +92,9 @@ function VendorRegistration() {
     toast.success("Vendor application submitted for review");
   };
 
+  if (!STATIC_DATA_MODE && branchState.ready && !branchState.features.marketplaceVendors) {
+    return <AuthCard title="Vendor applications are not open yet" subtitle="Grain Bazar is currently selling its own products only."><p className="text-sm text-slate">Please check back later. You can still shop as a customer.</p><Link to="/" className="mt-3 inline-block font-semibold text-gold hover:underline">Go to the store</Link></AuthCard>;
+  }
   if (!user) return <AuthCard title="Apply to become a vendor" subtitle="Create or sign in to your customer account first. Vendor access is granted after an administrator reviews your business details." footer={<><Link to="/register" className="font-semibold text-gold hover:underline">Create customer account</Link><span className="mx-2">·</span><Link to="/login" className="font-semibold text-gold hover:underline">Sign in</Link></>}><p className="text-sm text-slate">Applications are linked to your signed-in account. Public forms cannot create vendor roles or accounts directly.</p></AuthCard>;
   if (user.role !== "customer") return <AuthCard title="Vendor application" subtitle="Sign in with a customer account to apply."><Link to="/vendor/login" className="font-semibold text-gold hover:underline">Go to vendor sign in</Link></AuthCard>;
 

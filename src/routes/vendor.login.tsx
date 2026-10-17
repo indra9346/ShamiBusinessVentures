@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { useApp } from "@/lib/store";
 import { supabase } from "@/integrations/supabase/client";
+import { useBranches } from "@/lib/branches";
 import { signInProvisionedAccount } from "@/lib/provisioned-auth";
 
 export const Route = createFileRoute("/vendor/login")({
@@ -23,6 +24,8 @@ export const Route = createFileRoute("/vendor/login")({
 function VendorLogin() {
   const { login, user } = useApp();
   const navigate = useNavigate();
+  const { features, ready } = useBranches();
+  const marketplaceOpen = STATIC_DATA_MODE || !ready || features.marketplaceVendors;
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -106,7 +109,9 @@ function VendorLogin() {
         <Link to="/reset-password" className="inline-block text-sm font-semibold text-gold hover:underline">
           Set or reset password
         </Link>
-        <p className="text-sm text-slate">New to Grain Bazar as a seller? <Link to="/vendor/register" className="font-semibold text-gold hover:underline">Apply for vendor access</Link></p>
+        {marketplaceOpen
+          ? <p className="text-sm text-slate">New to Grain Bazar as a seller? <Link to="/vendor/register" className="font-semibold text-gold hover:underline">Apply for vendor access</Link></p>
+          : <p className="text-sm text-slate">Vendor applications are not open yet.</p>}
       </form>
     </AuthCard>
   );

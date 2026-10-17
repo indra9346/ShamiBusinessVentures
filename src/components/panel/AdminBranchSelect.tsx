@@ -24,7 +24,7 @@ export function AdminBranchSelect({ className }: { className?: string }) {
         <option value="all">All branches</option>
         {branches.map((branch) => (
           <option key={branch.id} value={branch.id}>
-            {branch.name}{branch.active ? "" : " (inactive)"}
+            {branch.vendorId ? `Vendor point · ${branch.vendorId}` : branch.name}{branch.active ? "" : " (inactive)"}
           </option>
         ))}
       </select>

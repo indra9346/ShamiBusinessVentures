@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { CommissionRules } from "@/components/panel/CommissionRules";
 
 export const Route = createFileRoute("/admin/commissions")({
   head: () => ({
@@ -80,6 +81,7 @@ function AdminCommissions() {
         <StatCard label="Average Rate" value={`${totals.avgRate}%`} icon={TrendingUp} />
       </div>
 
+      <CommissionRules />
       <Panel title="Commission Earned by Vendor" className="mb-6">
         <div className="h-72">
           <ResponsiveContainer width="100%" height="100%">
