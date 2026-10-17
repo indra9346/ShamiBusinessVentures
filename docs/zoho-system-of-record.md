@@ -1,113 +1,142 @@
-# Zoho as system of record — audit, mapping and migration plan
+# Zoho as system of record — audit, mapping, verification and migration plan
 
-Status: **audit + sync hardening done; no cutover performed.** Supabase stays the app's database.
-Nothing has been deleted, disabled or migrated.
+Last verified: 2026-10-17 (live production, admin-run; see section 8).
+Status: **Zoho is the record for sales orders; customers, products and stock are synced but not
+yet at full parity. No cutover performed.** Supabase remains the app's database. Nothing has been
+deleted, disabled or migrated away from Supabase.
 
-## 1. Current architecture (where data lives)
+## 1. Architecture and every persistence location
 
 | Location | What | Notes |
 |---|---|---|
-| Supabase Postgres | 39 tables (below), RLS on every table, RPCs for stock/orders/branches | The app's source of truth today |
-| Supabase Auth | customers, vendors, admins (email/password, phone OTP) | Roles in `user_roles` |
+| Supabase Postgres | 39 tables (below), RLS on every table, RPCs for stock/orders/branches | The app's transactional store |
+| Supabase Auth | customers, vendors, admins (email/phone one-time codes) | Roles in `user_roles` |
 | Supabase Storage | `catalog-images` (public), `vendor-kyc` (private) | |
-| Supabase Realtime | orders, stock, branches | live panels |
-| Browser localStorage | `sbv-state-v2` (cart, wishlist), `sbv-language`, `gb-admin-branch`, `shami-admin-last-activity:<user>`, `shamibusiness.zoho-order-views.v1` | per-device convenience only |
+| Supabase Realtime | orders, stock, branches | live admin/vendor panels |
+| Browser localStorage | `sbv-state-v2` (cart, wishlist), `sbv-language`, `gb-admin-branch`, `shami-admin-last-activity:<user>`, `shamibusiness.zoho-order-views.v1` | per-device convenience |
 | sessionStorage | `gb-reloaded-for-update` | stale-chunk reload guard |
 | Cookie | `sidebar_state` | UI only |
-| Zoho Inventory/Commerce | sales orders, contacts, items, stock, locations | via OAuth (server-side) |
-| External | Nominatim / BigDataCloud (reverse geocode) | no personal data stored there |
+| Zoho (one organization: Inventory + Books + Commerce) | sales orders, contacts, items, stock per location | OAuth, server-side only |
+| External | Nominatim / BigDataCloud reverse geocode | nothing stored there |
 
 Tables: addresses, batches, branch_stock, branches, catalog_products, contact_enquiries, coupons,
 crm_notes, customer_settings, integrations, invoices, notifications, order_item_batch_allocations,
 order_items, order_tracking, order_vendor_fulfillments, orders, payments, policies,
 policy_acceptance, product_reviews, profiles, return_requests, settings, store_categories,
 user_roles, vendor_applications, vendor_kyc_documents, vendor_payout_requests, vendor_settings,
-website_content, and the Zoho sync tables zoho_catalog_tombstones, zoho_commerce_connection,
+website_content; Zoho sync tables zoho_catalog_tombstones, zoho_commerce_connection,
 zoho_commerce_sync_data, zoho_commerce_sync_state, zoho_contact_links, zoho_item_links,
 zoho_oauth_states, zoho_sync_outbox.
 
-Existing Zoho flows: order placed/changed → instant push (`pushOrderChangeToZoho`) → Zoho sales
-order `GB-<order_no>`; failures land in `zoho_sync_outbox` (exponential backoff 30 s → 6 h, 12
-attempts, `FOR UPDATE SKIP LOCKED`), worked by the daily cron `/api/zoho/sync` (Bearer
-`CRON_SECRET`) and the admin "Sync now" button. Zoho → app: workflow webhook `/api/zoho/webhook`
-plus polling of orders, contacts and items.
+Flows: order placed/changed → instant push → Zoho sales order `GB-<order_no>` (Inventory API);
+failures → `zoho_sync_outbox` (backoff 30 s → 6 h, 12 attempts, `FOR UPDATE SKIP LOCKED`), worked
+by the daily cron `/api/zoho/sync` and admin buttons. Zoho → app: signed workflow webhook
+`/api/zoho/webhook` plus polling of orders, contacts and items.
 
-## 2. Entity → Zoho mapping
+## 2. Zoho capabilities (official documentation, read 2026-10-17)
 
-| Grain Bazar | Zoho resource | Verdict |
+| Capability | Evidence |
+|---|---|
+| Commerce admin API: products, variants, categories, coupons, taxes, payments, **sales orders: list / retrieve / update status / comments / address — no create** | [Commerce API index](https://www.zoho.com/commerce/api/introduction.html), [Update Status](https://www.zoho.com/commerce/api/update-status.html) |
+| Commerce "Place an Order" exists only in the **storefront checkout** API (Zoho cart session) | same index (Storefront APIs) |
+| Commerce webhooks: `salesorder.created/confirmed/cancelled/declined/shipped/delivered`, scope `ZohoCommerce.webhooks.CREATE`; signing method not documented there | [Create a Webhook](https://www.zoho.com/commerce/api/create-webhook.html) |
+| Commerce API limit: **1,000 calls/day/org (free), 2,500 (paid)** | [API Call Limit](https://www.zoho.com/commerce/api/api-call-limit.html) |
+| Inventory sales orders: create (unique `salesorder_number`, `ignore_auto_number_generation`), list, update, retrieve, delete, mark confirmed, mark void; **no "email a sales order"** | [Inventory Sales Orders](https://www.zoho.com/inventory/api/v1/salesorders/) |
+| Inventory items list: `filter_by=Status.All`, `page`/`per_page`; **`hsn_or_sac` and available-for-sale are on the item record, not in the list response** | [Inventory Items](https://www.zoho.com/inventory/api/v1/items/) |
+| Books "Email a sales order": `POST /books/v3/salesorders/{id}/email`, scope `ZohoBooks.salesorders.CREATE` | [Books Sales Order](https://www.zoho.com/books/api/v3/sales-order/) |
+| Books webhooks: secret 12–50 alphanumeric; signature = HMAC-SHA256 of sorted query/form key+value pairs + raw JSON, header `X-Zoho-Webhook-Signature`; 5 s connect / 10 s read timeout; non-2xx retried 5× with the same payload | [Books Webhooks help](https://www.zoho.com/us/books/help/settings/automation/workflow-actions/webhooks.html) |
+
+Observed in this organization (live evidence, not documentation):
+- Books workflow rules (and so webhooks and email alerts) fired for every change made **in the Zoho
+  UI** (5 of 5) and for **none** of the orders the website created through the API (0 of 4:
+  ORD-26889, ORD-23324, ORD-21485, ORD-20430, ORD-24278 creations).
+- Zoho offers **Void only on confirmed** sales orders (UI shows only Delete on drafts); the site now
+  confirms then voids, and flags for review if Zoho still is not void.
+- Live signed deliveries matched **hex** HMAC-SHA256 of the raw body (no query parameters); Zoho's
+  sample code uses base64 — the site accepts both encodings of the same digest.
+
+## 3. Entity / workflow → Zoho mapping
+
+| Grain Bazar | Zoho | Verdict |
 |---|---|---|
-| orders + order_items | Sales order (`salesorders`, line items, `location_id`, custom field `cf_order_channel`) | **Synced** (both ways for status/cancel/fulfilment) |
-| profiles + addresses (customers) | Contact (`contacts`, contact persons, billing/shipping) | **Synced** |
-| catalog_products | Item (`items`), images, description | **Synced** |
-| branch_stock / branches | Locations + item stock per location | **Partly** — stock is pushed per location; branch PIN rules, pickup/delivery flags stay in Supabase |
-| coupons | Commerce coupons | **Partly** — read from Zoho; usage limits enforced in app |
-| invoices | Zoho invoice | **Not moved** — app builds its own GST PDF; Zoho invoices are created from the sales order in Zoho |
-| payments | Customer payments | **Not moved** — payment capture/refund state must stay transactional in Supabase |
-| return_requests | Sales returns | **Gap** — not synced (possible later via `salesreturns` scope) |
-| Auth users, user_roles | — | **Unsupported**: Zoho is not an identity provider for this app |
-| vendor_* (applications, KYC docs, payouts, settings, fulfilment), commission rules | — | **Unsupported**: no Zoho resource; KYC files are private documents |
-| order_tracking, notifications, crm_notes, product_reviews, policies, policy_acceptance, website_content, store_categories, contact_enquiries, settings, batches, order_item_batch_allocations | — | **Unsupported / app-only** |
-| localStorage carts/wishlists | — | **Unsupported** (device-local by design) |
+| orders + order_items | Sales order via Inventory API (Commerce admin API cannot create) | **Supported, synced both ways** (status, cancel→void, fulfilment) |
+| profiles + addresses (customers) | Contacts | **Supported, partial parity** (see 8) |
+| catalog_products | Items (+ images, description, HSN) | **Supported, partial parity** (see 8) |
+| stock (app is stock master) | Item available-for-sale via inventory adjustments; locations | **Supported**; per-location stock needs Zoho transfer orders (data in Zoho is booked at Head Office) |
+| coupons | Commerce coupons | **Partial** — usage limits enforced in app |
+| invoices (GST PDF) | Zoho invoices | **Not moved** — app keeps its own PDF |
+| payments | Commerce payments (mark paid/refund) | **Not moved** — capture/refund state stays transactional in Supabase |
+| return_requests | Sales returns | **Gap** — not synced |
+| auth users, roles | — | **Unsupported** (Zoho is not this app's identity provider) |
+| vendor_* , commissions, KYC files | — | **Unsupported** |
+| tracking, notifications, CRM notes, reviews, policies, website content, categories, enquiries, settings, batches | — (categories exist in Commerce but storefront taxonomy stays in app) | **Unsupported / app-only** |
+| carts, wishlists (browser) | — | **Unsupported** (device-local) |
+| New-order notification | Books "Email a sales order" (API) — workflow email alerts do not fire for API-created orders | **Supported via API, off by default; needs re-authorization** |
 
-Zoho is not a general-purpose database: RLS-style per-user access, RPC transactions (stock
-reservation, cancel-restores-stock), realtime and auth have no Zoho equivalent. **Recommendation:
-Zoho = system of record for sales orders, customers, items and stock; Supabase stays the
-transactional app store.** A full move of everything is not possible.
+Zoho is not a general-purpose database. **Zoho = record for sales orders (and, once parity is
+complete, customers, items and stock); Supabase stays the transactional app store.**
 
-### Verified vs not verified in Zoho docs (checked 2026-10-17)
-- Verified (Inventory API docs): sales order create with unique `salesorder_number` and
-  `ignore_auto_number_generation`; `custom_fields`; `location_id`; pagination
-  (`page`, `per_page`, `page_context.has_more_page`); rate limits 100 req/min/org, daily caps by
-  plan, 429 on excess; scopes `ZohoInventory.<module>.<op>`; `.in` data centre.
-- **Not found**: an "email a sales order" endpoint in Inventory (only invoices, credit notes,
-  statements have email endpoints); webhook payload signing (HMAC) — the help pages returned 403;
-  the Zoho Commerce API reference beyond its intro page.
+## 4. Credentials and scopes (names only)
 
-## 3. Credentials and scopes (names only)
+Vercel env: `ZOHO_CLIENT_ID`, `ZOHO_CLIENT_SECRET`, `ZOHO_REDIRECT_URI`, `ZOHO_OAUTH_STATE_SECRET`,
+`ZOHO_TOKEN_ENCRYPTION_KEY`, `ZOHO_WEBHOOK_SECRET`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
+`CRON_SECRET`. The Zoho refresh token is AES-GCM encrypted in `zoho_commerce_connection`.
 
-Server env (Vercel): `ZOHO_CLIENT_ID`, `ZOHO_CLIENT_SECRET`, `ZOHO_REDIRECT_URI`,
-`ZOHO_OAUTH_STATE_SECRET`, `ZOHO_TOKEN_ENCRYPTION_KEY`, `SUPABASE_URL`,
-`SUPABASE_SERVICE_ROLE_KEY`, `CRON_SECRET`. The Zoho refresh token is stored AES-GCM encrypted
-in `zoho_commerce_connection`; none of these reach the browser.
+Scopes requested: ZohoCommerce items / coupons / salesorders / settings / sitesIndex / webhooks;
+ZohoInventory contacts / items / salesorders / inventoryadjustments (READ, CREATE, UPDATE) and
+settings.READ; **ZohoBooks.salesorders.CREATE** (added 2026-10-17 — active only after an admin
+re-authorizes Zoho).
 
-Scopes: `ZohoInventory.salesorders.CREATE/READ/UPDATE`, `ZohoInventory.contacts.CREATE/READ/UPDATE`,
-`ZohoInventory.items.CREATE/READ/UPDATE`, `ZohoInventory.settings.READ` (organization,
-locations), plus the Zoho Commerce scopes the app already requests for the Commerce read mirror
-and coupons. Add `ZohoInventory.invoices.CREATE` only if invoice emailing is enabled later.
+## 5. What is implemented
 
-## 4. Changes in this round
-- `src/lib/zoho-sync-core.ts` (pure, tested): order-number idempotency key, retry policy,
-  backoff, constant-time webhook key check, reconciliation, JSON log lines.
-- `inventoryRequest`: up to 2 retries with backoff — 429 for any call; 5xx/network only for
-  GET/PUT (a POST is never blindly resent; order creation re-checks the unique GB- number).
-- Outbox worker: one JSON log line per job (`outbox_job_finished`, no customer data/tokens).
-- Webhook: key accepted as `X-GB-Webhook-Key` header (preferred) or `?key=`; logs
-  accepted/rejected/failed; payload still never trusted (record re-read from Zoho).
-- `reconcileZohoOrders` server function + Admin → Zoho diagnostics → "Order reconciliation"
-  (read-only).
-- Tests: `npm run test:zoho` (Node test runner).
+- Idempotent order push (unique `GB-<order_no>`, lookup before re-create, link stored once).
+- Retries: Zoho 429 for any call; 5xx/network only for GET/PUT; durable outbox with backoff.
+- Webhook: signature verified per Zoho's documented base string (query/form pairs + raw JSON,
+  HMAC-SHA256, hex or base64); unsigned calls need the v2 shared key (v1 retired). Payload never
+  trusted: the order is re-read from Zoho; handler is idempotent for Zoho's retries.
+- Reconciliation (read-only, Admin → Zoho diagnostics): orders; products (SKU, price,
+  available-for-sale stock, active) and customers (links, existence in Zoho).
+- Draft cancellation: confirm → void → verify, else needs-review.
+- HSN on order lines: from the Grain Bazar product, else the Zoho item record.
+- Optional official notification: Books "Email a sales order" for each new website order to
+  configured staff addresses; off by default; failures logged, never block the sync.
+- Structured JSON logs (`source: "zoho-sync"`), no tokens or customer details.
+- Tests: `npm run test:zoho` (16 tests, incl. Zoho's documented signature examples).
 
-## 5. Notifications through Zoho (official capability)
-No Inventory API endpoint emails a sales order, so notifications should use Zoho's own
-**Workflow Rules → Email Alert** on Sales Orders (trigger: created, condition: Order Channel =
-GrainBazar). This is configured in Zoho Settings, needs no code and keeps delivery inside Zoho.
-It sends real emails, so the owner sets it up. Not verified end to end.
+## 6. Backup, migration, parity, rollback (no cutover without owner approval)
 
-## 6. Migration plan (only if more moves to Zoho later)
-1. **Backup**: Supabase dashboard → Database → Backups (confirm a daily backup exists) and take a
-   `pg_dump` from a fresh, non-compromised login; export Zoho data (Settings → Export).
-2. **Parity**: run "Order reconciliation" for 30/60/90 days until it shows 0 issues; compare
-   contact and item counts (`zoho_contact_links`, `zoho_item_links` vs Zoho).
-3. **Dual-run**: keep Supabase as the writer, Zoho as the mirror, for at least 2 weeks.
-4. **Cutover** (needs the owner's explicit approval): switch only the chosen entity's reads to Zoho.
-5. **Rollback**: flip reads back to Supabase (no data was deleted); Zoho write sync can be paused
-   from Admin → Zoho (write-sync switch) without losing queued jobs.
-6. Never drop Supabase tables until 1–5 have passed and a fresh backup is verified.
+1. **Backup**: check Supabase → Database → Backups for a restorable backup; if none is available on the Free plan, take a `pg_dump` with a
+   fresh Supabase login (the old CLI tokens were revoked) or upgrade for daily backups; export Zoho
+   data (Settings → Export) before bulk changes. Test a restore into a scratch project.
+2. **Parity**: Admin → Zoho diagnostics → run "Order reconciliation" (30/60/90 days) and "Products,
+   stock and customers" until both show 0 to review.
+3. **Fix links** (writes to Zoho, needs approval): run the product sync for unlinked products
+   (matches by SKU, links, pushes price/description and adjusts Zoho stock to the website value);
+   run the customer sync for customers with orders but no link.
+4. **Dual-run** ≥ 2 weeks with Supabase as writer and Zoho as record for orders.
+5. **Cutover** (explicit approval): only per entity, reads switched to Zoho.
+6. **Rollback**: switch reads back (nothing deleted); pause Zoho write sync from Admin → Zoho;
+   outbox jobs are kept.
+7. Never drop Supabase tables.
 
-## 7. Security follow-ups
-- The Supabase CLI login pasted in chat on 2026-10-17 must be treated as compromised: revoke it in
-  Supabase → Account → Access Tokens (and sign out CLI sessions), then log in again if needed.
-  No token was found in this repo's files or git history.
+## 7. Security
+
+- Supabase CLI tokens from 2026-10-17 revoked (17 deleted), CLI logged out; audit log reviewed
+  (only the owner's IP). No tokens in repo files or git history.
+- Zoho webhook v1 key (shown in chat) retired; webhooks now signed with `ZOHO_WEBHOOK_SECRET`.
+- A Resend API key was pasted in chat: delete it in Resend and create a new one (not used by the
+  site).
 - `.env` is tracked but holds only the public URL and publishable key.
-- Prefer moving the webhook key from the URL to the `X-GB-Webhook-Key` header in the Zoho
-  workflow webhook, so it does not appear in request logs.
+
+## 8. Verification log (2026-10-17, production)
+
+| Check | Result |
+|---|---|
+| Website order → Zoho sales order (ORD-23324) | Created in Zoho, total ₹2,518.96 matches |
+| Zoho edit → signed webhook → site | Zoho log "Success"; site log `webhook_signature_ok` (hex) |
+| Cancel on website → Void in Zoho (ORD-23324, ORD-27818) | Void in Zoho |
+| Stock restore after cancel (S1 Refined Sugar 50kg) | Website 175 = Zoho available 175 |
+| Order reconciliation, 30 days | 14 checked · 14 in sync · 0 to review (after fixing 5) |
+| Products parity | 26 checked · 10 in sync · 15 not linked · 1 stock difference (duplicate product rows with the same SKU) |
+| Customers parity | 9 accounts · 7 linked · 2 ordered customers without a link |
+| Official new-order notification | **Not delivered/tested** — needs Zoho re-authorization (Books scope), recipients, and owner approval to enable |
