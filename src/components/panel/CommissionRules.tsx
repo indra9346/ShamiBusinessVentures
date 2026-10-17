@@ -111,11 +111,12 @@ export function CommissionRules() {
             <thead><tr className="border-b border-border text-left text-xs uppercase text-slate"><th className="py-2">Vendor</th><th>State (GSTIN)</th><th>Rate now</th><th></th></tr></thead>
             <tbody>
               {vendors.map((vendor) => {
-                const code = /^[0-9]{2}/.test(vendor.gst || "") ? vendor.gst.slice(0, 2) : "";
+                // Only a valid GSTIN tells the state (an invalid one could start with any digits).
+                const code = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/.test((vendor.gst || "").toUpperCase()) ? vendor.gst.slice(0, 2) : "";
                 return (
                   <tr key={vendor.id} className="border-b border-border">
                     <td className="py-2 font-semibold text-navy">{vendor.business}</td>
-                    <td>{code ? `${stateName(code)} (${code})` : "No GSTIN"}</td>
+                    <td>{code ? `${stateName(code)} (${code})` : vendor.gst ? "Invalid GSTIN (default rate)" : "No GSTIN (default rate)"}</td>
                     <td>{vendor.commission}%</td>
                     <td className="text-right"><Button variant="outline" size="sm" onClick={() => void resetVendor(vendor.id)}>Use rules</Button></td>
                   </tr>

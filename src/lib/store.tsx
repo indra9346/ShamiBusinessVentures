@@ -1856,7 +1856,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }),
       };
     }
-    if (user?.role !== "admin" || adminBranchId === "all" || !branchState.ready) return value;
+    // A branch that no longer exists (deleted elsewhere) counts as "All branches".
+    if (user?.role !== "admin" || adminBranchId === "all" || !branchState.ready
+      || !branchState.branches.some((branch) => branch.id === adminBranchId)) return value;
     const defaultBranch = defaultBranchOf(branchState.branches);
     return {
       ...value,

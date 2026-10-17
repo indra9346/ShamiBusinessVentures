@@ -54,7 +54,7 @@ SELECT 'BR-CLK', 'CLK',
   COALESCE(p->>'mapUrl', ''),
   COALESCE(NULLIF(p->>'instructions', ''), 'Bring your order number. Collect during working hours.'),
   COALESCE(p->>'zohoLocationId', ''), COALESCE(NULLIF(p->>'zohoLocationName', ''), 'CLK Shami Business Ventures'),
-  COALESCE(ARRAY(SELECT jsonb_array_elements_text(p->'pincodes')), ARRAY['577522','577536','577537','577538','577543']),
+  COALESCE(NULLIF(ARRAY(SELECT jsonb_array_elements_text(p->'pincodes')), '{}'), ARRAY['577522','577536','577537','577538','577543']),
   true, true
 FROM (SELECT (SELECT value->'points'->0 FROM public.settings WHERE key = 'pickup_points') AS p) seed
 ON CONFLICT (id) DO NOTHING;
