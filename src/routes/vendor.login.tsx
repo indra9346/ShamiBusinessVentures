@@ -5,6 +5,7 @@ import { AuthCard } from "@/components/site/AuthCard";
 import { Input } from "@/components/ui/input";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { useApp } from "@/lib/store";
+import { supabase } from "@/integrations/supabase/client";
 import { signInProvisionedAccount } from "@/lib/provisioned-auth";
 
 export const Route = createFileRoute("/vendor/login")({
@@ -26,10 +27,18 @@ function VendorLogin() {
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
+  // Already signed in: go to the panel, but only with a real session (never on a stale memory).
   useEffect(() => {
-    if (user?.role === "vendor") {
+    if (user?.role !== "vendor") return;
+    let active = true;
+    if (STATIC_DATA_MODE) {
       navigate({ to: "/vendor/dashboard", replace: true });
+      return;
     }
+    void supabase.auth.getSession().then(({ data }) => {
+      if (active && data.session?.user) navigate({ to: "/vendor/dashboard", replace: true });
+    });
+    return () => { active = false; };
   }, [user?.role, navigate]);
 
   const finish = async (event: React.FormEvent<HTMLFormElement>) => {

@@ -198,6 +198,9 @@ export function PanelLayout({
         return;
       }
       if (!session?.user) {
+        // No session at all (e.g. signed out in another tab) but the app still remembers a user:
+        // clear it, or the login page would bounce straight back here.
+        if (user) logout();
         navigate({
           to: tone === "admin" ? "/admin/login" : tone === "vendor" ? "/vendor/login" : "/login",
           replace: true,
