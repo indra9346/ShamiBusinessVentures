@@ -25,8 +25,7 @@ function ZohoDiagnostics() {
             setBusy(true);
             try {
               const { probeZohoSalesChannel } = await import("@/lib/zoho-commerce.functions");
-              const tryChannel = new URLSearchParams(window.location.search).get("tryChannel") ?? undefined;
-              setOutput(await probeZohoSalesChannel({ data: tryChannel ? { tryChannel } : {} }));
+              setOutput(await probeZohoSalesChannel());
             } catch (cause) {
               setOutput(cause instanceof Error ? cause.message : String(cause));
             } finally {
@@ -36,6 +35,25 @@ function ZohoDiagnostics() {
         >
           {busy ? "Checking…" : "Check sales channel"}
         </Button>
+        <Button
+          variant="outline"
+          className="ml-2"
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            try {
+              const { markZohoOrdersChannel } = await import("@/lib/zoho-commerce.functions");
+              setOutput(await markZohoOrdersChannel());
+            } catch (cause) {
+              setOutput(cause instanceof Error ? cause.message : String(cause));
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          Mark existing orders as GrainBazar
+        </Button>
+        <p className="mt-3 text-xs text-slate">Needs a sales-order custom field in Zoho: label "Order Channel" (API name cf_order_channel). New orders are marked automatically.</p>
         {output && <pre id="zoho-probe-output" className="mt-4 max-h-[60vh] overflow-auto rounded-md bg-stone-900 p-3 text-xs text-stone-100">{output}</pre>}
       </Panel>
     </PanelLayout>

@@ -2507,7 +2507,7 @@ async function syncZohoOrder(db: Awaited<ReturnType<typeof dbAdmin>>, region: Re
     ...(orderGstInfo.isValid && orderGstInfo.gstin ? { gst_no: orderGstInfo.gstin } : {}),
     ...(orderGstInfo.placeOfContact ? { place_of_supply: orderGstInfo.placeOfContact } : {}),
   };
-  const created = await inventoryRequest<{ salesorder?: Record<string, unknown> }>(region, organizationId, token, "salesorders", "POST", payload, { ignore_auto_number_generation: "true" });
+  const created = await createSalesOrderWithChannel(region, organizationId, token, payload);
   const salesOrderId = str(created.salesorder?.["salesorder_id"]);
   if (!salesOrderId) throw new Error("Zoho created a sales order but returned no salesorder_id");
   const { error: saveError } = await db.from("orders").update({ zoho_salesorder_id: salesOrderId }).eq("id", order.id).is("zoho_salesorder_id", null);
@@ -2518,6 +2518,53 @@ async function syncZohoOrder(db: Awaited<ReturnType<typeof dbAdmin>>, region: Re
   if (Number.isFinite(zohoTotal) && Math.abs(zohoTotal - Number(order.total)) > 2.00)
     throw new NeedsReviewError(`Zoho accepted order ${safeNumber}, but total ₹${zohoTotal.toFixed(2)} differs from Grain Bazar ₹${Number(order.total).toFixed(2)}. Review taxes, discount, and shipping before processing.`);
 }
+
+
+/**
+ * Zoho accepts only its own sales channel values (API orders are "Direct Sales"), so Grain Bazar
+ * orders carry a sales-order custom field instead: label "Order Channel" (API name
+ * cf_order_channel), value "GrainBazar". Add that field once in Zoho (Settings > Preferences >
+ * Sales Orders > Field Customization) and show it as a column in the Orders list.
+ */
+export const ZOHO_CHANNEL_FIELD = "cf_order_channel";
+export const ZOHO_CHANNEL_VALUE = "GrainBazar";
+const channelCustomFields = [{ api_name: ZOHO_CHANNEL_FIELD, value: ZOHO_CHANNEL_VALUE }];
+const isCustomFieldError = (cause: unknown) => /custom ?field|cf_|api_name|invalid.*field/i.test(cause instanceof Error ? cause.message : String(cause));
+
+/** Creates the sales order with the channel field; if the field does not exist in Zoho yet, without it. */
+async function createSalesOrderWithChannel(region: Region, organizationId: string, token: string, payload: Record<string, unknown>) {
+  try {
+    return await inventoryRequest<{ salesorder?: Record<string, unknown> }>(region, organizationId, token, "salesorders", "POST",
+      { ...payload, custom_fields: channelCustomFields }, { ignore_auto_number_generation: "true" });
+  } catch (cause) {
+    if (!isCustomFieldError(cause)) throw cause;
+    console.warn(`Zoho has no "${ZOHO_CHANNEL_FIELD}" sales order field yet; order created without the channel mark.`);
+    return inventoryRequest<{ salesorder?: Record<string, unknown> }>(region, organizationId, token, "salesorders", "POST",
+      payload, { ignore_auto_number_generation: "true" });
+  }
+}
+
+/** Admin: marks every existing Grain Bazar sales order in Zoho with Order Channel = GrainBazar. */
+export const markZohoOrdersChannel = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    await ensureAdmin(context.supabase, context.userId);
+    const db = await dbAdmin();
+    const { region, organizationId, token } = await zohoOrderContext(db);
+    const { data: rows } = await db.from("orders").select("order_no,zoho_salesorder_id").not("zoho_salesorder_id", "is", null);
+    const result = { marked: 0, skipped: [] as string[], fieldMissing: false };
+    for (const row of rows ?? []) {
+      try {
+        await inventoryRequest(region, organizationId, token, `salesorders/${encodeURIComponent(row.zoho_salesorder_id!)}`, "PUT",
+          { custom_fields: channelCustomFields });
+        result.marked += 1;
+      } catch (cause) {
+        if (isCustomFieldError(cause)) { result.fieldMissing = true; break; }
+        result.skipped.push(`${row.order_no}: ${cause instanceof Error ? cause.message : String(cause)}`.slice(0, 160));
+      }
+    }
+    return JSON.stringify(result, null, 2);
+  });
 
 async function syncZohoCustomer(
   db: Awaited<ReturnType<typeof dbAdmin>>,
@@ -3590,8 +3637,7 @@ export const updateZohoSalesOrder = createServerFn({ method: "POST" })
  */
 export const probeZohoSalesChannel = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .validator(z.object({ tryChannel: z.string().trim().max(40).optional() }).optional())
-  .handler(async ({ data, context }) => {
+  .handler(async ({ context }) => {
     await ensureAdmin(context.supabase, context.userId);
     const db = await dbAdmin();
     const { region, organizationId, token } = await zohoOrderContext(db);
@@ -3605,7 +3651,13 @@ export const probeZohoSalesChannel = createServerFn({ method: "POST" })
       try {
         const gb = await inventoryRequest<{ salesorder?: Record<string, unknown> }>(
           region, organizationId, token, `salesorders/${encodeURIComponent(gbOrder.zoho_salesorder_id)}`, "GET");
-        report["grainBazarOrder"] = { orderNo: gbOrder.order_no, number: gb.salesorder?.["salesorder_number"], fields: pick(gb.salesorder) };
+        report["grainBazarOrder"] = {
+          orderNo: gbOrder.order_no,
+          number: gb.salesorder?.["salesorder_number"],
+          fields: pick(gb.salesorder),
+          customFields: (Array.isArray(gb.salesorder?.["custom_fields"]) ? gb.salesorder?.["custom_fields"] as Record<string, unknown>[] : [])
+            .map((field) => ({ label: field["label"], api_name: field["api_name"], value: field["value"] })),
+        };
       } catch (cause) {
         report["grainBazarOrder"] = { error: cause instanceof Error ? cause.message : String(cause) };
       }
@@ -3629,22 +3681,6 @@ export const probeZohoSalesChannel = createServerFn({ method: "POST" })
         report[resource] = Object.fromEntries(Object.entries(result).filter(([key]) => !["code", "message"].includes(key)));
       } catch (cause) {
         report[resource] = { error: cause instanceof Error ? cause.message : String(cause) };
-      }
-    }
-    // Experiment on a voided Grain Bazar order only (no live order is touched).
-    if (data?.tryChannel) {
-      const { data: voided } = await db.from("orders").select("order_no,zoho_salesorder_id")
-        .eq("zoho_order_status", "void").not("zoho_salesorder_id", "is", null)
-        .order("created_at", { ascending: false }).limit(1).maybeSingle();
-      if (voided?.zoho_salesorder_id) {
-        try {
-          const put = await inventoryRequest<{ salesorder?: Record<string, unknown> }>(
-            region, organizationId, token, `salesorders/${encodeURIComponent(voided.zoho_salesorder_id)}`, "PUT",
-            { sales_channel: data.tryChannel });
-          report["tryChannel"] = { orderNo: voided.order_no, accepted: true, fields: pick(put.salesorder) };
-        } catch (cause) {
-          report["tryChannel"] = { orderNo: voided.order_no, accepted: false, error: cause instanceof Error ? cause.message : String(cause) };
-        }
       }
     }
     return JSON.stringify(report, null, 2);
