@@ -232,7 +232,9 @@ export function PanelLayout({
         return;
       }
       if (!roleRecord) {
-        logout();
+        // Signed in, but not with this panel's role (e.g. an admin opening the vendor panel).
+        // Do not sign out: the session is shared by every tab, so that would also log out the
+        // other panel. Access is still refused; the panel's own login page is shown instead.
         navigate({
           to: tone === "admin" ? "/admin/login" : tone === "vendor" ? "/vendor/login" : "/login",
           replace: true,
