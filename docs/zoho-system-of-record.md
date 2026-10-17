@@ -48,7 +48,7 @@ by the daily cron `/api/zoho/sync` and admin buttons. Zoho → app: signed workf
 
 Observed in this organization (live evidence, not documentation):
 - Books workflow rules (and so webhooks and email alerts) fired for every change made **in the Zoho
-  UI** (5 of 5) and for **none** of the orders the website created through the API (0 of 4:
+  UI** (5 of 5) and for **none** of the orders the website created through the API (0 of 5:
   ORD-26889, ORD-23324, ORD-21485, ORD-20430, ORD-24278 creations).
 - Zoho offers **Void only on confirmed** sales orders (UI shows only Delete on drafts); the site now
   confirms then voids, and flags for review if Zoho still is not void.
