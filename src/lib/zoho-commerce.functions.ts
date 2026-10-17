@@ -1799,7 +1799,9 @@ async function pushCommerceDescription(
     const current = await commerceRequest<{ product?: Record<string, unknown> }>(
       api.region, api.organizationId, api.token, `products/${encodeURIComponent(productId)}`, "GET",
     );
-    const zohoText = htmlToText(str(current.product?.["product_description"]));
+    // Read exactly as the inbound check does (main description, else the short one).
+    const zohoText = htmlToText(str(current.product?.["product_description"]))
+      || htmlToText(str(current.product?.["product_short_description"]));
     const seen = plainObject(mirrorPayload["zohoSeen"]);
     // Latest edit wins: if Zoho's text changed since Grain Bazar last saw it, that Zoho edit has
     // not been pulled in yet; leave it for the inbound sync instead of overwriting it.
