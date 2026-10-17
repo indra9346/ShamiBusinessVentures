@@ -329,7 +329,8 @@ function Checkout() {
 
   const selectedAddress = addresses.find((a) => a.id === addr);
 
-  if (productCatalogStatus !== "ready" || unresolvedCartLines || checkoutItems.length === 0) {
+  // After an order is placed the cart is (correctly) empty; keep showing its confirmation.
+  if (!placedId && (productCatalogStatus !== "ready" || unresolvedCartLines || checkoutItems.length === 0)) {
     const unavailable = productCatalogStatus !== "ready" || unresolvedCartLines;
     return (
       <SiteLayout>
