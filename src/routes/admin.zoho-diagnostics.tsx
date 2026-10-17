@@ -248,6 +248,22 @@ function OrderEmailPanel() {
   const [recipients, setRecipients] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  // In-page confirmation (browser pop-ups can be blocked or auto-dismissed in embedded browsers).
+  const [confirmingTest, setConfirmingTest] = useState(false);
+  const sendTest = async () => {
+    setConfirmingTest(false);
+    setBusy(true);
+    setMessage("");
+    try {
+      const { sendZohoOrderTestEmail } = await import("@/lib/zoho-commerce.functions");
+      const sent = await sendZohoOrderTestEmail();
+      setMessage(`Zoho accepted the test email for ${sent.order} to ${sent.sentTo.join(", ")}. Check the inbox (and spam).`);
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
   useEffect(() => {
     void import("@/lib/zoho-commerce.functions")
       .then(({ getZohoOrderEmailConfig }) => getZohoOrderEmailConfig())
@@ -297,24 +313,20 @@ function OrderEmailPanel() {
             <Button
               variant="outline"
               disabled={busy || !recipients.trim()}
-              onClick={async () => {
-                if (!window.confirm(`Zoho will send a real test email for your newest website order to the saved recipients. Send it now?`)) return;
-                setBusy(true);
-                setMessage("");
-                try {
-                  const { sendZohoOrderTestEmail } = await import("@/lib/zoho-commerce.functions");
-                  const sent = await sendZohoOrderTestEmail();
-                  setMessage(`Zoho accepted the test email for ${sent.order} to ${sent.sentTo.join(", ")}. Check the inbox (and spam).`);
-                } catch (cause) {
-                  setMessage(cause instanceof Error ? cause.message : String(cause));
-                } finally {
-                  setBusy(false);
-                }
-              }}
+              onClick={() => { setMessage(""); setConfirmingTest(true); }}
             >
-              Send test email
+              {busy ? "Sending…" : "Send test email"}
             </Button>
           </div>
+          {confirmingTest && (
+            <div role="alertdialog" aria-label="Confirm test email" className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-navy">
+              <p>Zoho will send a <strong>real</strong> test email for your newest website order to the <strong>saved</strong> address(es). Send it now?</p>
+              <div className="mt-2 flex gap-2">
+                <Button className="bg-navy text-white hover:bg-navy/90" disabled={busy} onClick={() => void sendTest()}>Yes, send test email</Button>
+                <Button variant="outline" disabled={busy} onClick={() => setConfirmingTest(false)}>Cancel</Button>
+              </div>
+            </div>
+          )}
           <p className="text-xs text-slate">Status: {loaded ? (enabled ? "On" : "Off") : "Loading…"}</p>
           {message && <p role="status" className="text-sm text-navy">{message}</p>}
         </div>
