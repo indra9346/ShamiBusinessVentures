@@ -150,4 +150,4 @@ re-authorizes Zoho).
 | Order reconciliation (final, 30 days) | 14 checked · 14 in sync · 0 to review |
 | Zoho re-authorization with ZohoBooks.salesorders.CREATE | Done by the owner (consent screen showed Zoho Books: Sales Orders CREATE) |
 | Official new-order notification (test, GB-ORD-26889, 22:09 IST) | **Delivered.** Site: "Zoho accepted the test email"; inbox: from `message-service@sender.zoho-books.in` (Shami Business Ventures), sales order PDF attached; Zoho history: "Sales Order emailed to …" |
-| Side effect observed | Zoho marked the **draft** sales order **Open** when it was emailed ("Sales Order marked as open"), and the signed webhook to the site returned 200. With order emails On, new website orders become Open in Zoho on arrival. |
+| Side effect observed | Zoho marked the **draft** sales order **Open** when it was emailed ("Sales Order marked as open"), and the signed webhook to the site returned 200. With order emails On, new website orders become Open in Zoho on arrival — **accepted by the owner on 2026-10-17; order emails stay On.** |
