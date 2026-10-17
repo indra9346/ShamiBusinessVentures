@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { Panel } from "@/components/panel/widgets";
 import { adminNav } from "@/lib/panel-nav";
@@ -57,6 +57,8 @@ function ZohoDiagnostics() {
         {output && <pre id="zoho-probe-output" className="mt-4 max-h-[60vh] overflow-auto rounded-md bg-stone-900 p-3 text-xs text-stone-100">{output}</pre>}
       </Panel>
       <ReconcilePanel />
+      <CatalogParityPanel />
+      <OrderEmailPanel />
     </PanelLayout>
   );
 }
@@ -136,6 +138,181 @@ function ReconcilePanel() {
             <p className="text-xs text-slate">Ran {new Date(report.ranAt).toLocaleString("en-IN")}.</p>
           </div>
         )}
+      </Panel>
+    </div>
+  );
+}
+
+type CatalogReport = Awaited<ReturnType<typeof import("@/lib/zoho-commerce.functions").reconcileZohoCatalog>>;
+
+const CATALOG_LABELS: Record<string, string> = {
+  not_linked: "Not linked to a Zoho item",
+  missing_in_zoho: "Linked item missing in Zoho",
+  sku_mismatch: "SKU differs",
+  price_mismatch: "Price differs",
+  stock_mismatch: "Stock differs",
+  inactive_in_zoho: "Inactive in Zoho",
+  not_linked_with_orders: "Ordered but no Zoho contact",
+  contact_missing_in_zoho: "Linked contact missing in Zoho",
+};
+
+/** Read-only parity: products (SKU, price, stock, status) and customers against Zoho. */
+function CatalogParityPanel() {
+  const [busy, setBusy] = useState(false);
+  const [report, setReport] = useState<CatalogReport | null>(null);
+  const [error, setError] = useState("");
+  const rows = report ? [
+    ...report.catalog.issues.map((row) => ({ key: `p-${row.productId}-${row.issue}`, who: row.name, issue: row.issue, detail: row.detail })),
+    ...report.customers.issues.map((row) => ({ key: `c-${row.userId}-${row.issue}`, who: row.name, issue: row.issue, detail: row.detail })),
+  ] : [];
+  return (
+    <div className="mt-6">
+      <Panel title="Products, stock and customers">
+        <p className="mb-3 text-sm text-slate">
+          Compares every Grain Bazar product (SKU, price, stock, active) with its Zoho item, and customers who ordered with their Zoho contact.
+          Read-only: nothing is created or changed in either system.
+        </p>
+        <Button
+          className="bg-navy text-white hover:bg-navy/90"
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            setError("");
+            try {
+              const { reconcileZohoCatalog } = await import("@/lib/zoho-commerce.functions");
+              setReport(await reconcileZohoCatalog());
+            } catch (cause) {
+              setError(cause instanceof Error ? cause.message : String(cause));
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          {busy ? "Comparing…" : "Run parity check"}
+        </Button>
+        {error && <p role="alert" className="mt-3 text-sm text-danger">{error}</p>}
+        {report && (
+          <div className="mt-4 space-y-3 text-sm">
+            <p className="text-navy">
+              Products: <strong>{report.catalog.checked}</strong> checked · <strong className="text-emerald-700">{report.catalog.inSync}</strong> in sync ·{" "}
+              <strong className={report.catalog.issues.length ? "text-amber-700" : "text-emerald-700"}>{report.catalog.issues.length}</strong> to review
+              {report.catalog.zohoOnly > 0 && ` · ${report.catalog.zohoOnly} Zoho items not used by the website`}
+            </p>
+            <p className="text-navy">
+              Customers: <strong>{report.customers.checked}</strong> accounts · <strong>{report.customers.linked}</strong> linked to Zoho ·{" "}
+              {report.customers.notLinkedNoOrders} not linked yet (no orders, linked on first order) ·{" "}
+              <strong className={report.customers.issues.length ? "text-amber-700" : "text-emerald-700"}>{report.customers.issues.length}</strong> to review
+            </p>
+            {(report.itemsTruncated || report.stockTruncated || report.stockNotChecked > 0 || !report.contactsChecked) && (
+              <p className="text-xs text-amber-700">
+                {report.itemsTruncated && "Only the first 2,000 Zoho items were read. "}
+                {report.stockTruncated && "Stock was compared for the first 60 linked products only. "}
+                {report.stockNotChecked > 0 && `${report.stockNotChecked} items' stock could not be read from Zoho. `}
+                {!report.contactsChecked && "Zoho has more than 2,000 contacts, so contact existence was not checked."}
+              </p>
+            )}
+            {rows.length > 0 && (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="text-slate"><tr><th className="py-1 pr-3">Product / customer</th><th className="py-1 pr-3">Issue</th><th className="py-1">Detail</th></tr></thead>
+                  <tbody>
+                    {rows.map((row) => (
+                      <tr key={row.key} className="border-t align-top">
+                        <td className="py-1.5 pr-3 font-semibold text-navy">{row.who}</td>
+                        <td className="py-1.5 pr-3 whitespace-nowrap">{CATALOG_LABELS[row.issue] ?? row.issue}</td>
+                        <td className="py-1.5 text-slate">{row.detail}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <p className="text-xs text-slate">Ran {new Date(report.ranAt).toLocaleString("en-IN")} · {report.zohoItemsFetched} Zoho items read.</p>
+          </div>
+        )}
+      </Panel>
+    </div>
+  );
+}
+
+/**
+ * Official Zoho notification for each new website order: Zoho Books "Email a sales order".
+ * Off by default; needs Zoho re-authorized with Zoho Books permission.
+ */
+function OrderEmailPanel() {
+  const [loaded, setLoaded] = useState(false);
+  const [enabled, setEnabled] = useState(false);
+  const [recipients, setRecipients] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  useEffect(() => {
+    void import("@/lib/zoho-commerce.functions")
+      .then(({ getZohoOrderEmailConfig }) => getZohoOrderEmailConfig())
+      .then((config) => { setEnabled(config.enabled); setRecipients(config.to.join(", ")); })
+      .catch(() => setMessage("Could not load the current setting."))
+      .finally(() => setLoaded(true));
+  }, []);
+  const save = async (next: boolean) => {
+    setBusy(true);
+    setMessage("");
+    try {
+      const { setZohoOrderEmailConfig } = await import("@/lib/zoho-commerce.functions");
+      const saved = await setZohoOrderEmailConfig({ data: { enabled: next, to: recipients.split(/[\s,;]+/).filter(Boolean) } });
+      setEnabled(saved.enabled);
+      setRecipients(saved.to.join(", "));
+      setMessage(saved.enabled ? "On: Zoho will email each new website order to these addresses." : "Off: no Zoho order emails are sent.");
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="mt-6">
+      <Panel title="Zoho order emails">
+        <p className="mb-3 text-sm text-slate">
+          When a website order reaches Zoho, Zoho Books can email that sales order (official "Email a sales order") from your Zoho organization to the
+          addresses below. Zoho workflow email alerts do not fire for orders created by the website, so this is the Zoho route for new-order emails.
+          Needs Zoho re-authorized once with Zoho Books permission.
+        </p>
+        <div className="grid gap-2 sm:max-w-xl">
+          <label className="text-sm font-semibold text-navy" htmlFor="zoho-order-email-to">Send to (up to 5, comma separated)</label>
+          <input
+            id="zoho-order-email-to"
+            className="rounded-md border px-3 py-2 text-sm"
+            value={recipients}
+            disabled={!loaded || busy}
+            onChange={(e) => setRecipients(e.target.value)}
+            placeholder="orders@yourbusiness.com"
+            autoComplete="off"
+          />
+          <div className="flex flex-wrap gap-2">
+            <Button className="bg-navy text-white hover:bg-navy/90" disabled={!loaded || busy} onClick={() => void save(true)}>
+              {enabled ? "Save recipients" : "Turn on"}
+            </Button>
+            {enabled && <Button variant="outline" disabled={busy} onClick={() => void save(false)}>Turn off</Button>}
+            <Button
+              variant="outline"
+              disabled={busy}
+              onClick={async () => {
+                setBusy(true);
+                setMessage("");
+                try {
+                  const { checkZohoBooksAccess } = await import("@/lib/zoho-commerce.functions");
+                  setMessage((await checkZohoBooksAccess()).message);
+                } catch (cause) {
+                  setMessage(cause instanceof Error ? cause.message : String(cause));
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              Check Zoho Books access
+            </Button>
+          </div>
+          <p className="text-xs text-slate">Status: {loaded ? (enabled ? "On" : "Off") : "Loading…"}</p>
+          {message && <p role="status" className="text-sm text-navy">{message}</p>}
+        </div>
       </Panel>
     </div>
   );

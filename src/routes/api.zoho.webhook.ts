@@ -48,7 +48,12 @@ export const Route = createFileRoute("/api/zoho/webhook")({
         const signature = request.headers.get("x-zoho-webhook-signature");
         const secret = process.env["ZOHO_WEBHOOK_SECRET"] ?? "";
         if (signature) {
-          const matched = secret ? await verifyZohoSignature(body, signature, secret) : null;
+          const matched = secret
+            ? await verifyZohoSignature(body, signature, secret, {
+              query: [...new URL(request.url).searchParams.entries()],
+              contentType: request.headers.get("content-type"),
+            })
+            : null;
           if (!matched) {
             console.warn(zohoLogLine("webhook_rejected", {
               reason: secret ? "bad signature" : "signed call but ZOHO_WEBHOOK_SECRET is not set",

@@ -5,7 +5,10 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import type { Database, Json } from "@/integrations/supabase/types";
 import { PICKUP_SETTINGS_KEY, parsePickupSettings, pickupPointForPin } from "@/lib/pickup-points";
 import { isMeasureUnit, toBaseQuantity } from "@/lib/data";
-import { reconcileOrders, shouldRetryZohoCall, zohoLogLine, zohoOrderNumber, zohoRetryDelayMs, type ZohoOrderForReconcile } from "@/lib/zoho-sync-core";
+import {
+  cleanEmailList, newOrderEmail, reconcileCatalog, reconcileCustomers, reconcileOrders, shouldRetryZohoCall, zohoLogLine,
+  zohoOrderNumber, zohoRetryDelayMs, type AppProductForParity, type ZohoItemForParity, type ZohoOrderForReconcile,
+} from "@/lib/zoho-sync-core";
 
 const REGIONS = {
   com: ["https://accounts.zoho.com", "https://commerce.zoho.com", "https://www.zohoapis.com"],
@@ -140,7 +143,7 @@ export const startZohoAuthorization = createServerFn({ method: "POST" })
       response_type: "code",
       client_id: reqEnv("ZOHO_CLIENT_ID"),
       scope:
-        "ZohoCommerce.items.READ,ZohoCommerce.items.CREATE,ZohoCommerce.items.UPDATE,ZohoCommerce.coupons.READ,ZohoCommerce.coupons.CREATE,ZohoCommerce.coupons.UPDATE,ZohoCommerce.salesorders.READ,ZohoCommerce.salesorders.CREATE,ZohoCommerce.salesorders.UPDATE,ZohoCommerce.settings.READ,ZohoCommerce.settings.UPDATE,ZohoCommerce.sitesIndex.READ,ZohoCommerce.webhooks.READ,ZohoCommerce.webhooks.CREATE,ZohoInventory.contacts.READ,ZohoInventory.contacts.CREATE,ZohoInventory.contacts.UPDATE,ZohoInventory.items.READ,ZohoInventory.items.CREATE,ZohoInventory.items.UPDATE,ZohoInventory.salesorders.READ,ZohoInventory.salesorders.CREATE,ZohoInventory.salesorders.UPDATE,ZohoInventory.inventoryadjustments.READ,ZohoInventory.inventoryadjustments.CREATE,ZohoInventory.settings.READ",
+        "ZohoCommerce.items.READ,ZohoCommerce.items.CREATE,ZohoCommerce.items.UPDATE,ZohoCommerce.coupons.READ,ZohoCommerce.coupons.CREATE,ZohoCommerce.coupons.UPDATE,ZohoCommerce.salesorders.READ,ZohoCommerce.salesorders.CREATE,ZohoCommerce.salesorders.UPDATE,ZohoCommerce.settings.READ,ZohoCommerce.settings.UPDATE,ZohoCommerce.sitesIndex.READ,ZohoCommerce.webhooks.READ,ZohoCommerce.webhooks.CREATE,ZohoInventory.contacts.READ,ZohoInventory.contacts.CREATE,ZohoInventory.contacts.UPDATE,ZohoInventory.items.READ,ZohoInventory.items.CREATE,ZohoInventory.items.UPDATE,ZohoInventory.salesorders.READ,ZohoInventory.salesorders.CREATE,ZohoInventory.salesorders.UPDATE,ZohoInventory.inventoryadjustments.READ,ZohoInventory.inventoryadjustments.CREATE,ZohoInventory.settings.READ,ZohoBooks.salesorders.CREATE",
       redirect_uri: redirectUri,
       access_type: "offline",
       prompt: "consent",
@@ -1865,6 +1868,19 @@ async function zohoLineItemsForOrder(
   items: GrainBazarOrderItem[],
 ) {
   const lineItems: Record<string, unknown>[] = [];
+  // HSN for each line: the product's HSN in Grain Bazar, else the Zoho item's (read from the item
+  // record, since Zoho's list response does not document hsn_or_sac). Zoho (GST) refuses to save a
+  // sales order whose lines lack a 6-8 digit HSN, which would block every later edit in Zoho.
+  const validHsn = (value: unknown) => {
+    const hsn = str(value).replace(/\s/g, "");
+    return /^\d{6,8}$/.test(hsn) ? hsn : "";
+  };
+  const productIds = [...new Set(items.map((item) => item.product_id).filter((id): id is string => Boolean(id)))];
+  const appHsn = new Map<string, string>();
+  if (productIds.length) {
+    const { data: rows } = await db.from("catalog_products").select("id,payload").in("id", productIds);
+    for (const row of rows ?? []) appHsn.set(row.id, validHsn(plainObject(row.payload)["hsn"]));
+  }
   for (const item of items) {
     if (!item.sku) throw new NeedsReviewError(`Product ${item.product_name} has no SKU for Zoho item matching`);
     const result = await inventoryRequest<{ items?: Record<string, unknown>[] }>(region, organizationId, token, "items", "GET", undefined, { search_text: item.sku, per_page: "200" });
@@ -1879,12 +1895,19 @@ async function zohoLineItemsForOrder(
       }
     }
     if (matches.length !== 1) throw new NeedsReviewError(matches.length ? `SKU ${item.sku} matches multiple Zoho items` : `SKU ${item.sku} has no active Zoho Inventory item; map this product before order sync`);
-    // Carry the item's HSN code onto the line: Zoho (GST) refuses to save a sales order whose
-    // lines have no 6+ digit HSN, so a blank line would block every later edit in Zoho.
-    const hsn = str(matches[0]!["hsn_or_sac"]).replace(/\s/g, "");
+    const zohoItemId = str(matches[0]!["item_id"]);
+    let hsn = (item.product_id ? appHsn.get(item.product_id) : "") || validHsn(matches[0]!["hsn_or_sac"]);
+    if (!hsn) {
+      try {
+        const detail = await inventoryRequest<{ item?: Record<string, unknown> }>(region, organizationId, token, `items/${encodeURIComponent(zohoItemId)}`, "GET");
+        hsn = validHsn(detail.item?.["hsn_or_sac"]);
+      } catch {
+        // No HSN available: the line is sent without one (Zoho then asks for it on edit).
+      }
+    }
     lineItems.push({
-      item_id: str(matches[0]!["item_id"]), name: item.product_name, quantity: item.qty, rate: item.unit_price, tax_percentage: item.gst_rate,
-      ...(/^\d{6,8}$/.test(hsn) ? { hsn_or_sac: hsn } : {}),
+      item_id: zohoItemId, name: item.product_name, quantity: item.qty, rate: item.unit_price, tax_percentage: item.gst_rate,
+      ...(hsn ? { hsn_or_sac: hsn } : {}),
     });
   }
   return lineItems;
@@ -2549,6 +2572,19 @@ async function syncZohoOrder(db: Awaited<ReturnType<typeof dbAdmin>>, region: Re
   const { error: saveError } = await db.from("orders").update({ zoho_salesorder_id: salesOrderId }).eq("id", order.id).is("zoho_salesorder_id", null);
   if (saveError) throw new Error("Zoho sales order created, but its ID could not be stored; retry will check Zoho's unique order number");
   await saveZohoZohoState(db, order.id, created.salesorder ?? {});
+  // Official Zoho notification: Zoho Books "Email a sales order" (Books workflow email alerts do
+  // not fire for orders created through the API). Never blocks or fails the order sync.
+  try {
+    const outcome = await emailNewZohoOrder(db, region, organizationId, token, salesOrderId, {
+      number: safeNumber,
+      customer: order.customer_name ?? "",
+      total: Number(created.salesorder?.["total"] ?? order.total) || 0,
+      delivery: str(order.shipping_method),
+    });
+    if (outcome === "sent") console.info(zohoLogLine("order_email_sent", { order: safeNumber, zohoId: salesOrderId }));
+  } catch (cause) {
+    console.warn(zohoLogLine("order_email_failed", { order: safeNumber, zohoId: salesOrderId, error: cause instanceof Error ? cause.message : "unknown" }));
+  }
   await assertVisibleInZohoCommerce(region, organizationId, token, salesOrderId, safeNumber);
   const zohoTotal = Number(created.salesorder?.["total"]);
   if (Number.isFinite(zohoTotal) && Math.abs(zohoTotal - Number(order.total)) > 2.00)
@@ -3773,4 +3809,197 @@ export const reconcileZohoOrders = createServerFn({ method: "POST" })
     const report = reconcileOrders((orders ?? []).map((o) => ({ ...o, total: Number(o.total) })), zohoOrders);
     console.info(zohoLogLine("reconcile_finished", { days: data.days, checked: report.checked, inSync: report.inSync, issues: report.issues.length, zohoFetched: zohoOrders.length, truncated }));
     return { ...report, days: data.days, zohoFetched: zohoOrders.length, truncated, ranAt: new Date().toISOString() };
+  });
+
+
+// ---------------------------------------------------------------- official Zoho order emails
+const ORDER_EMAIL_SETTING = "zoho_order_email";
+type OrderEmailConfig = { enabled: boolean; to: string[] };
+
+async function readOrderEmailConfig(db: Awaited<ReturnType<typeof dbAdmin>>): Promise<OrderEmailConfig> {
+  const { data } = await db.from("settings").select("value").eq("key", ORDER_EMAIL_SETTING).maybeSingle();
+  const value = plainObject(data?.value);
+  const to = Array.isArray(value["to"]) ? cleanEmailList(value["to"].map((entry) => str(entry))) : [];
+  return { enabled: value["enabled"] === true && to.length > 0, to };
+}
+
+/** Zoho Books API v3 (same organization as Inventory). */
+async function booksRequest<T>(region: Region, organizationId: string, token: string, resource: string, method: "GET" | "POST", body?: Record<string, unknown>) {
+  const url = new URL(`${REGIONS[region][2]}/books/v3/${resource}`);
+  url.searchParams.set("organization_id", organizationId);
+  const response = await fetch(url, {
+    method,
+    headers: { Authorization: `Zoho-oauthtoken ${token}`, ...(body ? { "content-type": "application/json" } : {}) },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+    signal: AbortSignal.timeout(20_000),
+  });
+  const data = (await response.json().catch(() => ({}))) as T & { code?: number; message?: string };
+  if (!response.ok || data.code !== 0) throw new Error(data.message ?? `Zoho Books ${resource} failed (${response.status})`);
+  return data;
+}
+
+/**
+ * Zoho Books "Email a sales order" (POST /books/v3/salesorders/{id}/email, scope
+ * ZohoBooks.salesorders.CREATE). Sent once, when the website order's Zoho sales order is created.
+ */
+async function emailNewZohoOrder(
+  db: Awaited<ReturnType<typeof dbAdmin>>,
+  region: Region,
+  organizationId: string,
+  token: string,
+  salesOrderId: string,
+  order: { number: string; customer: string; total: number; delivery: string },
+): Promise<"off" | "sent"> {
+  const config = await readOrderEmailConfig(db);
+  if (!config.enabled) return "off";
+  const email = newOrderEmail(order);
+  await booksRequest(region, organizationId, token, `salesorders/${encodeURIComponent(salesOrderId)}/email`, "POST", {
+    to_mail_ids: config.to,
+    subject: email.subject,
+    body: email.body,
+    send_from_org_email_id: true,
+  });
+  return "sent";
+}
+
+export const getZohoOrderEmailConfig = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    await ensureAdmin(context.supabase, context.userId);
+    return readOrderEmailConfig(await dbAdmin());
+  });
+
+export const setZohoOrderEmailConfig = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator(z.object({ enabled: z.boolean(), to: z.array(z.string().max(200)).max(10) }))
+  .handler(async ({ data, context }) => {
+    await ensureAdmin(context.supabase, context.userId);
+    const to = cleanEmailList(data.to);
+    if (data.enabled && !to.length) throw new Error("Add at least one valid email address before turning Zoho order emails on.");
+    const db = await dbAdmin();
+    const { error } = await db.from("settings").upsert({
+      key: ORDER_EMAIL_SETTING,
+      value: { enabled: data.enabled, to } as unknown as Json,
+      is_public: false,
+      updated_at: new Date().toISOString(),
+    });
+    if (error) throw new Error("Could not save the Zoho order email setting");
+    console.info(zohoLogLine("order_email_setting_changed", { enabled: data.enabled, recipients: to.length }));
+    return { enabled: data.enabled && to.length > 0, to };
+  });
+
+/** Checks (read-only) whether the Zoho connection can call Zoho Books, i.e. has been re-authorized with the Books scope. */
+export const checkZohoBooksAccess = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    await ensureAdmin(context.supabase, context.userId);
+    const { region, organizationId, token } = await zohoOrderContext(await dbAdmin());
+    try {
+      await booksRequest(region, organizationId, token, "salesorders?per_page=1", "GET");
+      return { ok: true as const, message: "Zoho Books access works." };
+    } catch (cause) {
+      return { ok: false as const, message: `${cause instanceof Error ? cause.message : "Zoho Books refused the request"}. Re-authorize Zoho (Admin > Zoho > Reauthorize) to grant Zoho Books permission.` };
+    }
+  });
+
+// ---------------------------------------------------------------- product / stock / customer parity
+/**
+ * Read-only parity report: Grain Bazar products (SKU, price, stock, active) against their linked
+ * Zoho items, and Grain Bazar customers against their linked Zoho contacts. Uses documented Zoho
+ * Inventory list endpoints (page / per_page / page_context.has_more_page) and the item record for
+ * available-for-sale stock (not part of the documented list response). Changes nothing.
+ */
+export const reconcileZohoCatalog = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    await ensureAdmin(context.supabase, context.userId);
+    const db = await dbAdmin();
+    const { region, organizationId, token } = await zohoOrderContext(db);
+    const [productsResult, itemLinksResult, contactLinksResult, rolesResult, profilesResult, ordersResult] = await Promise.all([
+      db.from("catalog_products").select("id,active,status,payload"),
+      db.from("zoho_item_links").select("product_id,zoho_item_id"),
+      db.from("zoho_contact_links").select("user_id,contact_type,zoho_contact_id"),
+      db.from("user_roles").select("user_id,role").eq("role", "customer"),
+      db.from("profiles").select("id,full_name,email"),
+      db.from("orders").select("user_id").not("user_id", "is", null).limit(5000),
+    ]);
+    for (const result of [productsResult, itemLinksResult, contactLinksResult, rolesResult, profilesResult, ordersResult])
+      if (result.error) throw new Error("Could not read Grain Bazar data for the parity check");
+
+    const products: AppProductForParity[] = (productsResult.data ?? [])
+      .filter((row) => row.status !== "rejected")
+      .map((row) => {
+        const payload = plainObject(row.payload);
+        return {
+          id: row.id,
+          name: str(payload["name"]) || row.id,
+          sku: str(payload["sku"]).trim(),
+          price: finiteNumber(payload["price"]),
+          stock: finiteNumber(payload["stock"]),
+          active: row.active,
+        };
+      });
+    const itemLinks = new Map((itemLinksResult.data ?? []).map((row) => [row.product_id, row.zoho_item_id]));
+
+    // Zoho items (all statuses), documented pagination; at most 10 pages of 200.
+    const zohoItems = new Map<string, ZohoItemForParity>();
+    let itemsTruncated = false;
+    for (let page = 1; ; page += 1) {
+      const result = await inventoryRequest<{ items?: Record<string, unknown>[]; page_context?: { has_more_page?: boolean } }>(
+        region, organizationId, token, "items", "GET", undefined, { filter_by: "Status.All", page: String(page), per_page: "200" },
+      );
+      for (const row of result.items ?? []) {
+        const id = str(row["item_id"]);
+        zohoItems.set(id, { item_id: id, sku: str(row["sku"]), name: str(row["name"]), rate: finiteNumber(row["rate"]), available: null, status: str(row["status"]) });
+      }
+      if (!result.page_context?.has_more_page) break;
+      if (page >= 10) { itemsTruncated = true; break; }
+    }
+    // Available-for-sale per linked item, from the item record (documented); capped per run.
+    const STOCK_READS = 60;
+    const linkedForStock = products.filter((product) => itemLinks.has(product.id) && zohoItems.has(itemLinks.get(product.id)!)).slice(0, STOCK_READS);
+    const stockTruncated = products.filter((product) => itemLinks.has(product.id)).length > linkedForStock.length;
+    await runPool(linkedForStock, 3, async (product) => {
+      const zohoId = itemLinks.get(product.id)!;
+      try {
+        const detail = await inventoryRequest<{ item?: Record<string, unknown> }>(region, organizationId, token, `items/${encodeURIComponent(zohoId)}`, "GET");
+        const current = zohoItems.get(zohoId);
+        if (current && detail.item) zohoItems.set(zohoId, { ...current, available: zohoAvailableForSale(detail.item) });
+      } catch {
+        // Unreadable item: its stock is not compared (shown as not checked).
+      }
+    });
+    const catalog = reconcileCatalog(products, itemLinks, [...zohoItems.values()]);
+
+    // Customers vs Zoho contacts.
+    const names = new Map((profilesResult.data ?? []).map((row) => [row.id, row.full_name || row.email || row.id]));
+    const withOrders = new Set((ordersResult.data ?? []).map((row) => row.user_id as string));
+    const customers = [...new Set((rolesResult.data ?? []).map((row) => row.user_id))].map((id) => ({ id, name: names.get(id) ?? id, hasOrders: withOrders.has(id) }));
+    const contactLinks = new Map((contactLinksResult.data ?? []).filter((row) => row.contact_type === "customer").map((row) => [row.user_id, row.zoho_contact_id]));
+    let zohoContactIds: Set<string> | null = new Set();
+    for (let page = 1; ; page += 1) {
+      const result = await inventoryRequest<{ contacts?: Record<string, unknown>[]; page_context?: { has_more_page?: boolean } }>(
+        region, organizationId, token, "contacts", "GET", undefined, { page: String(page), per_page: "200" },
+      );
+      for (const row of result.contacts ?? []) zohoContactIds.add(str(row["contact_id"]));
+      if (!result.page_context?.has_more_page) break;
+      if (page >= 10) { zohoContactIds = null; break; }
+    }
+    const customerReport = reconcileCustomers(customers, contactLinks, zohoContactIds);
+
+    const notChecked = linkedForStock.filter((product) => zohoItems.get(itemLinks.get(product.id)!)?.available === null).length;
+    console.info(zohoLogLine("catalog_parity_finished", {
+      products: catalog.checked, productsInSync: catalog.inSync, productIssues: catalog.issues.length,
+      customers: customerReport.checked, customerIssues: customerReport.issues.length, stockNotChecked: notChecked,
+    }));
+    return {
+      catalog,
+      customers: customerReport,
+      zohoItemsFetched: zohoItems.size,
+      itemsTruncated,
+      stockTruncated,
+      stockNotChecked: notChecked,
+      contactsChecked: zohoContactIds !== null,
+      ranAt: new Date().toISOString(),
+    };
   });
