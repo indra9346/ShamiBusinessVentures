@@ -1879,7 +1879,13 @@ async function zohoLineItemsForOrder(
       }
     }
     if (matches.length !== 1) throw new NeedsReviewError(matches.length ? `SKU ${item.sku} matches multiple Zoho items` : `SKU ${item.sku} has no active Zoho Inventory item; map this product before order sync`);
-    lineItems.push({ item_id: str(matches[0]!["item_id"]), name: item.product_name, quantity: item.qty, rate: item.unit_price, tax_percentage: item.gst_rate });
+    // Carry the item's HSN code onto the line: Zoho (GST) refuses to save a sales order whose
+    // lines have no 6+ digit HSN, so a blank line would block every later edit in Zoho.
+    const hsn = str(matches[0]!["hsn_or_sac"]).replace(/\s/g, "");
+    lineItems.push({
+      item_id: str(matches[0]!["item_id"]), name: item.product_name, quantity: item.qty, rate: item.unit_price, tax_percentage: item.gst_rate,
+      ...(/^\d{6,8}$/.test(hsn) ? { hsn_or_sac: hsn } : {}),
+    });
   }
   return lineItems;
 }
