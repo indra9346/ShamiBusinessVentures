@@ -40,7 +40,7 @@ function LoginPage() {
   useEffect(() => {
     if (!authReady || user?.role !== "customer") return;
     if (next === "/checkout") void navigate({ to: "/checkout", search: { productId }, replace: true });
-    else void navigate({ to: "/shop", replace: true });
+    else void navigate({ to: "/", replace: true });
   }, [authReady, user?.role, next, productId, navigate]);
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
@@ -104,8 +104,8 @@ function LoginPage() {
     if (next === "/checkout") {
       navigate({ to: "/checkout", search: { productId }, replace: true });
     } else {
-      // Signed in: straight to the products to start shopping.
-      navigate({ to: "/shop", replace: true });
+      // Signed in: straight to the home page to start shopping.
+      navigate({ to: "/", replace: true });
     }
   };
 
