@@ -12,7 +12,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
-export const Route = createFileRoute("/vendor/payouts")({ component: VendorPayouts });
+export const Route = createFileRoute("/vendor/payouts")({
+  head: () => ({ meta: [{ title: "Payouts | Grain Bazar Vendor Panel" }, { name: "robots", content: "noindex" }] }),
+  component: VendorPayouts,
+});
 type Payout = { id: string; requested_at: string; amount: number; method: string; status: string; reference: string | null };
 function VendorPayouts() {
   const { vendorId } = useVendorScope();

@@ -12,7 +12,7 @@ import { useApp } from "@/lib/store";
 export const Route = createFileRoute("/vendor/notifications")({
   head: () => ({
     meta: [
-      { title: "Notifications | Shami Vendor Panel" },
+      { title: "Notifications | Grain Bazar Vendor Panel" },
       { name: "robots", content: "noindex" },
     ],
   }),

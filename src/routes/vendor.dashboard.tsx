@@ -1,20 +1,31 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { Boxes, IndianRupee, Package, ShoppingCart, Star, Users, Wallet } from "lucide-react";
-import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { DataTable, Filters, Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { vendorNav } from "@/lib/panel-nav";
-import { getOrderItemTotal, inr } from "@/lib/data";
+import { getOrderItemTotal, inr, type Order } from "@/lib/data";
 import { useVendorScope } from "@/lib/store";
+
+/** Short rupee labels for chart axes: ₹0, ₹850, ₹2.6k, ₹1.2L, ₹3.4Cr. */
+function compactInr(value: number) {
+  const trim = (n: number) => String(Math.round(n * 10) / 10);
+  if (value >= 1e7) return `₹${trim(value / 1e7)}Cr`;
+  if (value >= 1e5) return `₹${trim(value / 1e5)}L`;
+  if (value >= 1e3) return `₹${trim(value / 1e3)}k`;
+  return `₹${Math.round(value)}`;
+}
+
+const orderTime = (order: Order) => new Date(order.createdAt ?? order.date).getTime() || 0;
 
 export const Route = createFileRoute("/vendor/dashboard")({
   head: () => ({
     meta: [
-      { title: "Vendor Dashboard | Shami Business Ventures" },
+      { title: "Vendor Dashboard | Grain Bazar" },
       { name: "description", content: "Vendor sales, orders, stock and payout overview." },
-      { property: "og:title", content: "Vendor Dashboard | Shami" },
-      { property: "og:description", content: "Operational overview for Shami marketplace vendors." },
+      { property: "og:title", content: "Vendor Dashboard | Grain Bazar" },
+      { property: "og:description", content: "Operational overview for Grain Bazar marketplace vendors." },
       { name: "robots", content: "noindex" },
     ],
   }),
@@ -36,9 +47,15 @@ function VendorDashboard() {
     const date = new Date(order.createdAt ?? order.date);
     return !Number.isNaN(date.getTime()) && date >= start && date <= end;
   });
-  const periodRevenue = periodOrders.filter((order) => order.payment === "Paid" && order.status !== "Cancelled").reduce((sum, order) => sum + order.items
+  /** This vendor's share of an order (other vendors' lines are left out). */
+  const vendorAmount = (order: Order) => order.items
     .filter((item) => item.vendorId === vendorId)
-    .reduce((subtotal, item) => subtotal + getOrderItemTotal(item), 0), 0);
+    .reduce((subtotal, item) => subtotal + getOrderItemTotal(item), 0);
+  const isPaid = (order: Order) => order.payment === "Paid" && order.status !== "Cancelled";
+  const periodRevenue = periodOrders.filter(isPaid).reduce((sum, order) => sum + vendorAmount(order), 0);
+  const liveOrders = periodOrders.filter((order) => order.status !== "Cancelled");
+  const bookedValue = liveOrders.reduce((sum, order) => sum + vendorAmount(order), 0);
+  const awaitingPayment = liveOrders.filter((order) => order.payment !== "Paid").length;
 
   const bucketStarts: Date[] = [];
   if (period === "This Year") {
@@ -60,7 +77,7 @@ function VendorDashboard() {
     return { start: bucketStart, end: bucketEnd, month: period === "This Year"
       ? bucketStart.toLocaleDateString("en-IN", { month: "short" })
       : period === "This Month" ? `${bucketStart.getDate()}–${Math.min(bucketStart.getDate() + 6, new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate())}`
-        : period === "This Week" ? bucketStart.toLocaleDateString("en-IN", { weekday: "short" }) : "Today", revenue: 0, orders: 0 };
+        : period === "This Week" ? bucketStart.toLocaleDateString("en-IN", { weekday: "short" }) : "Today", revenue: 0, booked: 0, orders: 0 };
   });
   for (const order of periodOrders) {
     const parsedDate = new Date(order.createdAt ?? order.date);
@@ -68,10 +85,13 @@ function VendorDashboard() {
     const bucket = salesSeries.find((item) => parsedDate >= item.start && parsedDate <= item.end);
     if (!bucket) continue;
     bucket.orders += 1;
-    if (order.payment === "Paid" && order.status !== "Cancelled") bucket.revenue += order.items.filter((item) => item.vendorId === vendorId).reduce((sum, item) => sum + getOrderItemTotal(item), 0);
+    if (order.status !== "Cancelled") bucket.booked += vendorAmount(order);
+    if (isPaid(order)) bucket.revenue += vendorAmount(order);
   }
 
-  const pendingOrders = periodOrders.filter((o) => o.status !== "Delivered" && o.status !== "Cancelled").length;
+  // Open orders still need action whenever they were placed, so this one ignores the period.
+  const pendingOrders = vendorOrders.filter((o) => o.status !== "Delivered" && o.status !== "Cancelled").length;
+  const recentOrders = [...periodOrders].sort((a, b) => orderTime(b) - orderTime(a)).slice(0, 8);
   const lowStock = vendorProducts
     .filter((p) => p.stock <= 0 || p.stock < (p.minimumStock ?? 30))
     .sort((a, b) => a.stock - b.stock || a.name.localeCompare(b.name));
@@ -82,7 +102,7 @@ function VendorDashboard() {
     : 0;
   const pendingEarnings = periodOrders
     .filter((o) => o.payment === "Paid" && o.status !== "Delivered" && o.status !== "Cancelled")
-    .reduce((s, o) => s + o.items.filter((i) => i.vendorId === vendorId).reduce((t, i) => t + getOrderItemTotal(i), 0) * (1 - commission / 100), 0);
+    .reduce((s, o) => s + vendorAmount(o) * (1 - commission / 100), 0);
 
   const topProducts = [...vendorProducts].sort((a, b) => b.sold - a.sold).slice(0, 5);
 
@@ -91,9 +111,15 @@ function VendorDashboard() {
       <Filters options={["Today", "This Week", "This Month", "This Year"]} value={period} onChange={setPeriod} />
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label={`${period} Paid Sales`} value={inr(periodRevenue)} icon={IndianRupee} highlight />
+        <StatCard
+          label={`${period} Paid Sales`}
+          value={inr(periodRevenue)}
+          description={awaitingPayment ? `${inr(bookedValue)} booked · ${awaitingPayment} awaiting payment` : `${inr(bookedValue)} booked`}
+          icon={IndianRupee}
+          highlight
+        />
         <StatCard label={`${period} Orders`} value={String(periodOrders.length)} icon={ShoppingCart} />
-        <StatCard label="Pending Orders" value={String(pendingOrders)} icon={ShoppingCart} />
+        <StatCard label="Pending Orders" value={String(pendingOrders)} description="All open orders, not yet delivered" icon={ShoppingCart} />
         <StatCard label="Total Products" value={String(vendorProducts.length)} icon={Package} />
         <StatCard label="Unique Customers" value={String(uniqueCustomers)} icon={Users} />
         <StatCard label="Low Stock Products" value={String(lowStock.length)} icon={Boxes} />
@@ -101,16 +127,18 @@ function VendorDashboard() {
         <StatCard label="Pending Earnings" value={inr(pendingEarnings)} icon={Wallet} />
       </div>
 
-      <div className="mt-6 grid gap-6 xl:grid-cols-2">
+      <div className="mt-6 grid grid-cols-[minmax(0,1fr)] gap-6 xl:grid-cols-2">
         <Panel title="Sales Overview">
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={salesSeries}>
                 <CartesianGrid stroke="var(--border)" vertical={false} />
                 <XAxis dataKey="month" stroke="var(--slate)" fontSize={12} />
-                <YAxis stroke="var(--slate)" fontSize={12} tickFormatter={(v: number) => `${v / 100000}L`} />
+                <YAxis stroke="var(--slate)" fontSize={12} width={56} allowDecimals={false} tickFormatter={compactInr} />
                 <Tooltip formatter={(v: number) => inr(v)} />
-                <Line type="monotone" dataKey="revenue" stroke="var(--gold)" strokeWidth={3} dot={false} />
+                <Legend wrapperStyle={{ fontSize: 12 }} />
+                <Line type="monotone" name="Booked" dataKey="booked" stroke="var(--navy)" strokeWidth={2} strokeDasharray="5 4" dot={{ r: 3 }} />
+                <Line type="monotone" name="Paid" dataKey="revenue" stroke="var(--gold)" strokeWidth={3} dot={{ r: 3 }} />
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -121,21 +149,22 @@ function VendorDashboard() {
               <BarChart data={salesSeries}>
                 <CartesianGrid stroke="var(--border)" vertical={false} />
                 <XAxis dataKey="month" stroke="var(--slate)" fontSize={12} />
-                <YAxis stroke="var(--slate)" fontSize={12} />
+                <YAxis stroke="var(--slate)" fontSize={12} allowDecimals={false} />
                 <Tooltip />
-                <Bar dataKey="orders" fill="var(--navy)" radius={[4, 4, 0, 0]} />
+                <Bar name="Orders" dataKey="orders" fill="var(--navy)" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
         </Panel>
       </div>
 
-      <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_400px]">
+      <div className="mt-6 grid grid-cols-[minmax(0,1fr)] gap-6 xl:grid-cols-[minmax(0,1fr)_400px]">
         <Panel title="Recent Orders">
           <DataTable
             columns={["Order", "Date", "Customer", "Amount", "Payment", "Status"]}
-            rows={periodOrders.slice(0, 8).map((o) => {
-              const amt = o.items.filter((i) => i.vendorId === vendorId).reduce((t, i) => t + getOrderItemTotal(i), 0);
+            empty="No orders in this period"
+            rows={recentOrders.map((o) => {
+              const amt = vendorAmount(o);
               return [
                 <Link to="/vendor/orders/$id" params={{ id: o.id }} className="font-semibold text-navy hover:text-gold">
                   {o.id}

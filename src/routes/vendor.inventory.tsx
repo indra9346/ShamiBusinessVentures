@@ -15,10 +15,10 @@ import type { Product } from "@/lib/data";
 export const Route = createFileRoute("/vendor/inventory")({
   head: () => ({
     meta: [
-      { title: "Inventory | Shami Vendor Panel" },
+      { title: "Inventory | Grain Bazar Vendor Panel" },
       { name: "description", content: "Track stock levels and reorder alerts for your products." },
-      { property: "og:title", content: "Vendor Inventory | Shami" },
-      { property: "og:description", content: "Stock management console for Shami marketplace vendors." },
+      { property: "og:title", content: "Vendor Inventory | Grain Bazar" },
+      { property: "og:description", content: "Stock management console for Grain Bazar marketplace vendors." },
       { name: "robots", content: "noindex" },
     ],
   }),

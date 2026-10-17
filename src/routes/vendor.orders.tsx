@@ -17,10 +17,10 @@ export const Route = createFileRoute("/vendor/orders")({
   }),
   head: () => ({
     meta: [
-      { title: "Orders | Shami Vendor Panel" },
+      { title: "Orders | Grain Bazar Vendor Panel" },
       { name: "description", content: "Track and update orders containing your products." },
-      { property: "og:title", content: "Vendor Orders | Shami" },
-      { property: "og:description", content: "Order management for Shami marketplace vendors." },
+      { property: "og:title", content: "Vendor Orders | Grain Bazar" },
+      { property: "og:description", content: "Order management for Grain Bazar marketplace vendors." },
       { name: "robots", content: "noindex" },
     ],
   }),

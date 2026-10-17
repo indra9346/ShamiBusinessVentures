@@ -17,10 +17,10 @@ import { supabase } from "@/integrations/supabase/client";
 export const Route = createFileRoute("/vendor/earnings")({
   head: () => ({
     meta: [
-      { title: "Earnings | Shami Vendor Panel" },
+      { title: "Earnings | Grain Bazar Vendor Panel" },
       { name: "description", content: "Track revenue, commission and payouts for your store." },
-      { property: "og:title", content: "Vendor Earnings | Shami" },
-      { property: "og:description", content: "Earnings breakdown for Shami marketplace vendors." },
+      { property: "og:title", content: "Vendor Earnings | Grain Bazar" },
+      { property: "og:description", content: "Earnings breakdown for Grain Bazar marketplace vendors." },
       { name: "robots", content: "noindex" },
     ],
   }),

@@ -1,11 +1,18 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useState, type ChangeEvent } from "react";
+import { useMemo, useState, type ChangeEvent } from "react";
 import { toast } from "sonner";
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { Panel } from "@/components/panel/widgets";
 import { vendorNav } from "@/lib/panel-nav";
 import { type Product } from "@/lib/data";
-import { useApp } from "@/lib/store";
+import { useApp, useVendorScope } from "@/lib/store";
+import {
+  ProductTradeFields,
+  emptyTradeFields,
+  productPatchFromFields,
+  validateTradeFields,
+  type TradeFieldsState,
+} from "@/components/panel/ProductTradeFields";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -17,10 +24,10 @@ import { defaultGstForCategory, loadTaxSettings } from "@/lib/business-rules";
 export const Route = createFileRoute("/vendor/products/add")({
   head: () => ({
     meta: [
-      { title: "Add Product | Shami Vendor Panel" },
-      { name: "description", content: "List a new product on the Shami marketplace." },
-      { property: "og:title", content: "Add Product | Shami Vendor" },
-      { property: "og:description", content: "Create a new catalogue entry as a Shami vendor." },
+      { title: "Add Product | Grain Bazar Vendor Panel" },
+      { name: "description", content: "List a new product on the Grain Bazar marketplace." },
+      { property: "og:title", content: "Add Product | Grain Bazar Vendor" },
+      { property: "og:description", content: "Create a new catalogue entry as a Grain Bazar vendor." },
       { name: "robots", content: "noindex" },
     ],
   }),
@@ -28,7 +35,8 @@ export const Route = createFileRoute("/vendor/products/add")({
 });
 
 function VendorAddProduct() {
-  const { addProduct, categories } = useApp();
+  const { addProduct, categories, products } = useApp();
+  const { vendor } = useVendorScope();
   const navigate = useNavigate();
 
   const [name, setName] = useState("");
@@ -45,6 +53,15 @@ function VendorAddProduct() {
   const [status, setStatus] = useState<Product["status"]>("pending");
   const [image, setImage] = useState("");
   const [imageUploading, setImageUploading] = useState(false);
+  const [trade, setTrade] = useState<TradeFieldsState>(() => emptyTradeFields(""));
+  const brandChoices = useMemo(
+    () => [...new Set(products.map((p) => p.brand?.trim()).filter((b): b is string => !!b))].sort(),
+    [products],
+  );
+  const manufacturerChoices = useMemo(
+    () => [...new Set(products.map((p) => p.manufacturer?.trim()).filter((m): m is string => !!m))].sort(),
+    [products],
+  );
   const [skuToken] = useState(() => crypto.randomUUID().replaceAll("-", "").slice(0, 8).toUpperCase());
 
   const chooseImage = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -69,12 +86,15 @@ function VendorAddProduct() {
     if (!name.trim()) { toast.error("Product name is required"); return; }
     if (!category) { toast.error("Please select a category"); return; }
     if (!subcategory) { toast.error("Please select a subcategory"); return; }
+    const tradeError = validateTradeFields(trade);
+    if (tradeError) { toast.error(tradeError); return; }
     if (!weight.trim()) { toast.error("Weight / pack size is required"); return; }
-    const mrpNum = Number(mrp);
     const priceNum = Number(price);
+    // Retail price (MRP) is optional; blank means the selling price.
+    const mrpNum = mrp.trim() ? Number(mrp) : priceNum;
     const stockNum = Number(stock);
-    if (!mrpNum || mrpNum <= 0) { toast.error("Enter a valid MRP"); return; }
     if (!priceNum || priceNum <= 0) { toast.error("Enter a valid selling price"); return; }
+    if (!mrpNum || mrpNum <= 0) { toast.error("Enter a valid MRP"); return; }
     if (priceNum > mrpNum) { toast.error("Selling price cannot exceed MRP"); return; }
     if (!stock.trim() || !Number.isFinite(stockNum) || stockNum < 0) { toast.error("Enter a valid stock quantity"); return; }
     if (!description.trim()) { toast.error("Description is required"); return; }
@@ -84,11 +104,12 @@ function VendorAddProduct() {
     const id = `P-${crypto.randomUUID()}`;
     const today = new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
 
+    const tradePatch = productPatchFromFields(trade);
     const product: Product = {
+      ...tradePatch,
       id,
       name: name.trim(),
       sku,
-      brand: "Shami Select",
       vendor: "",
       vendorId: "",
       category,
@@ -125,7 +146,7 @@ function VendorAddProduct() {
   };
 
   return (
-    <PanelLayout items={vendorNav} tone="vendor" title="Add Product" subtitle="List a new product for Shami Sugar Mills">
+    <PanelLayout items={vendorNav} tone="vendor" title="Add Product" subtitle={vendor ? `List a new product for ${vendor.business}` : "List a new product"}>
       <Panel title="Product Details">
         <div className="grid gap-4 lg:grid-cols-2">
           <div className="grid gap-1.5">
@@ -141,6 +162,9 @@ function VendorAddProduct() {
             <Select value={category} onValueChange={(v) => {
               setCategory(v);
               setSubcategory("");
+              setTrade((current) => current.basisRate
+                ? current
+                : { ...emptyTradeFields(v), brand: current.brand, manufacturer: current.manufacturer, hsn: current.hsn });
               void loadTaxSettings().then((settings) => setGst(String(defaultGstForCategory(settings, v))))
                 .catch((error: unknown) => toast.error("Could not load GST defaults", { description: error instanceof Error ? error.message : "Using the current product rate." }));
             }}>
@@ -163,9 +187,18 @@ function VendorAddProduct() {
               </SelectContent>
             </Select>
           </div>
+          <div className="lg:col-span-2">
+            <ProductTradeFields
+              value={trade}
+              onChange={setTrade}
+              onPrice={(nextPrice, packSize) => { setPrice(String(nextPrice)); setWeight(packSize); }}
+              brands={brandChoices}
+              manufacturers={manufacturerChoices}
+            />
+          </div>
           <div className="grid gap-1.5">
             <Label>Weight / Pack Size</Label>
-            <Input value={weight} onChange={(e) => setWeight(e.target.value)} placeholder="e.g. 50 kg" />
+            <Input value={weight} onChange={(e) => setWeight(e.target.value)} readOnly={trade.useRate} placeholder="e.g. 50 kg" />
           </div>
           <div className="grid gap-1.5">
             <Label>GST %</Label>
@@ -180,12 +213,19 @@ function VendorAddProduct() {
             </Select>
           </div>
           <div className="grid gap-1.5">
-            <Label>MRP (₹)</Label>
+            <Label>MRP (₹, optional)</Label>
             <Input type="number" value={mrp} onChange={(e) => setMrp(e.target.value)} placeholder="e.g. 2650" />
           </div>
           <div className="grid gap-1.5">
             <Label>Selling Price (₹)</Label>
-            <Input type="number" value={price} onChange={(e) => setPrice(e.target.value)} placeholder="e.g. 2399" />
+            <Input
+              type="number"
+              value={price}
+              onChange={(e) => setPrice(e.target.value)}
+              readOnly={trade.useRate}
+              title={trade.useRate ? "Worked out from the rate per quintal above" : undefined}
+              placeholder="e.g. 2399"
+            />
           </div>
           <div className="grid gap-1.5">
             <Label>Opening Stock</Label>

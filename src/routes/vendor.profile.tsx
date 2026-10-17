@@ -15,10 +15,10 @@ import { uploadCatalogImage } from "@/lib/catalog-images";
 export const Route = createFileRoute("/vendor/profile")({
   head: () => ({
     meta: [
-      { title: "Store Profile | Shami Vendor Panel" },
+      { title: "Store Profile | Grain Bazar Vendor Panel" },
       { name: "description", content: "Manage your vendor business profile and KYC documents." },
-      { property: "og:title", content: "Vendor Profile | Shami" },
-      { property: "og:description", content: "Business profile management for Shami marketplace vendors." },
+      { property: "og:title", content: "Vendor Profile | Grain Bazar" },
+      { property: "og:description", content: "Business profile management for Grain Bazar marketplace vendors." },
       { name: "robots", content: "noindex" },
     ],
   }),

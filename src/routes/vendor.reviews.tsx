@@ -14,9 +14,9 @@ import { Textarea } from "@/components/ui/textarea";
 export const Route = createFileRoute("/vendor/reviews")({
   head: () => ({
     meta: [
-      { title: "Reviews | Shami Vendor Panel" },
+      { title: "Reviews | Grain Bazar Vendor Panel" },
       { name: "description", content: "Customer reviews and ratings for your products." },
-      { property: "og:title", content: "Vendor Reviews | Shami" },
+      { property: "og:title", content: "Vendor Reviews | Grain Bazar" },
       { property: "og:description", content: "Manage and respond to customer reviews." },
       { name: "robots", content: "noindex" },
     ],

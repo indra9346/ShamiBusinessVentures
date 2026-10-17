@@ -13,9 +13,9 @@ import { cn } from "@/lib/utils";
 export const Route = createFileRoute("/vendor/orders/$id")({
   head: ({ params }) => ({
     meta: [
-      { title: `Order ${params.id} | Shami Vendor Panel` },
+      { title: `Order ${params.id} | Grain Bazar Vendor Panel` },
       { name: "description", content: "Vendor order detail, items and status timeline." },
-      { property: "og:title", content: `Order ${params.id} | Shami Vendor` },
+      { property: "og:title", content: `Order ${params.id} | Grain Bazar Vendor` },
       { property: "og:description", content: "Detailed vendor order view." },
       { name: "robots", content: "noindex" },
     ],
