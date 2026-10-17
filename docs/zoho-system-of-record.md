@@ -62,7 +62,7 @@ Observed in this organization (live evidence, not documentation):
 | orders + order_items | Sales order via Inventory API (Commerce admin API cannot create) | **Supported, synced both ways** (status, cancel→void, fulfilment) |
 | profiles + addresses (customers) | Contacts | **Supported, partial parity** (see 8) |
 | catalog_products | Items (+ images, description, HSN) | **Supported, partial parity** (see 8) |
-| stock (app is stock master) | Item available-for-sale via inventory adjustments; locations | **Supported**; per-location stock needs Zoho transfer orders (data in Zoho is booked at Head Office) |
+| stock (app is stock master) | Item available-for-sale via inventory adjustments; locations | **Supported**. Stock moved Head Office → Challakere with transfer order TO-00001 (2026-10-17; 4 bags S1 sugar kept at Head Office for GB-ORD-24198). Stock corrections now carry the default godown's Zoho `location_id`, the same location website orders use. |
 | coupons | Commerce coupons | **Partial** — usage limits enforced in app |
 | invoices (GST PDF) | Zoho invoices | **Not moved** — app keeps its own PDF |
 | payments | Commerce payments (mark paid/refund) | **Not moved** — capture/refund state stays transactional in Supabase |
