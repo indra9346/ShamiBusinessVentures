@@ -40,6 +40,7 @@ import {
   calculateInventoryValuation,
   coupons as seedCoupons,
   customers as seedCustomers,
+  getOrderPaymentsReceived,
   inr,
   getCurrentFIFOCost,
   getAvailablePurchaseQuantity,
@@ -1421,6 +1422,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
                 : "This order has passed the cancellation stage for your account.",
             });
             return false;
+          }
+        }
+        // Admins may override the payment rules, but never by accident: confirm first.
+        if (user?.role === "admin" && typeof window !== "undefined") {
+          const paid = getOrderPaymentsReceived(existing);
+          const advancePercent = existing.advancePercent ?? 30;
+          const advanceDue = Math.round(existing.amount * advancePercent) / 100;
+          const needsFull = status === "Dispatched" || status === "Out for Delivery" || status === "Delivered";
+          const needsAdvance = status === "Accepted" || status === "Packed";
+          if ((needsFull && existing.payment !== "Paid") || (needsAdvance && paid < advanceDue)) {
+            const rule = needsFull ? "Full payment" : `The ${advancePercent}% advance (₹${advanceDue.toLocaleString("en-IN")})`;
+            const ok = window.confirm(
+              `${id} has ₹${paid.toLocaleString("en-IN")} paid of ₹${existing.amount.toLocaleString("en-IN")}. ${rule} is normally required before "${status}". Move it anyway?`,
+            );
+            if (!ok) return false;
           }
         }
         const optimisticUpdate = STATIC_DATA_MODE || user?.role !== "vendor";
