@@ -256,7 +256,7 @@ function AccountOrderDetail() {
 
       <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
         <Panel title="Items">
-          {order.items.some((item) => item.dbItemId) && order.status !== "Cancelled" && <div className="mb-4 flex justify-end"><Button variant="outline" onClick={() => setReturnOpen(true)}>Request a return</Button></div>}
+          {order.items.some((item) => item.dbItemId) && order.status === "Delivered" && <div className="mb-4 flex justify-end"><Button variant="outline" onClick={() => setReturnOpen(true)}>Request a return</Button></div>}
           <div className="overflow-x-auto">
             <table className="w-full min-w-[560px] text-sm">
               <thead>
