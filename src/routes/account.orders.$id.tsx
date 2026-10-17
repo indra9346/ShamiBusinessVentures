@@ -101,7 +101,8 @@ function AccountOrderDetail() {
           ← Back to Orders
         </Link>
         <div className="flex flex-wrap items-center gap-2">
-          <InvoicePreviewButton order={order} label="View / Download Invoice" />
+          {/* A tax invoice is issued once the order is fully paid. */}
+          {order.payment === "Paid" && <InvoicePreviewButton order={order} label="View / Download Invoice" />}
           <AlertDialog>
             <AlertDialogTrigger asChild>
               <Button

@@ -108,7 +108,10 @@ function AccountInvoices() {
             inr(o.amount),
             inr(o.tax),
             <StatusBadge status={o.payment} />,
-            <InvoicePreviewButton order={o} size="sm" label="View / Download" />,
+            // A tax invoice is issued once the order is fully paid.
+            o.payment === "Paid"
+              ? <InvoicePreviewButton order={o} size="sm" label="View / Download" />
+              : <span className="text-xs text-slate">Available after payment</span>,
           ])}
         />
       </Panel>

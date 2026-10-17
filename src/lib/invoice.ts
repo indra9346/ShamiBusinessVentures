@@ -269,7 +269,6 @@ export async function buildInvoicePdf(order: Order, options: InvoiceOptions = {}
     ["Order Date", dateText],
     ["Place of Supply", `${supplyName} (${supplyCode})`],
     ["Payment", `${order.method || "Online"} · ${order.payment}`],
-    ["Terms", balance > 0 ? "Due on Receipt" : "Paid"],
     ["Fulfilment", pickupPoint ? "Pickup from godown" : order.delivery || "Delivery"],
   ];
   pdf.setFontSize(8.5);
