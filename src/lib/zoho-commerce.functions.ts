@@ -1811,12 +1811,22 @@ async function pushCommerceDescription(
       );
     }
     if (mirrorId) {
+      const { zohoCommerceWriteError: _cleared, ...cleanPayload } = mirrorPayload;
       await db.from("catalog_products").update({
-        payload: { ...mirrorPayload, zohoSeen: { description: asZohoShowsIt, reorderLevel: seen["reorderLevel"] ?? null, at: new Date().toISOString() } } as Json,
+        payload: { ...cleanPayload, zohoSeen: { description: asZohoShowsIt, reorderLevel: seen["reorderLevel"] ?? null, at: new Date().toISOString() } } as Json,
       }).eq("id", mirrorId);
     }
   } catch (cause) {
-    console.warn(`Zoho Commerce description for ${sku} not updated; the next push retries:`, cause);
+    const message = (cause instanceof Error ? cause.message : String(cause)).slice(0, 500);
+    console.warn(`Zoho Commerce description for ${sku} not updated; the next push retries:`, message);
+    // Leave the reason on the product's Zoho Commerce copy so it can be seen and fixed.
+    if (sku) {
+      const { data: mirror } = await db.from("catalog_products").select("id,payload")
+        .like("id", "zoho-%").eq("payload->>sku", sku).limit(1).maybeSingle();
+      if (mirror) await db.from("catalog_products").update({
+        payload: { ...plainObject(mirror.payload), zohoCommerceWriteError: { message, at: new Date().toISOString() } } as Json,
+      }).eq("id", mirror.id);
+    }
   }
 }
 
