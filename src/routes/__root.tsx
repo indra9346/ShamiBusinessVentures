@@ -17,6 +17,8 @@ import { Toaster } from "@/components/ui/sonner";
 import { CartFloatingNotifier } from "@/components/site/CartFloatingNotification";
 import { AuthNoticeHost } from "@/components/site/AuthNotice";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
+import { registerStorefrontServiceWorker } from "@/lib/pwa";
+import { PwaInstallBanner } from "@/components/site/PwaInstallBanner";
 
 function NotFoundComponent() {
   return (
@@ -98,6 +100,11 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
       { name: "twitter:site", content: "@Lovable" },
+      { name: "theme-color", content: "#0B2341" },
+      { name: "mobile-web-app-capable", content: "yes" },
+      { name: "apple-mobile-web-app-capable", content: "yes" },
+      { name: "apple-mobile-web-app-title", content: "Shami" },
+      { name: "apple-mobile-web-app-status-bar-style", content: "black-translucent" },
     ],
     links: [
       {
@@ -105,6 +112,8 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
         href: appCss,
       },
       { rel: "icon", href: "/favicon.png", type: "image/png" },
+      { rel: "manifest", href: "/manifest.webmanifest" },
+      { rel: "apple-touch-icon", href: "/icons/icon-192.png" },
       { rel: "preconnect", href: "https://fonts.googleapis.com" },
       { rel: "preconnect", href: "https://fonts.gstatic.com", crossOrigin: "anonymous" },
       {
@@ -135,6 +144,9 @@ function RootShell({ children }: { children: ReactNode }) {
 
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
+  useEffect(() => {
+    registerStorefrontServiceWorker();
+  }, []);
 
   return (
     <QueryClientProvider client={queryClient}>
@@ -142,6 +154,7 @@ function RootComponent() {
       <LanguageProvider>
         <AppProvider>
           {STATIC_DATA_MODE && <div role="status" className="bg-amber-100 px-4 py-2 text-center text-xs font-semibold text-amber-950">Static preview mode: demo data only; no database, email, or payment is used. Customer demo OTPs: email 12345678, phone 123456. Admin/vendor sign-in is simulated in this preview only.</div>}
+          <PwaInstallBanner />
           <Outlet />
           <CartFloatingNotifier />
           <Toaster position="top-right" richColors />
