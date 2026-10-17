@@ -1131,6 +1131,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
           pushProductsToZohoInBackground([id]);
           return true;
         }
+        // Pausing or resuming an approved listing takes effect at once (no re-review).
+        const activeOnly = Object.keys(patch).length === 1 && patch.active !== undefined;
+        if (user?.role === "vendor" && activeOnly && existing.status === "approved" && !STATIC_DATA_MODE) {
+          const active = !!patch.active;
+          const { data: done, error } = await supabase.rpc("vendor_set_product_active", { _product_id: id, _active: active });
+          if (error || !done) {
+            toast.error(active ? "Could not resume this product" : "Could not pause this product", { description: error?.message ?? "This product is not in your store." });
+            return false;
+          }
+          setProducts((list) => list.map((p) => (p.id === id ? { ...p, active, updated: today() } : p)));
+          pushProductsToZohoInBackground([id]);
+          return true;
+        }
         const updated = { ...existing, ...patch, updated: today() };
         setProducts((list) => list.map((p) => (p.id === id ? updated : p)));
         const ok = await saveProduct(updated, user?.role === "vendor");
@@ -1142,8 +1155,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const existing = products.find((product) => product.id === id);
         if (!existing) return false;
         if (!STATIC_DATA_MODE) {
-          const { error } = await supabase.from("catalog_products").delete().eq("id", id);
+          const { data: deleted, error } = await supabase.from("catalog_products").delete().eq("id", id).select("id");
           if (error) { toast.error("Could not delete this product", { description: error.message }); return false; }
+          // Row rules remove nothing (without an error) when deletion is not allowed.
+          if (!deleted?.length) {
+            toast.error("This product cannot be deleted", {
+              description: user?.role === "vendor"
+                ? "It has orders or reviews, so its history must stay. Switch it off instead."
+                : "It may already be gone. Refresh the page.",
+            });
+            return false;
+          }
         }
         setProducts((list) => list.filter((p) => p.id !== id));
         return true;

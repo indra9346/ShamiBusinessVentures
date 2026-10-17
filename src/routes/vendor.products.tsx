@@ -176,7 +176,11 @@ function VendorProductsPanel() {
               <StatusBadge status={p.status} />,
               <Switch
                 checked={p.active}
-                onCheckedChange={async (v) => { if (await updateProduct(p.id, { active: v })) toast.success(v ? `${p.name} saved and submitted for admin review` : `${p.name} disabled and submitted for admin review`); }}
+                onCheckedChange={async (v) => {
+                  if (!await updateProduct(p.id, { active: v })) return;
+                  if (p.status === "approved") toast.success(v ? `${p.name} is back on sale` : `${p.name} is paused and hidden from customers`);
+                  else toast.success(v ? `${p.name} switched on and submitted for admin review` : `${p.name} switched off and submitted for admin review`);
+                }}
               />,
               p.created,
               <div className="flex flex-wrap items-center gap-1.5">

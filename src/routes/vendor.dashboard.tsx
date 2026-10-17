@@ -104,7 +104,23 @@ function VendorDashboard() {
     .filter((o) => o.payment === "Paid" && o.status !== "Delivered" && o.status !== "Cancelled")
     .reduce((s, o) => s + vendorAmount(o) * (1 - commission / 100), 0);
 
-  const topProducts = [...vendorProducts].sort((a, b) => b.sold - a.sold).slice(0, 5);
+  // Units and revenue from real order lines (not cancelled), so they match Admin Reports.
+  const productTotals = new Map<string, { qty: number; amount: number }>();
+  for (const order of vendorOrders) {
+    if (order.status === "Cancelled") continue;
+    for (const item of order.items) {
+      if (item.vendorId !== vendorId) continue;
+      const totals = productTotals.get(item.product.id) ?? { qty: 0, amount: 0 };
+      totals.qty += item.qty;
+      totals.amount += getOrderItemTotal(item);
+      productTotals.set(item.product.id, totals);
+    }
+  }
+  const topProducts = vendorProducts
+    .map((p) => ({ ...p, qty: productTotals.get(p.id)?.qty ?? 0, amount: productTotals.get(p.id)?.amount ?? 0 }))
+    .filter((p) => p.qty > 0)
+    .sort((a, b) => b.amount - a.amount || b.qty - a.qty)
+    .slice(0, 5);
 
   return (
     <PanelLayout items={vendorNav} tone="vendor" title="Vendor Dashboard" subtitle={vendor?.business ?? "Your vendor account"}>
@@ -180,14 +196,15 @@ function VendorDashboard() {
         </Panel>
         <Panel title="Top Products">
           <div className="space-y-4">
+            {topProducts.length === 0 && <p className="text-sm text-slate">No orders for your products yet.</p>}
             {topProducts.map((p) => (
               <div key={p.id} className="flex items-center gap-3">
                 <img src={p.image} alt={p.name} loading="lazy" width={800} height={800} className="h-11 w-11 rounded-md object-cover" />
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-semibold text-navy">{p.name}</p>
-                  <p className="text-xs text-slate">{p.sold} units sold</p>
+                  <p className="text-xs text-slate">{p.qty} units ordered</p>
                 </div>
-                <p className="text-sm font-bold text-gold">{inr(p.price * p.sold)}</p>
+                <p className="text-sm font-bold text-gold">{inr(p.amount)}</p>
               </div>
             ))}
           </div>
