@@ -1373,7 +1373,11 @@ async function withCommerceProductValues(
     // product's Zoho Commerce copy) and treats any difference as a Zoho edit.
     const seen = plainObject(mirrorPayload["zohoSeen"]);
     const hasSeen = typeof seen["description"] === "string";
-    const productChanged = hasSeen && (seen["description"] !== description || (seen["reorderLevel"] ?? null) !== variantReorder);
+    // Field by field: only a field that changed since it was last seen is a Zoho edit. (A reorder
+    // level Grain Bazar itself pushed must not make Zoho's unchanged description "win".)
+    const descriptionChanged = hasSeen && seen["description"] !== description;
+    const reorderChanged = hasSeen && (seen["reorderLevel"] ?? null) !== variantReorder;
+    const productChanged = descriptionChanged || reorderChanged;
     if (record && mirrorId && (!hasSeen || productChanged)) {
       await db.from("catalog_products")
         .update({ payload: { ...mirrorPayload, zohoSeen: { description, reorderLevel: variantReorder, at: new Date().toISOString() } } as Json })
@@ -1382,10 +1386,11 @@ async function withCommerceProductValues(
     if (!productChanged) return item;
     return {
       ...item,
-      ...(description ? { description } : {}),
-      ...(variantReorder !== null ? { reorder_level: variantReorder } : {}),
-      // Seen now: newer than anything synced before, so "latest wins" treats it as the latest edit.
-      last_modified_time: new Date().toISOString(),
+      ...(descriptionChanged && description ? { description } : {}),
+      ...(reorderChanged && variantReorder !== null ? { reorder_level: variantReorder } : {}),
+      // A description edit on the product page is seen now, so it is the latest edit. A reorder
+      // change also edits the item, so the item's own modified time already covers it.
+      ...(descriptionChanged ? { last_modified_time: new Date().toISOString() } : {}),
     };
   } catch {
     return item;
