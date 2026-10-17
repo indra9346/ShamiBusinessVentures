@@ -719,7 +719,11 @@ export const orderStages: OrderStatus[] = [
   "Placed", "Payment Confirmed", "Accepted", "Packed", "Dispatched", "Out for Delivery", "Delivered",
 ];
 
-export type OrderItem = { product: Product; qty: number; vendor: string; vendorId: string; capacity?: string; unitPrice?: number; dbItemId?: string };
+export type OrderItem = {
+  product: Product; qty: number; vendor: string; vendorId: string; capacity?: string; unitPrice?: number; dbItemId?: string;
+  /** GST % captured on the order line (the catalog rate may have changed since). */
+  gstRate?: number;
+};
 /** Uses the price captured on the order line, falling back to the catalog for local preview orders. */
 export function getOrderItemTotal(item: OrderItem): number {
   return Math.round((item.unitPrice ?? item.product.price) * item.qty * 100) / 100;

@@ -7,9 +7,10 @@ import { accountNav } from "@/lib/account-nav";
 import { inr } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { Button } from "@/components/ui/button";
-import { downloadCSV, downloadInvoice } from "@/lib/export-utils";
+import { downloadCSV } from "@/lib/export-utils";
 import { orderBelongsToUser } from "@/lib/account-identity";
 import { supabase } from "@/integrations/supabase/client";
+import { InvoicePreviewButton } from "@/components/site/InvoicePreviewDialog";
 
 export const Route = createFileRoute("/account/invoices")({
   head: () => ({
@@ -107,14 +108,7 @@ function AccountInvoices() {
             inr(o.amount),
             inr(o.tax),
             <StatusBadge status={o.payment} />,
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => downloadInvoice(o, undefined, invoicePrefix)}
-              className="hover:border-gold hover:text-gold transition-colors"
-            >
-              <Download className="mr-1.5 h-3.5 w-3.5" /> Download
-            </Button>,
+            <InvoicePreviewButton order={o} size="sm" label="View / Download" />,
           ])}
         />
       </Panel>

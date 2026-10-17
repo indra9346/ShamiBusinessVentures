@@ -49,6 +49,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
+import { InvoicePreviewButton } from "@/components/site/InvoicePreviewDialog";
 
 export const Route = createFileRoute("/admin/orders/$id")({
   head: ({ params }) => ({
@@ -196,6 +197,7 @@ function AdminOrderDetail() {
           >
             <Printer className="mr-1.5 h-3.5 w-3.5" /> Print Details
           </Button>
+          <InvoicePreviewButton order={order} copy="office" size="sm" label="Invoice" />
 
           <Select
             value={order.status}

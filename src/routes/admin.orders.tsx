@@ -36,7 +36,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { downloadCSV, downloadInvoice } from "@/lib/export-utils";
+import { downloadCSV } from "@/lib/export-utils";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -48,6 +48,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import { InvoicePreviewButton } from "@/components/site/InvoicePreviewDialog";
 
 export const Route = createFileRoute("/admin/orders")({
   head: () => ({
@@ -451,15 +452,7 @@ function AdminOrders() {
                     View
                   </Button>
                 </Link>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => downloadInvoice(o)}
-                  title="Download GST Invoice"
-                  className="hover:border-gold hover:text-gold transition-colors"
-                >
-                  <Download className="h-3.5 w-3.5 mr-1" /> Invoice
-                </Button>
+                <InvoicePreviewButton order={o} copy="office" size="sm" label="Invoice" />
                 <Select
                   value={o.status}
                   disabled={o.status === "Cancelled"}

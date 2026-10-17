@@ -388,7 +388,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
                   sold: 0, weight: "", status: "approved" as const, active: true, tags: [], description: "", specs: [],
                   created: "", updated: "",
                 };
-                return { product, qty: Number(item.qty), vendor: item.vendor || "", vendorId: item.vendor_id || "", capacity: item.capacity || product.weight, unitPrice: Number(item.unit_price), dbItemId: item.id };
+                return { product, qty: Number(item.qty), vendor: item.vendor || "", vendorId: item.vendor_id || "", capacity: item.capacity || product.weight, unitPrice: Number(item.unit_price), gstRate: Number(item.gst_rate), dbItemId: item.id };
               });
               const paymentStatus = row.payment_status.toLowerCase();
               const latestPayment = latestPaymentByOrder.get(row.id);

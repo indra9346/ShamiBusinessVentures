@@ -9,6 +9,7 @@ import { useApp, useVendorScope } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { InvoicePreviewButton } from "@/components/site/InvoicePreviewDialog";
 
 export const Route = createFileRoute("/vendor/orders/$id")({
   head: ({ params }) => ({
@@ -143,6 +144,10 @@ function VendorOrderDetail() {
                   <p className="text-xs text-slate">Full payment is required before dispatch.</p>
                 )}
               </div>
+{/* Only for orders made up entirely of this vendor's lines; other vendors' lines stay private. */}
+              {order.items.every((item) => item.vendorId === vendorId) && (
+                <div className="[&>button]:w-full"><InvoicePreviewButton order={order} copy="office" label="View Invoice" /></div>
+              )}
               <Button
                 variant="outline"
                 className="w-full"

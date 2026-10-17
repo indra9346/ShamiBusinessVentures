@@ -20,12 +20,12 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
-import { downloadInvoice } from "@/lib/export-utils";
 import { orderBelongsToUser } from "@/lib/account-identity";
 import { PickupPointCard } from "@/components/site/PickupPointCard";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { InvoicePreviewButton } from "@/components/site/InvoicePreviewDialog";
 
 export const Route = createFileRoute("/account/orders/$id")({
   head: ({ params }) => ({
@@ -101,9 +101,7 @@ function AccountOrderDetail() {
           ← Back to Orders
         </Link>
         <div className="flex flex-wrap items-center gap-2">
-          <Button variant="outline" onClick={() => downloadInvoice(order)}>
-            <Download className="mr-1.5 h-4 w-4" /> Download Invoice
-          </Button>
+          <InvoicePreviewButton order={order} label="View / Download Invoice" />
           <AlertDialog>
             <AlertDialogTrigger asChild>
               <Button

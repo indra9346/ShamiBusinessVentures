@@ -42,12 +42,12 @@ const settingKeys = ["business_profile", "tax_config", "commerce_rules", "securi
 function AdminSettings() {
   const { vendors } = useApp();
   const [business, setBusiness] = useState({
-    name: "Shami Business Ventures Pvt Ltd",
-    email: "support@shamiventures.in",
-    phone: "+91 98765 12340",
-    gstin: "29ABHCS4321K1ZP",
-    pan: "ABHCS4321K",
-    address: "Plot 27, APMC Industrial Yard, Belagavi, Karnataka 590010",
+    name: "Shami Business Ventures Private Limited",
+    email: "shamibusinessventurespvtltd@gmail.com",
+    phone: "8310084308",
+    gstin: "29ABJCS7870F1ZR",
+    pan: "ABJCS7870F",
+    address: ["Pavagada Road, Behind Mahalakshmi Kalyana Mantapa", "Mahadevi Road, Challakere", "Karnataka 577522, India"].join("\n"),
   });
   const [tax, setTax] = useState({ sugar: "5", staples: "5", packaged: "12", gstEnabled: true, invoicePrefix: "SBV/26-27/" });
   const [commerce, setCommerce] = useState({
@@ -96,7 +96,12 @@ function AdminSettings() {
     }
     const valueJson = JSON.parse(JSON.stringify(value)) as Json;
     const rows: { key: string; value: Json; is_public: boolean }[] = [{ key, value: valueJson, is_public: false }];
-    if (key === "business_profile") rows.push({ key: "company", value: { name: business.name, email: business.email, phone: business.phone, address: business.address, gstin: business.gstin, pan: business.pan }, is_public: true });
+    if (key === "business_profile" && business.gstin.trim() && !/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/.test(business.gstin.trim().toUpperCase())) {
+      toast.error("Enter a valid 15-character GSTIN");
+      return;
+    }
+    // Printed on every invoice (src/lib/invoice.ts): legal name, address, GSTIN, PAN, phone, email.
+    if (key === "business_profile") rows.push({ key: "company", value: { name: business.name, legal_name: business.name, email: business.email, phone: business.phone, address: business.address, gstin: business.gstin.trim().toUpperCase(), pan: business.pan.trim().toUpperCase(), currency: "INR" }, is_public: true });
     if (key === "tax_config") rows.push({ key: "tax", value: { gst_default: Number(tax.staples), gst_enabled: tax.gstEnabled, cess: 0, sugar: Number(tax.sugar), staples: Number(tax.staples), packaged: Number(tax.packaged), invoice_prefix: tax.invoicePrefix }, is_public: true });
     if (key === "commerce_rules") {
       const { data: currentShipping } = await supabase.from("settings").select("value").eq("key", "shipping").maybeSingle();
