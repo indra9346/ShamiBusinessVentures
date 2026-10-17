@@ -25,7 +25,8 @@ function ZohoDiagnostics() {
             setBusy(true);
             try {
               const { probeZohoSalesChannel } = await import("@/lib/zoho-commerce.functions");
-              setOutput(await probeZohoSalesChannel());
+              const tryChannel = new URLSearchParams(window.location.search).get("tryChannel") ?? undefined;
+              setOutput(await probeZohoSalesChannel({ data: tryChannel ? { tryChannel } : {} }));
             } catch (cause) {
               setOutput(cause instanceof Error ? cause.message : String(cause));
             } finally {

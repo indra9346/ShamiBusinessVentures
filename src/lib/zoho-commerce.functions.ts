@@ -3590,7 +3590,8 @@ export const updateZohoSalesOrder = createServerFn({ method: "POST" })
  */
 export const probeZohoSalesChannel = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .handler(async ({ context }) => {
+  .validator(z.object({ tryChannel: z.string().trim().max(40).optional() }).optional())
+  .handler(async ({ data, context }) => {
     await ensureAdmin(context.supabase, context.userId);
     const db = await dbAdmin();
     const { region, organizationId, token } = await zohoOrderContext(db);
@@ -3628,6 +3629,22 @@ export const probeZohoSalesChannel = createServerFn({ method: "POST" })
         report[resource] = Object.fromEntries(Object.entries(result).filter(([key]) => !["code", "message"].includes(key)));
       } catch (cause) {
         report[resource] = { error: cause instanceof Error ? cause.message : String(cause) };
+      }
+    }
+    // Experiment on a voided Grain Bazar order only (no live order is touched).
+    if (data?.tryChannel) {
+      const { data: voided } = await db.from("orders").select("order_no,zoho_salesorder_id")
+        .eq("zoho_order_status", "void").not("zoho_salesorder_id", "is", null)
+        .order("created_at", { ascending: false }).limit(1).maybeSingle();
+      if (voided?.zoho_salesorder_id) {
+        try {
+          const put = await inventoryRequest<{ salesorder?: Record<string, unknown> }>(
+            region, organizationId, token, `salesorders/${encodeURIComponent(voided.zoho_salesorder_id)}`, "PUT",
+            { sales_channel: data.tryChannel });
+          report["tryChannel"] = { orderNo: voided.order_no, accepted: true, fields: pick(put.salesorder) };
+        } catch (cause) {
+          report["tryChannel"] = { orderNo: voided.order_no, accepted: false, error: cause instanceof Error ? cause.message : String(cause) };
+        }
       }
     }
     return JSON.stringify(report, null, 2);
