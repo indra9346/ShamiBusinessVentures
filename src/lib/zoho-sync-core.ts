@@ -39,6 +39,23 @@ export function webhookKeyMatches(provided: string | null | undefined, expected:
   return diff === 0;
 }
 
+/**
+ * Checks Zoho's X-Zoho-Webhook-Signature: an HMAC-SHA256 of the raw request body keyed with the
+ * webhook's Secret. Accepts hex or base64 encoding of the digest (both carry the same secret).
+ * Returns which encoding matched, or null when the signature is missing or wrong.
+ */
+export async function verifyZohoSignature(rawBody: string, signature: string | null | undefined, secret: string) {
+  const provided = (signature ?? "").trim();
+  if (!provided || !secret) return null;
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const digest = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(rawBody)));
+  const hex = Array.from(digest, (b) => b.toString(16).padStart(2, "0")).join("");
+  const base64 = btoa(String.fromCharCode(...digest));
+  if (webhookKeyMatches(provided.toLowerCase(), hex)) return "hex";
+  if (webhookKeyMatches(provided, base64)) return "base64";
+  return null;
+}
+
 export type GbOrderForReconcile = {
   order_no: string;
   order_status: string;

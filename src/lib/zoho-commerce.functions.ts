@@ -2091,7 +2091,8 @@ async function zohoOrderContext(db: Awaited<ReturnType<typeof dbAdmin>>) {
 
 /** Shared secret in the webhook address, so only Zoho (holding the address) can call it. */
 export async function zohoWebhookKey() {
-  return (await sign("zoho-order-webhook-v1")).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "").slice(0, 40);
+  // v2: the v1 key was exposed on 2026-10-17 and no longer works.
+  return (await sign("zoho-order-webhook-v2")).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "").slice(0, 40);
 }
 
 /** Webhook entry point: re-reads the order from Zoho (never trusting the payload) and applies it. */

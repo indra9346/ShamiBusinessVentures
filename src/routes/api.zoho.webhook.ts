@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { webhookKeyMatches, zohoLogLine } from "@/lib/zoho-sync-core";
+import { verifyZohoSignature, webhookKeyMatches, zohoLogLine } from "@/lib/zoho-sync-core";
 
 /** Finds the sales order or item ID in a Zoho webhook body (JSON, or form data with a JSONString field). */
 function recordFrom(body: string): { kind: "salesorder" | "item"; id: string } | null {
@@ -39,15 +39,33 @@ export const Route = createFileRoute("/api/zoho/webhook")({
     handlers: {
       POST: async ({ request }) => {
         const { zohoWebhookKey, handleZohoOrderWebhook, handleZohoItemWebhook } = await import("@/lib/zoho-commerce.functions");
-        // Zoho workflow webhooks carry no signature we can verify, so a shared key authenticates
-        // the call: sent as the X-GB-Webhook-Key header (preferred, kept out of URL logs) or ?key=.
-        // The payload is never trusted either way; the record is re-read from Zoho.
-        const key = request.headers.get("x-gb-webhook-key") ?? new URL(request.url).searchParams.get("key");
-        if (!webhookKeyMatches(key, await zohoWebhookKey())) {
-          console.warn(zohoLogLine("webhook_rejected", { reason: "bad key" }));
-          return Response.json({ error: "Unauthorized" }, { status: 401 });
+        // Authentication, strongest first. The payload is never trusted either way: the record
+        // is re-read from Zoho.
+        // 1. Signed: Zoho's X-Zoho-Webhook-Signature (HMAC of the body with the webhook Secret,
+        //    stored server-side as ZOHO_WEBHOOK_SECRET). A signed call must verify.
+        // 2. Unsigned: the shared key as the X-GB-Webhook-Key header or ?key= (older set-ups).
+        const body = await request.text();
+        const signature = request.headers.get("x-zoho-webhook-signature");
+        const secret = process.env["ZOHO_WEBHOOK_SECRET"] ?? "";
+        if (signature) {
+          const matched = secret ? await verifyZohoSignature(body, signature, secret) : null;
+          if (!matched) {
+            console.warn(zohoLogLine("webhook_rejected", {
+              reason: secret ? "bad signature" : "signed call but ZOHO_WEBHOOK_SECRET is not set",
+              bodyBytes: body.length,
+              contentType: request.headers.get("content-type"),
+            }));
+            return Response.json({ error: "Unauthorized" }, { status: 401 });
+          }
+          console.info(zohoLogLine("webhook_signature_ok", { encoding: matched }));
+        } else {
+          const key = request.headers.get("x-gb-webhook-key") ?? new URL(request.url).searchParams.get("key");
+          if (!webhookKeyMatches(key, await zohoWebhookKey())) {
+            console.warn(zohoLogLine("webhook_rejected", { reason: "no signature and bad key" }));
+            return Response.json({ error: "Unauthorized" }, { status: 401 });
+          }
         }
-        const record = recordFrom(await request.text());
+        const record = recordFrom(body);
         if (!record) return Response.json({ ok: true, ignored: "no sales order or item id" });
         try {
           const outcome = record.kind === "salesorder"

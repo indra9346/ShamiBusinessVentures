@@ -7,8 +7,10 @@ import {
   zohoLogLine,
   zohoOrderNumber,
   zohoRetryDelayMs,
+  verifyZohoSignature,
   type GbOrderForReconcile,
 } from "../src/lib/zoho-sync-core.ts";
+import { createHmac } from "node:crypto";
 
 test("order number is stable and Zoho-safe (idempotency key)", () => {
   assert.equal(zohoOrderNumber("SBV-1001"), "GB-SBV-1001");
@@ -103,4 +105,18 @@ test("log line: JSON, truncated strings, undefined dropped", () => {
   assert.equal(line.error.length, 300);
   assert.equal("skipped" in line, false);
   assert.equal(line.attempt, 2);
+});
+
+test("Zoho signature: HMAC-SHA256 of the raw body, hex or base64; wrong secret/body/missing rejected", async () => {
+  const body = '{"salesorder":{"salesorder_id":"123"}}';
+  const secret = "test-secret-not-real";
+  const hex = createHmac("sha256", secret).update(body).digest("hex");
+  const base64 = createHmac("sha256", secret).update(body).digest("base64");
+  assert.equal(await verifyZohoSignature(body, hex, secret), "hex");
+  assert.equal(await verifyZohoSignature(body, hex.toUpperCase(), secret), "hex");
+  assert.equal(await verifyZohoSignature(body, base64, secret), "base64");
+  assert.equal(await verifyZohoSignature(body, hex, "other-secret"), null);
+  assert.equal(await verifyZohoSignature(body + " ", hex, secret), null);
+  assert.equal(await verifyZohoSignature(body, null, secret), null);
+  assert.equal(await verifyZohoSignature(body, hex, ""), null);
 });
