@@ -1,8 +1,8 @@
 # Zoho as system of record — audit, mapping, verification and migration plan
 
 Last verified: 2026-10-17 (live production, admin-run; see section 8).
-Status: **Zoho is the record for sales orders; customers, products and stock are synced but not
-yet at full parity. No cutover performed.** Supabase remains the app's database. Nothing has been
+Status: **Orders, customers, products and stock are in parity with Zoho (verified 2026-10-17,
+21:57 IST). No cutover performed.** Supabase remains the app's database. Nothing has been
 deleted, disabled or migrated away from Supabase.
 
 ## 1. Architecture and every persistence location
@@ -97,6 +97,11 @@ re-authorizes Zoho).
 - Reconciliation (read-only, Admin → Zoho diagnostics): orders; products (SKU, price,
   available-for-sale stock, active) and customers (links, existence in Zoho).
 - Draft cancellation: confirm → void → verify, else needs-review.
+- Contact sync: updates never send `contact_persons` (Zoho treats it as deleting persons); the
+  primary person is updated through the Contact Persons API. Several Zoho contacts with one email:
+  the one used by the customer's own Zoho sales orders is chosen, else needs review (merge in Zoho).
+- Product sync: refuses (needs review) when another Grain Bazar product has the same SKU or the
+  matched Zoho item is linked to another product, so stock never flips between duplicates.
 - HSN on order lines: from the Grain Bazar product, else the Zoho item record.
 - Optional official notification: Books "Email a sales order" for each new website order to
   configured staff addresses; off by default; failures logged, never block the sync.
@@ -137,6 +142,9 @@ re-authorizes Zoho).
 | Cancel on website → Void in Zoho (ORD-23324, ORD-27818) | Void in Zoho |
 | Stock restore after cancel (S1 Refined Sugar 50kg) | Website 175 = Zoho available 175 |
 | Order reconciliation, 30 days | 14 checked · 14 in sync · 0 to review (after fixing 5) |
-| Products parity | 26 checked · 10 in sync · 15 not linked · 1 stock difference (duplicate product rows with the same SKU) |
-| Customers parity | 9 accounts · 7 linked · 2 ordered customers without a link |
-| Official new-order notification | **Not delivered/tested** — needs Zoho re-authorization (Books scope), recipients, and owner approval to enable |
+| Products parity (first run) | 26 rows: 14 were Zoho-imported copies (never pushed) and 1 inactive product — both now excluded |
+| Products parity (final) | 11 of 11 active Grain Bazar products linked and in sync (SKU, price, available stock, status); 0 to review |
+| Customers parity (final) | 9 of 9 linked after fixing contact updates (Zoho refused a replaced person list) and choosing between duplicate Zoho contacts by the customer's own orders; 0 to review |
+| Order reconciliation (final, 30 days) | 14 checked · 14 in sync · 0 to review |
+| Zoho re-authorization with ZohoBooks.salesorders.CREATE | Done by the owner (consent screen showed Zoho Books: Sales Orders CREATE) |
+| Official new-order notification | **Not yet sent** — needs recipients and the owner's go-ahead for a real test email (Admin → Zoho diagnostics → Zoho order emails → Send test email) |
