@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { AlertCircle, AlertTriangle, Check, Info, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
+import { showAuthNotice } from "@/components/site/AuthNotice";
 
 export type NotificationType = "add" | "remove" | "success" | "error" | "info" | "warning";
 
@@ -101,8 +102,11 @@ export function installCustomerToastBridge() {
         const title = typeof msg === "string" ? msg : String(msg?.title || msg || "");
         const desc = data?.description || (typeof msg === "object" ? msg?.description : undefined);
         const img = data?.image || (typeof msg === "object" ? msg?.image : undefined);
-        showCustomerNotification(title, desc, "error", img);
-        return "droplet-" + Date.now();
+        // Problems and notes use the calm top-right notice (stays readable, fades slowly);
+        // only confirmations like "Added to cart" use the rising droplet.
+        void img;
+        showAuthNotice(title, desc, "error");
+        return "notice-" + Date.now();
       }
       return origError(msg, data);
     };
@@ -114,8 +118,11 @@ export function installCustomerToastBridge() {
         const title = typeof msg === "string" ? msg : String(msg?.title || msg || "");
         const desc = data?.description || (typeof msg === "object" ? msg?.description : undefined);
         const img = data?.image || (typeof msg === "object" ? msg?.image : undefined);
-        showCustomerNotification(title, desc, "info", img);
-        return "droplet-" + Date.now();
+        // Problems and notes use the calm top-right notice (stays readable, fades slowly);
+        // only confirmations like "Added to cart" use the rising droplet.
+        void img;
+        showAuthNotice(title, desc, "info");
+        return "notice-" + Date.now();
       }
       return origInfo(msg, data);
     };
@@ -127,8 +134,11 @@ export function installCustomerToastBridge() {
         const title = typeof msg === "string" ? msg : String(msg?.title || msg || "");
         const desc = data?.description || (typeof msg === "object" ? msg?.description : undefined);
         const img = data?.image || (typeof msg === "object" ? msg?.image : undefined);
-        showCustomerNotification(title, desc, "warning", img);
-        return "droplet-" + Date.now();
+        // Problems and notes use the calm top-right notice (stays readable, fades slowly);
+        // only confirmations like "Added to cart" use the rising droplet.
+        void img;
+        showAuthNotice(title, desc, "warning");
+        return "notice-" + Date.now();
       }
       return origWarning(msg, data);
     };

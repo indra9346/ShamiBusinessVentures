@@ -1,22 +1,28 @@
 import { useEffect, useRef, useState } from "react";
-import { AlertCircle, X } from "lucide-react";
+import { AlertCircle, AlertTriangle, Info, X } from "lucide-react";
 
 /**
  * Sign-in messages (wrong password, wrong code, account not allowed, ...) for every role.
  * Shown as a calm card fixed to the top-right corner: it fades in, stays readable for a few
  * seconds (longer while hovered), then fades out slowly. No sliding.
  */
-type Notice = { id: number; title: string; description?: string | undefined };
+export type NoticeTone = "error" | "warning" | "info";
+type Notice = { id: number; title: string; description?: string | undefined; tone: NoticeTone };
 
 let nextId = 1;
 const listeners = new Set<(notice: Notice) => void>();
 
-export function showAuthNotice(title: string, description?: string) {
-  const notice: Notice = { id: nextId++, title, description };
+export function showAuthNotice(title: string, description?: string, tone: NoticeTone = "error") {
+  const notice: Notice = { id: nextId++, title, description, tone };
   for (const listener of listeners) listener(notice);
 }
 
 const VISIBLE_MS = 6000;
+const TONES = {
+  error: { frame: "border-red-200 border-l-red-600", icon: AlertCircle, iconColor: "text-red-600" },
+  warning: { frame: "border-amber-200 border-l-amber-500", icon: AlertTriangle, iconColor: "text-amber-600" },
+  info: { frame: "border-sky-200 border-l-sky-600", icon: Info, iconColor: "text-sky-600" },
+} as const;
 const FADE_MS = 900;
 
 export function AuthNoticeHost() {
@@ -66,9 +72,9 @@ export function AuthNoticeHost() {
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
         style={{ transitionDuration: `${visible ? 300 : FADE_MS}ms` }}
-        className={`pointer-events-auto flex w-full max-w-sm items-start gap-3 rounded-lg border border-red-200 border-l-4 border-l-red-600 bg-white p-4 shadow-lg transition-opacity ease-out ${visible ? "opacity-100" : "opacity-0"}`}
+        className={`pointer-events-auto flex w-full max-w-sm items-start gap-3 rounded-lg border border-l-4 bg-white p-4 shadow-lg transition-opacity ease-out ${TONES[notice.tone].frame} ${visible ? "opacity-100" : "opacity-0"}`}
       >
-        <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-red-600" aria-hidden="true" />
+        {(() => { const Icon = TONES[notice.tone].icon; return <Icon className={`mt-0.5 h-5 w-5 shrink-0 ${TONES[notice.tone].iconColor}`} aria-hidden="true" />; })()}
         <div className="min-w-0 flex-1">
           <p className="text-sm font-semibold text-stone-900">{notice.title}</p>
           {notice.description && <p className="mt-0.5 text-sm text-stone-600">{notice.description}</p>}

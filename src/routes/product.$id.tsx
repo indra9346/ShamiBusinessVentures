@@ -110,10 +110,8 @@ function ProductDetail() {
     }
     const max = purchaseLimit;
     const num = parseInt(raw, 10);
+    // Above the limit: quietly cap it (the purchase range is shown above the box).
     if (num > max) {
-      toast.error(max < configuredMax
-        ? `Only ${max} units are available to purchase now`
-        : `Maximum purchase quantity is ${max}`);
       setTypedQty(String(max || 1));
       setQty(max || 1);
       return;
@@ -127,8 +125,8 @@ function ProductDetail() {
   const handleQtyBlur = () => {
     const parsed = parseInt(typedQty, 10);
     if (isNaN(parsed) || parsed < 1) {
-      setQty(1);
-      setTypedQty("1");
+      // Cleared: quietly put the current quantity back.
+      setTypedQty(String(qty || 1));
     } else {
       const clamped = Math.min(purchaseLimit || 1, parsed);
       setQty(clamped);

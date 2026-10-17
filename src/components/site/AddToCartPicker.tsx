@@ -90,9 +90,8 @@ export function AddToCartPicker({
       setQty(1);
       setTypedQty("1");
     } else {
+      // Above the limit: quietly cap it; the note under the keypad says why.
       const clamped = Math.min(num, purchaseLimit || 1);
-      if (clamped < num)
-        toast.error(`Maximum purchase quantity is ${purchaseLimit} for this product`);
       setQty(clamped);
       setTypedQty(String(clamped));
     }

@@ -242,17 +242,14 @@ function CartQuantityControl({
     const digitsOnly = valueToCommit.replace(/\D/g, "");
     const parsed = parseInt(digitsOnly, 10);
 
+    // Cleared or 0: quietly put the previous quantity back (deleting the number is not an error).
     if (isNaN(parsed) || parsed < 1) {
-      toast.info("Minimum quantity is 1");
-      setVal("1");
-      onUpdateQty(1);
+      setVal(String(qty));
       return;
     }
 
+    // Above the limit: quietly cap it; the line under the box says why.
     if (parsed > purchaseLimit) {
-      toast.error(purchaseLimit < configuredMax
-        ? `Maximum purchase quantity is ${purchaseLimit} based on available stock`
-        : `Maximum purchase quantity for this product is ${purchaseLimit}`);
       setVal(String(purchaseLimit || 1));
       onUpdateQty(purchaseLimit || 1);
       return;
@@ -297,20 +294,14 @@ function CartQuantityControl({
   };
 
   const handleDecrease = () => {
-    if (qty <= 1) {
-      toast.info("Minimum quantity is 1");
-      return;
-    }
+    if (qty <= 1) return;
     const next = qty - 1;
     setVal(String(next));
     onUpdateQty(next);
   };
 
   const handleIncrease = () => {
-    if (qty >= purchaseLimit) {
-      toast.error(`Maximum purchase quantity is ${purchaseLimit}`);
-      return;
-    }
+    if (qty >= purchaseLimit) return;
     const next = Math.min(purchaseLimit, qty + 1);
     setVal(String(next));
     onUpdateQty(next);
@@ -349,11 +340,13 @@ function CartQuantityControl({
           <Plus className="h-3.5 w-3.5" />
         </button>
       </div>
-      {Number(val) > purchaseLimit && (
-        <p role="alert" className="text-xs font-medium text-danger">
-          Maximum {purchaseLimit} per purchase
+      {Number(val) > purchaseLimit ? (
+        <p role="status" className="text-xs font-medium text-amber-700">
+          Maximum {purchaseLimit} per purchase{purchaseLimit < configuredMax ? " (available stock)" : ""}
         </p>
-      )}
+      ) : qty >= purchaseLimit && purchaseLimit > 0 ? (
+        <p className="text-[11px] text-slate">Maximum {purchaseLimit} per purchase</p>
+      ) : null}
     </div>
   );
 }
