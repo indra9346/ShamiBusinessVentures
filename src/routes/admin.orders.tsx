@@ -17,7 +17,8 @@ import { DataTable, Panel, StatCard, StatusBadge } from "@/components/panel/widg
 import { Pager } from "@/components/panel/pager";
 import { adminNav } from "@/lib/panel-nav";
 import { canCancelOrder, inr, orderStages, type OrderStatus } from "@/lib/data";
-import { useApp } from "@/lib/store";
+import { useApp, type Address } from "@/lib/store";
+import { supabase } from "@/integrations/supabase/client";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { Input } from "@/components/ui/input";
 import {
@@ -126,6 +127,29 @@ function AdminOrders() {
   const [draftItems, setDraftItems] = useState<
     Array<{ productId: string; qty: string; capacity: string; price: string }>
   >([]);
+  // The order must ship to one of the customer's own saved addresses (the database checks it).
+  const [customerAddresses, setCustomerAddresses] = useState<Address[] | null>(null);
+  const [addressId, setAddressId] = useState("");
+  const [orderFormError, setOrderFormError] = useState("");
+  useEffect(() => {
+    setCustomerAddresses(null);
+    setAddressId("");
+    if (!customerId || STATIC_DATA_MODE) return;
+    let active = true;
+    void supabase.from("addresses").select("*").eq("user_id", customerId)
+      .order("is_default", { ascending: false }).order("created_at", { ascending: true })
+      .then(({ data, error }) => {
+        if (!active) return;
+        if (error) { setCustomerAddresses([]); return; }
+        const list = (data ?? []).map((row) => ({
+          id: row.id, label: row.label, name: row.name, phone: row.phone, line: row.line,
+          city: row.city, state: row.state, pin: row.pin, landmark: row.landmark || "", default: row.is_default,
+        }) as Address);
+        setCustomerAddresses(list);
+        setAddressId(list[0]?.id ?? "");
+      });
+    return () => { active = false; };
+  }, [customerId]);
 
   const createOrder = async () => {
     const customer = customers.find((item) => item.id === customerId);
@@ -146,6 +170,17 @@ function AdminOrders() {
           (requestedByProduct.get(line.product.id) ?? 0) + line.qty,
         );
     }
+    setOrderFormError("");
+    const shippingAddress = customerAddresses?.find((address) => address.id === addressId);
+    if (customer && !STATIC_DATA_MODE && !shippingAddress) {
+      setOrderFormError("This customer has no saved address. Ask them to add one in My Account → Addresses, then try again.");
+      return;
+    }
+    const missing = lines.find((line) => line.product && !line.capacity);
+    if (missing) {
+      setOrderFormError(`Enter the capacity / size for ${missing.product!.name} (for example 1 L or 25 kg).`);
+      return;
+    }
     if (
       !customer ||
       !lines.length ||
@@ -163,9 +198,7 @@ function AdminOrders() {
           qty > (products.find((product) => product.id === productId)?.stock ?? 0),
       )
     ) {
-      toast.error(
-        "Choose a customer and valid product, bag count, capacity, price, and available stock.",
-      );
+      setOrderFormError("Choose a customer and a valid product, bag count, price and available stock.");
       return;
     }
     let order: Awaited<ReturnType<typeof placeOrder>>;
@@ -180,11 +213,13 @@ function AdminOrders() {
         method: "UPI",
         payment: "Pending",
         customerOverride: customer,
+        ...(shippingAddress ? { shippingAddress } : {}),
         delivery,
         source: "WhatsApp / Admin entry",
         ...(paymentDueDate ? { paymentDueDate } : {}),
       });
-    } catch {
+    } catch (cause) {
+      setOrderFormError(cause instanceof Error ? cause.message : "The order could not be saved.");
       return;
     }
     toast.success(
@@ -548,6 +583,27 @@ function AdminOrders() {
                 </SelectContent>
               </Select>
             </div>
+            <div className="grid gap-1">
+              <Label>Delivery address</Label>
+              {customerAddresses === null ? (
+                <p className="text-sm text-slate">{customerId ? "Loading saved addresses…" : "Select a customer first."}</p>
+              ) : customerAddresses.length === 0 ? (
+                <p className="text-sm text-amber-700">This customer has no saved address yet. Ask them to add one in My Account → Addresses.</p>
+              ) : (
+                <Select value={addressId} onValueChange={setAddressId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select address" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {customerAddresses.map((address) => (
+                      <SelectItem key={address.id} value={address.id}>
+                        {address.label}{address.default ? " (default)" : ""} · {[address.line, address.city, address.pin].filter(Boolean).join(", ")}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
             <div className="space-y-3">
               {draftItems.map((line, index) => {
                 const product = products.find((candidate) => candidate.id === line.productId);
@@ -729,6 +785,9 @@ function AdminOrders() {
               )}
             </p>
           </div>
+          {orderFormError && (
+            <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{orderFormError}</p>
+          )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setNewOrderOpen(false)}>
               Cancel
