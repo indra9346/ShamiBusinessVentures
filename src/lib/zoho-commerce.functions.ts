@@ -1091,10 +1091,18 @@ async function upsertZohoContact(
 
   let contactId = link?.zoho_contact_id ?? "";
   let zohoModifiedAt: string | null = null;
+  let personError: string | null = null;
   if (!contactId) {
     const found = await inventoryRequest<{ contacts?: Record<string, unknown>[] }>(region, organizationId, token, "contacts", "GET", undefined, { email, per_page: "200" });
     const exact = (found.contacts ?? []).filter((row) => str(row["contact_type"]) === contactType && str(row["email"]).toLowerCase() === email.toLowerCase());
-    if (exact.length > 1) throw new NeedsReviewError(`More than one Zoho ${contactType} contact matches ${email}`);
+    if (exact.length > 1) {
+      // Several Zoho contacts share the email: use the one this customer's own Zoho sales orders use.
+      const preferred = contactType === "customer"
+        ? await contactUsedByCustomerOrders(db, region, organizationId, token, userId, exact.map((row) => str(row["contact_id"])))
+        : null;
+      if (!preferred) throw new NeedsReviewError(`More than one Zoho ${contactType} contact matches ${email}. Merge the duplicates in Zoho (Contacts > select both > Merge), then Retry.`);
+      contactId = preferred;
+    }
     if (exact.length === 1) contactId = str(exact[0]!["contact_id"]);
   }
   if (!contactId) {
@@ -1103,11 +1111,21 @@ async function upsertZohoContact(
     zohoModifiedAt = str(created.contact?.["last_modified_time"]) || null;
     if (!contactId) throw new Error("Zoho created a contact but returned no contact ID");
   } else {
-    const updated = await inventoryRequest<{ contact?: Record<string, unknown> }>(region, organizationId, token, `contacts/${encodeURIComponent(contactId)}`, "PUT", contact);
+    // Never send contact_persons on update: Zoho treats a replaced list as deleting the existing
+    // persons, which it refuses for persons on Commerce orders. The primary person is updated in
+    // place through the documented Contact Persons API instead.
+    const { contact_persons: _persons, ...contactFields } = contact;
+    const updated = await inventoryRequest<{ contact?: Record<string, unknown> }>(region, organizationId, token, `contacts/${encodeURIComponent(contactId)}`, "PUT", contactFields);
     zohoModifiedAt = str(updated.contact?.["last_modified_time"]) || null;
+    try {
+      await upsertPrimaryContactPerson(region, organizationId, token, contactId, person);
+    } catch (cause) {
+      personError = cause instanceof Error ? cause.message : "Zoho refused the contact person update";
+    }
   }
   const { error: linkError } = await db.from("zoho_contact_links").upsert({ user_id: userId, contact_type: contactType, zoho_contact_id: contactId, updated_at: new Date().toISOString(), ...(zohoModifiedAt ? { last_zoho_modified_at: zohoModifiedAt } : {}) });
   if (linkError) throw new Error("Zoho contact synchronized, but its ID could not be saved in Grain Bazar");
+  if (personError) throw new NeedsReviewError(`Zoho contact ${contactId} is linked and updated, but its contact person could not be updated: ${personError}`);
   return contactId;
 }
 
@@ -1644,6 +1662,15 @@ async function syncZohoCatalogItem(
   if (shared.stock !== null && shared.stock < 0)
     throw new NeedsReviewError(`Product ${shared.sku} has negative stock; correct it before Zoho sync`);
 
+  // Two Grain Bazar products with one SKU would push two different stock figures to the same Zoho
+  // item (Zoho-imported copies are excluded; they are never pushed).
+  const { data: sameSku, error: sameSkuError } = await db.from("catalog_products")
+    .select("id,vendor_id,payload").eq("payload->>sku", shared.sku).neq("id", product.id);
+  if (sameSkuError) throw new Error("Could not check for duplicate SKUs before Zoho sync");
+  const duplicates = (sameSku ?? []).filter((row) => !row.vendor_id.startsWith("zoho:"));
+  if (duplicates.length)
+    throw new NeedsReviewError(`SKU ${shared.sku} is used by ${duplicates.length + 1} Grain Bazar products (${[shared.name, ...duplicates.map((row) => str(plainObject(row.payload)["name"]) || row.id)].join(", ")}). Keep one and change or remove the others, then Retry.`);
+
   let itemId = link?.zoho_item_id ?? "";
 
   // Unchanged since the last successful sync: confirm with one read and stop if Zoho still
@@ -1721,7 +1748,12 @@ async function syncZohoCatalogItem(
     );
     if (matches.length > 1)
       throw new NeedsReviewError(`SKU ${shared.sku} matches multiple Zoho Inventory items`);
-    if (matches.length === 1) itemId = str(matches[0]!["item_id"]);
+    if (matches.length === 1) {
+      const candidate = str(matches[0]!["item_id"]);
+      const { data: taken } = await db.from("zoho_item_links").select("product_id").eq("zoho_item_id", candidate).neq("product_id", product.id).maybeSingle();
+      if (taken) throw new NeedsReviewError(`Zoho item for SKU ${shared.sku} is already linked to Grain Bazar product ${taken.product_id}; resolve the duplicate before linking.`);
+      itemId = candidate;
+    }
   }
 
   let resultItem: Record<string, unknown> | undefined;
@@ -3888,18 +3920,35 @@ export const setZohoOrderEmailConfig = createServerFn({ method: "POST" })
     return { enabled: data.enabled && to.length > 0, to };
   });
 
-/** Checks (read-only) whether the Zoho connection can call Zoho Books, i.e. has been re-authorized with the Books scope. */
-export const checkZohoBooksAccess = createServerFn({ method: "POST" })
+/**
+ * Sends one real test email through Zoho Books "Email a sales order" for the newest website order
+ * that is in Zoho, to the saved recipients. Only runs when an admin clicks it. (Zoho documents no
+ * dry run: reading or previewing needs ZohoBooks.salesorders.READ, which is not requested.)
+ */
+export const sendZohoOrderTestEmail = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
     await ensureAdmin(context.supabase, context.userId);
-    const { region, organizationId, token } = await zohoOrderContext(await dbAdmin());
-    try {
-      await booksRequest(region, organizationId, token, "salesorders?per_page=1", "GET");
-      return { ok: true as const, message: "Zoho Books access works." };
-    } catch (cause) {
-      return { ok: false as const, message: `${cause instanceof Error ? cause.message : "Zoho Books refused the request"}. Re-authorize Zoho (Admin > Zoho > Reauthorize) to grant Zoho Books permission.` };
-    }
+    const db = await dbAdmin();
+    const config = await readOrderEmailConfig(db);
+    if (!config.to.length) throw new Error("Save at least one recipient first.");
+    const { data: order, error } = await db.from("orders")
+      .select("order_no,customer_name,total,shipping_method,zoho_salesorder_id")
+      .not("zoho_salesorder_id", "is", null).neq("order_status", "Cancelled")
+      .order("created_at", { ascending: false }).limit(1).maybeSingle();
+    if (error) throw new Error("Could not read orders");
+    if (!order?.zoho_salesorder_id) throw new Error("No open website order is linked to Zoho yet.");
+    const { region, organizationId, token } = await zohoOrderContext(db);
+    const number = zohoOrderNumber(order.order_no);
+    const email = newOrderEmail({ number, customer: order.customer_name ?? "", total: Number(order.total) || 0, delivery: str(order.shipping_method) });
+    await booksRequest(region, organizationId, token, `salesorders/${encodeURIComponent(order.zoho_salesorder_id)}/email`, "POST", {
+      to_mail_ids: config.to,
+      subject: `Test: ${email.subject}`,
+      body: email.body,
+      send_from_org_email_id: true,
+    });
+    console.info(zohoLogLine("order_email_test_sent", { order: number, recipients: config.to.length }));
+    return { order: number, sentTo: config.to };
   });
 
 // ---------------------------------------------------------------- product / stock / customer parity
@@ -3916,7 +3965,7 @@ export const reconcileZohoCatalog = createServerFn({ method: "POST" })
     const db = await dbAdmin();
     const { region, organizationId, token } = await zohoOrderContext(db);
     const [productsResult, itemLinksResult, contactLinksResult, rolesResult, profilesResult, ordersResult] = await Promise.all([
-      db.from("catalog_products").select("id,active,status,payload"),
+      db.from("catalog_products").select("id,vendor_id,active,status,payload"),
       db.from("zoho_item_links").select("product_id,zoho_item_id"),
       db.from("zoho_contact_links").select("user_id,contact_type,zoho_contact_id"),
       db.from("user_roles").select("user_id,role").eq("role", "customer"),
@@ -3926,8 +3975,10 @@ export const reconcileZohoCatalog = createServerFn({ method: "POST" })
     for (const result of [productsResult, itemLinksResult, contactLinksResult, rolesResult, profilesResult, ordersResult])
       if (result.error) throw new Error("Could not read Grain Bazar data for the parity check");
 
+    // Zoho-imported copies (vendor "zoho:...") mirror Zoho items and are never pushed back.
+    const zohoImported = (productsResult.data ?? []).filter((row) => row.vendor_id.startsWith("zoho:")).length;
     const products: AppProductForParity[] = (productsResult.data ?? [])
-      .filter((row) => row.status !== "rejected")
+      .filter((row) => row.status !== "rejected" && !row.vendor_id.startsWith("zoho:"))
       .map((row) => {
         const payload = plainObject(row.payload);
         return {
@@ -3995,6 +4046,7 @@ export const reconcileZohoCatalog = createServerFn({ method: "POST" })
     return {
       catalog,
       customers: customerReport,
+      zohoImported,
       zohoItemsFetched: zohoItems.size,
       itemsTruncated,
       stockTruncated,
@@ -4003,3 +4055,61 @@ export const reconcileZohoCatalog = createServerFn({ method: "POST" })
       ranAt: new Date().toISOString(),
     };
   });
+
+
+/** Updates the contact's primary person in place (Zoho Inventory Contact Persons API), or adds one. */
+async function upsertPrimaryContactPerson(
+  region: Region,
+  organizationId: string,
+  token: string,
+  contactId: string,
+  person: { first_name: string; last_name: string; email: string; phone: string; mobile: string },
+) {
+  const listed = await inventoryRequest<{ contact_persons?: Record<string, unknown>[] }>(
+    region, organizationId, token, `contacts/${encodeURIComponent(contactId)}/contactpersons`, "GET",
+  );
+  const persons = (listed.contact_persons ?? []).map(plainObject);
+  const primary = persons.find((row) => row["is_primary_contact"] === true)
+    ?? persons.find((row) => str(row["email"]).toLowerCase() === person.email.toLowerCase())
+    ?? persons[0];
+  const fields = {
+    contact_id: contactId,
+    first_name: person.first_name || "Customer",
+    last_name: person.last_name,
+    email: person.email,
+    phone: person.phone,
+    mobile: person.mobile,
+  };
+  if (primary && str(primary["contact_person_id"])) {
+    await inventoryRequest(region, organizationId, token, `contacts/contactpersons/${encodeURIComponent(str(primary["contact_person_id"]))}`, "PUT", fields);
+  } else {
+    await inventoryRequest(region, organizationId, token, "contacts/contactpersons", "POST", fields);
+  }
+}
+
+/** Among duplicate Zoho contacts, the one this customer's own Zoho sales orders use (if exactly one). */
+async function contactUsedByCustomerOrders(
+  db: Awaited<ReturnType<typeof dbAdmin>>,
+  region: Region,
+  organizationId: string,
+  token: string,
+  userId: string,
+  candidates: string[],
+): Promise<string | null> {
+  const { data: orders } = await db.from("orders").select("zoho_salesorder_id")
+    .eq("user_id", userId).not("zoho_salesorder_id", "is", null)
+    .order("created_at", { ascending: false }).limit(5);
+  const used = new Set<string>();
+  for (const order of orders ?? []) {
+    try {
+      const response = await inventoryRequest<{ salesorder?: Record<string, unknown> }>(
+        region, organizationId, token, `salesorders/${encodeURIComponent(order.zoho_salesorder_id!)}`, "GET",
+      );
+      const customerId = str(response.salesorder?.["customer_id"]);
+      if (candidates.includes(customerId)) used.add(customerId);
+    } catch {
+      // Unreadable order: ignore it for this choice.
+    }
+  }
+  return used.size === 1 ? [...used][0]! : null;
+}

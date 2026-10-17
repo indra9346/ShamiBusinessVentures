@@ -116,3 +116,13 @@ test("new order email: subject and body carry the order basics", () => {
   assert.match(email.body, /2518\.95/);
   assert.match(email.body, /Kumar/);
 });
+
+test("catalog parity: two products with one SKU are flagged, not compared", () => {
+  const report = reconcileCatalog(
+    [product("1", { sku: "DUP-1" }), product("2", { sku: "dup-1 " }), product("3")],
+    new Map([["1", "z1"], ["2", "z1"], ["3", "z3"]]),
+    [item("1", { sku: "DUP-1" }), item("3")],
+  );
+  assert.deepEqual(report.issues.map((row) => [row.productId, row.issue]), [["1", "duplicate_sku"], ["2", "duplicate_sku"]]);
+  assert.equal(report.inSync, 1);
+});

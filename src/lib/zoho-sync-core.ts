@@ -165,7 +165,7 @@ export function reconcileOrders(gbOrders: GbOrderForReconcile[], zohoOrders: Zoh
 
 export type AppProductForParity = { id: string; name: string; sku: string; price: number | null; stock: number | null; active: boolean };
 export type ZohoItemForParity = { item_id: string; sku: string; name: string; rate: number | null; available: number | null; status: string };
-export type CatalogIssue = "not_linked" | "missing_in_zoho" | "sku_mismatch" | "price_mismatch" | "stock_mismatch" | "inactive_in_zoho";
+export type CatalogIssue = "duplicate_sku" | "not_linked" | "missing_in_zoho" | "sku_mismatch" | "price_mismatch" | "stock_mismatch" | "inactive_in_zoho";
 export type CatalogRow = { productId: string; name: string; issue: CatalogIssue; detail: string; zohoId?: string };
 
 /**
@@ -182,7 +182,18 @@ export function reconcileCatalog(
   const linkedIds = new Set(links.values());
   const issues: CatalogRow[] = [];
   let inSync = 0;
+  // Two Grain Bazar products with one SKU would both write to the same Zoho item.
+  const skuCount = new Map<string, number>();
   for (const product of products) {
+    const sku = product.sku.trim().toLowerCase();
+    if (sku) skuCount.set(sku, (skuCount.get(sku) ?? 0) + 1);
+  }
+  for (const product of products) {
+    const sharedBy = skuCount.get(product.sku.trim().toLowerCase()) ?? 0;
+    if (sharedBy > 1) {
+      issues.push({ productId: product.id, name: product.name, issue: "duplicate_sku", detail: `SKU ${product.sku} is used by ${sharedBy} Grain Bazar products; keep one` });
+      continue;
+    }
     const zohoId = links.get(product.id);
     if (!zohoId) {
       issues.push({ productId: product.id, name: product.name, issue: "not_linked", detail: `SKU ${product.sku || "-"} has no Zoho item link yet` });

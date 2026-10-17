@@ -146,6 +146,7 @@ function ReconcilePanel() {
 type CatalogReport = Awaited<ReturnType<typeof import("@/lib/zoho-commerce.functions").reconcileZohoCatalog>>;
 
 const CATALOG_LABELS: Record<string, string> = {
+  duplicate_sku: "Same SKU on several products",
   not_linked: "Not linked to a Zoho item",
   missing_in_zoho: "Linked item missing in Zoho",
   sku_mismatch: "SKU differs",
@@ -197,6 +198,7 @@ function CatalogParityPanel() {
               Products: <strong>{report.catalog.checked}</strong> checked · <strong className="text-emerald-700">{report.catalog.inSync}</strong> in sync ·{" "}
               <strong className={report.catalog.issues.length ? "text-amber-700" : "text-emerald-700"}>{report.catalog.issues.length}</strong> to review
               {report.catalog.zohoOnly > 0 && ` · ${report.catalog.zohoOnly} Zoho items not used by the website`}
+              {report.zohoImported > 0 && ` · ${report.zohoImported} Zoho-imported copies not compared`}
             </p>
             <p className="text-navy">
               Customers: <strong>{report.customers.checked}</strong> accounts · <strong>{report.customers.linked}</strong> linked to Zoho ·{" "}
@@ -293,13 +295,15 @@ function OrderEmailPanel() {
             {enabled && <Button variant="outline" disabled={busy} onClick={() => void save(false)}>Turn off</Button>}
             <Button
               variant="outline"
-              disabled={busy}
+              disabled={busy || !recipients.trim()}
               onClick={async () => {
+                if (!window.confirm(`Zoho will send a real test email for your newest website order to the saved recipients. Send it now?`)) return;
                 setBusy(true);
                 setMessage("");
                 try {
-                  const { checkZohoBooksAccess } = await import("@/lib/zoho-commerce.functions");
-                  setMessage((await checkZohoBooksAccess()).message);
+                  const { sendZohoOrderTestEmail } = await import("@/lib/zoho-commerce.functions");
+                  const sent = await sendZohoOrderTestEmail();
+                  setMessage(`Zoho accepted the test email for ${sent.order} to ${sent.sentTo.join(", ")}. Check the inbox (and spam).`);
                 } catch (cause) {
                   setMessage(cause instanceof Error ? cause.message : String(cause));
                 } finally {
@@ -307,7 +311,7 @@ function OrderEmailPanel() {
                 }
               }}
             >
-              Check Zoho Books access
+              Send test email
             </Button>
           </div>
           <p className="text-xs text-slate">Status: {loaded ? (enabled ? "On" : "Off") : "Loading…"}</p>
