@@ -24,7 +24,7 @@ function pushOrderToZohoInBackground(orderNo: string) {
     .catch((cause: unknown) => console.warn("Zoho will receive this order change on the next sync run", cause));
 }
 
-/** Sends admin product edits to Zoho in the background; the daily run is the backup. */
+/** Sends admin and vendor product edits to Zoho in the background; the daily run is the backup. */
 function pushProductsToZohoInBackground(productIds: string[]) {
   if (STATIC_DATA_MODE || productIds.length === 0) return;
   void import("@/lib/zoho-commerce.functions")
@@ -1102,7 +1102,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setProducts((list) => [p, ...list.filter((item) => item.id !== p.id)]);
         const saved = await saveProduct(p, user?.role === "vendor");
         if (!saved) setProducts((list) => list.filter((item) => item.id !== p.id));
-        else if (user?.role === "admin") pushProductsToZohoInBackground([p.id]);
+        else pushProductsToZohoInBackground([p.id]);
         return saved;
       },
       updateProduct: async (id, patch) => {
@@ -1118,11 +1118,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
         const existing = products.find((product) => product.id === id);
         if (!existing) return false;
+        // A vendor's stock count is not a listing change: the product stays live (no re-review).
+        const stockOnly = Object.keys(patch).length === 1 && patch.stock !== undefined;
+        if (user?.role === "vendor" && stockOnly && !STATIC_DATA_MODE) {
+          const stock = Math.round(patch.stock ?? 0);
+          const { data: done, error } = await supabase.rpc("vendor_set_product_stock", { _product_id: id, _stock: stock });
+          if (error || !done) {
+            toast.error("Could not update stock", { description: error?.message ?? "This product is not in your store." });
+            return false;
+          }
+          setProducts((list) => list.map((p) => (p.id === id ? { ...p, stock, updated: today() } : p)));
+          pushProductsToZohoInBackground([id]);
+          return true;
+        }
         const updated = { ...existing, ...patch, updated: today() };
         setProducts((list) => list.map((p) => (p.id === id ? updated : p)));
         const ok = await saveProduct(updated, user?.role === "vendor");
         if (!ok) setProducts((list) => list.map((item) => item.id === id ? existing : item));
-        else if (user?.role === "admin") pushProductsToZohoInBackground([id]);
+        else pushProductsToZohoInBackground([id]);
         return ok;
       },
       deleteProduct: async (id) => {

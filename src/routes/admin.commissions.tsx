@@ -36,7 +36,8 @@ function AdminCommissions() {
       vendors.map((v) => {
         const pct = v.commission;
         const sales = getVendorPaidSales(orders, v.id);
-        const earned = Math.round(sales * (pct / 100));
+        // Paise precision, matching the vendor's Earnings page.
+        const earned = Math.round(sales * (pct / 100) * 100) / 100;
         return { ...v, sales, pct, earned, net: sales - earned };
       }),
     [vendors, orders],

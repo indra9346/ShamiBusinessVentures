@@ -316,7 +316,7 @@ function VendorProductsPanel() {
                   return;
                 }
                 if (!await updateProduct(stockDialog.id, { stock: val })) return;
-                toast.success(`Stock for ${stockDialog.name} updated; product submitted for admin review`);
+                toast.success(`Stock for ${stockDialog.name} updated`, { description: "The product stays live; Zoho gets the new stock too." });
                 setStockDialog(null);
               }}
             >

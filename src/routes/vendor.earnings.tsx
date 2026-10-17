@@ -28,7 +28,7 @@ export const Route = createFileRoute("/vendor/earnings")({
 });
 
 function VendorEarnings() {
-  const { vendors } = useApp();
+  const { vendors, orders } = useApp();
   const { vendorOrders, vendorId, revenue } = useVendorScope();
   const vendor = vendors.find((v) => v.id === vendorId);
   const commission = vendor?.commission ?? 8;
@@ -100,10 +100,11 @@ function VendorEarnings() {
     .filter((order) => order.payment === "Paid" && order.status !== "Delivered" && order.status !== "Cancelled")
     .reduce((sum, order) => sum + order.items.filter((item) => item.vendorId === vendorId).reduce((value, item) => value + getOrderItemTotal(item), 0) * (1 - commission / 100), 0),
   [vendorOrders, vendorId, commission]);
-  const settledNetEarnings = useMemo(() => vendorOrders
+  // Same rule as the payout request check in the database: the whole order is delivered and paid.
+  const settledNetEarnings = useMemo(() => orders
     .filter((order) => order.payment === "Paid" && order.status === "Delivered")
     .reduce((sum, order) => sum + order.items.filter((item) => item.vendorId === vendorId).reduce((value, item) => value + getOrderItemTotal(item), 0) * (1 - commission / 100), 0),
-  [vendorOrders, vendorId, commission]);
+  [orders, vendorId, commission]);
   const availableEarnings = reservedPayouts === null ? null : Math.floor(Math.max(0, settledNetEarnings - reservedPayouts) * 100) / 100;
 
   return (

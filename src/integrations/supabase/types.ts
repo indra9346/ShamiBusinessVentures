@@ -969,6 +969,7 @@ export type Database = {
       request_vendor_payout: { Args: { _amount: number; _method?: string }; Returns: string }
       admin_update_order_item: { Args: { _order_no: string; _order_item_id: string; _qty: number; _capacity: string; _unit_price: number }; Returns: Json }
       vendor_update_order_fulfillment: { Args: { _order_no: string; _status: string }; Returns: boolean }
+      vendor_set_product_stock: { Args: { _product_id: string; _stock: number }; Returns: boolean }
       admin_update_order_status: { Args: { _order_no: string; _status: string }; Returns: boolean }
       cancel_marketplace_order: { Args: { _order_no: string }; Returns: boolean }
       admin_broadcast_notification: { Args: { _audience: string; _title: string; _message: string }; Returns: number }

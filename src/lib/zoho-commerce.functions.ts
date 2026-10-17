@@ -2029,7 +2029,32 @@ async function syncCatalogProductsDirect(db: Awaited<ReturnType<typeof dbAdmin>>
   return outcome;
 }
 
-/** After checkout: the order's products changed stock; send them to Zoho now. Owner or admin only. */
+/** The signed-in user's vendor ID, or null when they are not a vendor. */
+async function callerVendorId(db: Awaited<ReturnType<typeof dbAdmin>>, userId: string) {
+  const { data } = await db.from("profiles").select("vendor_id").eq("id", userId).maybeSingle();
+  return data?.vendor_id ?? null;
+}
+
+/**
+ * Who may trigger an instant Zoho push for an order: the customer who placed it, an admin,
+ * or a vendor with a line in it (vendor fulfilment updates change the order too).
+ */
+async function mayPushOrder(
+  db: Awaited<ReturnType<typeof dbAdmin>>,
+  userId: string,
+  isAdmin: () => Promise<boolean>,
+  order: { id: string; user_id: string | null },
+) {
+  if (order.user_id === userId) return true;
+  if (await isAdmin()) return true;
+  const vendorId = await callerVendorId(db, userId);
+  if (!vendorId) return false;
+  const { count } = await db.from("order_items").select("id", { count: "exact", head: true })
+    .eq("order_id", order.id).eq("vendor_id", vendorId);
+  return (count ?? 0) > 0;
+}
+
+/** After checkout or a status change: the order's products changed stock; send them to Zoho now. */
 export const pushOrderStockToZoho = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator(z.object({ orderNo: z.string().trim().min(1).max(80) }))
@@ -2037,10 +2062,8 @@ export const pushOrderStockToZoho = createServerFn({ method: "POST" })
     const db = await dbAdmin();
     const { data: order } = await db.from("orders").select("id,user_id").eq("order_no", data.orderNo).maybeSingle();
     if (!order) return { pushed: 0 };
-    if (order.user_id !== context.userId) {
-      const { data: isAdmin } = await context.supabase.rpc("has_role", { _user_id: context.userId, _role: "admin" });
-      if (!isAdmin) return { pushed: 0 };
-    }
+    const isAdmin = async () => !!(await context.supabase.rpc("has_role", { _user_id: context.userId, _role: "admin" })).data;
+    if (!(await mayPushOrder(db, context.userId, isAdmin, order))) return { pushed: 0 };
     if (!(await isZohoWriteSyncActive(db))) return { pushed: 0 };
     const { data: items } = await db.from("order_items").select("product_id").eq("order_id", order.id);
     const ids = (items ?? []).map((item) => item.product_id).filter((id): id is string => !!id);
@@ -2051,13 +2074,20 @@ export const pushOrderStockToZoho = createServerFn({ method: "POST" })
     }
   });
 
-/** Admin product edits: send them to Zoho now instead of waiting for the daily run. */
+/** Admin or vendor product edits: send them to Zoho now instead of waiting for the daily run. */
 export const pushProductChangeToZoho = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator(z.object({ productIds: z.array(z.string().trim().min(1).max(80)).min(1).max(20) }))
   .handler(async ({ data, context }) => {
-    await ensureAdmin(context.supabase, context.userId);
     const db = await dbAdmin();
+    const { data: isAdmin } = await context.supabase.rpc("has_role", { _user_id: context.userId, _role: "admin" });
+    if (!isAdmin) {
+      // A vendor may push only their own products.
+      const vendorId = await callerVendorId(db, context.userId);
+      if (!vendorId) return { pushed: 0, review: 0 };
+      const { data: owned } = await db.from("catalog_products").select("id").in("id", data.productIds).eq("vendor_id", vendorId);
+      if ((owned ?? []).length !== new Set(data.productIds).size) return { pushed: 0, review: 0 };
+    }
     if (!(await isZohoWriteSyncActive(db))) return { pushed: 0, review: 0 };
     return syncCatalogProductsDirect(db, data.productIds);
   });
@@ -3148,10 +3178,8 @@ export const pushOrderChangeToZoho = createServerFn({ method: "POST" })
       .eq("order_no", data.orderNo)
       .maybeSingle();
     if (error || !order) return { pushed: false };
-    if (order.user_id !== context.userId) {
-      const { data: isAdmin } = await context.supabase.rpc("has_role", { _user_id: context.userId, _role: "admin" });
-      if (!isAdmin) return { pushed: false };
-    }
+    const isAdmin = async () => !!(await context.supabase.rpc("has_role", { _user_id: context.userId, _role: "admin" })).data;
+    if (!(await mayPushOrder(db, context.userId, isAdmin, order))) return { pushed: false };
     if (!(await isZohoWriteSyncActive(db))) return { pushed: false };
     try {
       await pushOrderToZohoDirect(db, order.id);
