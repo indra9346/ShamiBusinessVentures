@@ -112,6 +112,10 @@ export type Database = {
       }
       addresses: {
         Row: {
+          latitude: number | null
+          longitude: number | null
+          location_accuracy_m: number | null
+          located_at: string | null
           city: string
           created_at: string
           id: string
@@ -127,6 +131,10 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          latitude?: number | null
+          longitude?: number | null
+          location_accuracy_m?: number | null
+          located_at?: string | null
           city: string
           created_at?: string
           id?: string
@@ -142,6 +150,10 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          latitude?: number | null
+          longitude?: number | null
+          location_accuracy_m?: number | null
+          located_at?: string | null
           city?: string
           created_at?: string
           id?: string

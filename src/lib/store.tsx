@@ -73,7 +73,13 @@ function preferredRole(roles: readonly string[]): Role | undefined {
 
 export type SessionUser = { id?: string | undefined; name: string; email: string; role: Role; phone?: string | undefined; avatar?: string | undefined; addressKey?: string | undefined };
 export type CartLine = { id: string; qty: number };
-export type Address = (typeof seedAddresses)[number];
+export type Address = (typeof seedAddresses)[number] & {
+  /** Map point captured with "Use my current location". */
+  latitude?: number | undefined;
+  longitude?: number | undefined;
+  locationAccuracy?: number | undefined;
+  locatedAt?: string | undefined;
+};
 export type Customer = (typeof seedCustomers)[number];
 export type Vendor = (typeof seedVendors)[number] & { avatar?: string; businessAddress?: string };
 export type Review = (typeof seedReviews)[number] & { reply?: string };
@@ -558,6 +564,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
               const saved = (addressRows ?? []).map((row) => ({
                 id: row.id, label: row.label, name: row.name, phone: row.phone, line: row.line,
                 city: row.city, state: row.state, pin: row.pin, landmark: row.landmark || "", default: row.is_default,
+                ...(row.latitude !== null && row.longitude !== null ? {
+                  latitude: row.latitude, longitude: row.longitude,
+                  ...(row.location_accuracy_m !== null ? { locationAccuracy: Number(row.location_accuracy_m) } : {}),
+                  ...(row.located_at ? { locatedAt: row.located_at } : {}),
+                } : {}),
               }) as Address);
               setAddresses(saved);
               if (ownerKey) setAddressesByUser((existing) => ({ ...existing, [ownerKey]: saved }));
@@ -1788,6 +1799,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
           const { error } = await supabase.from("addresses").insert({
             id: a.id, user_id: authUser.id, label: a.label, name: a.name, phone: a.phone,
             line: a.line, city: a.city, state: a.state, pin: a.pin, landmark: a.landmark || null, is_default: a.default,
+            latitude: a.latitude ?? null, longitude: a.longitude ?? null,
+            location_accuracy_m: a.locationAccuracy ?? null, located_at: a.locatedAt ?? null,
           });
           if (error) {
             toast.error("Could not save this address", { description: error.message });
@@ -1811,6 +1824,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             ...(patch.state !== undefined ? { state: patch.state } : {}),
             ...(patch.pin !== undefined ? { pin: patch.pin } : {}),
             ...(patch.landmark !== undefined ? { landmark: patch.landmark || null } : {}),
+            ...(patch.latitude !== undefined ? { latitude: patch.latitude, longitude: patch.longitude ?? null, location_accuracy_m: patch.locationAccuracy ?? null, located_at: patch.locatedAt ?? null } : {}),
           }).eq("id", id).eq("user_id", user?.id ?? "");
           if (error) { toast.error("Could not update this address", { description: error.message }); return false; }
         }

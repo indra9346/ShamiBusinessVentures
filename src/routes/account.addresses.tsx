@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { UseMyLocationButton, type CapturedLocation } from "@/components/site/UseMyLocationButton";
 
 export const Route = createFileRoute("/account/addresses")({
   head: () => ({
@@ -32,6 +33,19 @@ function AccountAddresses() {
   const [editing, setEditing] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState(blank);
+  // Map point from "Use my current location" (kept with the address).
+  const [point, setPoint] = useState<{ latitude: number; longitude: number; locationAccuracy: number; locatedAt: string } | null>(null);
+  const fillFromLocation = (location: CapturedLocation) => {
+    setForm((f) => ({
+      ...f,
+      line: location.line || f.line,
+      city: location.city || f.city,
+      state: location.state || f.state,
+      pin: location.pin || f.pin,
+      landmark: location.landmark || f.landmark,
+    }));
+    setPoint({ latitude: location.latitude, longitude: location.longitude, locationAccuracy: location.accuracy, locatedAt: location.capturedAt });
+  };
 
   const set = (k: keyof typeof blank, v: string) => setForm((f) => ({ ...f, [k]: v }));
 
@@ -46,6 +60,7 @@ function AccountAddresses() {
             onClick={() => {
               setEditing(null);
               setForm(blank);
+              setPoint(null);
               setOpen(true);
             }}
           >
@@ -77,6 +92,9 @@ function AccountAddresses() {
                       label: a.label, name: a.name, phone: a.phone, line: a.line,
                       city: a.city, state: a.state, pin: a.pin, landmark: a.landmark ?? "",
                     });
+                    setPoint(a.latitude !== undefined && a.longitude !== undefined
+                      ? { latitude: a.latitude, longitude: a.longitude, locationAccuracy: a.locationAccuracy ?? 0, locatedAt: a.locatedAt ?? "" }
+                      : null);
                     setOpen(true);
                   }}
                 >
@@ -108,6 +126,7 @@ function AccountAddresses() {
           <DialogHeader>
             <DialogTitle>{editing ? "Edit Address" : "Add New Address"}</DialogTitle>
           </DialogHeader>
+          <UseMyLocationButton onLocated={fillFromLocation} />
           <div className="grid gap-3 sm:grid-cols-2">
             {([
               ["label", "Label"], ["name", "Full Name"], ["phone", "Phone"], ["line", "Address Line"],
@@ -132,13 +151,13 @@ function AccountAddresses() {
                 if (saving) return;
                 setSaving(true);
                 if (editing) {
-                  const saved = await updateAddress(editing, form);
+                  const saved = await updateAddress(editing, { ...form, ...(point ?? {}) });
                   if (!saved) { setSaving(false); return; }
                   toast.success("Address updated");
                 } else {
                   let saved = false;
                   try {
-                    saved = await addAddress({ id: crypto.randomUUID(), ...form, default: addresses.length === 0 });
+                    saved = await addAddress({ id: crypto.randomUUID(), ...form, ...(point ?? {}), default: addresses.length === 0 });
                   } catch (error) {
                     toast.error("Could not save this address", { description: error instanceof Error ? error.message : "Please retry." });
                   }

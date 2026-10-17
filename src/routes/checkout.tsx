@@ -11,6 +11,7 @@ import { usePickupSettings } from "@/lib/pickup-points";
 import { branchForPin, defaultBranchOf, useBranches } from "@/lib/branches";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
+import { UseMyLocationButton, type CapturedLocation } from "@/components/site/UseMyLocationButton";
 
 export const Route = createFileRoute("/checkout")({
   validateSearch: z.object({ productId: z.string().optional() }),
@@ -67,6 +68,18 @@ function Checkout() {
       setAddr(addresses.find((address) => address.default)?.id ?? addresses[0]!.id);
     if (addresses.length > 0) setAddressFormOpen(false);
   }, [addresses, addr]);
+  const [addressPoint, setAddressPoint] = useState<{ latitude: number; longitude: number; locationAccuracy: number; locatedAt: string } | null>(null);
+  const fillFromLocation = (location: CapturedLocation) => {
+    setAddressForm((f) => ({
+      ...f,
+      line: location.line || f.line,
+      city: location.city || f.city,
+      state: location.state || f.state,
+      pin: location.pin || f.pin,
+      landmark: location.landmark || f.landmark,
+    }));
+    setAddressPoint({ latitude: location.latitude, longitude: location.longitude, locationAccuracy: location.accuracy, locatedAt: location.capturedAt });
+  };
   const [addressForm, setAddressForm] = useState({
     label: "Home",
     name: user?.name ?? "",
@@ -342,6 +355,7 @@ function Checkout() {
         state: addressForm.state.trim(),
         pin: addressForm.pin.trim(),
         landmark: addressForm.landmark.trim(),
+        ...(addressPoint ?? {}),
         default: addresses.length === 0,
       });
     } catch (error) {
@@ -464,6 +478,7 @@ function Checkout() {
                   {addressFormOpen && (
                     <div className="rounded-lg border border-border bg-ivory p-4">
                       <h3 className="font-semibold text-navy">Add your delivery address</h3>
+                      <UseMyLocationButton className="mt-3" onLocated={fillFromLocation} />
                       <div className="mt-3 grid gap-3 sm:grid-cols-2">
                         {(
                           [
