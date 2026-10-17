@@ -29,6 +29,7 @@ import {
 } from "@/components/panel/ProductTradeFields";
 import { useApp } from "@/lib/store";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -119,6 +120,7 @@ function emptyForm(
 ) {
   return {
     name: "",
+    description: "",
     category: defaultCategory,
     subcategory: defaultSubcategory,
     vendorId: defaultVendorId,
@@ -303,6 +305,7 @@ function AdminProductsPanel() {
   const [editing, setEditing] = useState<Product | null>(null);
   const [editForm, setEditForm] = useState({
     name: "",
+    description: "",
     mrp: "",
     price: "",
     gst: "",
@@ -535,7 +538,7 @@ function AdminProductsPanel() {
       status: form.status,
       active: true,
       tags: [],
-      description: "Newly added product pending catalogue review.",
+      description: form.description.trim(),
       specs: [{ label: "Brand", value: tradePatch.brand }],
       ...(tradePatch.ratePricing ? { ratePricing: tradePatch.ratePricing } : {}),
       ...(tradePatch.manufacturer ? { manufacturer: tradePatch.manufacturer } : {}),
@@ -800,6 +803,15 @@ function AdminProductsPanel() {
                     <Input
                       value={form.name}
                       onChange={(e) => setForm({ ...form, name: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <Label>Description</Label>
+                    <Textarea
+                      rows={3}
+                      value={form.description}
+                      onChange={(e) => setForm({ ...form, description: e.target.value })}
+                      placeholder="Quality, packaging, usage. Shown on the product page and sent to Zoho."
                     />
                   </div>
                   <div className="grid grid-cols-2 gap-3">
@@ -1208,6 +1220,7 @@ function AdminProductsPanel() {
                     setEditTrade(tradeFieldsFromProduct(p));
                     setEditForm({
                       name: p.name,
+                      description: p.description ?? "",
                       mrp: String(p.mrp),
                       price: String(p.price),
                       gst: String(p.gst),
@@ -1289,6 +1302,15 @@ function AdminProductsPanel() {
               <Input
                 value={editForm.name}
                 onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+              />
+            </div>
+            <div>
+              <Label>Description</Label>
+              <Textarea
+                rows={3}
+                value={editForm.description}
+                onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
+                placeholder="Quality, packaging, usage. Shown on the product page and sent to Zoho."
               />
             </div>
             <ProductTradeFields
@@ -1502,6 +1524,7 @@ function AdminProductsPanel() {
                 const saved = await updateProduct(editing.id, {
                   ...tradePatch,
                   name: editForm.name,
+                  description: editForm.description.trim(),
                   mrp,
                   price,
                   gst,
