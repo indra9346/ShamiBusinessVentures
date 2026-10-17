@@ -5,6 +5,7 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import type { Database, Json } from "@/integrations/supabase/types";
 import { PICKUP_SETTINGS_KEY, parsePickupSettings, pickupPointForPin } from "@/lib/pickup-points";
 import { isMeasureUnit, toBaseQuantity } from "@/lib/data";
+import { reconcileOrders, shouldRetryZohoCall, zohoLogLine, zohoOrderNumber, zohoRetryDelayMs, type ZohoOrderForReconcile } from "@/lib/zoho-sync-core";
 
 const REGIONS = {
   com: ["https://accounts.zoho.com", "https://commerce.zoho.com", "https://www.zohoapis.com"],
@@ -930,14 +931,29 @@ async function inventoryRequest<T>(
     ...(body ? { body: JSON.stringify(body) } : {}),
     signal: AbortSignal.timeout(20_000),
   });
-  let response = await send();
-  // Zoho throttles bursts per organization; wait as asked (capped) and retry once.
-  if (response.status === 429) {
-    const waitSeconds = Math.min(10, Math.max(1, Number(response.headers.get("retry-after")) || 2));
-    await new Promise((resolve) => setTimeout(resolve, waitSeconds * 1000));
-    response = await send();
+  // Up to 2 retries with backoff: 429 for any method (Zoho did not process it); 5xx and network
+  // errors only for GET/PUT. A POST is never resent blindly; order creation looks up its unique
+  // GB- number on the next attempt instead (see syncZohoOrder).
+  const MAX_RETRIES = 2;
+  let response: Response | null = null;
+  for (let retry = 0; ; retry += 1) {
+    let status: number | "network";
+    try {
+      response = await send();
+      status = response.status;
+    } catch (cause) {
+      response = null;
+      status = "network";
+      if (retry >= MAX_RETRIES || !shouldRetryZohoCall(method, status)) throw cause;
+    }
+    if (response && (response.ok || !shouldRetryZohoCall(method, status))) break;
+    if (retry >= MAX_RETRIES) break;
+    const waitMs = zohoRetryDelayMs(retry + 1, response?.headers.get("retry-after") ?? null);
+    console.warn(zohoLogLine("zoho_call_retry", { resource: resource.split("/")[0], method, status: String(status), retry: retry + 1, waitMs }));
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
   }
-  const data = (await response.json()) as T & { code?: number; message?: string };
+  if (!response) throw new Error(`Zoho Inventory ${resource} could not be reached`);
+  const data = (await response.json().catch(() => ({}))) as T & { code?: number; message?: string };
   if (!response.ok || data.code !== 0)
     throw new Error(data.message ?? `Zoho Inventory ${resource} failed (${response.status})`);
   return data;
@@ -2474,7 +2490,7 @@ async function syncZohoOrder(db: Awaited<ReturnType<typeof dbAdmin>>, region: Re
   if (!items?.length) throw new NeedsReviewError("Order has no line items");
 
   const lineItems = await zohoLineItemsForOrder(db, region, organizationId, token, items);
-  const safeNumber = `GB-${String(order.order_no).replace(/[^A-Za-z0-9-]/g, "-").slice(-40)}`;
+  const safeNumber = zohoOrderNumber(order.order_no);
   // A previous request may have reached Zoho even if the response was lost.
   // On retries, search Zoho first by the unique sales-order number.
   if (job.attempts > 1) {
@@ -2862,6 +2878,7 @@ export async function processZohoSyncOutbox(limit = 20, options?: { force?: bool
   const runJob = async (job: ZohoSyncJob) => {
     let status: "complete" | "failed" | "needs_review" = "complete";
     let errorMessage: string | null = null;
+    const startedAt = Date.now();
     try {
       if (job.entity_type === "customer")
         await syncZohoCustomer(db, region, connection.organization_id, token, job.entity_id, ctx);
@@ -2876,6 +2893,8 @@ export async function processZohoSyncOutbox(limit = 20, options?: { force?: bool
         errorMessage.toLowerCase().includes("create more orders");
       status = cause instanceof NeedsReviewError || isQuotaLimit ? "needs_review" : "failed";
     }
+    const log = zohoLogLine("outbox_job_finished", { job: job.id, entity: job.entity_type, entityId: job.entity_id, attempt: job.attempts, status, ms: Date.now() - startedAt, error: errorMessage });
+    if (status === "complete") console.info(log); else console.warn(log);
     const { error: finishError } = await db.rpc("finish_zoho_sync_job", { _id: job.id, _status: status, _error: errorMessage });
     if (finishError) throw new Error(`Zoho job ${job.id} was processed but its result could not be recorded`);
     if (status === "complete") summary.complete += 1;
@@ -3689,4 +3708,54 @@ export const probeZohoSalesChannel = createServerFn({ method: "POST" })
       }
     }
     return JSON.stringify(report, null, 2);
+  });
+
+
+/**
+ * Reconciliation report (read-only): Grain Bazar orders from the last `days` days against the
+ * Zoho sales orders numbered GB-..., matched by that unique number. Lists missing, unlinked,
+ * duplicated, cancelled-on-one-side and total differences. Changes nothing in either system.
+ */
+export const reconcileZohoOrders = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator(z.object({ days: z.number().int().min(1).max(90).default(14) }))
+  .handler(async ({ data, context }) => {
+    await ensureAdmin(context.supabase, context.userId);
+    const db = await dbAdmin();
+    const { region, organizationId, token } = await zohoOrderContext(db);
+    const since = new Date(Date.now() - data.days * 86_400_000);
+    const { data: orders, error } = await db.from("orders")
+      .select("order_no,order_status,total,zoho_salesorder_id,created_at")
+      .gte("created_at", since.toISOString())
+      .order("created_at", { ascending: false })
+      .limit(1000);
+    if (error) throw new Error("Could not read Grain Bazar orders");
+    // Per-order lookups with endpoints the sync already uses: by stored Zoho ID, else by the unique
+    // GB- number. Capped per run to stay well inside Zoho's per-minute API limit.
+    const MAX_LOOKUPS = 80;
+    const rows = (orders ?? []).slice(0, MAX_LOOKUPS);
+    const truncated = (orders ?? []).length > rows.length;
+    const zohoOrders: ZohoOrderForReconcile[] = [];
+    const toRecon = (row: Record<string, unknown>): ZohoOrderForReconcile => ({
+      salesorder_id: str(row["salesorder_id"]),
+      salesorder_number: str(row["salesorder_number"]),
+      status: str(row["order_status"] ?? row["status"]),
+      total: Number(row["total"]),
+    });
+    await runPool(rows, 2, async (order) => {
+      if (order.zoho_salesorder_id) {
+        try {
+          const one = await inventoryRequest<{ salesorder?: Record<string, unknown> }>(
+            region, organizationId, token, `salesorders/${encodeURIComponent(order.zoho_salesorder_id)}`, "GET");
+          if (one.salesorder) { zohoOrders.push(toRecon(one.salesorder)); return; }
+        } catch {
+          // Deleted in Zoho or not readable: fall through to the number search.
+        }
+      }
+      const found = await findZohoSalesOrdersByNumber(region, organizationId, token, zohoOrderNumber(order.order_no));
+      zohoOrders.push(...found.map(toRecon));
+    });
+    const report = reconcileOrders((orders ?? []).map((o) => ({ ...o, total: Number(o.total) })), zohoOrders);
+    console.info(zohoLogLine("reconcile_finished", { days: data.days, checked: report.checked, inSync: report.inSync, issues: report.issues.length, zohoFetched: zohoOrders.length, truncated }));
+    return { ...report, days: data.days, zohoFetched: zohoOrders.length, truncated, ranAt: new Date().toISOString() };
   });

@@ -1,11 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-
-function equalSecret(a: string, b: string) {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i += 1) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
-}
+import { webhookKeyMatches, zohoLogLine } from "@/lib/zoho-sync-core";
 
 /** Finds the sales order or item ID in a Zoho webhook body (JSON, or form data with a JSONString field). */
 function recordFrom(body: string): { kind: "salesorder" | "item"; id: string } | null {
@@ -45,18 +39,24 @@ export const Route = createFileRoute("/api/zoho/webhook")({
     handlers: {
       POST: async ({ request }) => {
         const { zohoWebhookKey, handleZohoOrderWebhook, handleZohoItemWebhook } = await import("@/lib/zoho-commerce.functions");
-        const key = new URL(request.url).searchParams.get("key") ?? "";
-        if (!equalSecret(key, await zohoWebhookKey()))
+        // Zoho workflow webhooks carry no signature we can verify, so a shared key authenticates
+        // the call: sent as the X-GB-Webhook-Key header (preferred, kept out of URL logs) or ?key=.
+        // The payload is never trusted either way; the record is re-read from Zoho.
+        const key = request.headers.get("x-gb-webhook-key") ?? new URL(request.url).searchParams.get("key");
+        if (!webhookKeyMatches(key, await zohoWebhookKey())) {
+          console.warn(zohoLogLine("webhook_rejected", { reason: "bad key" }));
           return Response.json({ error: "Unauthorized" }, { status: 401 });
+        }
         const record = recordFrom(await request.text());
         if (!record) return Response.json({ ok: true, ignored: "no sales order or item id" });
         try {
           const outcome = record.kind === "salesorder"
             ? await handleZohoOrderWebhook(record.id)
             : await handleZohoItemWebhook(record.id);
+          console.info(zohoLogLine("webhook_applied", { kind: record.kind, zohoId: record.id, outcome }));
           return Response.json({ ok: true, outcome });
         } catch (cause) {
-          console.error("Zoho order webhook failed", cause);
+          console.error(zohoLogLine("webhook_failed", { kind: record.kind, zohoId: record.id, error: cause instanceof Error ? cause.message : "unknown" }));
           // 200 so Zoho does not disable the webhook; the catch-up check and daily run retry.
           return Response.json({ ok: false });
         }
