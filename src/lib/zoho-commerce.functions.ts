@@ -1504,16 +1504,20 @@ async function syncZohoItemStock(
   sku: string,
   appStock: number,
   zohoAvailable: number,
+  locationId = "",
 ) {
   const delta = Math.round((appStock - zohoAvailable) * 1000) / 1000;
   if (delta === 0) return;
   try {
+    // At the godown's Zoho location (documented location_id), the same location website orders
+    // take stock from; without it Zoho uses the primary location and the two drift apart.
     await inventoryRequest(region, organizationId, token, "inventoryadjustments", "POST", {
       date: todayInIndia(),
       reason: "Grain Bazar stock sync",
       adjustment_type: "quantity",
       description: `Set ${sku} available stock to ${appStock} to match Grain Bazar`,
-      line_items: [{ item_id: itemId, quantity_adjusted: delta }],
+      ...(locationId ? { location_id: locationId } : {}),
+      line_items: [{ item_id: itemId, quantity_adjusted: delta, ...(locationId ? { location_id: locationId } : {}) }],
     });
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : "Zoho rejected the stock adjustment";
@@ -1795,6 +1799,7 @@ async function syncZohoCatalogItem(
     if (shared.stock !== null && !stockFollowUp && str(resultItem?.["item_type"]) === "inventory") {
       await syncZohoItemStock(
         region, organizationId, token, itemId, shared.sku, shared.stock, zohoAvailableForSale(resultItem),
+        await defaultStockLocationId(db),
       );
     }
   }
@@ -4112,4 +4117,13 @@ async function contactUsedByCustomerOrders(
     }
   }
   return used.size === 1 ? [...used][0]! : null;
+}
+
+
+/** Zoho location of the default (else the only active) godown, where Grain Bazar keeps its stock. */
+async function defaultStockLocationId(db: Awaited<ReturnType<typeof dbAdmin>>) {
+  const { data: branches } = await db.from("branches").select("zoho_location_id,is_default,active").eq("active", true).is("vendor_id", null);
+  const withLocation = (branches ?? []).filter((branch) => branch.zoho_location_id);
+  const chosen = withLocation.find((branch) => branch.is_default) ?? (withLocation.length === 1 ? withLocation[0] : undefined);
+  return chosen?.zoho_location_id ?? "";
 }
