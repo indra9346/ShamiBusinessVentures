@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { z } from "zod";
 import { toast } from "sonner";
 import { AuthCard } from "@/components/site/AuthCard";
@@ -32,9 +32,15 @@ export const Route = createFileRoute("/login")({
 });
 
 function LoginPage() {
-  const { login } = useApp();
+  const { login, user, authReady } = useApp();
   const navigate = useNavigate();
   const { next, productId } = Route.useSearch();
+  // Already signed in as a customer (e.g. after a refresh): carry straight on.
+  useEffect(() => {
+    if (!authReady || user?.role !== "customer") return;
+    if (next === "/checkout") void navigate({ to: "/checkout", search: { productId }, replace: true });
+    else void navigate({ to: "/account", replace: true });
+  }, [authReady, user?.role, next, productId, navigate]);
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   // A sign-in request must never create an account. Customer accounts are

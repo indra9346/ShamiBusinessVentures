@@ -38,6 +38,7 @@ function Checkout() {
   const {
     user,
     hydrated,
+    authReady,
     cart,
     cartItems,
     products,
@@ -53,9 +54,10 @@ function Checkout() {
   const { productId } = Route.useSearch();
   const navigate = useNavigate();
   useEffect(() => {
-    if (hydrated && !user)
+    // Wait until the saved sign-in has been read, or a refresh would bounce signed-in customers.
+    if (hydrated && authReady && !user)
       void navigate({ to: "/login", search: { next: "/checkout", productId }, replace: true });
-  }, [hydrated, user, navigate, productId]);
+  }, [hydrated, authReady, user, navigate, productId]);
   const [step, setStep] = useState(0);
   const [addr, setAddr] = useState(addresses[0]?.id ?? "");
   const [addressFormOpen, setAddressFormOpen] = useState(addresses.length === 0);
@@ -193,7 +195,14 @@ function Checkout() {
   const total = subtotal + shipCost + tax - discount;
   const summary = confirmationSummary ?? { subtotal, shipCost, tax, discount, total };
 
-  if (!hydrated || !user) {
+  if (!hydrated || !authReady) {
+    return (
+      <SiteLayout>
+        <div className="mx-auto max-w-xl px-6 py-20 text-center text-sm text-slate">Checking your sign-in…</div>
+      </SiteLayout>
+    );
+  }
+  if (!user) {
     return (
       <SiteLayout>
         <div className="mx-auto max-w-xl px-6 py-20 text-center">

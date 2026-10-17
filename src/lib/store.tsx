@@ -118,6 +118,8 @@ export type Notif = (typeof seedNotifications)[number] & { source?: "seed" | "li
 
 type AppState = {
   hydrated: boolean;
+  /** True once the saved sign-in has been read (a signed-in user is not yet known before this). */
+  authReady: boolean;
   user: SessionUser | null;
   login: (u: SessionUser) => void;
   logout: () => void;
@@ -233,6 +235,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [addresses, setAddresses] = useState<Address[]>([]);
   const [addressesByUser, setAddressesByUser] = useState<Record<string, Address[]>>({});
   const [hydrated, setHydrated] = useState(false);
+  const [authReady, setAuthReady] = useState(STATIC_DATA_MODE);
   const [productCatalogStatus, setProductCatalogStatus] = useState<"loading" | "ready" | "unavailable">("loading");
   const [categoryCatalogStatus, setCategoryCatalogStatus] = useState<"loading" | "ready" | "unavailable">("loading");
 
@@ -818,7 +821,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
     };
 
-    void syncAuthSession();
+    void syncAuthSession().finally(() => { if (active) setAuthReady(true); });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === "SIGNED_IN" || event === "USER_UPDATED" || event === "TOKEN_REFRESHED") {
@@ -906,6 +909,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     return {
       hydrated,
+      authReady,
       user,
       login: (u) => {
         const signedInUser = { ...u, addressKey: u.addressKey ?? addressOwnerKey(u) };
@@ -1795,7 +1799,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         return true;
       },
     };
-  }, [hydrated, user, cart, wishlist, wishlistsByUser, categories, products, batches, orders, vendors, customers, reviews, returns, coupons, notifications, addresses, addressesByUser, productCatalogStatus, categoryCatalogStatus, saveProduct, logout]);
+  }, [hydrated, authReady, user, cart, wishlist, wishlistsByUser, categories, products, batches, orders, vendors, customers, reviews, returns, coupons, notifications, addresses, addressesByUser, productCatalogStatus, categoryCatalogStatus, saveProduct, logout]);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 }
