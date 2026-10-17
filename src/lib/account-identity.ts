@@ -8,9 +8,12 @@ export function normalizePhone(phone: string | undefined) {
 }
 
 export function orderBelongsToUser(order: Order, user: SessionUser | null) {
-  if (!user || user.role !== "customer") return false;
-
+  if (!user) return false;
+  // An order placed by this exact account is always theirs, whatever the account's role (staff
+  // also shop on the storefront). Email/phone matching is only for customer accounts, because
+  // staff accounts load every customer's orders.
   if (user.id && order.customerId && order.customerId === user.id) return true;
+  if (user.role !== "customer") return false;
   const orderEmail = typeof order.email === "string" ? order.email.toLowerCase() : "";
   const emailMatches = Boolean(user.email && orderEmail === user.email.toLowerCase());
   const userPhone = normalizePhone(user.phone);

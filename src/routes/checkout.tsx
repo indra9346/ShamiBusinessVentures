@@ -455,7 +455,7 @@ function Checkout() {
           ))}
         </ol>
 
-        <div className="grid gap-6 sm:gap-8 lg:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-6 sm:gap-8 lg:grid-cols-[minmax(0,1fr)_360px]">
           <div className="rounded-lg border border-border bg-card p-4 sm:p-6 shadow-card">
             {step === 0 && (
               <>
