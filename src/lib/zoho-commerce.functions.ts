@@ -1753,7 +1753,66 @@ async function syncZohoCatalogItem(
     } : {}),
   });
   if (linkError) throw new Error("Zoho item synchronized, but its Grain Bazar mapping could not be saved");
+  if (shared.description) {
+    await pushCommerceDescription(db, { region, organizationId, token }, shared.sku, str(resultItem?.["group_id"]), shared.description);
+  }
   if (stockFollowUp) throw new NeedsReviewError(stockFollowUp);
+}
+
+const escapeHtml = (text: string) => text
+  .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+/**
+ * Grain Bazar -> Zoho Commerce: shoppers read the description on the Commerce product page,
+ * which is separate from the Inventory item's description. Writes it there when it differs,
+ * then records it as "last seen" so the inbound check does not mistake it for a Zoho edit.
+ * Never fails the item sync; a refusal is logged and the next push retries.
+ */
+async function pushCommerceDescription(
+  db: Awaited<ReturnType<typeof dbAdmin>>,
+  api: ZohoApiContext,
+  sku: string,
+  groupId: string,
+  description: string,
+) {
+  try {
+    let productId = "";
+    let mirrorId = "";
+    let mirrorPayload: Record<string, unknown> = {};
+    if (sku) {
+      const { data: mirror } = await db.from("catalog_products").select("id,payload")
+        .like("id", "zoho-%").eq("payload->>sku", sku).limit(1).maybeSingle();
+      mirrorId = mirror?.id ?? "";
+      mirrorPayload = plainObject(mirror?.payload);
+      productId = str(plainObject(mirrorPayload["zoho"])["productId"]);
+    }
+    productId ||= groupId;
+    if (!productId) return;
+    const html = description.split(/\n+/).map((line) => line.trim()).filter(Boolean)
+      .map((line) => `<p>${escapeHtml(line)}</p>`).join("");
+    const asZohoShowsIt = htmlToText(html);
+    const current = await commerceRequest<{ product?: Record<string, unknown> }>(
+      api.region, api.organizationId, api.token, `products/${encodeURIComponent(productId)}`, "GET",
+    );
+    const zohoText = htmlToText(str(current.product?.["product_description"]));
+    const seen = plainObject(mirrorPayload["zohoSeen"]);
+    // Latest edit wins: if Zoho's text changed since Grain Bazar last saw it, that Zoho edit has
+    // not been pulled in yet; leave it for the inbound sync instead of overwriting it.
+    if (typeof seen["description"] === "string" && seen["description"] !== zohoText && zohoText !== asZohoShowsIt) return;
+    if (zohoText !== asZohoShowsIt) {
+      await commerceRequest(
+        api.region, api.organizationId, api.token, `products/${encodeURIComponent(productId)}`, "PUT",
+        { product_description: html },
+      );
+    }
+    if (mirrorId) {
+      await db.from("catalog_products").update({
+        payload: { ...mirrorPayload, zohoSeen: { description: asZohoShowsIt, reorderLevel: seen["reorderLevel"] ?? null, at: new Date().toISOString() } } as Json,
+      }).eq("id", mirrorId);
+    }
+  } catch (cause) {
+    console.warn(`Zoho Commerce description for ${sku} not updated; the next push retries:`, cause);
+  }
 }
 
 type GrainBazarOrderItem = { product_id: string | null; product_name: string; sku: string | null; qty: number; unit_price: number; gst_rate: number };
