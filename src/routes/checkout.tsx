@@ -281,9 +281,19 @@ function Checkout() {
       void navigate({ to: "/cart" });
       return;
     }
+    // A filled-in new address is saved by Continue itself (no separate "Save address" needed).
+    if (step === 0 && addressFormOpen && (addressForm.line.trim() || addressForm.pin.trim() || !addr)) {
+      if (!(await saveAddress())) return;
+      setStep(1);
+      return;
+    }
     if (step === 0 && !addr) {
       toast.error("Please select or add a delivery address");
       return;
+    }
+    if (step === 0) {
+      setAddressFormOpen(false);
+      setChangingAddress(false);
     }
     if (step === 3) {
       if (!shippingRatesReady) {
@@ -336,8 +346,9 @@ function Checkout() {
     setStep(step + 1);
   };
 
-  const saveAddress = async () => {
-    if (savingAddress) return;
+  /** Saves the new-address form; returns the new address id, or null if it could not be saved. */
+  const saveAddress = async (): Promise<string | null> => {
+    if (savingAddress) return null;
     const phoneDigits = addressForm.phone.replace(/\D/g, "");
     if (
       !addressForm.name.trim() ||
@@ -347,7 +358,7 @@ function Checkout() {
       !/^\d{6}$/.test(addressForm.pin.trim())
     ) {
       toast.error("Enter your name, valid phone, full address, city and 6-digit PIN code");
-      return;
+      return null;
     }
     setSavingAddress(true);
     const id = crypto.randomUUID();
@@ -373,10 +384,12 @@ function Checkout() {
     } finally {
       setSavingAddress(false);
     }
-    if (!saved) return;
+    if (!saved) return null;
     setAddr(id);
     setAddressFormOpen(false);
+    setChangingAddress(false);
     toast.success("Delivery address saved");
+    return id;
   };
 
   const selectedAddress = addresses.find((a) => a.id === addr);
@@ -740,7 +753,17 @@ function Checkout() {
               <div className="mt-8 flex justify-between">
                 <button
                   disabled={placingOrder}
-                  onClick={() => setStep(Math.max(0, step - 1))}
+                  onClick={() => {
+                    if (step > 0) { setStep(step - 1); return; }
+                    // First step: close the address chooser, else leave checkout for the product / cart.
+                    if ((addressFormOpen && addresses.length > 0) || changingAddress) {
+                      setAddressFormOpen(false);
+                      setChangingAddress(false);
+                      return;
+                    }
+                    if (productId) void navigate({ to: "/product/$id", params: { id: productId } });
+                    else void navigate({ to: "/cart" });
+                  }}
                   className="rounded-md border border-navy px-5 py-2.5 text-sm font-semibold text-navy transition-colors hover:bg-navy hover:text-white"
                 >
                   Back
