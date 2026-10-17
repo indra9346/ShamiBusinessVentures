@@ -1917,8 +1917,16 @@ async function syncLinkedZohoOrder(
 
   if (order.order_status === "Cancelled") {
     if (!["void", "cancelled"].includes(zohoStatus())) {
+      // Zoho voids only confirmed sales orders; a draft must be confirmed first.
+      if (zohoStatus() === "draft") {
+        await inventoryRequest(region, organizationId, token, `${path}/status/confirmed`, "POST");
+      }
       await inventoryRequest(region, organizationId, token, `${path}/status/void`, "POST");
       zoho = await load();
+      if (!["void", "cancelled"].includes(zohoStatus())) {
+        await saveZohoZohoState(db, order.id, zoho);
+        throw new NeedsReviewError(`Grain Bazar order ${order.order_no} is cancelled, but Zoho sales order ${str(zoho["salesorder_number"])} is still ${zohoStatus()}. Void it in Zoho.`);
+      }
     }
   } else if (ZOHO_CLOSED_ORDER_STATES.includes(zohoStatus())) {
     await saveZohoZohoState(db, order.id, zoho);
