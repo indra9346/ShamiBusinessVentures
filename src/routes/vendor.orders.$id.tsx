@@ -136,6 +136,9 @@ function VendorOrderDetail() {
                     ))}
                   </SelectContent>
                 </Select>
+                {(order.status === "Placed" || order.status === "Payment Confirmed") && vendorOrderStatusOptions(order).length === 1 && (
+                  <p className="text-xs text-slate">Waiting for the customer's advance payment. You can accept once it is recorded.</p>
+                )}
                 {order.status === "Packed" && order.payment !== "Paid" && (
                   <p className="text-xs text-slate">Full payment is required before dispatch.</p>
                 )}

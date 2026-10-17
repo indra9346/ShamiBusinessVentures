@@ -74,6 +74,10 @@ function VendorRegistration() {
     event.preventDefault();
     if (!user?.id || user.role !== "customer") { toast.error("Sign in with your customer account to apply"); return; }
     if (!user.email.includes("@")) { toast.error("A verified email account is required for vendor sign-in"); return; }
+    if (gstin.trim() && !/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/.test(gstin.trim().toUpperCase())) {
+      toast.error("Enter a valid 15-character GSTIN (for example 29ABCDE1234F1Z5), or leave it blank");
+      return;
+    }
     setSaving(true);
     const { data, error } = await supabase.rpc("customer_submit_vendor_application", {
       _business_name: business.trim(), _owner_name: owner.trim(), _phone: phone.trim(), _gstin: gstin.trim(), _city: city.trim(), _address: address.trim(),
