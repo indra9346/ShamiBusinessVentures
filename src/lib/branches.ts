@@ -163,6 +163,10 @@ export function branchForPin(branches: Branch[], pin: string | null | undefined)
   return (clean ? active.find((branch) => branch.servesPincodes.includes(clean)) : undefined) ?? defaultBranchOf(branches);
 }
 
+/** Home-delivery charge from a godown (same rule as the database): its fee, free at or above its threshold. */
+export const branchDeliveryFee = (branch: Branch | null, subtotal: number) =>
+  !branch || (branch.freeDeliveryAbove !== null && subtotal >= branch.freeDeliveryAbove) ? 0 : branch.deliveryFee;
+
 export const branchStockOf = (state: BranchState, productId: string, branchId: string) => state.stock.get(productId)?.get(branchId) ?? 0;
 
 /* ------------------------------------------------------------------------- */

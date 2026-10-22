@@ -6,6 +6,7 @@ import { SiteLayout, Breadcrumbs } from "@/components/site/SiteLayout";
 import { getAvailablePurchaseQuantity, getMaxPurchaseQuantity, inr, type Product } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { useStorefrontDisplay } from "@/lib/storefront-display";
+import { branchDeliveryFee, defaultBranchOf, useBranches } from "@/lib/branches";
 import { Input } from "@/components/ui/input";
 import { showCartNotification } from "@/components/site/CartFloatingNotification";
 
@@ -28,7 +29,11 @@ function Cart() {
   const [applied, setApplied] = useState<string | null>(null);
   const hasUnavailableLines = cartItems.length < cart.length;
   const checkoutBlocked = productCatalogStatus !== "ready" || hasUnavailableLines;
-  const delivery = subtotal > 10000 || subtotal === 0 ? 0 : 250;
+  // Same default as checkout: pickup from the godown (free) when it offers pickup, else its home-delivery charge.
+  // Checkout picks the godown by delivery PIN when branch routing is on; before an address, use the default godown.
+  const godown = defaultBranchOf(useBranches().branches);
+  const pickup = godown ? godown.pickupEnabled : true;
+  const delivery = pickup ? 0 : branchDeliveryFee(godown, subtotal);
   const tax = cartItems.reduce((sum, line) => sum + Math.round(line.product.price * line.qty * line.product.gst / 100), 0);
   const appliedCoupon = applied ? coupons.find((c) => c.code === applied) : undefined;
   const discount = appliedCoupon
@@ -173,7 +178,7 @@ function Cart() {
             <h2 className="text-sm font-bold tracking-wide text-navy uppercase">Order Summary</h2>
             <div className="mt-5 space-y-3 text-sm">
               <Row label="Subtotal" value={inr(subtotal)} />
-              <Row label="Delivery charges" value={delivery === 0 ? "Free" : inr(delivery)} />
+              <Row label={pickup ? "Godown pickup" : "Delivery charges"} value={delivery === 0 ? "Free" : inr(delivery)} />
               <Row label="GST" value={inr(tax)} />
               {discount > 0 && <Row label={`Coupon discount (${applied})`} value={`- ${inr(discount)}`} gold />}
               <div className="hairline-gold my-2" />

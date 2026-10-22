@@ -8,7 +8,7 @@ import { inr } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { PickupPointCard } from "@/components/site/PickupPointCard";
 import { usePickupSettings } from "@/lib/pickup-points";
-import { branchForPin, defaultBranchOf, useBranches } from "@/lib/branches";
+import { branchDeliveryFee, branchForPin, defaultBranchOf, useBranches } from "@/lib/branches";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
 import { UseMyLocationButton, type CapturedLocation } from "@/components/site/UseMyLocationButton";
@@ -192,9 +192,7 @@ function Checkout() {
   const canPickup = fulfilBranch ? fulfilBranch.pickupEnabled : true;
   const canDeliver = fulfilBranch ? fulfilBranch.deliveryEnabled : homeDelivery;
   const fulfil: "Pickup" | "Delivery" = ship === "Delivery" && canDeliver ? "Delivery" : canPickup ? "Pickup" : "Delivery";
-  const deliveryFee = fulfilBranch
-    ? fulfilBranch.freeDeliveryAbove !== null && subtotal >= fulfilBranch.freeDeliveryAbove ? 0 : fulfilBranch.deliveryFee
-    : 0;
+  const deliveryFee = branchDeliveryFee(fulfilBranch, subtotal);
   const shipCost = fulfil === "Delivery" ? deliveryFee : 0;
 
   // Marketplace ON: items fulfilled from different points (a vendor's own place, a godown) are
