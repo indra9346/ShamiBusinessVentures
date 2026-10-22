@@ -170,11 +170,11 @@ Product details stay editable on **both** sides (owner's decision); the latest e
   and secret as "Grain Bazar order sync" (`/api/zoho/webhook`, signed with `ZOHO_WEBHOOK_SECRET`).
   The route already handles item payloads (`handleZohoItemWebhook`). Books rules fire only for
   edits made in the Zoho UI, which is the case they need to cover.
-- **Catch-up:** the Vercel cron `/api/zoho/sync` now runs every 15 minutes instead of daily, and
-  needs Vercel **Pro**: Hobby allows only daily crons and rejects the deployment. Each run reads up to
-  20 linked items (one Inventory and one Commerce call each), plus contacts and recent orders. At
-  today's size (11 items, 9 customers) that is about 2,000–4,000 Inventory calls a day, inside the
-  10,000/day Premium limit. Commerce MRP edits don't fire the Books rule, so they arrive with the
-  catch-up.
+- **Catch-up:** call `/api/zoho/sync` (with `Authorization: Bearer $CRON_SECRET`) **every 15 minutes**
+  from the host's scheduler. On Hostinger that is a cron job (docs/hosting-hostinger.md). `vercel.json` stays
+  daily, because Vercel Hobby rejects more frequent crons; on Vercel Pro it could be `*/15 * * * *`.
+  Each run reads up to 20 linked items (one Inventory and one Commerce call each), plus contacts and
+  recent orders: about 2,000–4,000 Inventory calls a day at today's size, inside the 10,000/day
+  Premium limit. Commerce MRP edits don't fire the Books rule, so they arrive with the catch-up.
 - **Migration:** `20261022120000_zoho_item_hsn_mrp_two_way.sql` (`apply_zoho_catalog_item` applies
   HSN and MRP; inserts the seller setting).
