@@ -120,3 +120,13 @@ test("Zoho signature: HMAC-SHA256 of the raw body, hex or base64; wrong secret/b
   assert.equal(await verifyZohoSignature(body, null, secret), null);
   assert.equal(await verifyZohoSignature(body, hex, ""), null);
 });
+
+test("item sync seller scope: empty list keeps everyone, otherwise only listed sellers", async () => {
+  const { zohoItemSyncAllows, parseZohoItemSyncVendorIds } = await import("../src/lib/zoho-sync-core.ts");
+  assert.equal(zohoItemSyncAllows([], "VENDOR-007"), true);
+  assert.equal(zohoItemSyncAllows(["VENDOR-001"], "VENDOR-001"), true);
+  assert.equal(zohoItemSyncAllows(["VENDOR-001"], "VENDOR-007"), false);
+  assert.deepEqual(parseZohoItemSyncVendorIds([" VENDOR-001 ", "VENDOR-001", 7, "", null]), ["VENDOR-001"]);
+  assert.deepEqual(parseZohoItemSyncVendorIds({ vendor: "VENDOR-001" }), []);
+  assert.deepEqual(parseZohoItemSyncVendorIds(null), []);
+});

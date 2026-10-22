@@ -6,7 +6,8 @@ import type { Database, Json } from "@/integrations/supabase/types";
 import { PICKUP_SETTINGS_KEY, parsePickupSettings, pickupPointForPin } from "@/lib/pickup-points";
 import { isMeasureUnit, toBaseQuantity } from "@/lib/data";
 import {
-  cleanEmailList, newOrderEmail, reconcileCatalog, reconcileCustomers, reconcileOrders, shouldRetryZohoCall, zohoLogLine,
+  cleanEmailList, newOrderEmail, parseZohoItemSyncVendorIds, reconcileCatalog, reconcileCustomers, reconcileOrders, shouldRetryZohoCall,
+  zohoItemSyncAllows, zohoLogLine,
   zohoOrderNumber, zohoRetryDelayMs, type AppProductForParity, type ZohoItemForParity, type ZohoOrderForReconcile,
 } from "@/lib/zoho-sync-core";
 
@@ -1226,6 +1227,12 @@ function finiteNumber(value: unknown) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+/** A price that is set: Zoho reports a missing MRP as 0 or blank, which must not overwrite one. */
+function positiveRate(value: unknown) {
+  const rate = finiteNumber(value);
+  return rate !== null && rate > 0 ? rate : null;
+}
+
 function catalogSharedValues(product: CatalogProduct) {
   const payload = plainObject(product.payload);
   return {
@@ -1239,6 +1246,8 @@ function catalogSharedValues(product: CatalogProduct) {
     /** Grain Bazar is the stock master: Zoho stock on hand is adjusted to match this. */
     stock: finiteNumber(payload["stock"]),
     hsn: str(payload["hsn"]).trim(),
+    /** MRP lives on the Zoho Commerce variant (label_rate), not on the Inventory item. */
+    mrp: positiveRate(payload["mrp"]),
   };
 }
 
@@ -1289,6 +1298,8 @@ function catalogEditableValues(product: CatalogProduct) {
     minimumStock: finiteNumber(payload["minimumStock"]),
     description: str(payload["description"]).trim(),
     active: product.active,
+    hsn: str(payload["hsn"]).trim(),
+    mrp: positiveRate(payload["mrp"]),
   };
 }
 
@@ -1302,6 +1313,9 @@ function zohoEditableValues(item: Record<string, unknown>) {
     minimumStock: finiteNumber(item["reorder_level"]),
     description: str(item["description"]).trim(),
     active: status ? status !== "inactive" : null,
+    hsn: str(item["hsn_or_sac"]).trim(),
+    // Only present when withCommerceProductValues saw a Zoho Commerce MRP edit.
+    mrp: positiveRate(item["label_rate"]),
   };
 }
 
@@ -1404,20 +1418,24 @@ async function withCommerceProductValues(
     const variant = variants.find((v) => str(v["sku"]).trim().toLowerCase() === sku.toLowerCase()) ?? (variants.length === 1 ? variants[0] : undefined);
     const description = htmlToText(str(product["product_description"])) || htmlToText(str(product["product_short_description"]));
     const variantReorder = variant && str(variant["reorder_level"]) !== "" ? finiteNumber(variant["reorder_level"]) : null;
+    const variantMrp = variant ? positiveRate(variant["label_rate"]) : null;
 
     // Zoho's product response has no modified time, and a product-page save does not always
     // move the item's. So Grain Bazar remembers the Commerce values it last saw (on the
     // product's Zoho Commerce copy) and treats any difference as a Zoho edit.
     const seen = plainObject(mirrorPayload["zohoSeen"]);
     const hasSeen = typeof seen["description"] === "string";
+    // MRP was added to "last seen" later; until it is recorded once, Zoho's MRP is not an edit.
+    const hasSeenMrp = "mrp" in seen;
     // Field by field: only a field that changed since it was last seen is a Zoho edit. (A reorder
     // level Grain Bazar itself pushed must not make Zoho's unchanged description "win".)
     const descriptionChanged = hasSeen && seen["description"] !== description;
     const reorderChanged = hasSeen && (seen["reorderLevel"] ?? null) !== variantReorder;
-    const productChanged = descriptionChanged || reorderChanged;
-    if (record && mirrorId && (!hasSeen || productChanged)) {
+    const mrpChanged = hasSeenMrp && (seen["mrp"] ?? null) !== variantMrp;
+    const productChanged = descriptionChanged || reorderChanged || mrpChanged;
+    if (record && mirrorId && (!hasSeen || !hasSeenMrp || productChanged)) {
       await db.from("catalog_products")
-        .update({ payload: { ...mirrorPayload, zohoSeen: { description, reorderLevel: variantReorder, at: new Date().toISOString() } } as Json })
+        .update({ payload: { ...mirrorPayload, zohoSeen: { description, reorderLevel: variantReorder, mrp: variantMrp, at: new Date().toISOString() } } as Json })
         .eq("id", mirrorId);
     }
     if (!productChanged) return item;
@@ -1425,9 +1443,10 @@ async function withCommerceProductValues(
       ...item,
       ...(descriptionChanged && description ? { description } : {}),
       ...(reorderChanged && variantReorder !== null ? { reorder_level: variantReorder } : {}),
-      // A description edit on the product page is seen now, so it is the latest edit. A reorder
-      // change also edits the item, so the item's own modified time already covers it.
-      ...(descriptionChanged ? { last_modified_time: new Date().toISOString() } : {}),
+      ...(mrpChanged && variantMrp !== null ? { label_rate: variantMrp } : {}),
+      // A description or MRP edit on the product page is seen now, so it is the latest edit. A
+      // reorder change also edits the item, so the item's own modified time already covers it.
+      ...(descriptionChanged || mrpChanged ? { last_modified_time: new Date().toISOString() } : {}),
     };
   } catch {
     return item;
@@ -1452,6 +1471,7 @@ async function applyZohoItemChange(
     .select("id,vendor_id,category,status,active,payload,created_at,updated_at")
     .eq("id", link.product_id).maybeSingle();
   if (!product) return "unchanged" as const;
+  if (!zohoItemSyncAllows(await zohoItemSyncVendorIds(db), product.vendor_id)) return "unchanged" as const;
   const decision = await zohoItemDecision(product, link, item);
   if (decision === "app") {
     // Grain Bazar's edit is newer: send it to Zoho now rather than taking Zoho's older value.
@@ -1621,6 +1641,8 @@ async function syncZohoCatalogItem(
     return;
   }
   if (product.vendor_id.startsWith("zoho:")) return;
+  // Only the sellers listed in settings (Shami's own products) are kept in Zoho.
+  if (!zohoItemSyncAllows(await zohoItemSyncVendorIds(db), product.vendor_id)) return;
 
   const { data: savedLink, error: savedLinkError } = await db.from("zoho_item_links")
     .select("product_id,zoho_item_id,updated_at,last_polled_at,last_zoho_modified_at,app_fingerprint")
@@ -1690,12 +1712,12 @@ async function syncZohoCatalogItem(
       str(item["status"]) === "active" &&
       str(item["sku"]).trim().toLowerCase() === shared.sku.toLowerCase() &&
       finiteNumber(item["rate"]) === shared.rate &&
+      // An HSN Zoho lacks is sent once (Zoho blocks order edits on lines without one).
+      (!shared.hsn || str(item["hsn_or_sac"]).trim() === shared.hsn) &&
       (shared.stock === null || (tracked && zohoStock === shared.stock));
     if (inSync) {
-      // The item is current, but the Commerce product page may still need the description.
-      if (shared.description) {
-        await pushCommerceDescription(db, { region, organizationId, token }, shared.sku, str(item?.["group_id"]), shared.description);
-      }
+      // The item is current, but the Commerce product page may still need the description or MRP.
+      await pushCommerceProductValues(db, { region, organizationId, token }, shared.sku, str(item?.["group_id"]), shared.description, shared.mrp);
       return;
     }
   }
@@ -1820,9 +1842,7 @@ async function syncZohoCatalogItem(
     } : {}),
   });
   if (linkError) throw new Error("Zoho item synchronized, but its Grain Bazar mapping could not be saved");
-  if (shared.description) {
-    await pushCommerceDescription(db, { region, organizationId, token }, shared.sku, str(resultItem?.["group_id"]), shared.description);
-  }
+  await pushCommerceProductValues(db, { region, organizationId, token }, shared.sku, str(resultItem?.["group_id"]), shared.description, shared.mrp);
   if (stockFollowUp) throw new NeedsReviewError(stockFollowUp);
 }
 
@@ -1831,17 +1851,20 @@ const escapeHtml = (text: string) => text
 
 /**
  * Grain Bazar -> Zoho Commerce: shoppers read the description on the Commerce product page,
- * which is separate from the Inventory item's description. Writes it there when it differs,
- * then records it as "last seen" so the inbound check does not mistake it for a Zoho edit.
+ * which is separate from the Inventory item's description, and the MRP is the variant's
+ * label rate. Writes each when it differs, then records them as "last seen" so the inbound
+ * check does not mistake them for Zoho edits.
  * Never fails the item sync; a refusal is logged and the next push retries.
  */
-async function pushCommerceDescription(
+async function pushCommerceProductValues(
   db: Awaited<ReturnType<typeof dbAdmin>>,
   api: ZohoApiContext,
   sku: string,
   groupId: string,
   description: string,
+  mrp: number | null,
 ) {
+  if (!description && mrp === null) return;
   try {
     let productId = "";
     let mirrorId = "";
@@ -1855,34 +1878,60 @@ async function pushCommerceDescription(
     }
     productId ||= groupId;
     if (!productId) return;
-    const html = description.split(/\n+/).map((line) => line.trim()).filter(Boolean)
-      .map((line) => `<p>${escapeHtml(line)}</p>`).join("");
-    const asZohoShowsIt = htmlToText(html);
     const current = await commerceRequest<{ product?: Record<string, unknown> }>(
       api.region, api.organizationId, api.token, `products/${encodeURIComponent(productId)}`, "GET",
     );
-    // Read exactly as the inbound check does (main description, else the short one).
-    const zohoText = htmlToText(str(current.product?.["product_description"]))
-      || htmlToText(str(current.product?.["product_short_description"]));
     const seen = plainObject(mirrorPayload["zohoSeen"]);
-    // Latest edit wins: if Zoho's text changed since Grain Bazar last saw it, that Zoho edit has
-    // not been pulled in yet; leave it for the inbound sync instead of overwriting it.
-    if (typeof seen["description"] === "string" && seen["description"] !== zohoText && zohoText !== asZohoShowsIt) return;
-    if (zohoText !== asZohoShowsIt) {
-      await commerceRequest(
-        api.region, api.organizationId, api.token, `products/${encodeURIComponent(productId)}`, "PUT",
-        { product_description: html },
-      );
+    const nextSeen: Record<string, unknown> = { ...seen };
+
+    if (description) {
+      const html = description.split(/\n+/).map((line) => line.trim()).filter(Boolean)
+        .map((line) => `<p>${escapeHtml(line)}</p>`).join("");
+      const asZohoShowsIt = htmlToText(html);
+      // Read exactly as the inbound check does (main description, else the short one).
+      const zohoText = htmlToText(str(current.product?.["product_description"]))
+        || htmlToText(str(current.product?.["product_short_description"]));
+      // Latest edit wins: if Zoho's text changed since Grain Bazar last saw it, that Zoho edit has
+      // not been pulled in yet; leave it for the inbound sync instead of overwriting it.
+      const zohoEditPending = typeof seen["description"] === "string" && seen["description"] !== zohoText && zohoText !== asZohoShowsIt;
+      if (!zohoEditPending) {
+        if (zohoText !== asZohoShowsIt) {
+          await commerceRequest(
+            api.region, api.organizationId, api.token, `products/${encodeURIComponent(productId)}`, "PUT",
+            { product_description: html },
+          );
+        }
+        nextSeen["description"] = asZohoShowsIt;
+      }
     }
+
+    if (mrp !== null) {
+      const variants = (Array.isArray(current.product?.["variants"]) ? current.product["variants"] as unknown[] : []).map(plainObject);
+      const variant = variants.find((v) => str(v["sku"]).trim().toLowerCase() === sku.toLowerCase()) ?? (variants.length === 1 ? variants[0] : undefined);
+      const variantId = str(variant?.["variant_id"]);
+      const zohoMrp = variant ? positiveRate(variant["label_rate"]) : null;
+      // Same rule as the description: a Zoho MRP edit not yet pulled in is left alone.
+      const zohoEditPending = "mrp" in seen && (seen["mrp"] ?? null) !== zohoMrp && zohoMrp !== mrp;
+      if (variantId && !zohoEditPending) {
+        if (zohoMrp !== mrp) {
+          await commerceRequest(
+            api.region, api.organizationId, api.token, `variants/${encodeURIComponent(variantId)}`, "PUT",
+            { label_rate: String(mrp) },
+          );
+        }
+        nextSeen["mrp"] = mrp;
+      }
+    }
+
     if (mirrorId) {
       const { zohoCommerceWriteError: _cleared, ...cleanPayload } = mirrorPayload;
       await db.from("catalog_products").update({
-        payload: { ...cleanPayload, zohoSeen: { description: asZohoShowsIt, reorderLevel: seen["reorderLevel"] ?? null, at: new Date().toISOString() } } as Json,
+        payload: { ...cleanPayload, zohoSeen: { ...nextSeen, reorderLevel: seen["reorderLevel"] ?? null, at: new Date().toISOString() } } as Json,
       }).eq("id", mirrorId);
     }
   } catch (cause) {
     const message = (cause instanceof Error ? cause.message : String(cause)).slice(0, 500);
-    console.warn(`Zoho Commerce description for ${sku} not updated; the next push retries:`, message);
+    console.warn(`Zoho Commerce description or MRP for ${sku} not updated; the next push retries:`, message);
     // Leave the reason on the product's Zoho Commerce copy so it can be seen and fixed.
     if (sku) {
       const { data: mirror } = await db.from("catalog_products").select("id,payload")
@@ -2907,6 +2956,12 @@ export async function isZohoWriteSyncActive(dbClient?: SupabaseClient<Database>)
     // ignore
   }
   return true;
+}
+
+/** Sellers whose products sync with Zoho items (Shami's own); empty = every seller. */
+async function zohoItemSyncVendorIds(db: Awaited<ReturnType<typeof dbAdmin>>) {
+  const { data } = await db.from("settings").select("value").eq("key", "zoho_item_sync_vendor_ids").maybeSingle();
+  return parseZohoItemSyncVendorIds(data?.value);
 }
 
 export const getZohoWriteSyncConfig = createServerFn({ method: "GET" })

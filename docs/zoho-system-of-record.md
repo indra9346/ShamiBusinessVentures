@@ -151,3 +151,30 @@ re-authorizes Zoho).
 | Zoho re-authorization with ZohoBooks.salesorders.CREATE | Done by the owner (consent screen showed Zoho Books: Sales Orders CREATE) |
 | Official new-order notification (test, GB-ORD-26889, 22:09 IST) | **Delivered.** Site: "Zoho accepted the test email"; inbox: from `message-service@sender.zoho-books.in` (Shami Business Ventures), sales order PDF attached; Zoho history: "Sales Order emailed to …" |
 | Side effect observed | Zoho marked the **draft** sales order **Open** when it was emailed ("Sales Order marked as open"), and the signed webhook to the site returned 200. With order emails On, new website orders become Open in Zoho on arrival — **accepted by the owner on 2026-10-17; order emails stay On.** |
+
+## 9. Step 1: instant two-way product sync (branch `zoho-step1-two-way-items`, 2026-10-22)
+
+Product details stay editable on **both** sides (owner's decision); the latest edit wins.
+
+- **Fields both ways:** name, SKU, price, purchase price, reorder level, description, active, and now
+  **HSN** (Inventory `hsn_or_sac`) and **MRP** (Zoho Commerce variant `label_rate`, written with
+  `PUT /store/api/v1/variants/{variant_id}`). A blank HSN or zero MRP from Zoho never clears the
+  website's value. Zoho's MRP is compared against the value last seen (`zohoSeen.mrp` on the
+  product's Zoho Commerce copy), like the description; the first run only records it.
+- **HSN backfill:** the "already in sync" shortcut now also checks HSN, so the next product sync
+  sends the website's HSN to every Zoho item that lacks it (Admin → Zoho → sync products once).
+- **Sellers:** only sellers listed in the `zoho_item_sync_vendor_ids` setting sync with Zoho items
+  (`["VENDOR-001"]`, Shami's own products). An empty list means every seller.
+- **Instant Zoho → website:** add a Zoho Books workflow rule. Settings → Automation → Workflow
+  Rules → New: module **Items**, when **Created or Edited**, action **Webhook** to the same address
+  and secret as "Grain Bazar order sync" (`/api/zoho/webhook`, signed with `ZOHO_WEBHOOK_SECRET`).
+  The route already handles item payloads (`handleZohoItemWebhook`). Books rules fire only for
+  edits made in the Zoho UI, which is the case they need to cover.
+- **Catch-up:** call `/api/zoho/sync` (with `Authorization: Bearer $CRON_SECRET`) **every 15 minutes**
+  from the host's scheduler. On Hostinger that is a cron job (docs/hosting-hostinger.md). `vercel.json` stays
+  daily, because Vercel Hobby rejects more frequent crons; on Vercel Pro it could be `*/15 * * * *`.
+  Each run reads up to 20 linked items (one Inventory and one Commerce call each), plus contacts and
+  recent orders: about 2,000–4,000 Inventory calls a day at today's size, inside the 10,000/day
+  Premium limit. Commerce MRP edits don't fire the Books rule, so they arrive with the catch-up.
+- **Migration:** `20261022120000_zoho_item_hsn_mrp_two_way.sql` (`apply_zoho_catalog_item` applies
+  HSN and MRP; inserts the seller setting).

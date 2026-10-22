@@ -289,3 +289,17 @@ export function zohoLogLine(event: string, fields: Record<string, string | numbe
   }
   return JSON.stringify({ source: "zoho-sync", event, at: new Date().toISOString(), ...clean });
 }
+
+/**
+ * Whether a seller's products are kept in step with Zoho items. An empty list (setting not
+ * saved yet) keeps every seller's products, as before the setting existed.
+ */
+export function zohoItemSyncAllows(vendorIds: string[], vendorId: string) {
+  return vendorIds.length === 0 || vendorIds.includes(vendorId);
+}
+
+/** Reads the `zoho_item_sync_vendor_ids` setting value: a list of seller IDs, anything else = none. */
+export function parseZohoItemSyncVendorIds(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.filter((id): id is string => typeof id === "string").map((id) => id.trim()).filter(Boolean))];
+}

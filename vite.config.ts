@@ -7,11 +7,11 @@
 import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 
 export default defineConfig({
-  // The public application is deployed at shamibusinessventures.vercel.app.
-  // Pin the server build to Vercel so TanStack Start API routes such as the
-  // OAuth callback and protected sync worker are emitted as Vercel functions.
+  // Server build target. Default "vercel" (shamibusinessventures.vercel.app) emits API routes
+  // such as the OAuth callback and the sync worker as Vercel functions. Set NITRO_PRESET=node-server
+  // to build a plain Node server instead (Hostinger Node.js hosting or a VPS; see docs/hosting-hostinger.md).
   nitro: {
-    preset: "vercel",
+    preset: process.env["NITRO_PRESET"] || "vercel",
   },
   vite: {
     // Vercel preview deployments are static UI sandboxes; production remains
