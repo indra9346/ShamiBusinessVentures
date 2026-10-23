@@ -1327,7 +1327,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
             throw new Error(message);
           }
         }
-        const id = `ORD-${20000 + Math.floor(Math.random() * 9000)}`;
+        // order_no is unique: a 4-digit random number collided (and failed checkout) more often
+        // as orders grew. Date plus 5 random digits leaves 100,000 numbers per day.
+        const id = `ORD-${new Date().toISOString().slice(2, 10).replace(/-/g, "")}${String(Math.floor(Math.random() * 100000)).padStart(5, "0")}`;
         const order = buildOrder(
           id,
           today(),
