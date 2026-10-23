@@ -23,7 +23,7 @@ const join = (...parts: string[]) => [...new Set(parts.map((part) => part.trim()
 async function fromNominatim(lat: number, lng: number): Promise<ReverseGeocodeResult | null> {
   const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&addressdetails=1&zoom=18&accept-language=en&lat=${lat}&lon=${lng}`;
   const response = await fetch(url, {
-    headers: { "User-Agent": "GrainBazar/1.0 (+https://shamibusinessventures.vercel.app)", Accept: "application/json" },
+    headers: { "User-Agent": "GrainBazar/1.0 (+https://grainbazar.com)", Accept: "application/json" },
     signal: AbortSignal.timeout(8000),
   });
   if (!response.ok) return null;
