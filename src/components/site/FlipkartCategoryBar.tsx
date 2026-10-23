@@ -156,12 +156,20 @@ function BadgeBody({
 
   return (
     <span className="group flex w-[4.5rem] flex-col items-center gap-1.5 transition-all duration-200 hover:-translate-y-1 sm:w-24">
+      {/* Outer ring in the brand colour (a circle within a circle) so each category stands out;
+          the white border on the inner circle leaves a gap between ring and picture. */}
       <span
         className={cn(
-          "relative grid h-16 w-16 place-items-center overflow-hidden rounded-full border-2 bg-card shadow-xs transition-all duration-200 sm:h-20 sm:w-20",
+          "rounded-full p-[3px] shadow-xs transition-all duration-200",
           active
-            ? "border-gold bg-amber-50 shadow-[0_0_0_3px_rgba(212,175,55,0.18)]"
-            : "border-stone-200 group-hover:border-navy/40 group-hover:shadow-md",
+            ? "bg-gradient-to-br from-gold to-amber-500 shadow-[0_2px_8px_rgba(212,175,55,0.35)]"
+            : "bg-gradient-to-br from-gold to-gold/60 group-hover:to-amber-500 group-hover:shadow-md",
+        )}
+      >
+      <span
+        className={cn(
+          "relative grid h-16 w-16 place-items-center overflow-hidden rounded-full border-[3px] border-card sm:h-20 sm:w-20",
+          active ? "bg-amber-50" : "bg-card",
         )}
       >
         {showImage ? (
@@ -179,6 +187,7 @@ function BadgeBody({
             aria-hidden
           />
         )}
+      </span>
       </span>
       <span
         className={cn(
