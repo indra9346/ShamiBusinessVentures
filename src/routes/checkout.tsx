@@ -5,6 +5,7 @@ import { Check, CreditCard } from "lucide-react";
 import { toast } from "sonner";
 import { SiteLayout, Breadcrumbs } from "@/components/site/SiteLayout";
 import { inr } from "@/lib/data";
+import { couponDiscount, lineGst } from "@/lib/pricing";
 import { useApp } from "@/lib/store";
 import { PickupPointCard } from "@/components/site/PickupPointCard";
 import { usePickupSettings } from "@/lib/pickup-points";
@@ -20,7 +21,7 @@ const ADDRESS_AUTOCOMPLETE: Record<string, string> = {
 };
 
 export const Route = createFileRoute("/checkout")({
-  validateSearch: z.object({ productId: z.string().optional() }),
+  validateSearch: z.object({ productId: z.string().optional(), coupon: z.string().optional() }),
   head: () => ({
     meta: [
       { title: "Secure Checkout | Shami Business Ventures" },
@@ -59,7 +60,7 @@ function Checkout() {
     coupons,
     orders,
   } = useApp();
-  const { productId } = Route.useSearch();
+  const { productId, coupon: cartCoupon } = Route.useSearch();
   const navigate = useNavigate();
   useEffect(() => {
     // Wait until the saved sign-in has been read, or a refresh would bounce signed-in customers.
@@ -109,7 +110,8 @@ function Checkout() {
   }, [user?.name, user?.phone]);
   const [ship, setShip] = useState<"Pickup" | "Delivery">("Pickup");
   const [method, setMethod] = useState("UPI");
-  const [couponCode, setCouponCode] = useState("");
+  // A coupon applied on the cart page carries over.
+  const [couponCode, setCouponCode] = useState(cartCoupon?.trim().toUpperCase() ?? "");
   const [placedId, setPlacedId] = useState<string | null>(null);
   const [savingAddress, setSavingAddress] = useState(false);
   const [placingOrder, setPlacingOrder] = useState(false);
@@ -217,7 +219,7 @@ function Checkout() {
     }, {}))
     : [{ point: null, lines: checkoutItems }];
   const tax = checkoutItems.reduce(
-    (sum, line) => sum + Math.round((line.product.price * line.qty * line.product.gst) / 100),
+    (sum, line) => sum + lineGst(line.product.price, line.qty, line.product.gst),
     0,
   );
   const appliedCoupon = coupons.find(
@@ -229,16 +231,7 @@ function Checkout() {
         orders.filter((order) => order.coupon === c.code && order.status !== "Cancelled").length <
           c.maxPerUser),
   );
-  const discount = appliedCoupon
-    ? Math.min(
-        appliedCoupon.source === "zoho" && appliedCoupon.type === "Percentage"
-          ? Number.MAX_SAFE_INTEGER
-          : appliedCoupon.max,
-        appliedCoupon.type === "Percentage"
-          ? Math.round((subtotal * parseFloat(appliedCoupon.value)) / 100)
-          : parseFloat(appliedCoupon.value.replace(/[^0-9.]/g, "")),
-      )
-    : 0;
+  const discount = appliedCoupon ? couponDiscount(appliedCoupon, subtotal) : 0;
   const total = subtotal + shipCost + tax - discount;
   const summary = confirmationSummary ?? { subtotal, shipCost, tax, discount, total };
 

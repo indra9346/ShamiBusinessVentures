@@ -86,6 +86,8 @@ export type Review = (typeof seedReviews)[number] & { reply?: string };
 export type Coupon = (typeof seedCoupons)[number] & {
   source?: "zoho";
   maxPerUser?: number;
+  /** No maximum_discount set: the database applies the full percentage. */
+  uncapped?: boolean;
 };
 
 type OrderRow = Database["public"]["Tables"]["orders"]["Row"];
@@ -470,6 +472,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             code: row.code, type: row.discount_type,
             value: row.discount_type === "Percentage" ? `${row.discount_value}%` : `₹${row.discount_value}`,
             min: Number(row.minimum_order), max: Number(row.maximum_discount),
+            ...(row.maximum_discount === null ? { uncapped: true } : {}),
             start: asDate(row.starts_on), end: asDate(row.ends_on), limit: row.usage_limit, used: row.used_count,
             ...(row.zoho_coupon_id ? { source: "zoho" as const } : {}),
             ...(row.zoho_usage_limit_per_user ? { maxPerUser: row.zoho_usage_limit_per_user } : {}),
