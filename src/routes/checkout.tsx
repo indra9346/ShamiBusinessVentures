@@ -222,7 +222,8 @@ function Checkout() {
     (sum, line) => sum + lineGst(line.product.price, line.qty, line.product.gst),
     0,
   );
-  const appliedCoupon = coupons.find(
+  // A coupon applies to a single order; checkout does not send it when the cart splits.
+  const appliedCoupon = orderGroups.length > 1 ? undefined : coupons.find(
     (c) =>
       c.code === couponCode &&
       c.status === "Active" &&
@@ -294,6 +295,7 @@ function Checkout() {
       if (placingOrder) return;
       setPlacingOrder(true);
       const placed: Awaited<ReturnType<typeof placeOrder>>[] = [];
+      const placedLines: typeof checkoutItems = [];
       try {
         for (const group of orderGroups) {
           // A partner point may offer only one of pickup / delivery; the database checks it.
@@ -311,6 +313,7 @@ function Checkout() {
             shipping: shipCost,
             delivery: groupFulfil === "Pickup" ? "Pickup from our godown" : "Home delivery",
           }));
+          placedLines.push(...group.lines);
         }
       } catch {
         if (!placed.length) return;
@@ -328,7 +331,11 @@ function Checkout() {
         total: sum((order) => order.amount),
       });
       if (productId) removeFromCart(productId);
-      else clearCart();
+      else if (placed.length < orderGroups.length) {
+        // A later order failed: keep its items in the cart so they can be ordered again.
+        for (const line of placedLines) removeFromCart(line.product.id);
+        toast.error("Some items were not ordered", { description: "They are still in your cart. Review them and place another order." });
+      } else clearCart();
       setPlacedId(placed.map((order) => order.id).join(", "));
       toast.success(placed.length > 1 ? `${placed.length} orders placed` : "Order placed", { description: `${placed.map((order) => order.id).join(", ")} confirmed` });
       setStep(step + 1);
@@ -646,8 +653,9 @@ function Checkout() {
                   />
                   {couponCode && !appliedCoupon && (
                     <p role="status" className="mt-1 text-xs text-danger">
-                      This coupon is unavailable, below its minimum order, or has reached its
-                      per-customer limit.
+                      {orderGroups.length > 1
+                        ? "Coupons apply to a single order. These items ship from different places, so place them separately to use a coupon."
+                        : "This coupon is unavailable, below its minimum order, or has reached its per-customer limit."}
                     </p>
                   )}
                   {appliedCoupon && (
