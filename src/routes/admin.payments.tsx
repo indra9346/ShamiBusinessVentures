@@ -1,11 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { CheckCircle2, Clock, IndianRupee, RotateCcw, XCircle } from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { DataTable, Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { adminNav } from "@/lib/panel-nav";
 import { inr } from "@/lib/data";
+import { loadAdvancePercent } from "@/lib/business-rules";
+import { toPaise } from "@/lib/pricing";
 import { useApp } from "@/lib/store";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -80,6 +82,11 @@ function AdminPayments() {
   const [confirmOrder, setConfirmOrder] = useState<string | null>(null);
   const [utr, setUtr] = useState("");
   const [advancePercent, setAdvancePercent] = useState("30");
+  // The advance the database requires before a vendor accepts comes from Settings → Orders.
+  const [settingsAdvance, setSettingsAdvance] = useState(30);
+  useEffect(() => {
+    void loadAdvancePercent().then(setSettingsAdvance).catch(() => undefined);
+  }, []);
 
   const stats = useMemo(() => {
     const collected = txns.reduce((s, t) => s + t.paid, 0);
@@ -260,7 +267,7 @@ function AdminPayments() {
                     setConfirmOrder(t.order);
                     setUtr("");
                     setAdvancePercent(
-                      String(orders.find((o) => o.id === t.order)?.advancePercent ?? 30),
+                      String(orders.find((o) => o.id === t.order)?.advancePercent ?? settingsAdvance),
                     );
                   }}
                 >
@@ -353,7 +360,8 @@ function AdminPayments() {
                 order.amount - (order.paidAmount ?? (order.payment === "Paid" ? order.amount : 0)),
               );
               const percent = Math.min(100, Math.max(0, Number(advancePercent) || 0));
-              const advance = Math.min(remaining, Math.round(order.amount * (percent / 100)));
+              // To paise, as the database checks it: whole rupees fell short of e.g. ₹677.25.
+              const advance = Math.min(remaining, toPaise(order.amount * (percent / 100)));
               return (
                 <div className="space-y-3 text-sm">
                   <p>
