@@ -2235,7 +2235,7 @@ async function syncCatalogProductsDirect(db: Awaited<ReturnType<typeof dbAdmin>>
   const runCtx = newZohoRunContext();
   const outcome = { pushed: 0, review: 0 };
   for (const productId of [...new Set(productIds)].slice(0, 20)) {
-    const settle = (status: "complete" | "needs_review", message: string | null) => db.from("zoho_sync_outbox")
+    const settle = (status: "complete" | "failed" | "needs_review", message: string | null) => db.from("zoho_sync_outbox")
       .update({ status, last_error: message, updated_at: new Date().toISOString() })
       .eq("entity_type", "catalog").eq("entity_id", productId).in("status", ["pending", "failed"]);
     try {
@@ -2244,7 +2244,8 @@ async function syncCatalogProductsDirect(db: Awaited<ReturnType<typeof dbAdmin>>
       outcome.pushed += 1;
     } catch (cause) {
       const message = (cause instanceof Error ? cause.message : "Zoho rejected the product").slice(0, 900);
-      await settle("needs_review", message);
+      // A transient failure stays queued for the next sync run instead of waiting for a person.
+      await settle(cause instanceof NeedsReviewError ? "needs_review" : "failed", message);
       outcome.review += 1;
     }
   }
@@ -2541,6 +2542,21 @@ async function assertVisibleInZohoCommerce(region: Region, organizationId: strin
   }
 }
 
+/** Records a sales order found in Zoho by its GB- number on the site order, then syncs it. */
+async function linkAndSyncZohoOrder(
+  db: Awaited<ReturnType<typeof dbAdmin>>,
+  region: Region,
+  organizationId: string,
+  token: string,
+  order: Database["public"]["Tables"]["orders"]["Row"],
+  items: GrainBazarOrderItem[],
+  salesOrderId: string,
+) {
+  const { error } = await db.from("orders").update({ zoho_salesorder_id: salesOrderId }).eq("id", order.id).is("zoho_salesorder_id", null);
+  if (error) throw new Error("Existing Zoho order found but its ID could not be recorded");
+  await syncLinkedZohoOrder(db, region, organizationId, token, { ...order, zoho_salesorder_id: salesOrderId }, items);
+}
+
 async function syncZohoOrder(db: Awaited<ReturnType<typeof dbAdmin>>, region: Region, organizationId: string, token: string, job: ZohoSyncJob) {
   const orderId = job.entity_id;
   const [{ data: order, error: orderError }, { data: items, error: itemsError }] = await Promise.all([
@@ -2551,6 +2567,14 @@ async function syncZohoOrder(db: Awaited<ReturnType<typeof dbAdmin>>, region: Re
   if (!order) return;
   if (order.zoho_salesorder_id) {
     await syncLinkedZohoOrder(db, region, organizationId, token, order, items ?? []);
+    return;
+  }
+  // Cancelled before it ever reached Zoho: never create an open sales order that would commit
+  // stock the site has already given back. If an earlier push did reach Zoho, link and void it.
+  if (order.order_status === "Cancelled") {
+    const matches = await findZohoSalesOrdersByNumber(region, organizationId, token, zohoOrderNumber(order.order_no));
+    if (matches.length > 1) throw new NeedsReviewError(`More than one Zoho sales order uses ${zohoOrderNumber(order.order_no)}`);
+    if (matches.length === 1) await linkAndSyncZohoOrder(db, region, organizationId, token, order, items ?? [], str(matches[0]!["salesorder_id"]));
     return;
   }
   let customerId = "";
@@ -2621,9 +2645,8 @@ async function syncZohoOrder(db: Awaited<ReturnType<typeof dbAdmin>>, region: Re
     const matches = await findZohoSalesOrdersByNumber(region, organizationId, token, safeNumber);
     if (matches.length > 1) throw new NeedsReviewError(`More than one Zoho sales order uses ${safeNumber}`);
     if (matches.length === 1) {
-      const existingId = str(matches[0]!["salesorder_id"]);
-      const { error: saveExistingError } = await db.from("orders").update({ zoho_salesorder_id: existingId }).eq("id", order.id).is("zoho_salesorder_id", null);
-      if (saveExistingError) throw new Error("Existing Zoho order found but its ID could not be recorded");
+      // Bring the found sales order up to date too (status, lines), not just link it.
+      await linkAndSyncZohoOrder(db, region, organizationId, token, order, items, str(matches[0]!["salesorder_id"]));
       return;
     }
   }
@@ -3414,14 +3437,17 @@ async function pushOrderToZohoDirect(db: Awaited<ReturnType<typeof dbAdmin>>, or
     } as ZohoSyncJob);
   } catch (cause) {
     const message = (cause instanceof Error ? cause.message : "Zoho rejected the order").slice(0, 900);
+    // Same split as the queue worker: a timeout or Zoho outage is retried by the next sync run;
+    // only a rejection that needs a person goes to review (the worker never claims those).
+    const status = cause instanceof NeedsReviewError ? "needs_review" : "failed";
     const { data: jobs } = await openJobs();
     if (jobs?.length) {
       await db.from("zoho_sync_outbox")
-        .update({ status: "needs_review", last_error: message, updated_at: new Date().toISOString() })
+        .update({ status, last_error: message, updated_at: new Date().toISOString() })
         .in("id", jobs.map((job) => job.id));
     } else {
       await db.from("zoho_sync_outbox").insert({
-        entity_type: "order", entity_id: orderId, event_type: "upsert", status: "needs_review", last_error: message,
+        entity_type: "order", entity_id: orderId, event_type: "upsert", status, last_error: message,
       });
     }
     throw new Error(`${message}${zohoPermissionHint(message)}`);
