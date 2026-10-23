@@ -1201,7 +1201,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
           pushProductsToZohoInBackground([id]);
           return true;
         }
-        const updated = { ...existing, ...patch, updated: today() };
+        // The save writes the whole payload, and stock and sales counts change with every order.
+        // Take them from the database rather than this page's copy, so saving another field never
+        // undoes an order's stock deduction (the stock trigger would book it as a stock movement).
+        const live: Partial<Pick<Product, "stock" | "sold" | "reserved">> = {};
+        if (!STATIC_DATA_MODE) {
+          const { data: row } = await supabase.from("catalog_products").select("payload").eq("id", id).maybeSingle();
+          const payload = (row?.payload ?? {}) as Record<string, unknown>;
+          for (const key of ["stock", "sold", "reserved"] as const) {
+            if (typeof payload[key] === "number") live[key] = payload[key];
+          }
+        }
+        const updated = { ...existing, ...live, ...patch, updated: today() };
         setProducts((list) => list.map((p) => (p.id === id ? updated : p)));
         const ok = await saveProduct(updated, user?.role === "vendor");
         if (!ok) setProducts((list) => list.map((item) => item.id === id ? existing : item));
