@@ -7,4 +7,5 @@ const result = spawnSync("npx", ["vite", "build"], {
   shell: true,
   env: { ...process.env, NITRO_PRESET: "node-server" },
 });
+if (result.status === 0) await import("./copy-cron-to-output.mjs");
 process.exit(result.status ?? 1);

@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite dev",
-    "build": "vite build",
+    "build": "vite build && node scripts/copy-cron-to-output.mjs",
     "build:node": "node scripts/build-node.mjs",
     "start": "node .output/server/index.mjs",
     "build:dev": "vite build --mode development",
