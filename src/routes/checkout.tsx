@@ -4,7 +4,7 @@ import { z } from "zod";
 import { Check, CreditCard } from "lucide-react";
 import { toast } from "sonner";
 import { SiteLayout, Breadcrumbs } from "@/components/site/SiteLayout";
-import { inr } from "@/lib/data";
+import { inr, inrPrecise } from "@/lib/data";
 import { couponDiscount, lineGst } from "@/lib/pricing";
 import { useApp } from "@/lib/store";
 import { PickupPointCard } from "@/components/site/PickupPointCard";
@@ -719,7 +719,7 @@ function Checkout() {
                 <h2 className="mt-5 text-xl font-bold text-navy">Order Confirmed</h2>
                 <p className="mt-2 text-sm text-slate">
                   Order ID <span className="font-bold text-gold">{placedId}</span> · Total{" "}
-                  {inr(summary.total)} · Payment pending. Online payment is not enabled yet; payment
+                  {inrPrecise(summary.total)} · Payment pending. Online payment is not enabled yet; payment
                   must be arranged and verified separately.{" "}
                   {fulfil === "Pickup" ? "We will let you know when it is ready to collect." : "Delivery in 2–4 business days."}
                 </p>
@@ -782,11 +782,11 @@ function Checkout() {
             <h2 className="text-sm font-bold tracking-wide text-navy uppercase">Summary</h2>
             <div className="mt-4 space-y-2.5 text-sm">
               {[
-                ["Subtotal", inr(summary.subtotal)],
-                [fulfil === "Delivery" ? "Delivery" : "Pickup", summary.shipCost === 0 ? "Free" : inr(summary.shipCost)],
-                ["GST", inr(summary.tax)],
+                ["Subtotal", inrPrecise(summary.subtotal)],
+                [fulfil === "Delivery" ? "Delivery" : "Pickup", summary.shipCost === 0 ? "Free" : inrPrecise(summary.shipCost)],
+                ["GST", inrPrecise(summary.tax)],
                 ...(summary.discount > 0
-                  ? [["Coupon discount", `- ${inr(summary.discount)}`]]
+                  ? [["Coupon discount", `- ${inrPrecise(summary.discount)}`]]
                   : []),
               ].map(([k, v]) => (
                 <div key={k} className="flex justify-between">
@@ -797,7 +797,7 @@ function Checkout() {
               <div className="hairline-gold my-2" />
               <div className="flex justify-between text-base font-bold text-navy">
                 <span>Total</span>
-                <span>{inr(summary.total)}</span>
+                <span>{inrPrecise(summary.total)}</span>
               </div>
             </div>
           </aside>

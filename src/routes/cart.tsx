@@ -3,7 +3,7 @@ import { Minus, Plus, ShoppingBag, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { SiteLayout, Breadcrumbs } from "@/components/site/SiteLayout";
-import { getAvailablePurchaseQuantity, getMaxPurchaseQuantity, inr, type Product } from "@/lib/data";
+import { getAvailablePurchaseQuantity, getMaxPurchaseQuantity, inr, inrPrecise, type Product } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { useStorefrontDisplay } from "@/lib/storefront-display";
 import { branchDeliveryFee, defaultBranchOf, useBranches } from "@/lib/branches";
@@ -176,14 +176,14 @@ function Cart() {
           <aside className="h-max rounded-lg border border-border bg-card p-6 shadow-card lg:sticky lg:top-40">
             <h2 className="text-sm font-bold tracking-wide text-navy uppercase">Order Summary</h2>
             <div className="mt-5 space-y-3 text-sm">
-              <Row label="Subtotal" value={inr(subtotal)} />
-              <Row label={pickup ? "Godown pickup" : "Delivery charges"} value={delivery === 0 ? "Free" : inr(delivery)} />
-              <Row label="GST" value={inr(tax)} />
-              {discount > 0 && <Row label={`Coupon discount (${applied})`} value={`- ${inr(discount)}`} gold />}
+              <Row label="Subtotal" value={inrPrecise(subtotal)} />
+              <Row label={pickup ? "Godown pickup" : "Delivery charges"} value={delivery === 0 ? "Free" : inrPrecise(delivery)} />
+              <Row label="GST" value={inrPrecise(tax)} />
+              {discount > 0 && <Row label={`Coupon discount (${applied})`} value={`- ${inrPrecise(discount)}`} gold />}
               <div className="hairline-gold my-2" />
               <div className="flex justify-between text-base font-bold text-navy">
                 <span>Grand total</span>
-                <span>{inr(total)}</span>
+                <span>{inrPrecise(total)}</span>
               </div>
             </div>
 

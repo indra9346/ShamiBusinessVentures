@@ -5,7 +5,7 @@ import { CheckCircle2, Clock, IndianRupee, RotateCcw, XCircle } from "lucide-rea
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { DataTable, Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { adminNav } from "@/lib/panel-nav";
-import { inr } from "@/lib/data";
+import { inr, inrPrecise } from "@/lib/data";
 import { loadAdvancePercent } from "@/lib/business-rules";
 import { toPaise } from "@/lib/pricing";
 import { useApp } from "@/lib/store";
@@ -227,9 +227,9 @@ function AdminPayments() {
             t.customer,
             t.phone,
             t.vendor,
-            inr(t.amount),
-            inr(t.paid),
-            inr(Math.max(0, t.amount - t.paid)),
+            inrPrecise(t.amount),
+            inrPrecise(t.paid),
+            inrPrecise(Math.max(0, t.amount - t.paid)),
             t.utr || "—",
             t.method,
             <StatusBadge status={t.status} />,
@@ -365,9 +365,9 @@ function AdminPayments() {
               return (
                 <div className="space-y-3 text-sm">
                   <p>
-                    Order total <strong>{inr(order.amount)}</strong> · {percent}% payment{" "}
-                    <strong>{inr(advance)}</strong> · pending after confirmation{" "}
-                    <strong>{inr(Math.max(0, remaining - advance))}</strong>
+                    Order total <strong>{inrPrecise(order.amount)}</strong> · {percent}% payment{" "}
+                    <strong>{inrPrecise(advance)}</strong> · pending after confirmation{" "}
+                    <strong>{inrPrecise(Math.max(0, remaining - advance))}</strong>
                   </p>
                   <label className="grid gap-1 text-xs font-medium text-slate">
                     Advance / payment percentage
@@ -392,11 +392,11 @@ function AdminPayments() {
                     onClick={async () => {
                       const saved = await confirmPayment(order.id, advance, utr, percent);
                       if (!saved) return;
-                      toast.success(`Verified manual payment of ${inr(advance)} recorded for ${order.id}`);
+                      toast.success(`Verified manual payment of ${inrPrecise(advance)} recorded for ${order.id}`);
                       setConfirmOrder(null);
                     }}
                   >
-                    Confirm {inr(advance)}
+                    Confirm {inrPrecise(advance)}
                   </Button>
                 </div>
               );
