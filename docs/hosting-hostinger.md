@@ -10,19 +10,22 @@ Supabase (project `ppziinqjxqpxpmudinfd`); only the web server moves.
   actions, Zoho sync, Zoho webhook, OAuth callback). Use **Hostinger Node.js web app hosting or a
   VPS**. Shared or "website" hosting with only PHP or static files will not work.
 - **Node 22** (tested with 22.19). Node 20 is the minimum.
-- About 1 GB of RAM for `npm run build:node`. On a small plan, build locally or in CI and upload
+- About 1 GB of RAM for `npm run build`. On a small plan, build locally or in CI and upload
   `.output/`.
 
 ## 2. Build and run
 
 ```bash
 npm ci
-npm run build:node        # Node server build -> .output/
+npm run build             # Node server build -> .output/ (on any host except Vercel)
 npm start                 # node .output/server/index.mjs, listens on PORT (default 3000)
 ```
 
-- `npm run build` (without `:node`) still builds for Vercel. Use `build:node` on Hostinger.
-  The target is chosen by `NITRO_PRESET` in `vite.config.ts`.
+- In Hostinger's Node.js app settings the defaults work: framework **Nitro**, build command
+  `npm run build`, output directory `.output`, start command `npm start`, Node **22.x**.
+- `vite.config.ts` builds for Vercel only when `VERCEL` is set (Vercel sets it during its builds);
+  everywhere else it builds the Node server. `NITRO_PRESET` overrides this, and
+  `npm run build:node` forces the Node server build.
 - On a VPS, run it under a process manager and put Nginx in front for HTTPS, for example
   `pm2 start .output/server/index.mjs --name grainbazar`.
 - `.output/` is self-contained. To deploy you only need `.output/` plus the environment variables.
@@ -35,7 +38,7 @@ them. The owner sends the secret values privately, not in chat or email.
 
 | Name | When | Notes |
 |---|---|---|
-| `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, `VITE_SUPABASE_PROJECT_ID` | **build time** | Public. Already in the repo's `.env`. Must be present when `npm run build:node` runs. |
+| `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, `VITE_SUPABASE_PROJECT_ID` | **build time** | Public. Already in the repo's `.env`. Must be present when `npm run build` runs. |
 | `VITE_STATIC_DATA_MODE` | build time | Must be `false` (or unset) on the live site. `true` shows demo data. |
 | `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY` | server | Same Supabase project. |
 | `SUPABASE_SERVICE_ROLE_KEY` | server | **Secret.** Full database access. Server only. |
