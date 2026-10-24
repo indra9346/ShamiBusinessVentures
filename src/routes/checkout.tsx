@@ -9,7 +9,7 @@ import { couponDiscount, lineGst } from "@/lib/pricing";
 import { useApp } from "@/lib/store";
 import { PickupPointCard } from "@/components/site/PickupPointCard";
 import { usePickupSettings } from "@/lib/pickup-points";
-import { branchDeliveryFee, branchForPin, defaultBranchOf, useBranches } from "@/lib/branches";
+import { branchDeliveryFee, branchForPin, defaultBranchOf, useBranches, useShopperPin } from "@/lib/branches";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
 import { UseMyLocationButton, type CapturedLocation } from "@/components/site/UseMyLocationButton";
@@ -191,6 +191,17 @@ function Checkout() {
   const { branches, features } = useBranches();
   const addressPin = addresses.find((a) => a.id === addr)?.pin ?? "";
   const fulfilBranch = features.branchRouting ? branchForPin(branches, addressPin) : defaultBranchOf(branches);
+  // The order is priced by the godown serving the delivery address, as the database does: keep the
+  // shopper's "Delivering to" PIN on that address so the prices shown are the prices charged.
+  const [shopperPin, setShopperPin] = useShopperPin();
+  useEffect(() => {
+    if (!features.branchRouting || !/^\d{6}$/.test(addressPin) || addressPin === shopperPin) return;
+    const before = branchForPin(branches, shopperPin || ((addresses.find((a) => a.default) ?? addresses[0])?.pin ?? ""));
+    setShopperPin(addressPin);
+    if (before && fulfilBranch && before.id !== fulfilBranch.id) {
+      toast.info(`Prices updated for the ${fulfilBranch.city || fulfilBranch.name} godown`, { description: "It serves your delivery address." });
+    }
+  }, [features.branchRouting, addressPin, shopperPin, setShopperPin, branches, fulfilBranch, addresses]);
   const canPickup = fulfilBranch ? fulfilBranch.pickupEnabled : true;
   const canDeliver = fulfilBranch ? fulfilBranch.deliveryEnabled : homeDelivery;
   const fulfil: "Pickup" | "Delivery" = ship === "Delivery" && canDeliver ? "Delivery" : canPickup ? "Pickup" : "Delivery";
@@ -264,7 +275,7 @@ function Checkout() {
   const goNext = async () => {
     if (productCatalogStatus !== "ready" || unresolvedCartLines) {
       toast.error(
-        "Checkout is unavailable while saved cart items cannot be verified against the live catalog.",
+        "Some items in your cart are not sold at your godown or are no longer available. Remove them in the cart to continue.",
       );
       return;
     }
@@ -399,13 +410,13 @@ function Checkout() {
       <SiteLayout>
         <div className="mx-auto max-w-xl px-6 py-20 text-center">
           <h1 className="text-2xl font-bold text-navy">
-            {unavailable ? "Checkout is temporarily unavailable" : "Your cart is empty"}
+            {unavailable ? "Please review your cart" : "Your cart is empty"}
           </h1>
           <p className="mt-3 text-sm text-slate">
             {productCatalogStatus === "loading"
               ? "We’re loading the live catalog before verifying your cart."
               : unavailable
-                ? "Some saved cart items could not be verified against live products. Review your cart after the catalog is restored."
+                ? "Some items in your cart are not sold at the godown serving your PIN code, or are no longer available. Remove them in your cart to continue."
                 : "Add a product to your cart before continuing to checkout."}
           </p>
           <Link

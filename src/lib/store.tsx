@@ -11,7 +11,7 @@ import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
-import { branchForPin, branchStockOf, defaultBranchOf, useAdminBranch, useBranches } from "@/lib/branches";
+import { branchForPin, branchStockOf, defaultBranchOf, godownPriceOf, useAdminBranch, useBranches, useShopperPin } from "@/lib/branches";
 
 /** Sends a placed or changed order to Zoho in the background; the daily run is the backup. */
 function pushOrderToZohoInBackground(orderNo: string) {
@@ -914,7 +914,41 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setCart([]);
   }, []);
 
+  // Shoppers see their godown. With PIN matching ON that is the godown serving the PIN they chose
+  // ("Delivering to"), or before they choose, their default address: only the items it sells, at
+  // its prices and stock. Marketplace items show their vendor's fulfilment point's stock. Admins
+  // and vendors see the catalogue as it is (an admin's branch view is applied further down).
+  const [chosenPin] = useShopperPin();
+  const isShopper = user?.role !== "admin" && user?.role !== "vendor";
+  const fallbackPin = (addresses.find((address) => address.default) ?? addresses[0])?.pin ?? "";
+  const shopperGodown = isShopper && branchState.ready && branchState.features.branchRouting
+    ? branchForPin(branchState.branches, chosenPin || fallbackPin)
+    : null;
+  const viewProducts = useMemo(() => {
+    if (!isShopper || !branchState.ready || (!shopperGodown && branchState.vendorPoints.size === 0)) return products;
+    const view: Product[] = [];
+    for (const product of products) {
+      if (product.vendorId.startsWith("zoho:")) { view.push(product); continue; }
+      const point = branchState.vendorPoints.get(product.vendorId);
+      if (point) { view.push({ ...product, stock: branchStockOf(branchState, product.id, point) }); continue; }
+      if (!shopperGodown) { view.push(product); continue; }
+      const price = godownPriceOf(branchState, shopperGodown, product.id, product.price);
+      if (price === null) continue; // not sold at this godown
+      view.push({
+        ...product,
+        price,
+        mrp: Math.max(product.mrp, price),
+        // A stored per-kg/litre rate belongs to the base price; let it follow the godown price.
+        ...(price !== product.price ? { ratePricing: undefined } : {}),
+        stock: branchStockOf(branchState, product.id, shopperGodown.id),
+      });
+    }
+    return view;
+  }, [isShopper, branchState, shopperGodown, products]);
+
   const value = useMemo<AppState>(() => {
+    // Everything below reads the shopper's godown view (the full catalogue for admins and vendors).
+    const products = viewProducts;
     const cartItems = cart
       .map((line) => ({ product: products.find((p) => p.id === line.id), qty: line.qty }))
       .filter((line): line is { product: Product; qty: number } => Boolean(line.product));
@@ -1874,25 +1908,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
         return true;
       },
     };
-  }, [branchState, adminBranchId, hydrated, authReady, user, cart, wishlist, wishlistsByUser, categories, products, batches, orders, vendors, customers, reviews, returns, coupons, notifications, addresses, addressesByUser, productCatalogStatus, categoryCatalogStatus, saveProduct, logout]);
+  }, [branchState, adminBranchId, hydrated, authReady, user, cart, wishlist, wishlistsByUser, categories, viewProducts, batches, orders, vendors, customers, reviews, returns, coupons, notifications, addresses, addressesByUser, productCatalogStatus, categoryCatalogStatus, saveProduct, logout]);
 
   // An administrator working in one godown sees that branch's orders, and stock as that branch's count.
   const scopedValue = useMemo<AppState>(() => {
-    // Shoppers: with PIN matching ON, each product shows the stock of the godown serving the
-    // customer's default address (or, for a marketplace vendor, of that vendor's fulfilment point).
-    if (user?.role !== "admin" && user?.role !== "vendor" && branchState.ready && (branchState.features.branchRouting || branchState.vendorPoints.size > 0)) {
-      const pin = (value.addresses.find((address) => address.default) ?? value.addresses[0])?.pin ?? "";
-      const serving = branchState.features.branchRouting ? branchForPin(branchState.branches, pin) : null;
-      return {
-        ...value,
-        products: value.products.map((product) => {
-          if (product.vendorId.startsWith("zoho:")) return product;
-          const point = branchState.vendorPoints.get(product.vendorId);
-          if (point) return { ...product, stock: branchStockOf(branchState, product.id, point) };
-          return serving ? { ...product, stock: branchStockOf(branchState, product.id, serving.id) } : product;
-        }),
-      };
-    }
+    // (Shoppers already see their godown: see viewProducts above.)
     // A branch that no longer exists (deleted elsewhere) counts as "All branches".
     if (user?.role !== "admin" || adminBranchId === "all" || !branchState.ready
       || !branchState.branches.some((branch) => branch.id === adminBranchId)) return value;

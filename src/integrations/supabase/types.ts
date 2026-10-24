@@ -21,15 +21,15 @@ export type Database = {
         Relationships: []
       }
       branch_prices: {
-        Row: { branch_id: string; product_id: string; price: number; updated_at: string }
-        Insert: { branch_id: string; product_id: string; price: number; updated_at?: string }
-        Update: { branch_id?: string; product_id?: string; price?: number; updated_at?: string }
+        Row: { branch_id: string; product_id: string; price: number; listed: boolean; pending: boolean; updated_at: string }
+        Insert: { branch_id: string; product_id: string; price: number; listed?: boolean; pending?: boolean; updated_at?: string }
+        Update: { branch_id?: string; product_id?: string; price?: number; listed?: boolean; pending?: boolean; updated_at?: string }
         Relationships: []
       }
       branch_stock: {
-        Row: { branch_id: string; product_id: string; stock: number; updated_at: string }
-        Insert: { branch_id: string; product_id: string; stock?: number; updated_at?: string }
-        Update: { branch_id?: string; product_id?: string; stock?: number; updated_at?: string }
+        Row: { branch_id: string; product_id: string; stock: number; zoho_pending: boolean; updated_at: string }
+        Insert: { branch_id: string; product_id: string; stock?: number; zoho_pending?: boolean; updated_at?: string }
+        Update: { branch_id?: string; product_id?: string; stock?: number; zoho_pending?: boolean; updated_at?: string }
         Relationships: []
       }
       zoho_oauth_states: {
@@ -946,8 +946,9 @@ export type Database = {
       apply_zoho_order_fulfillment: { Args: { _order_id: string; _status: string }; Returns: undefined }
       apply_zoho_order_cancellation: { Args: { _order_id: string }; Returns: string }
       branch_product_price: { Args: { _branch_id: string; _product_id: string }; Returns: number | null }
-      apply_zoho_branch_prices: { Args: { _branch_id: string; _pricebook_name: string; _prices: Json }; Returns: number }
-      apply_zoho_branch_stock: { Args: { _branch_id: string; _product_id: string; _stock: number }; Returns: number }
+      admin_set_branch_price: { Args: { _branch_id: string; _product_id: string; _price: number | null; _listed?: boolean }; Returns: boolean }
+      apply_zoho_branch_prices: { Args: { _branch_id: string; _pricebook_name: string; _prices: Json; _read_at: string }; Returns: number }
+      apply_zoho_branch_stock: { Args: { _branch_id: string; _product_id: string; _stock: number; _read_at: string }; Returns: number | null }
       branch_pending_order_qty: { Args: { _branch_id: string }; Returns: { product_id: string; qty: number }[] }
       apply_zoho_catalog_item: { Args: { _product_id: string; _item: Json; _expected_updated_at: string }; Returns: undefined }
       finish_zoho_sync_job: { Args: { _id: string; _status: string; _error?: string | null }; Returns: undefined }
