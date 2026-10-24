@@ -81,3 +81,22 @@ test("godown stock from a Zoho location, less website orders Zoho does not hold 
   assert.equal(godownStockFromZohoItem(item, "L3"), null);
   assert.equal(godownStockFromZohoItem({}, "L1"), null);
 });
+
+test("only orders since Zoho became the stock master, not yet held by Zoho, are pending", async () => {
+  const { pendingOrderQty } = await import("../src/lib/zoho-sync-core.ts");
+  const since = "2026-10-24T12:00:00Z";
+  const order = (over: Record<string, unknown>) => ({
+    branch_id: "BR-HBL", order_status: "Placed", zoho_salesorder_id: null, zoho_order_status: null,
+    created_at: "2026-10-24T13:00:00Z", items: [{ product_id: "P001", qty: 2 }], ...over,
+  });
+  const pending = pendingOrderQty([
+    order({}),
+    order({ zoho_salesorder_id: "SO1", zoho_order_status: "draft" }),
+    order({ zoho_salesorder_id: "SO2", zoho_order_status: "confirmed" }),
+    order({ order_status: "Cancelled" }),
+    order({ created_at: "2026-10-17T10:00:00Z" }),
+    order({ branch_id: null }),
+  ] as never, since, "BR-CLK");
+  assert.equal(pending.get("BR-HBL")?.get("P001"), 4, "no SO + draft SO; not confirmed, cancelled or older orders");
+  assert.equal(pending.get("BR-CLK")?.get("P001"), 2, "orders without a godown belong to the default one");
+});
