@@ -19,3 +19,38 @@ export function couponDiscount(coupon: Coupon, subtotal: number) {
   }
   return Math.min(subtotal, value);
 }
+
+/** A purchase lot's entered values (the white columns of Shami's pricing sheet). */
+export type PriceLotInput = {
+  price: number;
+  commission: number;
+  gstRate: number;
+  transport: number;
+  /** Usually negative: the transporter's amali is deducted. */
+  amaliTransport: number;
+  amaliShami: number;
+  driverTips: number;
+  unloading: number;
+  margin: number;
+  /** Bag size in kg (a 50 kg bag is half a quintal). */
+  bagKg: number;
+};
+
+const paise = (amount: number) => Math.round((amount + Number.EPSILON) * 100) / 100;
+
+/**
+ * The calculated columns (green in the sheet), per quintal unless noted. Same formulas as the
+ * price_lots table's generated columns:
+ *   GST = (price + commission) x rate; landing = price + commission + GST + transport
+ *   + amali (transport) + amali (Shami) + driver tips + unloading; selling = landing + margin;
+ *   bag = selling x bag kg / 100.
+ */
+export function priceLotTotals(lot: PriceLotInput) {
+  const n = (value: number) => (Number.isFinite(value) ? value : 0);
+  const gst = paise((n(lot.price) + n(lot.commission)) * n(lot.gstRate) / 100);
+  const landing = paise(n(lot.price) + n(lot.commission) + gst + n(lot.transport) + n(lot.amaliTransport)
+    + n(lot.amaliShami) + n(lot.driverTips) + n(lot.unloading));
+  const sellingQntl = paise(landing + n(lot.margin));
+  const sellingBag = paise(sellingQntl * (n(lot.bagKg) || 50) / 100);
+  return { gst, landing, sellingQntl, sellingBag };
+}
