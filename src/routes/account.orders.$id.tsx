@@ -5,7 +5,7 @@ import { CheckCircle2, Circle, Download } from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { Panel, StatusBadge } from "@/components/panel/widgets";
 import { accountNav } from "@/lib/account-nav";
-import { canCancelOrder, inr, orderStages } from "@/lib/data";
+import { canCancelOrder, inr, inrPrecise, orderStages } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import {
@@ -299,25 +299,25 @@ function AccountOrderDetail() {
           <dl className="space-y-2 text-sm">
             <div className="flex justify-between">
               <dt className="text-slate">Subtotal</dt>
-              <dd className="text-charcoal">{inr(order.subtotal)}</dd>
+              <dd className="text-charcoal">{inrPrecise(order.subtotal)}</dd>
             </div>
             <div className="flex justify-between">
               <dt className="text-slate">Discount{order.coupon ? ` (${order.coupon})` : ""}</dt>
-              <dd className="text-danger">-{inr(order.discount)}</dd>
+              <dd className="text-danger">-{inrPrecise(order.discount)}</dd>
             </div>
             <div className="flex justify-between">
               <dt className="text-slate">Tax</dt>
-              <dd className="text-charcoal">{inr(order.tax)}</dd>
+              <dd className="text-charcoal">{inrPrecise(order.tax)}</dd>
             </div>
             <div className="flex justify-between">
               <dt className="text-slate">Shipping</dt>
               <dd className="text-charcoal">
-                {order.shipping === 0 ? "Free" : inr(order.shipping)}
+                {order.shipping === 0 ? "Free" : inrPrecise(order.shipping)}
               </dd>
             </div>
             <div className="mt-2 flex justify-between border-t border-border pt-2 text-base font-bold">
               <dt className="text-navy">Total</dt>
-              <dd className="text-gold">{inr(order.amount)}</dd>
+              <dd className="text-gold">{inrPrecise(order.amount)}</dd>
             </div>
           </dl>
         </Panel>

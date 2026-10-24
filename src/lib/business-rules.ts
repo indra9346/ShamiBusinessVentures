@@ -38,6 +38,16 @@ export async function loadTaxSettings(): Promise<TaxSettings> {
   };
 }
 
+/** Settings → Orders advance percentage; vendor acceptance requires round(total × % / 100, 2). */
+export async function loadAdvancePercent(fallback = 30): Promise<number> {
+  const { data } = await supabase.from("settings").select("value").eq("key", "order").maybeSingle();
+  const value = data?.value && typeof data.value === "object" && !Array.isArray(data.value)
+    ? data.value as Record<string, unknown>
+    : {};
+  const n = Number(value["advance_percent"] ?? fallback);
+  return Number.isFinite(n) && n >= 0 && n <= 100 ? n : fallback;
+}
+
 export function defaultGstForCategory(settings: TaxSettings, category: string): number {
   if (!settings.gstEnabled) return 0;
   const normalized = category.toLowerCase();

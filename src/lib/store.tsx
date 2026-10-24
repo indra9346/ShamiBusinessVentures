@@ -86,6 +86,8 @@ export type Review = (typeof seedReviews)[number] & { reply?: string };
 export type Coupon = (typeof seedCoupons)[number] & {
   source?: "zoho";
   maxPerUser?: number;
+  /** No maximum_discount set: the database applies the full percentage. */
+  uncapped?: boolean;
 };
 
 type OrderRow = Database["public"]["Tables"]["orders"]["Row"];
@@ -470,6 +472,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             code: row.code, type: row.discount_type,
             value: row.discount_type === "Percentage" ? `${row.discount_value}%` : `₹${row.discount_value}`,
             min: Number(row.minimum_order), max: Number(row.maximum_discount),
+            ...(row.maximum_discount === null ? { uncapped: true } : {}),
             start: asDate(row.starts_on), end: asDate(row.ends_on), limit: row.usage_limit, used: row.used_count,
             ...(row.zoho_coupon_id ? { source: "zoho" as const } : {}),
             ...(row.zoho_usage_limit_per_user ? { maxPerUser: row.zoho_usage_limit_per_user } : {}),
@@ -1148,6 +1151,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
         const existing = products.find((product) => product.id === id);
         if (!existing) return false;
+        // Full edit forms send every field. A stock value left as the form loaded it is the page's
+        // old copy, not a new count (orders may have sold units since): drop it so the database's
+        // current stock is kept. A stock-only change is always applied.
+        if (patch.stock !== undefined && Object.keys(patch).length > 1 && Number(patch.stock) === Number(existing.stock)) {
+          const { stock: _unchangedStock, ...rest } = patch;
+          patch = rest;
+        }
         // Admin stock is kept per godown: the change goes to the branch being worked in.
         if (user?.role === "admin" && patch.stock !== undefined && !STATIC_DATA_MODE && !existing.vendorId.startsWith("zoho:")) {
           const activeBranches = branchState.branches.filter((branch) => branch.active);
@@ -1198,7 +1208,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
           pushProductsToZohoInBackground([id]);
           return true;
         }
-        const updated = { ...existing, ...patch, updated: today() };
+        // The save writes the whole payload, and stock and sales counts change with every order.
+        // Take them from the database rather than this page's copy, so saving another field never
+        // undoes an order's stock deduction (the stock trigger would book it as a stock movement).
+        const live: Partial<Pick<Product, "stock" | "sold" | "reserved">> = {};
+        if (!STATIC_DATA_MODE) {
+          const { data: row } = await supabase.from("catalog_products").select("payload").eq("id", id).maybeSingle();
+          const payload = (row?.payload ?? {}) as Record<string, unknown>;
+          for (const key of ["stock", "sold", "reserved"] as const) {
+            if (typeof payload[key] === "number") live[key] = payload[key];
+          }
+        }
+        const updated = { ...existing, ...live, ...patch, updated: today() };
         setProducts((list) => list.map((p) => (p.id === id ? updated : p)));
         const ok = await saveProduct(updated, user?.role === "vendor");
         if (!ok) setProducts((list) => list.map((item) => item.id === id ? existing : item));
@@ -1324,7 +1345,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
             throw new Error(message);
           }
         }
-        const id = `ORD-${20000 + Math.floor(Math.random() * 9000)}`;
+        // order_no is unique: a 4-digit random number collided (and failed checkout) more often
+        // as orders grew. Date plus 5 random digits leaves 100,000 numbers per day.
+        const id = `ORD-${new Date().toISOString().slice(2, 10).replace(/-/g, "")}${String(Math.floor(Math.random() * 100000)).padStart(5, "0")}`;
         const order = buildOrder(
           id,
           today(),

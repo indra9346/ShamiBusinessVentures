@@ -4,7 +4,8 @@ import { z } from "zod";
 import { Check, CreditCard } from "lucide-react";
 import { toast } from "sonner";
 import { SiteLayout, Breadcrumbs } from "@/components/site/SiteLayout";
-import { inr } from "@/lib/data";
+import { inr, inrPrecise } from "@/lib/data";
+import { couponDiscount, lineGst } from "@/lib/pricing";
 import { useApp } from "@/lib/store";
 import { PickupPointCard } from "@/components/site/PickupPointCard";
 import { usePickupSettings } from "@/lib/pickup-points";
@@ -20,7 +21,7 @@ const ADDRESS_AUTOCOMPLETE: Record<string, string> = {
 };
 
 export const Route = createFileRoute("/checkout")({
-  validateSearch: z.object({ productId: z.string().optional() }),
+  validateSearch: z.object({ productId: z.string().optional(), coupon: z.string().optional() }),
   head: () => ({
     meta: [
       { title: "Secure Checkout | Shami Business Ventures" },
@@ -59,7 +60,7 @@ function Checkout() {
     coupons,
     orders,
   } = useApp();
-  const { productId } = Route.useSearch();
+  const { productId, coupon: cartCoupon } = Route.useSearch();
   const navigate = useNavigate();
   useEffect(() => {
     // Wait until the saved sign-in has been read, or a refresh would bounce signed-in customers.
@@ -109,7 +110,8 @@ function Checkout() {
   }, [user?.name, user?.phone]);
   const [ship, setShip] = useState<"Pickup" | "Delivery">("Pickup");
   const [method, setMethod] = useState("UPI");
-  const [couponCode, setCouponCode] = useState("");
+  // A coupon applied on the cart page carries over.
+  const [couponCode, setCouponCode] = useState(cartCoupon?.trim().toUpperCase() ?? "");
   const [placedId, setPlacedId] = useState<string | null>(null);
   const [savingAddress, setSavingAddress] = useState(false);
   const [placingOrder, setPlacingOrder] = useState(false);
@@ -217,10 +219,11 @@ function Checkout() {
     }, {}))
     : [{ point: null, lines: checkoutItems }];
   const tax = checkoutItems.reduce(
-    (sum, line) => sum + Math.round((line.product.price * line.qty * line.product.gst) / 100),
+    (sum, line) => sum + lineGst(line.product.price, line.qty, line.product.gst),
     0,
   );
-  const appliedCoupon = coupons.find(
+  // A coupon applies to a single order; checkout does not send it when the cart splits.
+  const appliedCoupon = orderGroups.length > 1 ? undefined : coupons.find(
     (c) =>
       c.code === couponCode &&
       c.status === "Active" &&
@@ -229,16 +232,7 @@ function Checkout() {
         orders.filter((order) => order.coupon === c.code && order.status !== "Cancelled").length <
           c.maxPerUser),
   );
-  const discount = appliedCoupon
-    ? Math.min(
-        appliedCoupon.source === "zoho" && appliedCoupon.type === "Percentage"
-          ? Number.MAX_SAFE_INTEGER
-          : appliedCoupon.max,
-        appliedCoupon.type === "Percentage"
-          ? Math.round((subtotal * parseFloat(appliedCoupon.value)) / 100)
-          : parseFloat(appliedCoupon.value.replace(/[^0-9.]/g, "")),
-      )
-    : 0;
+  const discount = appliedCoupon ? couponDiscount(appliedCoupon, subtotal) : 0;
   const total = subtotal + shipCost + tax - discount;
   const summary = confirmationSummary ?? { subtotal, shipCost, tax, discount, total };
 
@@ -301,6 +295,7 @@ function Checkout() {
       if (placingOrder) return;
       setPlacingOrder(true);
       const placed: Awaited<ReturnType<typeof placeOrder>>[] = [];
+      const placedLines: typeof checkoutItems = [];
       try {
         for (const group of orderGroups) {
           // A partner point may offer only one of pickup / delivery; the database checks it.
@@ -318,6 +313,7 @@ function Checkout() {
             shipping: shipCost,
             delivery: groupFulfil === "Pickup" ? "Pickup from our godown" : "Home delivery",
           }));
+          placedLines.push(...group.lines);
         }
       } catch {
         if (!placed.length) return;
@@ -335,7 +331,11 @@ function Checkout() {
         total: sum((order) => order.amount),
       });
       if (productId) removeFromCart(productId);
-      else clearCart();
+      else if (placed.length < orderGroups.length) {
+        // A later order failed: keep its items in the cart so they can be ordered again.
+        for (const line of placedLines) removeFromCart(line.product.id);
+        toast.error("Some items were not ordered", { description: "They are still in your cart. Review them and place another order." });
+      } else clearCart();
       setPlacedId(placed.map((order) => order.id).join(", "));
       toast.success(placed.length > 1 ? `${placed.length} orders placed` : "Order placed", { description: `${placed.map((order) => order.id).join(", ")} confirmed` });
       setStep(step + 1);
@@ -653,8 +653,9 @@ function Checkout() {
                   />
                   {couponCode && !appliedCoupon && (
                     <p role="status" className="mt-1 text-xs text-danger">
-                      This coupon is unavailable, below its minimum order, or has reached its
-                      per-customer limit.
+                      {orderGroups.length > 1
+                        ? "Coupons apply to a single order. These items ship from different places, so place them separately to use a coupon."
+                        : "This coupon is unavailable, below its minimum order, or has reached its per-customer limit."}
                     </p>
                   )}
                   {appliedCoupon && (
@@ -718,7 +719,7 @@ function Checkout() {
                 <h2 className="mt-5 text-xl font-bold text-navy">Order Confirmed</h2>
                 <p className="mt-2 text-sm text-slate">
                   Order ID <span className="font-bold text-gold">{placedId}</span> · Total{" "}
-                  {inr(summary.total)} · Payment pending. Online payment is not enabled yet; payment
+                  {inrPrecise(summary.total)} · Payment pending. Online payment is not enabled yet; payment
                   must be arranged and verified separately.{" "}
                   {fulfil === "Pickup" ? "We will let you know when it is ready to collect." : "Delivery in 2–4 business days."}
                 </p>
@@ -781,11 +782,11 @@ function Checkout() {
             <h2 className="text-sm font-bold tracking-wide text-navy uppercase">Summary</h2>
             <div className="mt-4 space-y-2.5 text-sm">
               {[
-                ["Subtotal", inr(summary.subtotal)],
-                [fulfil === "Delivery" ? "Delivery" : "Pickup", summary.shipCost === 0 ? "Free" : inr(summary.shipCost)],
-                ["GST", inr(summary.tax)],
+                ["Subtotal", inrPrecise(summary.subtotal)],
+                [fulfil === "Delivery" ? "Delivery" : "Pickup", summary.shipCost === 0 ? "Free" : inrPrecise(summary.shipCost)],
+                ["GST", inrPrecise(summary.tax)],
                 ...(summary.discount > 0
-                  ? [["Coupon discount", `- ${inr(summary.discount)}`]]
+                  ? [["Coupon discount", `- ${inrPrecise(summary.discount)}`]]
                   : []),
               ].map(([k, v]) => (
                 <div key={k} className="flex justify-between">
@@ -796,7 +797,7 @@ function Checkout() {
               <div className="hairline-gold my-2" />
               <div className="flex justify-between text-base font-bold text-navy">
                 <span>Total</span>
-                <span>{inr(summary.total)}</span>
+                <span>{inrPrecise(summary.total)}</span>
               </div>
             </div>
           </aside>

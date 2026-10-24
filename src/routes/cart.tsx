@@ -3,10 +3,11 @@ import { Minus, Plus, ShoppingBag, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { SiteLayout, Breadcrumbs } from "@/components/site/SiteLayout";
-import { getAvailablePurchaseQuantity, getMaxPurchaseQuantity, inr, type Product } from "@/lib/data";
+import { getAvailablePurchaseQuantity, getMaxPurchaseQuantity, inr, inrPrecise, type Product } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { useStorefrontDisplay } from "@/lib/storefront-display";
 import { branchDeliveryFee, defaultBranchOf, useBranches } from "@/lib/branches";
+import { couponDiscount, lineGst } from "@/lib/pricing";
 import { Input } from "@/components/ui/input";
 import { showCartNotification } from "@/components/site/CartFloatingNotification";
 
@@ -34,11 +35,9 @@ function Cart() {
   const godown = defaultBranchOf(useBranches().branches);
   const pickup = godown ? godown.pickupEnabled : true;
   const delivery = pickup ? 0 : branchDeliveryFee(godown, subtotal);
-  const tax = cartItems.reduce((sum, line) => sum + Math.round(line.product.price * line.qty * line.product.gst / 100), 0);
+  const tax = cartItems.reduce((sum, line) => sum + lineGst(line.product.price, line.qty, line.product.gst), 0);
   const appliedCoupon = applied ? coupons.find((c) => c.code === applied) : undefined;
-  const discount = appliedCoupon
-    ? Math.min(appliedCoupon.max, appliedCoupon.type === "Percentage" ? Math.round((subtotal * parseFloat(appliedCoupon.value)) / 100) : parseFloat(appliedCoupon.value.replace(/[^0-9.]/g, "")))
-    : 0;
+  const discount = appliedCoupon ? couponDiscount(appliedCoupon, subtotal) : 0;
   const total = subtotal + delivery + tax - discount;
 
   const applyCoupon = () => {
@@ -177,14 +176,14 @@ function Cart() {
           <aside className="h-max rounded-lg border border-border bg-card p-6 shadow-card lg:sticky lg:top-40">
             <h2 className="text-sm font-bold tracking-wide text-navy uppercase">Order Summary</h2>
             <div className="mt-5 space-y-3 text-sm">
-              <Row label="Subtotal" value={inr(subtotal)} />
-              <Row label={pickup ? "Godown pickup" : "Delivery charges"} value={delivery === 0 ? "Free" : inr(delivery)} />
-              <Row label="GST" value={inr(tax)} />
-              {discount > 0 && <Row label={`Coupon discount (${applied})`} value={`- ${inr(discount)}`} gold />}
+              <Row label="Subtotal" value={inrPrecise(subtotal)} />
+              <Row label={pickup ? "Godown pickup" : "Delivery charges"} value={delivery === 0 ? "Free" : inrPrecise(delivery)} />
+              <Row label="GST" value={inrPrecise(tax)} />
+              {discount > 0 && <Row label={`Coupon discount (${applied})`} value={`- ${inrPrecise(discount)}`} gold />}
               <div className="hairline-gold my-2" />
               <div className="flex justify-between text-base font-bold text-navy">
                 <span>Grand total</span>
-                <span>{inr(total)}</span>
+                <span>{inrPrecise(total)}</span>
               </div>
             </div>
 
@@ -205,6 +204,7 @@ function Cart() {
             ) : (
               <Link
                 to="/checkout"
+                search={applied ? { coupon: applied } : {}}
                 className="mt-5 block rounded-md bg-gold py-3.5 text-center text-sm font-bold text-midnight transition-colors hover:bg-gold-light"
               >
                 Proceed to Checkout
