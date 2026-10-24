@@ -303,3 +303,109 @@ export function parseZohoItemSyncVendorIds(value: unknown) {
   if (!Array.isArray(value)) return [];
   return [...new Set(value.filter((id): id is string => typeof id === "string").map((id) => id.trim()).filter(Boolean))];
 }
+
+/* ------------------------------------------------------------------------- */
+/* Godown catalogue (Zoho-primary): price lists and stock per Zoho location.  */
+/* ------------------------------------------------------------------------- */
+
+const finite = (value: unknown) => {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+/**
+ * A Zoho price list as godown prices: {productId: price}. "per_item" lists price only the items
+ * they contain; "fixed_percentage" lists mark every linked item up or down from its base price.
+ * Items not linked to a Grain Bazar product, and non-positive prices, are left out.
+ */
+export function godownPricesFromPricebook(
+  pricebook: Record<string, unknown>,
+  productByZohoItem: Map<string, string>,
+  basePriceByProduct: Map<string, number>,
+) {
+  const prices: Record<string, number> = {};
+  const type = String(pricebook["pricebook_type"] ?? "per_item");
+  if (type === "fixed_percentage") {
+    const percentage = finite(pricebook["percentage"]) ?? 0;
+    const factor = pricebook["is_increase"] === false ? 1 - percentage / 100 : 1 + percentage / 100;
+    for (const productId of new Set(productByZohoItem.values())) {
+      const base = basePriceByProduct.get(productId);
+      if (base && base > 0 && factor > 0) prices[productId] = Math.round(base * factor * 100) / 100;
+    }
+    return prices;
+  }
+  const items = Array.isArray(pricebook["pricebook_items"]) ? (pricebook["pricebook_items"] as Record<string, unknown>[]) : [];
+  for (const item of items) {
+    const productId = productByZohoItem.get(String(item["item_id"] ?? ""));
+    const rate = finite(item["pricebook_rate"]);
+    if (productId && rate !== null && rate > 0) prices[productId] = Math.round(rate * 100) / 100;
+  }
+  return prices;
+}
+
+/**
+ * A godown's sellable stock from its Zoho location: Zoho's available stock there, less website
+ * orders Zoho does not hold yet (no sales order, or a draft). Never below zero; null when the
+ * item has no entry for that location.
+ */
+export function godownStockFromZohoItem(item: Record<string, unknown>, zohoLocationId: string, pendingQty = 0) {
+  const locations = Array.isArray(item["locations"]) ? (item["locations"] as Record<string, unknown>[]) : [];
+  const location = locations.find((entry) => String(entry["location_id"] ?? "") === zohoLocationId);
+  if (!location) return null;
+  const available = finite(location["location_available_stock"]) ?? finite(location["location_stock_on_hand"]);
+  if (available === null) return null;
+  return Math.max(0, Math.round((available - Math.max(0, pendingQty)) * 100) / 100);
+}
+
+export type GodownPriceRow = { product_id: string; price: number | string; listed: boolean; pending: boolean };
+
+/** Zoho's godown prices with website edits still waiting for Zoho applied on top (they win). */
+export function mergeGodownPrices(zohoPrices: Record<string, number>, rows: GodownPriceRow[]) {
+  const merged: Record<string, number> = { ...zohoPrices };
+  for (const row of rows) {
+    if (!row.pending) continue;
+    const price = Number(row.price);
+    if (row.listed && Number.isFinite(price) && price > 0) merged[row.product_id] = Math.round(price * 100) / 100;
+    else delete merged[row.product_id];
+  }
+  return merged;
+}
+
+export function sameGodownPrices(a: Record<string, number>, b: Record<string, number>) {
+  const keys = Object.keys(a);
+  return keys.length === Object.keys(b).length && keys.every((key) => b[key] === a[key]);
+}
+
+/**
+ * The full item list to send back to a Zoho per-item price list: Zoho's own entries are kept as
+ * they are (items not on the website, volume brackets), linked items take the merged price, items
+ * dropped on the website are removed, and newly listed items are added.
+ */
+export function zohoPricebookItemsFor(
+  originalItems: Record<string, unknown>[],
+  merged: Record<string, number>,
+  productByZohoItem: Map<string, string>,
+  zohoItemByProduct: Map<string, string>,
+) {
+  const out: Record<string, unknown>[] = [];
+  const seen = new Set<string>();
+  for (const original of originalItems) {
+    const itemId = String(original["item_id"] ?? "");
+    if (!itemId) continue;
+    const productId = productByZohoItem.get(itemId);
+    const keep: Record<string, unknown> = { item_id: itemId, pricebook_rate: original["pricebook_rate"] };
+    for (const key of ["pricebook_item_id", "pricing_scheme", "price_brackets", "pricebook_discount"]) {
+      if (original[key] !== undefined && original[key] !== null && original[key] !== "") keep[key] = original[key];
+    }
+    if (!productId) { out.push(keep); continue; }
+    seen.add(productId);
+    if (productId in merged) out.push({ ...keep, pricebook_rate: merged[productId] });
+  }
+  for (const [productId, rate] of Object.entries(merged)) {
+    if (seen.has(productId)) continue;
+    const itemId = zohoItemByProduct.get(productId);
+    if (itemId) out.push({ item_id: itemId, pricebook_rate: rate });
+  }
+  return out;
+}

@@ -29,6 +29,9 @@ function Cart() {
   const [coupon, setCoupon] = useState("");
   const [applied, setApplied] = useState<string | null>(null);
   const hasUnavailableLines = cartItems.length < cart.length;
+  const removeUnavailable = () => {
+    for (const line of cart) if (!cartItems.some((item) => item.product.id === line.id)) removeFromCart(line.id);
+  };
   const checkoutBlocked = productCatalogStatus !== "ready" || hasUnavailableLines;
   // Same default as checkout: pickup from the godown (free) when it offers pickup, else its home-delivery charge.
   // Checkout picks the godown by delivery PIN when branch routing is on; before an address, use the default godown.
@@ -80,12 +83,12 @@ function Cart() {
             {hasUnavailableLines
               ? productCatalogStatus === "loading"
                 ? "We’re matching saved cart items with the live catalog."
-                : "Some saved items could not be matched to live products. They are not included in the total, and checkout is unavailable until the catalog is restored."
+                : "These items are not sold at the godown serving your PIN code, or are no longer available."
               : "Browse the catalogue and add sugar, rice, oils or pulses."}
           </p>
-          {hasUnavailableLines && (
+          {hasUnavailableLines && productCatalogStatus !== "loading" && (
             <button onClick={clearCart} className="text-sm font-semibold text-danger hover:underline">
-              Clear saved cart
+              Remove these items
             </button>
           )}
           <Link to="/shop" className="mt-3 rounded-md bg-navy px-6 py-3 text-sm font-semibold text-white hover:bg-midnight">
@@ -100,7 +103,7 @@ function Cart() {
                 {productCatalogStatus === "loading"
                   ? "The live catalog is still loading; checkout is temporarily unavailable."
                   : hasUnavailableLines
-                    ? "Some saved cart items are unavailable in the live catalog. They are excluded from this subtotal, and checkout is disabled."
+                    ? <>Some items in your cart are not sold at the godown serving your PIN code, or are no longer available. They are not in this total. <button type="button" onClick={removeUnavailable} className="font-semibold underline">Remove them</button> to continue.</>
                     : "The live product catalog is unavailable, so checkout is disabled."}
               </div>
             )}

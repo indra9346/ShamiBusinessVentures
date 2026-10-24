@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { MapPin, Phone, Plus, Star, Truck, Warehouse } from "lucide-react";
+import { MapPin, Phone, Plus, RefreshCw, Star, Truck, Warehouse } from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { Panel, StatCard } from "@/components/panel/widgets";
 import { adminNav } from "@/lib/panel-nav";
@@ -34,12 +34,14 @@ const STATES: [string, string][] = [
 type Form = {
   id: string; code: string; name: string; address: string; city: string; state: string; pincode: string; phone: string;
   email: string; mapUrl: string; instructions: string; gstin: string; zohoLocationId: string; zohoLocationName: string;
+  zohoPricebookId: string; zohoPricebookName: string;
   pincodes: string; pickupEnabled: boolean; deliveryEnabled: boolean; deliveryFee: string; freeDeliveryAbove: string; active: boolean;
 };
 
 const emptyForm: Form = {
   id: "", code: "", name: "", address: "", city: "", state: "Karnataka", pincode: "", phone: "", email: "", mapUrl: "",
   instructions: "Bring your order number. Collect during working hours.", gstin: "", zohoLocationId: "", zohoLocationName: "",
+  zohoPricebookId: "", zohoPricebookName: "",
   pincodes: "", pickupEnabled: true, deliveryEnabled: false, deliveryFee: "0", freeDeliveryAbove: "", active: true,
 };
 
@@ -47,17 +49,63 @@ const formFrom = (branch: Branch): Form => ({
   id: branch.id, code: branch.code, name: branch.name, address: branch.address, city: branch.city, state: branch.state,
   pincode: branch.pincode, phone: branch.phone, email: branch.email, mapUrl: branch.mapUrl, instructions: branch.instructions,
   gstin: branch.gstin, zohoLocationId: branch.zohoLocationId, zohoLocationName: branch.zohoLocationName,
+  zohoPricebookId: branch.zohoPricebookId, zohoPricebookName: branch.zohoPricebookName,
   pincodes: branch.servesPincodes.join(", "), pickupEnabled: branch.pickupEnabled, deliveryEnabled: branch.deliveryEnabled,
   deliveryFee: String(branch.deliveryFee), freeDeliveryAbove: branch.freeDeliveryAbove === null ? "" : String(branch.freeDeliveryAbove),
   active: branch.active,
 });
 
 function AdminBranches() {
-  const { branches, stock, features, ready } = useBranches();
+  const { branches, stock, prices, features, ready } = useBranches();
   const { orders } = useApp();
   const [form, setForm] = useState<Form | null>(null);
   const [saving, setSaving] = useState(false);
   const [locations, setLocations] = useState<{ id: string; name: string }[] | null>(null);
+  const [priceLists, setPriceLists] = useState<{ id: string; name: string; type: "per_item" | "percentage"; active: boolean }[] | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [stockMaster, setStockMaster] = useState<boolean | null>(null);
+
+  // "Zoho is the stock master" (private setting, read by the admin only).
+  useEffect(() => {
+    void supabase.from("settings").select("value").eq("key", "zoho_stock_master").maybeSingle().then(({ data }) => {
+      const value = data?.value && typeof data.value === "object" && !Array.isArray(data.value) ? data.value as Record<string, unknown> : {};
+      setStockMaster(value["enabled"] === true);
+    });
+  }, []);
+
+  const setZohoStockMaster = async (on: boolean) => {
+    const { error } = await supabase.from("settings").upsert({ key: "zoho_stock_master", value: { enabled: on }, is_public: false });
+    if (error) { toast.error("Could not change the setting", { description: error.message }); return; }
+    setStockMaster(on);
+    toast.success(on ? "Zoho is now the stock master" : "The website is the stock master again");
+  };
+
+  const loadPriceLists = async () => {
+    try {
+      const { listZohoPriceLists } = await import("@/lib/zoho-commerce.functions");
+      setPriceLists(await listZohoPriceLists());
+    } catch (cause) {
+      toast.error("Could not load Zoho price lists", { description: cause instanceof Error ? cause.message : undefined });
+    }
+  };
+
+  const syncNow = async () => {
+    setSyncing(true);
+    try {
+      const { syncZohoGodownsNow } = await import("@/lib/zoho-commerce.functions");
+      const result = await syncZohoGodownsNow();
+      await reloadBranches();
+      const problems = [...result.prices.errors, ...result.stock.errors];
+      if (problems.length) toast.error("Synced with some problems", { description: problems.slice(0, 3).join(" · ") });
+      else toast.success("Godowns synced with Zoho", {
+        description: `${result.prices.godowns} price list(s), ${result.prices.prices} prices${result.stock.enabled ? `, stock for ${result.stock.items} item(s)` : ""}${result.prices.sentToZoho + result.stock.sentToZoho ? ` · ${result.prices.sentToZoho + result.stock.sentToZoho} website change(s) sent to Zoho` : ""}`,
+      });
+    } catch (cause) {
+      toast.error("Could not sync with Zoho", { description: cause instanceof Error ? cause.message : undefined });
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   const stats = useMemo(() => new Map(branches.map((branch) => {
     const branchOrders = orders.filter((order) => order.branchId === branch.id);
@@ -113,6 +161,7 @@ function AdminBranches() {
       state_code: stateCode, pincode: form.pincode.trim(), phone: form.phone.trim(), email: form.email.trim(),
       map_url: form.mapUrl.trim(), instructions: form.instructions.trim(), gstin: form.gstin.trim().toUpperCase(),
       zoho_location_id: form.zohoLocationId, zoho_location_name: form.zohoLocationName,
+      zoho_pricebook_id: form.zohoPricebookId, zoho_pricebook_name: form.zohoPricebookName,
       serves_pincodes: pincodes.length ? pincodes : [form.pincode.trim()],
       pickup_enabled: form.pickupEnabled, delivery_enabled: form.deliveryEnabled, delivery_fee: fee, free_delivery_above: free,
       active: form.active, updated_at: new Date().toISOString(),
@@ -175,6 +224,24 @@ function AdminBranches() {
         </div>
       </Panel>
 
+      <Panel title="Godown prices and stock with Zoho (two-way)" className="mb-6">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="max-w-2xl space-y-1 text-sm text-slate">
+            <p>Link a godown to a <strong>Zoho price list</strong> and its customers see only the items in that list, at its prices. A godown without a price list sells every item at the normal price. Prices can be edited here (Products → a product → Godown prices) or in Zoho; changes sync both ways every 15 minutes.</p>
+            <p><strong>Zoho is the stock master</strong>: each godown's stock comes from its Zoho location. Stock entered on the website (godown stock, stock receipts) is sent to that Zoho location. Website orders reach Zoho as sales orders and are never counted twice.</p>
+          </div>
+          <div className="flex flex-col items-end gap-3">
+            <label className="flex items-center gap-2 text-sm font-semibold text-navy">
+              <Switch checked={stockMaster === true} disabled={stockMaster === null} onCheckedChange={(on) => void setZohoStockMaster(on)} aria-label="Zoho is the stock master" />
+              Zoho stock master: {stockMaster ? "ON" : "OFF"}
+            </label>
+            <Button variant="outline" disabled={syncing} onClick={() => void syncNow()}>
+              <RefreshCw className={`mr-1 h-4 w-4 ${syncing ? "animate-spin" : ""}`} /> {syncing ? "Syncing…" : "Sync with Zoho now"}
+            </Button>
+          </div>
+        </div>
+      </Panel>
+
       <div className="mb-4 flex justify-end">
         <Button className="bg-navy text-white hover:bg-navy/90" onClick={() => setForm({ ...emptyForm })}>
           <Plus className="mr-1 h-4 w-4" /> Add branch
@@ -190,6 +257,11 @@ function AdminBranches() {
                 {branch.phone && <p className="flex items-center gap-1.5 text-charcoal"><Phone className="h-4 w-4 text-slate" />{branch.phone}</p>}
                 <p className="text-xs text-slate">Code {branch.code} · {branch.state} ({branch.stateCode}) · Zoho location: {branch.zohoLocationName || "not set"}</p>
                 <p className="text-xs text-slate">Serves PIN {branch.servesPincodes.join(", ") || "—"}</p>
+                <p className="text-xs text-slate">
+                  {branch.zohoPricebookId
+                    ? <>Zoho price list: <span className="font-semibold text-navy">{branch.zohoPricebookName || branch.zohoPricebookId}</span> · {[...prices.values()].filter((byBranch) => byBranch.get(branch.id)?.listed).length} item(s) sold here{[...prices.values()].some((byBranch) => byBranch.get(branch.id)?.pending) ? " · website changes waiting for Zoho" : ""}</>
+                    : "Prices: normal price, every item"}
+                </p>
                 <p className="text-xs text-slate">
                   {branch.pickupEnabled ? "Pickup" : ""}{branch.pickupEnabled && branch.deliveryEnabled ? " + " : ""}
                   {branch.deliveryEnabled ? `Home delivery (${branch.deliveryFee ? inr(branch.deliveryFee) : "free"}${branch.freeDeliveryAbove !== null ? `, free above ${inr(branch.freeDeliveryAbove)}` : ""})` : ""}
@@ -256,6 +328,20 @@ function AdminBranches() {
                 ) : (
                   <Button type="button" variant="outline" onClick={() => void loadLocations()}>{form.zohoLocationName || "Load from Zoho"}</Button>
                 )}
+              </div>
+              <div className="grid gap-1.5 sm:col-span-2"><Label>Zoho price list (items and prices for this godown)</Label>
+                {priceLists ? (
+                  <select className="h-9 rounded-md border border-input bg-background px-2 text-sm" value={form.zohoPricebookId}
+                    onChange={(e) => setForm({ ...form, zohoPricebookId: e.target.value, zohoPricebookName: priceLists.find((p) => p.id === e.target.value)?.name ?? "" })}>
+                    <option value="">None: every item at the normal price</option>
+                    {priceLists.map((list) => (
+                      <option key={list.id} value={list.id}>{list.name}{list.type === "percentage" ? " (percentage, edit in Zoho)" : ""}{list.active ? "" : " (inactive)"}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <Button type="button" variant="outline" onClick={() => void loadPriceLists()}>{form.zohoPricebookName || "Load price lists from Zoho"}</Button>
+                )}
+                <p className="text-xs text-slate">After saving, click "Sync with Zoho now" to bring in its items and prices.</p>
               </div>
               <label className="flex items-center gap-2 text-sm"><Switch checked={form.pickupEnabled} onCheckedChange={(on) => setForm({ ...form, pickupEnabled: on })} />Customers can collect from this godown</label>
               <label className="flex items-center gap-2 text-sm"><Switch checked={form.deliveryEnabled} onCheckedChange={(on) => setForm({ ...form, deliveryEnabled: on })} />Home delivery from this godown</label>

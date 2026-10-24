@@ -6,7 +6,8 @@ import type { Database, Json } from "@/integrations/supabase/types";
 import { PICKUP_SETTINGS_KEY, parsePickupSettings, pickupPointForPin } from "@/lib/pickup-points";
 import { isMeasureUnit, toBaseQuantity } from "@/lib/data";
 import {
-  cleanEmailList, newOrderEmail, parseZohoItemSyncVendorIds, reconcileCatalog, reconcileCustomers, reconcileOrders, shouldRetryZohoCall,
+  cleanEmailList, godownPricesFromPricebook, godownStockFromZohoItem, mergeGodownPrices, newOrderEmail, parseZohoItemSyncVendorIds, sameGodownPrices,
+  zohoPricebookItemsFor, reconcileCatalog, reconcileCustomers, reconcileOrders, shouldRetryZohoCall,
   zohoItemSyncAllows, zohoLogLine,
   zohoOrderNumber, zohoRetryDelayMs, type AppProductForParity, type ZohoItemForParity, type ZohoOrderForReconcile,
 } from "@/lib/zoho-sync-core";
@@ -144,7 +145,7 @@ export const startZohoAuthorization = createServerFn({ method: "POST" })
       response_type: "code",
       client_id: reqEnv("ZOHO_CLIENT_ID"),
       scope:
-        "ZohoCommerce.items.READ,ZohoCommerce.items.CREATE,ZohoCommerce.items.UPDATE,ZohoCommerce.coupons.READ,ZohoCommerce.coupons.CREATE,ZohoCommerce.coupons.UPDATE,ZohoCommerce.salesorders.READ,ZohoCommerce.salesorders.CREATE,ZohoCommerce.salesorders.UPDATE,ZohoCommerce.settings.READ,ZohoCommerce.settings.UPDATE,ZohoCommerce.sitesIndex.READ,ZohoCommerce.webhooks.READ,ZohoCommerce.webhooks.CREATE,ZohoInventory.contacts.READ,ZohoInventory.contacts.CREATE,ZohoInventory.contacts.UPDATE,ZohoInventory.items.READ,ZohoInventory.items.CREATE,ZohoInventory.items.UPDATE,ZohoInventory.salesorders.READ,ZohoInventory.salesorders.CREATE,ZohoInventory.salesorders.UPDATE,ZohoInventory.inventoryadjustments.READ,ZohoInventory.inventoryadjustments.CREATE,ZohoInventory.settings.READ,ZohoBooks.salesorders.CREATE",
+        "ZohoCommerce.items.READ,ZohoCommerce.items.CREATE,ZohoCommerce.items.UPDATE,ZohoCommerce.coupons.READ,ZohoCommerce.coupons.CREATE,ZohoCommerce.coupons.UPDATE,ZohoCommerce.salesorders.READ,ZohoCommerce.salesorders.CREATE,ZohoCommerce.salesorders.UPDATE,ZohoCommerce.settings.READ,ZohoCommerce.settings.UPDATE,ZohoCommerce.sitesIndex.READ,ZohoCommerce.webhooks.READ,ZohoCommerce.webhooks.CREATE,ZohoInventory.contacts.READ,ZohoInventory.contacts.CREATE,ZohoInventory.contacts.UPDATE,ZohoInventory.items.READ,ZohoInventory.items.CREATE,ZohoInventory.items.UPDATE,ZohoInventory.salesorders.READ,ZohoInventory.salesorders.CREATE,ZohoInventory.salesorders.UPDATE,ZohoInventory.inventoryadjustments.READ,ZohoInventory.inventoryadjustments.CREATE,ZohoInventory.settings.READ,ZohoInventory.settings.UPDATE,ZohoBooks.salesorders.CREATE",
       redirect_uri: redirectUri,
       access_type: "offline",
       prompt: "consent",
@@ -1818,7 +1819,8 @@ async function syncZohoCatalogItem(
         }).`;
       }
     }
-    if (shared.stock !== null && !stockFollowUp && str(resultItem?.["item_type"]) === "inventory") {
+    // When Zoho is the stock master, godown stock is reconciled per location instead.
+    if (shared.stock !== null && !stockFollowUp && str(resultItem?.["item_type"]) === "inventory" && !(await isZohoStockMaster(db))) {
       await syncZohoItemStock(
         region, organizationId, token, itemId, shared.sku, shared.stock, zohoAvailableForSale(resultItem),
         await defaultStockLocationId(db),
@@ -3081,11 +3083,20 @@ export async function processZohoSyncOutbox(limit = 20, options?: { force?: bool
       .then(() => pollZohoOrderFulfillment(db, region, connection.organization_id, token, limit)),
     pollZohoCatalogChanges(db, region, connection.organization_id, token, limit),
   ]);
+  // Godown prices (Zoho price lists) and godown stock (Zoho locations), both ways. After the
+  // catalogue pull, so new item links are in place; after the order jobs, so new sales orders
+  // already hold their stock in Zoho.
+  const godownPrices = await syncZohoGodownPrices(db, region, connection.organization_id, token)
+    .catch((cause: unknown) => ({ godowns: 0, prices: 0, sentToZoho: 0, failed: 1, errors: [cause instanceof Error ? cause.message : String(cause)] }));
+  const godownStock = await syncZohoGodownStock(db, region, connection.organization_id, token)
+    .catch((cause: unknown) => ({ enabled: true, items: 0, pulled: 0, sentToZoho: 0, failed: 1, errors: [cause instanceof Error ? cause.message : String(cause)] }));
   return {
     ...summary,
     inboundContacts: contacts,
     inboundFulfillment: fulfillment,
     inboundCatalog: catalog,
+    godownPrices,
+    godownStock,
   };
 }
 
@@ -4208,3 +4219,209 @@ async function defaultStockLocationId(db: Awaited<ReturnType<typeof dbAdmin>>) {
   const chosen = withLocation.find((branch) => branch.is_default) ?? (withLocation.length === 1 ? withLocation[0] : undefined);
   return chosen?.zoho_location_id ?? "";
 }
+
+/* ------------------------------------------------------------------------- */
+/* Godown catalogue, two-way with Zoho: price lists and stock per location.   */
+/* ------------------------------------------------------------------------- */
+
+/** On when Zoho owns stock per location: each godown's stock is reconciled with its Zoho location
+ *  (website edits sent, Zoho changes pulled). Off: the website's total stock is sent to the default
+ *  godown's location, as before. */
+async function isZohoStockMaster(db: Awaited<ReturnType<typeof dbAdmin>>) {
+  const { data } = await db.from("settings").select("value").eq("key", "zoho_stock_master").maybeSingle();
+  const value = data?.value;
+  return !!value && typeof value === "object" && !Array.isArray(value) && (value as Record<string, unknown>)["enabled"] === true;
+}
+
+/** Zoho sales price lists (all pages). */
+async function fetchZohoSalesPricebooks(region: Region, organizationId: string, token: string) {
+  const books: Record<string, unknown>[] = [];
+  for (let page = 1; page <= 5; page += 1) {
+    const result = await inventoryRequest<{ pricebooks?: Record<string, unknown>[] }>(
+      region, organizationId, token, "pricebooks", "GET", undefined,
+      { page: String(page), per_page: "200", filter_by: "SalesOrPurchaseType.Sales" },
+    );
+    books.push(...(result.pricebooks ?? []));
+    if ((result.pricebooks ?? []).length < 200) break;
+  }
+  return books;
+}
+
+/** One Zoho price list with its items (list responses can leave the items out). */
+async function fetchZohoPricebook(region: Region, organizationId: string, token: string, books: Record<string, unknown>[], pricebookId: string) {
+  let book = books.find((entry) => str(entry["pricebook_id"]) === pricebookId);
+  if (!book) throw new NeedsReviewError(`Zoho price list ${pricebookId} was not found (deleted, or not a sales price list)`);
+  if (str(book["pricebook_type"]) !== "fixed_percentage" && !Array.isArray(book["pricebook_items"])) {
+    const one = await inventoryRequest<{ pricebook?: Record<string, unknown> }>(
+      region, organizationId, token, `pricebooks/${encodeURIComponent(pricebookId)}`, "GET",
+    );
+    if (one.pricebook) book = one.pricebook;
+  }
+  return book;
+}
+
+/**
+ * Two-way godown prices. For each godown linked to a Zoho price list: start from Zoho's list,
+ * let website edits still waiting for Zoho win, send the merged list to Zoho when it differs,
+ * then save the merged list on the website (which clears the waiting flags). A failed send keeps
+ * the website edits waiting for the next run.
+ */
+async function syncZohoGodownPrices(db: Awaited<ReturnType<typeof dbAdmin>>, region: Region, organizationId: string, token: string) {
+  const summary = { godowns: 0, prices: 0, sentToZoho: 0, failed: 0, errors: [] as string[] };
+  const { data: branches } = await db.from("branches").select("id,name,zoho_pricebook_id").eq("active", true).neq("zoho_pricebook_id", "");
+  if (!branches?.length) return summary;
+  const [books, { data: links }, { data: products }] = await Promise.all([
+    fetchZohoSalesPricebooks(region, organizationId, token),
+    db.from("zoho_item_links").select("product_id,zoho_item_id"),
+    db.from("catalog_products").select("id,vendor_id,payload"),
+  ]);
+  const productByZohoItem = new Map((links ?? []).map((link) => [link.zoho_item_id, link.product_id]));
+  const zohoItemByProduct = new Map((links ?? []).map((link) => [link.product_id, link.zoho_item_id]));
+  const basePrice = new Map((products ?? [])
+    .filter((product) => !product.vendor_id?.startsWith("zoho:"))
+    .map((product) => [product.id, finiteNumber((product.payload as Record<string, unknown> | null)?.["price"]) ?? 0]));
+  for (const branch of branches) {
+    try {
+      const readAt = new Date().toISOString();
+      const [book, { data: rows }] = await Promise.all([
+        fetchZohoPricebook(region, organizationId, token, books, branch.zoho_pricebook_id),
+        db.from("branch_prices").select("product_id,price,listed,pending").eq("branch_id", branch.id),
+      ]);
+      const zohoPrices = godownPricesFromPricebook(book, productByZohoItem, basePrice);
+      const perItem = str(book["pricebook_type"]) !== "fixed_percentage";
+      const merged = mergeGodownPrices(zohoPrices, perItem ? (rows ?? []) : []);
+      if (perItem && !sameGodownPrices(merged, zohoPrices)) {
+        const items = zohoPricebookItemsFor(
+          Array.isArray(book["pricebook_items"]) ? (book["pricebook_items"] as Record<string, unknown>[]) : [],
+          merged, productByZohoItem, zohoItemByProduct,
+        );
+        await inventoryRequest(region, organizationId, token, `pricebooks/${encodeURIComponent(branch.zoho_pricebook_id)}`, "PUT", {
+          name: str(book["name"]),
+          pricebook_type: "per_item",
+          sales_or_purchase_type: str(book["sales_or_purchase_type"]) || "sales",
+          ...(str(book["currency_id"]) ? { currency_id: str(book["currency_id"]) } : {}),
+          ...(str(book["pricing_scheme"]) ? { pricing_scheme: str(book["pricing_scheme"]) } : {}),
+          pricebook_items: items,
+        });
+        summary.sentToZoho += 1;
+      }
+      const { data: kept, error } = await db.rpc("apply_zoho_branch_prices", {
+        _branch_id: branch.id, _pricebook_name: str(book["name"]), _prices: merged as unknown as Json, _read_at: readAt,
+      });
+      if (error) throw new Error(error.message);
+      summary.godowns += 1;
+      summary.prices += Number(kept) || 0;
+    } catch (cause) {
+      summary.failed += 1;
+      const message = cause instanceof Error ? cause.message : String(cause);
+      summary.errors.push(`${branch.name}: ${message}${zohoPermissionHint(message)}`.slice(0, 400));
+    }
+  }
+  return summary;
+}
+
+/**
+ * Two-way godown stock (stock master ON). For each linked item and each godown with a Zoho
+ * location: a website edit still waiting is sent to that location as a stock adjustment; otherwise
+ * the godown takes Zoho's available stock there, less website orders Zoho does not hold yet.
+ */
+async function syncZohoGodownStock(db: Awaited<ReturnType<typeof dbAdmin>>, region: Region, organizationId: string, token: string) {
+  const summary = { enabled: false, items: 0, pulled: 0, sentToZoho: 0, failed: 0, errors: [] as string[] };
+  if (!(await isZohoStockMaster(db))) return summary;
+  summary.enabled = true;
+  const readAt = new Date().toISOString();
+  const [{ data: branches }, { data: links }, { data: products }, { data: stockRows }] = await Promise.all([
+    db.from("branches").select("id,zoho_location_id").eq("active", true).is("vendor_id", null).neq("zoho_location_id", ""),
+    db.from("zoho_item_links").select("product_id,zoho_item_id"),
+    db.from("catalog_products").select("id,vendor_id,payload"),
+    db.from("branch_stock").select("branch_id,product_id,stock,zoho_pending"),
+  ]);
+  if (!branches?.length || !links?.length) return summary;
+  const siteProducts = new Map((products ?? []).filter((product) => !product.vendor_id?.startsWith("zoho:"))
+    .map((product) => [product.id, str((product.payload as Record<string, unknown> | null)?.["sku"]) || product.id]));
+  const siteStock = new Map((stockRows ?? []).map((row) => [`${row.branch_id}|${row.product_id}`, row]));
+  const pending = new Map<string, Map<string, number>>();
+  for (const branch of branches) {
+    const { data: rows } = await db.rpc("branch_pending_order_qty", { _branch_id: branch.id });
+    pending.set(branch.id, new Map((rows ?? []).map((row: { product_id: string; qty: number }) => [row.product_id, Number(row.qty) || 0] as const)));
+  }
+  await runPool(links.filter((link) => siteProducts.has(link.product_id)), 3, async (link) => {
+    try {
+      const response = await inventoryRequest<{ item?: Record<string, unknown> }>(
+        region, organizationId, token, `items/${encodeURIComponent(link.zoho_item_id)}`, "GET",
+      );
+      const item = response.item ?? {};
+      summary.items += 1;
+      if (str(item["item_type"]) && str(item["item_type"]) !== "inventory") return;
+      for (const branch of branches) {
+        const ordersWaiting = pending.get(branch.id)?.get(link.product_id) ?? 0;
+        const zohoStock = godownStockFromZohoItem(item, branch.zoho_location_id, ordersWaiting);
+        const row = siteStock.get(`${branch.id}|${link.product_id}`);
+        let target = zohoStock;
+        if (row?.zoho_pending) {
+          // Website edit wins: bring the Zoho location to the website count (plus orders Zoho
+          // does not hold yet, which the website has already taken off).
+          const zohoAvailable = godownStockFromZohoItem(item, branch.zoho_location_id, 0) ?? 0;
+          const delta = Math.round((Number(row.stock) + ordersWaiting - zohoAvailable) * 1000) / 1000;
+          if (delta !== 0) {
+            await inventoryRequest(region, organizationId, token, "inventoryadjustments", "POST", {
+              date: todayInIndia(),
+              reason: "Grain Bazar godown stock",
+              adjustment_type: "quantity",
+              description: `Set ${siteProducts.get(link.product_id)} stock at this godown to ${row.stock} to match Grain Bazar`,
+              location_id: branch.zoho_location_id,
+              line_items: [{ item_id: link.zoho_item_id, quantity_adjusted: delta, location_id: branch.zoho_location_id }],
+            });
+            summary.sentToZoho += 1;
+          }
+          target = Number(row.stock);
+        }
+        if (target === null) continue;
+        const { error } = await db.rpc("apply_zoho_branch_stock", {
+          _branch_id: branch.id, _product_id: link.product_id, _stock: target, _read_at: readAt,
+        });
+        if (error) throw new Error(error.message);
+        if (!row?.zoho_pending) summary.pulled += 1;
+      }
+    } catch (cause) {
+      summary.failed += 1;
+      const message = cause instanceof Error ? cause.message : String(cause);
+      summary.errors.push(`${siteProducts.get(link.product_id)}: ${message}${zohoPermissionHint(message)}`.slice(0, 300));
+    }
+  });
+  summary.errors = summary.errors.slice(0, 10);
+  return summary;
+}
+
+/** Admin → Godowns: Zoho sales price lists to link a godown to. */
+export const listZohoPriceLists = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    await ensureAdmin(context.supabase, context.userId);
+    const db = await dbAdmin();
+    const { region, organizationId, token } = await zohoOrderContext(db);
+    try {
+      const books = await fetchZohoSalesPricebooks(region, organizationId, token);
+      return books.map((book) => ({
+        id: str(book["pricebook_id"]),
+        name: str(book["name"]),
+        type: str(book["pricebook_type"]) === "fixed_percentage" ? ("percentage" as const) : ("per_item" as const),
+        active: str(book["status"]) !== "inactive",
+      })).filter((book) => book.id);
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "Zoho price lists could not be read";
+      throw new Error(`${message}${zohoPermissionHint(message)}`);
+    }
+  });
+
+/** Admin: reconcile godown prices (and stock, when Zoho is the stock master) with Zoho now. */
+export const syncZohoGodownsNow = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    await ensureAdmin(context.supabase, context.userId);
+    const db = await dbAdmin();
+    const { region, organizationId, token } = await zohoOrderContext(db);
+    const prices = await syncZohoGodownPrices(db, region, organizationId, token);
+    const stock = await syncZohoGodownStock(db, region, organizationId, token);
+    return { prices, stock };
+  });

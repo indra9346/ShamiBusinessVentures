@@ -6,6 +6,7 @@ import { DataTable, Panel, StatusBadge } from "@/components/panel/widgets";
 import { adminNav } from "@/lib/panel-nav";
 import { getPricingDisplayMode, inr, type PricingDisplayMode } from "@/lib/data";
 import { PricingDisplayModeToggle } from "@/components/panel/PricingDisplayModeToggle";
+import { GodownPricesPanel } from "@/components/panel/GodownPricesPanel";
 import { useApp } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -170,6 +171,7 @@ function AdminProductDetail() {
       </div>
 
       <div className="mt-6 grid gap-6 xl:grid-cols-2">
+        <GodownPricesPanel productId={product.id} basePrice={product.price} />
         <Panel title={`Reviews (${productReviews.length})`}>
           {productReviews.length === 0 ? (
             <p className="text-sm text-slate">No reviews for this product yet.</p>

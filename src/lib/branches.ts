@@ -23,6 +23,9 @@ export type Branch = {
   gstin: string;
   zohoLocationId: string;
   zohoLocationName: string;
+  /** Zoho price list this godown sells from: only its items, at its prices. "" = every item at the base price. */
+  zohoPricebookId: string;
+  zohoPricebookName: string;
   servesPincodes: string[];
   pickupEnabled: boolean;
   deliveryEnabled: boolean;
@@ -51,7 +54,7 @@ export const DEMO_BRANCH: Branch = {
   address: "Pavagada Road, Behind Mahalakshmi Kalyana Mantapa, Mahadevi Road, Challakere, Karnataka 577522",
   city: "Challakere", state: "Karnataka", stateCode: "29", pincode: "577522", phone: "8310084308",
   email: "shamibusinessventurespvtltd@gmail.com", mapUrl: "", instructions: "Bring your order number. Collect during working hours.",
-  gstin: "", zohoLocationId: "", zohoLocationName: "CLK Shami Business Ventures",
+  gstin: "", zohoLocationId: "", zohoLocationName: "CLK Shami Business Ventures", zohoPricebookId: "", zohoPricebookName: "",
   servesPincodes: ["577522", "577536", "577537", "577538", "577543"], pickupEnabled: true, deliveryEnabled: false,
   deliveryFee: 0, freeDeliveryAbove: null, isDefault: true, active: true, sortOrder: 0, vendorId: null,
 };
@@ -67,6 +70,7 @@ export function branchFromRow(row: Row): Branch {
     city: str(row["city"]), state: str(row["state"]), stateCode: str(row["state_code"]), pincode: str(row["pincode"]),
     phone: str(row["phone"]), email: str(row["email"]), mapUrl: str(row["map_url"]), instructions: str(row["instructions"]),
     gstin: str(row["gstin"]), zohoLocationId: str(row["zoho_location_id"]), zohoLocationName: str(row["zoho_location_name"]),
+    zohoPricebookId: str(row["zoho_pricebook_id"]), zohoPricebookName: str(row["zoho_pricebook_name"]),
     servesPincodes: Array.isArray(row["serves_pincodes"]) ? (row["serves_pincodes"] as unknown[]).map(String) : [],
     pickupEnabled: row["pickup_enabled"] !== false, deliveryEnabled: row["delivery_enabled"] === true,
     deliveryFee: Number(row["delivery_fee"]) || 0, freeDeliveryAbove: Number.isFinite(free) ? free : null,
@@ -75,19 +79,23 @@ export function branchFromRow(row: Row): Branch {
   };
 }
 
+export type GodownPrice = { price: number; listed: boolean; pending: boolean };
+
 export type BranchState = {
   ready: boolean;
   branches: Branch[];
   /** product id -> branch id -> stock */
   stock: Map<string, Map<string, number>>;
+  /** product id -> branch id -> godown price (godowns linked to a Zoho price list). */
+  prices: Map<string, Map<string, GodownPrice>>;
   features: PlatformFeatures;
   /** Marketplace ON: vendor id -> the branch their items are fulfilled from. */
   vendorPoints: Map<string, string>;
 };
 
 let cache: BranchState = STATIC_DATA_MODE
-  ? { ready: true, branches: [DEMO_BRANCH], stock: new Map(), features: defaultFeatures, vendorPoints: new Map() }
-  : { ready: false, branches: [], stock: new Map(), features: defaultFeatures, vendorPoints: new Map() };
+  ? { ready: true, branches: [DEMO_BRANCH], stock: new Map(), prices: new Map(), features: defaultFeatures, vendorPoints: new Map() }
+  : { ready: false, branches: [], stock: new Map(), prices: new Map(), features: defaultFeatures, vendorPoints: new Map() };
 const listeners = new Set<(state: BranchState) => void>();
 let loading: Promise<void> | null = null;
 let subscribed = false;
@@ -99,11 +107,19 @@ function publish(next: BranchState) {
 
 export async function reloadBranches() {
   if (STATIC_DATA_MODE) return;
-  const [branchResult, stockResult, featureResult] = await Promise.all([
+  const [branchResult, stockResult, featureResult, priceResult] = await Promise.all([
     supabase.from("branches").select("*").order("sort_order").order("name"),
     supabase.from("branch_stock").select("branch_id,product_id,stock"),
     supabase.from("settings").select("value").eq("key", PLATFORM_FEATURES_KEY).eq("is_public", true).maybeSingle(),
+    supabase.from("branch_prices").select("branch_id,product_id,price,listed,pending"),
   ]);
+  const prices = new Map<string, Map<string, GodownPrice>>();
+  // Before the godown migration is applied the table does not exist yet: no godown prices.
+  for (const row of priceResult.error ? [] : priceResult.data ?? []) {
+    const byBranch = prices.get(row.product_id) ?? new Map<string, GodownPrice>();
+    byBranch.set(row.branch_id, { price: Number(row.price) || 0, listed: row.listed !== false, pending: row.pending === true });
+    prices.set(row.product_id, byBranch);
+  }
   const stock = new Map<string, Map<string, number>>();
   for (const row of stockResult.data ?? []) {
     const byBranch = stock.get(row.product_id) ?? new Map<string, number>();
@@ -122,6 +138,7 @@ export async function reloadBranches() {
     ready: true,
     branches: (branchResult.data ?? []).map((row) => branchFromRow(row as Row)),
     stock,
+    prices,
     features,
     vendorPoints,
   });
@@ -137,6 +154,7 @@ function ensureLoaded() {
     supabase.channel("branches-live")
       .on("postgres_changes", { event: "*", schema: "public", table: "branches" }, schedule)
       .on("postgres_changes", { event: "*", schema: "public", table: "branch_stock" }, schedule)
+      .on("postgres_changes", { event: "*", schema: "public", table: "branch_prices" }, schedule)
       .on("postgres_changes", { event: "*", schema: "public", table: "settings" }, schedule)
       .subscribe();
   }
@@ -168,6 +186,51 @@ export const branchDeliveryFee = (branch: Branch | null, subtotal: number) =>
   !branch || (branch.freeDeliveryAbove !== null && subtotal >= branch.freeDeliveryAbove) ? 0 : branch.deliveryFee;
 
 export const branchStockOf = (state: BranchState, productId: string, branchId: string) => state.stock.get(productId)?.get(branchId) ?? 0;
+
+/**
+ * The price a product sells at in a godown (same rule as the database's branch_product_price):
+ * a godown linked to a Zoho price list sells only its listed items at their prices; any other
+ * godown sells every item at the base price. Null = not sold at that godown.
+ */
+export function godownPriceOf(state: BranchState, branch: Branch | null, productId: string, basePrice: number) {
+  if (!branch || !branch.zohoPricebookId) return basePrice > 0 ? basePrice : null;
+  const entry = state.prices.get(productId)?.get(branch.id);
+  return entry && entry.listed && entry.price > 0 ? entry.price : null;
+}
+
+/* ------------------------------------------------------------------------- */
+/* The shopper's delivery PIN ("Delivering to …"), kept on this device.       */
+/* ------------------------------------------------------------------------- */
+const SHOPPER_PIN_KEY = "gb-shopper-pin";
+const pinListeners = new Set<(pin: string) => void>();
+let shopperPin = "";
+try {
+  if (typeof window !== "undefined") shopperPin = localStorage.getItem(SHOPPER_PIN_KEY) || "";
+} catch {
+  /* storage blocked */
+}
+
+/** Sets the shopper's PIN (6 digits) or clears it (""), for every open component. */
+export function setShopperPin(pin: string) {
+  const clean = pin.replace(/\D/g, "").slice(0, 6);
+  shopperPin = clean.length === 6 ? clean : "";
+  try {
+    if (shopperPin) localStorage.setItem(SHOPPER_PIN_KEY, shopperPin);
+    else localStorage.removeItem(SHOPPER_PIN_KEY);
+  } catch { /* storage blocked */ }
+  for (const listener of pinListeners) listener(shopperPin);
+}
+
+/** The PIN the shopper chose ("" when none yet). */
+export function useShopperPin(): [string, (pin: string) => void] {
+  const [value, setValue] = useState(shopperPin);
+  useEffect(() => {
+    pinListeners.add(setValue);
+    setValue(shopperPin);
+    return () => { pinListeners.delete(setValue); };
+  }, []);
+  return [value, setShopperPin];
+}
 
 /* ------------------------------------------------------------------------- */
 /* The branch an administrator is working in ("all" = every branch).          */
