@@ -36,6 +36,27 @@ export type PriceLotInput = {
   bagKg: number;
 };
 
+/**
+ * The rate (per QTL or per litre) to show for a pack price. Multiplying a rounded pack price
+ * is off by up to a paisa per pack: a ₹2,617.13 bag comes from ₹5,234.25 per QTL (5,234.25 ÷ 2 =
+ * 2,617.125 → 2,617.13), but 2,617.13 × 2 = 5,234.26. So this picks the simplest rate - whole
+ * rupees, then 10 paise, then paise, lowest first - whose pack price rounds to exactly this
+ * price. packPerBasis = pack size ÷ rate unit (a 50 kg bag per QTL = 0.5).
+ */
+export function rateForPackPrice(packPrice: number, packPerBasis: number): number {
+  if (!(packPrice > 0) || !(packPerBasis > 0)) return 0;
+  const target = Math.round(packPrice * 100);
+  const packOf = (ratePaise: number) => Math.round(ratePaise * packPerBasis + 1e-7);
+  const lo = (target - 0.5) / packPerBasis;
+  const hi = (target + 0.5) / packPerBasis;
+  for (const step of [100, 10, 1]) {
+    for (let value = Math.ceil(lo / step - 1e-9) * step; value <= hi + 1e-9; value += step) {
+      if (packOf(value) === target) return value / 100;
+    }
+  }
+  return Math.round(target / packPerBasis) / 100;
+}
+
 const paise = (amount: number) => Math.round((amount + Number.EPSILON) * 100) / 100;
 
 /**

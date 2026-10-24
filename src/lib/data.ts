@@ -5,6 +5,7 @@ import dalImg from "@/assets/p-dal.jpg";
 import premiumRiceCategoryImg from "@/assets/category-rice-premium.jpg";
 import premiumSugarCategoryImg from "@/assets/category-sugar-premium.jpg";
 import premiumOilCategoryImg from "@/assets/category-oil-premium.jpg";
+import { rateForPackPrice } from "@/lib/pricing";
 
 export const inr = (n: number) =>
   "₹" + Math.round(n).toLocaleString("en-IN", { maximumFractionDigits: 2 });
@@ -170,7 +171,7 @@ export function deriveRatePricing(product: Pick<Product, "weight" | "price">): R
   const packUnit: MeasureUnit = unit === "QTL" ? "kg" : unit;
   const qty = unit === "QTL" ? packQty * 100 : packQty;
   const basisUnit: MeasureUnit = isVolumeUnit(packUnit) ? "L" : "QTL";
-  const basisRate = Math.round((price / toBaseQuantity(qty, packUnit)) * toBaseQuantity(1, basisUnit) * 100) / 100;
+  const basisRate = rateForPackPrice(price, toBaseQuantity(qty, packUnit) / toBaseQuantity(1, basisUnit));
   return { packQty: qty, packUnit, basisQty: 1, basisUnit, basisRate };
 }
 

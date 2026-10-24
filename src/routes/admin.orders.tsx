@@ -19,6 +19,7 @@ import { adminNav } from "@/lib/panel-nav";
 import { canCancelOrder, inr, orderStages, type OrderStatus } from "@/lib/data";
 import { useApp, type Address } from "@/lib/store";
 import { supabase } from "@/integrations/supabase/client";
+import { godownOfferOf, orderGodownFor, useBranches } from "@/lib/branches";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { Input } from "@/components/ui/input";
 import {
@@ -131,6 +132,25 @@ function AdminOrders() {
   const [customerAddresses, setCustomerAddresses] = useState<Address[] | null>(null);
   const [addressId, setAddressId] = useState("");
   const [orderFormError, setOrderFormError] = useState("");
+  // The order belongs to the godown serving the delivery address (by PIN when PIN matching is
+  // on), and the database charges that godown's price from its stock: show the same here.
+  const branchState = useBranches();
+  const orderAddress = customerAddresses?.find((address) => address.id === addressId);
+  const orderGodown = branchState.ready ? orderGodownFor(branchState, orderAddress?.pin) : null;
+  const offerOf = (product: (typeof products)[number] | undefined) =>
+    product ? godownOfferOf(branchState, orderGodown, product) : { price: null, stock: 0 };
+  const newLine = () => {
+    const product = products.find((item) => offerOf(item).price !== null) ?? products[0];
+    return { productId: product?.id ?? "", qty: "1", capacity: product?.weight ?? "", price: String(offerOf(product).price ?? "") };
+  };
+  // A different address can mean a different godown: re-price the lines.
+  useEffect(() => {
+    setDraftItems((items) => items.map((item) => {
+      const price = offerOf(products.find((product) => product.id === item.productId)).price;
+      return { ...item, price: price === null ? "" : String(price) };
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orderGodown?.id, branchState.prices, branchState.features.branchRouting]);
   useEffect(() => {
     setCustomerAddresses(null);
     setAddressId("");
@@ -195,10 +215,15 @@ function AdminOrders() {
       ) ||
       [...requestedByProduct].some(
         ([productId, qty]) =>
-          qty > (products.find((product) => product.id === productId)?.stock ?? 0),
+          qty > offerOf(products.find((product) => product.id === productId)).stock,
       )
     ) {
       setOrderFormError("Choose a customer and a valid product, bag count, price and available stock.");
+      return;
+    }
+    const notSold = lines.find((line) => offerOf(line.product).price === null);
+    if (notSold) {
+      setOrderFormError(`${notSold.product!.name} is not sold at ${orderGodown?.name ?? "this godown"}. Remove it or choose another address.`);
       return;
     }
     let order: Awaited<ReturnType<typeof placeOrder>>;
@@ -326,14 +351,7 @@ function AdminOrders() {
             <Button
               size="sm"
               onClick={() => {
-                setDraftItems([
-                  {
-                    productId: products[0]?.id ?? "",
-                    qty: "1",
-                    capacity: products[0]?.weight ?? "",
-                    price: String(products[0]?.price ?? ""),
-                  },
-                ]);
+                setDraftItems([newLine()]);
                 setNewOrderOpen(true);
               }}
             >
@@ -603,10 +621,16 @@ function AdminOrders() {
                   </SelectContent>
                 </Select>
               )}
+              {orderGodown && (
+                <p className="text-xs text-slate">
+                  Fulfilled from <span className="font-semibold text-navy">{orderGodown.name}</span>: prices and stock below are this godown's.
+                </p>
+              )}
             </div>
             <div className="space-y-3">
               {draftItems.map((line, index) => {
                 const product = products.find((candidate) => candidate.id === line.productId);
+                const offer = offerOf(product);
                 const lineTotal = (Number(line.qty) || 0) * (Number(line.price) || 0);
                 return (
                   <div
@@ -626,7 +650,7 @@ function AdminOrders() {
                                     ...item,
                                     productId,
                                     capacity: selected?.weight ?? "",
-                                    price: String(selected?.price ?? ""),
+                                    price: String(offerOf(selected).price ?? ""),
                                   }
                                 : item,
                             ),
@@ -644,7 +668,11 @@ function AdminOrders() {
                           ))}
                         </SelectContent>
                       </Select>
-                      <span className="text-xs text-slate">Available: {product?.stock ?? 0}</span>
+                      {product && offer.price === null ? (
+                        <span className="text-xs font-semibold text-amber-700">Not sold at {orderGodown?.name ?? "this godown"}</span>
+                      ) : (
+                        <span className="text-xs text-slate">Available: {offer.stock}{orderGodown ? ` at ${orderGodown.name}` : ""}</span>
+                      )}
                     </div>
                     <div className="grid gap-1">
                       <Label>Bags</Label>
@@ -749,15 +777,7 @@ function AdminOrders() {
                 type="button"
                 variant="outline"
                 onClick={() =>
-                  setDraftItems((items) => [
-                    ...items,
-                    {
-                      productId: products[0]?.id ?? "",
-                      qty: "1",
-                      capacity: products[0]?.weight ?? "",
-                      price: String(products[0]?.price ?? ""),
-                    },
-                  ])
+                  setDraftItems((items) => [...items, newLine()])
                 }
               >
                 + Add another product
