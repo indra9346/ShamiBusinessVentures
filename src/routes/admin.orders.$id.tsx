@@ -25,6 +25,7 @@ import { Panel, StatusBadge } from "@/components/panel/widgets";
 import { adminNav } from "@/lib/panel-nav";
 import { canCancelOrder, inr, orderStages, type OrderStatus } from "@/lib/data";
 import { useApp } from "@/lib/store";
+import { useBranches, zohoLocationLabel } from "@/lib/branches";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { syncSingleOrderToZoho } from "@/lib/zoho-commerce.functions";
 import { PickupPointCard } from "@/components/site/PickupPointCard";
@@ -98,6 +99,7 @@ function AdminOrderDetail() {
   // Hooks stay above the early return: orders load after the first render.
   const [pushedZohoId, setPushedZohoId] = useState<string | null>(null);
   const [syncingZoho, setSyncingZoho] = useState(false);
+  const { branches } = useBranches();
 
   if (!order) {
     return (
@@ -138,6 +140,7 @@ function AdminOrderDetail() {
   );
 
   const zohoSalesOrderId = pushedZohoId ?? (order.zohoSalesOrderId || null);
+  const orderBranch = branches.find((branch) => branch.id === order.branchId) ?? branches.find((branch) => branch.isDefault) ?? null;
 
   const handleSyncToZoho = async () => {
     setSyncingZoho(true);
@@ -371,7 +374,7 @@ function AdminOrderDetail() {
             </div>
             <p className="text-xs text-slate mt-0.5">
               {zohoSalesOrderId
-                ? `Order is synchronized with Zoho Head Office under Sales Order ${zohoSalesOrderId}.`
+                ? `Order is synchronized with Zoho under Sales Order ${zohoSalesOrderId}, in ${zohoLocationLabel(orderBranch)}.`
                 : "Active write sync will automatically mirror this sales order into Zoho Inventory & Commerce."}
             </p>
           </div>

@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
+import { defaultBranchOf } from "@/lib/godown-rules";
+
+export { branchForPin, branchStockOf, defaultBranchOf, godownOfferOf, godownPriceOf, orderGodownFor, zohoLocationLabel } from "@/lib/godown-rules";
 
 /**
  * Grain Bazar godown branches. One catalogue; each product has a stock count per branch
@@ -172,31 +175,9 @@ export function useBranches(): BranchState {
   return state;
 }
 
-export const defaultBranchOf = (branches: Branch[]) => branches.find((branch) => branch.isDefault && branch.active) ?? branches.find((branch) => branch.active && !branch.vendorId) ?? null;
-
-/** The godown serving a PIN code: one that lists it, else the default godown. */
-export function branchForPin(branches: Branch[], pin: string | null | undefined) {
-  const active = branches.filter((branch) => branch.active && !branch.vendorId);
-  const clean = (pin ?? "").replace(/\D/g, "");
-  return (clean ? active.find((branch) => branch.servesPincodes.includes(clean)) : undefined) ?? defaultBranchOf(branches);
-}
-
 /** Home-delivery charge from a godown (same rule as the database): its fee, free at or above its threshold. */
 export const branchDeliveryFee = (branch: Branch | null, subtotal: number) =>
   !branch || (branch.freeDeliveryAbove !== null && subtotal >= branch.freeDeliveryAbove) ? 0 : branch.deliveryFee;
-
-export const branchStockOf = (state: BranchState, productId: string, branchId: string) => state.stock.get(productId)?.get(branchId) ?? 0;
-
-/**
- * The price a product sells at in a godown (same rule as the database's branch_product_price):
- * a godown linked to a Zoho price list sells only its listed items at their prices; any other
- * godown sells every item at the base price. Null = not sold at that godown.
- */
-export function godownPriceOf(state: BranchState, branch: Branch | null, productId: string, basePrice: number) {
-  if (!branch || !branch.zohoPricebookId) return basePrice > 0 ? basePrice : null;
-  const entry = state.prices.get(productId)?.get(branch.id);
-  return entry && entry.listed && entry.price > 0 ? entry.price : null;
-}
 
 /* ------------------------------------------------------------------------- */
 /* The shopper's delivery PIN ("Delivering to …"), kept on this device.       */
