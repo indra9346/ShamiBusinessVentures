@@ -1,8 +1,9 @@
 {
-  "crons": [
+  "redirects": [
     {
-      "path": "/api/zoho/sync",
-      "schedule": "0 3 * * *"
+      "source": "/:path*",
+      "destination": "https://grainbazar.com/:path*",
+      "permanent": false
     }
   ]
 }
