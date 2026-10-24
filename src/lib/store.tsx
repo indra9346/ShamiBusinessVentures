@@ -1151,6 +1151,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
         const existing = products.find((product) => product.id === id);
         if (!existing) return false;
+        // Full edit forms send every field. A stock value left as the form loaded it is the page's
+        // old copy, not a new count (orders may have sold units since): drop it so the database's
+        // current stock is kept. A stock-only change is always applied.
+        if (patch.stock !== undefined && Object.keys(patch).length > 1 && Number(patch.stock) === Number(existing.stock)) {
+          const { stock: _unchangedStock, ...rest } = patch;
+          patch = rest;
+        }
         // Admin stock is kept per godown: the change goes to the branch being worked in.
         if (user?.role === "admin" && patch.stock !== undefined && !STATIC_DATA_MODE && !existing.vendorId.startsWith("zoho:")) {
           const activeBranches = branchState.branches.filter((branch) => branch.active);
