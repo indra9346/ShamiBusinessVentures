@@ -74,7 +74,11 @@ function AdminBranches() {
   }, []);
 
   const setZohoStockMaster = async (on: boolean) => {
-    const { error } = await supabase.from("settings").upsert({ key: "zoho_stock_master", value: { enabled: on }, is_public: false });
+    // "since": website orders before this moment are already in Zoho's stock and are not
+    // subtracted again by the stock sync.
+    const { error } = await supabase.from("settings").upsert({
+      key: "zoho_stock_master", value: on ? { enabled: true, since: new Date().toISOString() } : { enabled: false }, is_public: false,
+    });
     if (error) { toast.error("Could not change the setting", { description: error.message }); return; }
     setStockMaster(on);
     toast.success(on ? "Zoho is now the stock master" : "The website is the stock master again");

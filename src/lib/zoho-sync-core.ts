@@ -409,3 +409,37 @@ export function zohoPricebookItemsFor(
   }
   return out;
 }
+
+export type OrderForPending = {
+  branch_id: string | null;
+  order_status: string;
+  zoho_salesorder_id: string | null;
+  zoho_order_status: string | null;
+  created_at: string;
+  items: { product_id: string | null; qty: number }[];
+};
+
+/**
+ * Website orders at each godown whose stock Zoho does not hold yet: not cancelled, with no Zoho
+ * sales order or only a draft one. Only orders placed after Zoho became the stock master count;
+ * earlier orders were already taken off Zoho's stock by the website's stock corrections.
+ * Returns branch id -> product id -> quantity.
+ */
+export function pendingOrderQty(orders: OrderForPending[], since: string, defaultBranchId: string) {
+  const cutoff = Date.parse(since);
+  const out = new Map<string, Map<string, number>>();
+  for (const order of orders) {
+    if (order.order_status === "Cancelled") continue;
+    if (!Number.isFinite(cutoff) || Date.parse(order.created_at) < cutoff) continue;
+    const zohoStatus = (order.zoho_order_status ?? "").toLowerCase();
+    if (order.zoho_salesorder_id && zohoStatus !== "" && zohoStatus !== "draft") continue;
+    const branchId = order.branch_id || defaultBranchId;
+    const byProduct = out.get(branchId) ?? new Map<string, number>();
+    for (const item of order.items) {
+      if (!item.product_id) continue;
+      byProduct.set(item.product_id, (byProduct.get(item.product_id) ?? 0) + (Number(item.qty) || 0));
+    }
+    out.set(branchId, byProduct);
+  }
+  return out;
+}

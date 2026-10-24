@@ -6,7 +6,7 @@ import type { Database, Json } from "@/integrations/supabase/types";
 import { PICKUP_SETTINGS_KEY, parsePickupSettings, pickupPointForPin } from "@/lib/pickup-points";
 import { isMeasureUnit, toBaseQuantity } from "@/lib/data";
 import {
-  cleanEmailList, godownPricesFromPricebook, godownStockFromZohoItem, mergeGodownPrices, newOrderEmail, parseZohoItemSyncVendorIds, sameGodownPrices,
+  cleanEmailList, godownPricesFromPricebook, godownStockFromZohoItem, mergeGodownPrices, newOrderEmail, parseZohoItemSyncVendorIds, pendingOrderQty, sameGodownPrices,
   zohoPricebookItemsFor, reconcileCatalog, reconcileCustomers, reconcileOrders, shouldRetryZohoCall,
   zohoItemSyncAllows, zohoLogLine,
   zohoOrderNumber, zohoRetryDelayMs, type AppProductForParity, type ZohoItemForParity, type ZohoOrderForReconcile,
@@ -4228,9 +4228,16 @@ async function defaultStockLocationId(db: Awaited<ReturnType<typeof dbAdmin>>) {
  *  (website edits sent, Zoho changes pulled). Off: the website's total stock is sent to the default
  *  godown's location, as before. */
 async function isZohoStockMaster(db: Awaited<ReturnType<typeof dbAdmin>>) {
-  const { data } = await db.from("settings").select("value").eq("key", "zoho_stock_master").maybeSingle();
-  const value = data?.value;
-  return !!value && typeof value === "object" && !Array.isArray(value) && (value as Record<string, unknown>)["enabled"] === true;
+  return (await zohoStockMasterSetting(db)).enabled;
+}
+
+/** The "Zoho is the stock master" switch and when it was turned on (orders before then are
+ *  already reflected in Zoho's stock). */
+async function zohoStockMasterSetting(db: Awaited<ReturnType<typeof dbAdmin>>) {
+  const { data } = await db.from("settings").select("value,updated_at").eq("key", "zoho_stock_master").maybeSingle();
+  const value = data?.value && typeof data.value === "object" && !Array.isArray(data.value) ? data.value as Record<string, unknown> : {};
+  const since = typeof value["since"] === "string" && value["since"] ? value["since"] : (data?.updated_at ?? new Date().toISOString());
+  return { enabled: value["enabled"] === true, since };
 }
 
 /** Zoho sales price lists (all pages). */
@@ -4340,11 +4347,17 @@ async function syncZohoGodownStock(db: Awaited<ReturnType<typeof dbAdmin>>, regi
   const siteProducts = new Map((products ?? []).filter((product) => !product.vendor_id?.startsWith("zoho:"))
     .map((product) => [product.id, str((product.payload as Record<string, unknown> | null)?.["sku"]) || product.id]));
   const siteStock = new Map((stockRows ?? []).map((row) => [`${row.branch_id}|${row.product_id}`, row]));
-  const pending = new Map<string, Map<string, number>>();
-  for (const branch of branches) {
-    const { data: rows } = await db.rpc("branch_pending_order_qty", { _branch_id: branch.id });
-    pending.set(branch.id, new Map((rows ?? []).map((row: { product_id: string; qty: number }) => [row.product_id, Number(row.qty) || 0] as const)));
-  }
+  // Website orders Zoho does not hold yet, placed since Zoho became the stock master.
+  const { since } = await zohoStockMasterSetting(db);
+  const [{ data: recentOrders }, { data: defaultBranch }] = await Promise.all([
+    db.from("orders").select("id,branch_id,order_status,zoho_salesorder_id,zoho_order_status,created_at,order_items(product_id,qty)").gte("created_at", since),
+    db.from("branches").select("id").eq("is_default", true).maybeSingle(),
+  ]);
+  const pending = pendingOrderQty((recentOrders ?? []).map((order) => ({
+    branch_id: order.branch_id, order_status: order.order_status, zoho_salesorder_id: order.zoho_salesorder_id,
+    zoho_order_status: order.zoho_order_status, created_at: order.created_at,
+    items: ((order as { order_items?: { product_id: string | null; qty: number }[] }).order_items ?? []),
+  })), since, defaultBranch?.id ?? "");
   await runPool(links.filter((link) => siteProducts.has(link.product_id)), 3, async (link) => {
     try {
       const response = await inventoryRequest<{ item?: Record<string, unknown> }>(
