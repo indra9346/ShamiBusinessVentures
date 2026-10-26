@@ -145,7 +145,8 @@ function CategoryLevel() {
           normalizeFacetValue(productSubcategory(product, isRice)) === normalizeFacetValue(value),
       ).length,
     })),
-    ...brands.map((value) => ({
+    // A brand on every product here (the house brand, Shami Select) filters nothing, so no tile for it.
+    ...brands.filter((value) => categoryProducts.some((product) => !productMatchesBrand(product, value))).map((value) => ({
       key: `brand:${value}`,
       label: value,
       image: tileImageFor(value, (product) => productMatchesBrand(product, value)),

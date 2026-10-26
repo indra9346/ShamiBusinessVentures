@@ -138,6 +138,7 @@ function Shop() {
     isStorefrontProduct(product) && visibleCats.some((category) => categoryMatches(product.category, category.name)),
   ), [products, visibleCats]);
   const brandOptions = useMemo(() => availableProductBrands(eligibleProducts, configuredBrands), [eligibleProducts]);
+  const usefulBrandOptions = brandOptions.filter((brand) => eligibleProducts.some((product) => !productMatchesBrand(product, brand)));
   const brandCounts = useMemo(() => new Map(brandOptions.map((brand) => [
     normalizeFacetValue(brand), eligibleProducts.filter((product) => productMatchesBrand(product, brand)).length,
   ])), [brandOptions, eligibleProducts]);
@@ -374,9 +375,10 @@ function Shop() {
           </FilterGroup>
           )}
 
-          {brandOptions.length > 0 && (
+          {/* A brand on every product (the house brand, Shami Select) filters nothing, so it is not offered. */}
+          {usefulBrandOptions.length > 0 && (
             <FilterGroup title="Brand">
-              {brandOptions.map((brand) => (
+              {usefulBrandOptions.map((brand) => (
                 <Row
                   key={brand}
                   label={`${brand} (${brandCounts.get(normalizeFacetValue(brand)) ?? 0})`}
