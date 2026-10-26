@@ -137,10 +137,13 @@ function AdminOrders() {
   const branchState = useBranches();
   const orderAddress = customerAddresses?.find((address) => address.id === addressId);
   const orderGodown = branchState.ready ? orderGodownFor(branchState, orderAddress?.pin) : null;
+  // Zoho-imported copies (vendor "zoho:…") mirror the real products and hold no godown stock:
+  // orders are always placed for the real product.
+  const orderableProducts = products.filter((product) => !product.vendorId.startsWith("zoho:") && product.active);
   const offerOf = (product: (typeof products)[number] | undefined) =>
     product ? godownOfferOf(branchState, orderGodown, product) : { price: null, stock: 0 };
   const newLine = () => {
-    const product = products.find((item) => offerOf(item).price !== null) ?? products[0];
+    const product = orderableProducts.find((item) => offerOf(item).price !== null) ?? orderableProducts[0];
     return { productId: product?.id ?? "", qty: "1", capacity: product?.weight ?? "", price: String(offerOf(product).price ?? "") };
   };
   // A different address can mean a different godown: re-price the lines.
@@ -661,7 +664,7 @@ function AdminOrders() {
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          {products.map((item) => (
+                          {orderableProducts.map((item) => (
                             <SelectItem key={item.id} value={item.id}>
                               {item.name} · {item.sku}
                             </SelectItem>
