@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { InvoicePreviewButton } from "@/components/site/InvoicePreviewDialog";
+import { ZohoInvoiceStatus } from "@/components/panel/ZohoInvoiceStatus";
 
 export const Route = createFileRoute("/vendor/orders/$id")({
   head: ({ params }) => ({
@@ -117,6 +118,7 @@ function VendorOrderDetail() {
               <div className="flex justify-between"><span>Payment Status</span><StatusBadge status={order.payment} /></div>
               <div className="flex justify-between"><span>Order Status</span><StatusBadge status={order.status} /></div>
             </div>
+            <ZohoInvoiceStatus orderNo={order.id} audience="vendor" className="mt-3" />
           </Panel>
 
           <Panel title="Actions">

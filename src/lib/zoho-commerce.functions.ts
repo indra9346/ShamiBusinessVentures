@@ -11,6 +11,7 @@ import {
   zohoItemSyncAllows, zohoLogLine,
   zohoOrderNumber, zohoRetryDelayMs, type AppProductForParity, type ZohoItemForParity, type ZohoOrderForReconcile,
   orderNeedsZohoInvoice, paymentsToRecord, roundingWriteOff,
+  invoiceDecision, websiteInvoiceStatus, zohoInvoicesOf, type InvoiceRecord,
   indiaDate, nextZohoFulfilmentStep, zohoFulfilmentStatus, zohoPackagesOf, zohoStatusMovesForward,
 } from "@/lib/zoho-sync-core";
 
@@ -2085,8 +2086,7 @@ async function syncLinkedZohoOrder(
   }
   // Confirmed by the admin: the Zoho Books invoice, with the verified payments recorded on it.
   if (orderNeedsZohoInvoice(order.order_status) && !["draft", ...ZOHO_CLOSED_ORDER_STATES].includes(zohoStatus())) {
-    await ensureZohoBooksInvoice(db, region, organizationId, token, order, zoho);
-    zoho = await load();
+    if (await syncZohoOrderInvoice(db, region, organizationId, token, order, zoho)) zoho = await load();
   }
   // Packed / Dispatched / Out for Delivery / Delivered on the website: package, shipment and
   // delivery in Zoho, at the sales order's godown location.
@@ -2163,7 +2163,7 @@ async function ensureZohoBooksInvoice(
   const { data: payments, error } = await db.from("payments").select("amount,txn_ref,method,created_at,status")
     .eq("order_id", order.id).eq("status", "Paid");
   if (error) throw new Error("Could not read the order's payments from Grain Bazar");
-  if (!payments?.length) return;
+  if (!payments?.length) return invoice;
   let recorded: string[] = [];
   try {
     const response = await booksRequest<{ payments?: { reference_number?: string }[] }>(region, organizationId, token, `invoices/${encodeURIComponent(invoiceId)}/payments`, "GET");
@@ -2205,6 +2205,106 @@ async function ensureZohoBooksInvoice(
     }
     console.info(zohoLogLine("zoho_invoice_rounding_written_off", { order: number, amount: writeOff }));
   }
+  return writeOff > 0 ? await readInvoice() : after;
+}
+
+type InvoiceRow = Database["public"]["Tables"]["zoho_order_invoices"]["Row"];
+
+async function readInvoiceRecord(db: Awaited<ReturnType<typeof dbAdmin>>, orderId: string) {
+  const { data, error } = await db.from("zoho_order_invoices").select("*").eq("order_id", orderId).maybeSingle();
+  if (error) throw new Error("Could not read the order's invoice record");
+  return data as InvoiceRow | null;
+}
+
+const asInvoiceRecord = (row: InvoiceRow | null): InvoiceRecord | null => row && {
+  zohoInvoiceId: row.zoho_invoice_id, invoiceNumber: row.invoice_number, status: row.status,
+  autoAttempts: row.auto_attempts, adminApproved: row.admin_approved,
+};
+
+async function saveInvoiceRecord(
+  db: Awaited<ReturnType<typeof dbAdmin>>,
+  order: { id: string; order_no: string },
+  patch: Partial<Omit<InvoiceRow, "order_id" | "order_no">>,
+) {
+  const { error } = await db.from("zoho_order_invoices").upsert(
+    { order_id: order.id, order_no: order.order_no, ...patch, updated_at: new Date().toISOString() },
+    { onConflict: "order_id" },
+  );
+  if (error) throw new Error("Could not save the order's invoice record");
+}
+
+/**
+ * Zoho -> website for the order's invoice, from a sales order detail record: records the live
+ * invoice (number, status, amounts) or that the known invoice was voided/deleted in Zoho. Never
+ * creates anything. Skipped when the record does not list invoices.
+ */
+async function recordZohoInvoiceState(
+  db: Awaited<ReturnType<typeof dbAdmin>>,
+  order: { id: string; order_no: string; order_status: string },
+  zoho: Record<string, unknown>,
+) {
+  const invoices = zohoInvoicesOf(zoho);
+  if (!invoices || !orderNeedsZohoInvoice(order.order_status)) return;
+  const row = await readInvoiceRecord(db, order.id);
+  const decision = invoiceDecision(asInvoiceRecord(row), invoices);
+  if (decision.action === "track") {
+    const { invoice } = decision;
+    const status = websiteInvoiceStatus(invoice.status);
+    if (row?.zoho_invoice_id === invoice.invoiceId && row.status === status && Number(row.balance) === invoice.balance) return;
+    await saveInvoiceRecord(db, order, {
+      zoho_invoice_id: invoice.invoiceId, invoice_number: invoice.number, status,
+      total: invoice.total, balance: invoice.balance,
+      auto_attempts: Math.max(1, row?.auto_attempts ?? 0),
+      last_event: row?.zoho_invoice_id === invoice.invoiceId ? `Invoice ${status.replace("_", " ")} in Zoho` : "Invoice found in Zoho",
+    });
+  } else if (decision.action === "lost") {
+    await saveInvoiceRecord(db, order, {
+      zoho_invoice_id: null, status: decision.status, balance: null,
+      last_event: `Invoice ${decision.number} was ${decision.status === "void" ? "voided" : "deleted"} in Zoho Books`,
+    });
+  }
+}
+
+/**
+ * Website -> Zoho for a confirmed order's invoice. Creates the first invoice automatically; after
+ * an invoice was voided/deleted in Zoho, waits for an admin's approval (order page) before making
+ * a new one. Returns true when it changed anything in Zoho.
+ */
+async function syncZohoOrderInvoice(
+  db: Awaited<ReturnType<typeof dbAdmin>>,
+  region: Region,
+  organizationId: string,
+  token: string,
+  order: Database["public"]["Tables"]["orders"]["Row"],
+  zoho: Record<string, unknown>,
+) {
+  const row = await readInvoiceRecord(db, order.id);
+  const decision = invoiceDecision(asInvoiceRecord(row), zohoInvoicesOf(zoho) ?? []);
+  if (decision.action === "lost") {
+    await recordZohoInvoiceState(db, order, zoho);
+    return false;
+  }
+  if (decision.action === "await_approval") {
+    if (!["void", "deleted", "awaiting_approval"].includes(row?.status ?? "")) {
+      await saveInvoiceRecord(db, order, { status: "awaiting_approval", last_event: "No Zoho invoice: waiting for admin approval" });
+    }
+    return false;
+  }
+  const invoice = await ensureZohoBooksInvoice(db, region, organizationId, token, order, zoho);
+  const created = decision.action === "create";
+  await saveInvoiceRecord(db, order, {
+    zoho_invoice_id: str(invoice.invoice_id) || null,
+    invoice_number: str(invoice.invoice_number) || null,
+    status: websiteInvoiceStatus(str(invoice.status)),
+    total: Number.isFinite(Number(invoice.total)) ? Number(invoice.total) : null,
+    balance: Number.isFinite(Number(invoice.balance)) ? Number(invoice.balance) : null,
+    ...(created ? {
+      auto_attempts: (row?.auto_attempts ?? 0) + 1,
+      admin_approved: false,
+      last_event: decision.reason === "approved" ? "New invoice created after admin approval" : "Invoice created when the order was confirmed",
+    } : {}),
+  });
+  return true;
 }
 
 /** Records Zoho's status and change time on the Grain Bazar order (shown in the admin). */
@@ -2328,7 +2428,14 @@ async function applyZohoSalesOrderToApp(
 
   const modifiedMs = Date.parse(str(zoho["last_modified_time"]));
   const knownMs = Date.parse(order.zoho_last_modified_at ?? "");
-  if (Number.isFinite(modifiedMs) && Number.isFinite(knownMs) && modifiedMs <= knownMs) return "unchanged";
+  if (Number.isFinite(modifiedMs) && Number.isFinite(knownMs) && modifiedMs <= knownMs) {
+    try {
+      await recordZohoInvoiceState(db, order, zoho);
+    } catch {
+      // The next poll or order sync records it.
+    }
+    return "unchanged";
+  }
 
   const status = str(zoho["order_status"] ?? zoho["status"]).toLowerCase();
   let outcome = "recorded";
@@ -2352,6 +2459,12 @@ async function applyZohoSalesOrderToApp(
     if (!["void", "cancelled"].includes(status) && Number.isFinite(zohoTotal) && Math.abs(zohoTotal - Number(order.total)) > 2) {
       await saveZohoReview(db, "order", order.id, `Zoho sales order ${number} now totals ₹${zohoTotal.toFixed(2)}, but Grain Bazar order ${order.order_no} totals ₹${Number(order.total).toFixed(2)}. Items or prices were changed in Zoho; make the same change in Grain Bazar (or undo it in Zoho).`);
       outcome = "review";
+    }
+    // The order's invoice as Zoho has it now (deleted / voided / paid in Zoho shows on the site).
+    try {
+      await recordZohoInvoiceState(db, order, zoho);
+    } catch {
+      // The next poll or order sync records it.
     }
   }
   await saveZohoZohoState(db, order.id, zoho);
@@ -2415,6 +2528,56 @@ export async function handleZohoOrderWebhook(salesOrderId: string) {
   if (!response.salesorder) return "missing";
   return applyZohoSalesOrderToApp(db, organizationId, response.salesorder);
 }
+
+/**
+ * Zoho Books invoice webhook (created / edited / voided): finds the invoice's website order (its
+ * sales order, or the GB- order number Zoho copies into the invoice reference) and applies that
+ * sales order, which records the invoice's new state on the website at once.
+ */
+export async function handleZohoInvoiceWebhook(invoice: { salesOrderId: string; reference: string }) {
+  let salesOrderId = invoice.salesOrderId;
+  if (!salesOrderId && invoice.reference.startsWith("GB-")) {
+    const db = await dbAdmin();
+    const { data } = await db.from("orders").select("zoho_salesorder_id").eq("order_no", invoice.reference.slice(3)).maybeSingle();
+    salesOrderId = data?.zoho_salesorder_id ?? "";
+  }
+  if (!salesOrderId) return "not_grain_bazar";
+  return handleZohoOrderWebhook(salesOrderId);
+}
+
+/**
+ * Re-reads the order's Zoho sales order and records its invoice (issued / paid / voided / deleted)
+ * on the website. Read-only towards Zoho. Called when an admin, the order's customer or one of its
+ * vendors opens the order, at most once every 30 seconds per order.
+ */
+export const refreshZohoOrderInvoice = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator(z.object({ orderNo: z.string().trim().min(1).max(80) }))
+  .handler(async ({ data, context }) => {
+    const db = await dbAdmin();
+    const { data: order } = await db.from("orders")
+      .select("id,order_no,order_status,user_id,vendor_ids,zoho_salesorder_id,zoho_last_polled_at")
+      .eq("order_no", data.orderNo).maybeSingle();
+    if (!order?.zoho_salesorder_id) return { refreshed: false };
+    const { data: roles } = await db.from("user_roles").select("role").eq("user_id", context.userId);
+    const isAdmin = (roles ?? []).some((row) => row.role === "admin");
+    let allowed = isAdmin || order.user_id === context.userId;
+    if (!allowed && (roles ?? []).some((row) => row.role === "vendor")) {
+      const { data: profile } = await db.from("profiles").select("vendor_id").eq("id", context.userId).maybeSingle();
+      allowed = Boolean(profile?.vendor_id && (order.vendor_ids ?? []).includes(profile.vendor_id));
+    }
+    if (!allowed) throw new Error("Not allowed");
+    const last = Date.parse(order.zoho_last_polled_at ?? "");
+    if (Number.isFinite(last) && Date.now() - last < 30_000) return { refreshed: false };
+    await db.from("orders").update({ zoho_last_polled_at: new Date().toISOString() }).eq("id", order.id);
+    const { region, organizationId, token } = await zohoOrderContext(db);
+    const response = await inventoryRequest<{ salesorder?: Record<string, unknown> }>(
+      region, organizationId, token, `salesorders/${encodeURIComponent(order.zoho_salesorder_id)}`, "GET",
+    );
+    if (!response.salesorder) return { refreshed: false };
+    await recordZohoInvoiceState(db, order, response.salesorder);
+    return { refreshed: true };
+  });
 
 /** Pushes products to Zoho now and settles their queued catalog jobs. */
 async function syncCatalogProductsDirect(db: Awaited<ReturnType<typeof dbAdmin>>, productIds: string[]) {
@@ -3114,7 +3277,7 @@ async function pollZohoOrderFulfillment(
   limit = 20,
 ) {
   const { data: orders, error } = await db.from("orders")
-    .select("id,order_status,zoho_salesorder_id,zoho_last_polled_at")
+    .select("id,order_no,order_status,zoho_salesorder_id,zoho_last_polled_at")
     .not("zoho_salesorder_id", "is", null)
     .order("zoho_last_polled_at", { ascending: true, nullsFirst: true })
     .limit(limit);
@@ -3134,6 +3297,7 @@ async function pollZohoOrderFulfillment(
         if (applyError) throw new Error("Zoho fulfillment status could not be applied to Grain Bazar");
         result.updated += 1;
       }
+      await recordZohoInvoiceState(db, order, zohoOrder);
       await db.from("orders").update({ zoho_last_polled_at: new Date().toISOString() }).eq("id", order.id);
     } catch {
       result.failed += 1;

@@ -367,6 +367,12 @@ export type Database = {
           },
         ]
       }
+      zoho_order_invoices: {
+        Row: { order_id: string; order_no: string; zoho_invoice_id: string | null; invoice_number: string | null; status: string; total: number | null; balance: number | null; auto_attempts: number; admin_approved: boolean; approved_by: string | null; approved_at: string | null; last_event: string; updated_at: string }
+        Insert: { order_id: string; order_no: string; zoho_invoice_id?: string | null; invoice_number?: string | null; status?: string; total?: number | null; balance?: number | null; auto_attempts?: number; admin_approved?: boolean; approved_by?: string | null; approved_at?: string | null; last_event?: string; updated_at?: string }
+        Update: { order_id?: string; order_no?: string; zoho_invoice_id?: string | null; invoice_number?: string | null; status?: string; total?: number | null; balance?: number | null; auto_attempts?: number; admin_approved?: boolean; approved_by?: string | null; approved_at?: string | null; last_event?: string; updated_at?: string }
+        Relationships: []
+      }
       notifications: {
         Row: {
           created_at: string
@@ -975,6 +981,7 @@ export type Database = {
       customer_request_return: { Args: { _order_item_id: string; _quantity: number; _reason: string }; Returns: string }
       customer_set_default_address: { Args: { _id: string }; Returns: boolean }
       admin_update_return: { Args: { _id: string; _status: string; _refund_status: string }; Returns: boolean }
+      request_zoho_invoice_approval: { Args: { _order_no: string }; Returns: boolean }
       admin_update_payout: { Args: { _id: string; _status: string; _reference?: string | null }; Returns: boolean }
       has_role: {
         Args: {
