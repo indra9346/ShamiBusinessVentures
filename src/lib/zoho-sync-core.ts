@@ -495,3 +495,16 @@ export function paymentsToRecord(payments: WebsitePayment[], recordedReferences:
   }
   return result;
 }
+
+/** Zoho rounds CGST and SGST separately (₹51.225 → ₹51.23 each), so its invoice can exceed the website total by a paisa or two. */
+export const ROUNDING_WRITE_OFF_LIMIT = 1;
+
+/**
+ * The invoice balance to write off as GST rounding: only when the website order is paid in full
+ * and what is left on the Books invoice is at most ₹1. Anything larger is a real shortfall.
+ */
+export function roundingWriteOff(orderTotal: number, paidAmount: number, invoiceBalance: number) {
+  const paidInFull = Math.round(paidAmount * 100) >= Math.round(orderTotal * 100);
+  const balance = Math.round(invoiceBalance * 100) / 100;
+  return paidInFull && balance > 0 && balance <= ROUNDING_WRITE_OFF_LIMIT ? balance : 0;
+}

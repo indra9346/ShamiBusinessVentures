@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { indiaDate, orderNeedsZohoInvoice, paymentsToRecord, zohoPaymentMode } from "../src/lib/zoho-sync-core.ts";
+import { indiaDate, orderNeedsZohoInvoice, paymentsToRecord, roundingWriteOff, zohoPaymentMode } from "../src/lib/zoho-sync-core.ts";
 
 test("only admin-confirmed, live orders get a Zoho Books invoice", () => {
   for (const status of ["Payment Confirmed", "Accepted", "Packed", "Dispatched", "Out for Delivery", "Delivered"])
@@ -52,4 +52,16 @@ test("never more than the invoice balance, and nothing when it is already paid",
 
 test("payments without a UTR or amount are skipped", () => {
   assert.deepEqual(paymentsToRecord([paid(100, "  ", "2026-10-24T10:00:00Z"), paid(0, "U2", "2026-10-24T10:00:00Z")], [], 500), []);
+});
+
+test("a paisa left by Zoho's CGST/SGST rounding is written off when the order is paid in full", () => {
+  // Live test 26 Oct: website ₹2,151.45 paid in full, Zoho invoice ₹2,151.46 → ₹0.01 left.
+  assert.equal(roundingWriteOff(2151.45, 2151.45, 0.01), 0.01);
+  assert.equal(roundingWriteOff(2151.45, 2151.45, 1), 1);
+});
+
+test("nothing is written off for a real shortfall, a partial payment or a paid invoice", () => {
+  assert.equal(roundingWriteOff(2151.45, 2151.45, 1.01), 0);
+  assert.equal(roundingWriteOff(10000, 3000, 0.5), 0);
+  assert.equal(roundingWriteOff(2151.45, 2151.45, 0), 0);
 });
