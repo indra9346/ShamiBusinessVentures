@@ -11,6 +11,7 @@ import {
   zohoItemSyncAllows, zohoLogLine,
   zohoOrderNumber, zohoRetryDelayMs, type AppProductForParity, type ZohoItemForParity, type ZohoOrderForReconcile,
   orderNeedsZohoInvoice, paymentsToRecord, roundingWriteOff,
+  indiaDate, nextZohoFulfilmentStep, zohoFulfilmentStatus, zohoPackagesOf, zohoStatusMovesForward,
 } from "@/lib/zoho-sync-core";
 
 const REGIONS = {
@@ -146,7 +147,7 @@ export const startZohoAuthorization = createServerFn({ method: "POST" })
       response_type: "code",
       client_id: reqEnv("ZOHO_CLIENT_ID"),
       scope:
-        "ZohoCommerce.items.READ,ZohoCommerce.items.CREATE,ZohoCommerce.items.UPDATE,ZohoCommerce.coupons.READ,ZohoCommerce.coupons.CREATE,ZohoCommerce.coupons.UPDATE,ZohoCommerce.salesorders.READ,ZohoCommerce.salesorders.CREATE,ZohoCommerce.salesorders.UPDATE,ZohoCommerce.settings.READ,ZohoCommerce.settings.UPDATE,ZohoCommerce.sitesIndex.READ,ZohoCommerce.webhooks.READ,ZohoCommerce.webhooks.CREATE,ZohoInventory.contacts.READ,ZohoInventory.contacts.CREATE,ZohoInventory.contacts.UPDATE,ZohoInventory.items.READ,ZohoInventory.items.CREATE,ZohoInventory.items.UPDATE,ZohoInventory.salesorders.READ,ZohoInventory.salesorders.CREATE,ZohoInventory.salesorders.UPDATE,ZohoInventory.inventoryadjustments.READ,ZohoInventory.inventoryadjustments.CREATE,ZohoInventory.settings.READ,ZohoInventory.settings.UPDATE,ZohoBooks.salesorders.CREATE,ZohoBooks.invoices.READ,ZohoBooks.invoices.CREATE,ZohoBooks.customerpayments.READ,ZohoBooks.customerpayments.CREATE",
+        "ZohoCommerce.items.READ,ZohoCommerce.items.CREATE,ZohoCommerce.items.UPDATE,ZohoCommerce.coupons.READ,ZohoCommerce.coupons.CREATE,ZohoCommerce.coupons.UPDATE,ZohoCommerce.salesorders.READ,ZohoCommerce.salesorders.CREATE,ZohoCommerce.salesorders.UPDATE,ZohoCommerce.settings.READ,ZohoCommerce.settings.UPDATE,ZohoCommerce.sitesIndex.READ,ZohoCommerce.webhooks.READ,ZohoCommerce.webhooks.CREATE,ZohoInventory.contacts.READ,ZohoInventory.contacts.CREATE,ZohoInventory.contacts.UPDATE,ZohoInventory.items.READ,ZohoInventory.items.CREATE,ZohoInventory.items.UPDATE,ZohoInventory.salesorders.READ,ZohoInventory.salesorders.CREATE,ZohoInventory.salesorders.UPDATE,ZohoInventory.inventoryadjustments.READ,ZohoInventory.inventoryadjustments.CREATE,ZohoInventory.settings.READ,ZohoInventory.settings.UPDATE,ZohoBooks.salesorders.CREATE,ZohoBooks.invoices.READ,ZohoBooks.invoices.CREATE,ZohoBooks.customerpayments.READ,ZohoBooks.customerpayments.CREATE,ZohoInventory.packages.READ,ZohoInventory.packages.CREATE,ZohoInventory.shipmentorders.READ,ZohoInventory.shipmentorders.CREATE,ZohoInventory.shipmentorders.UPDATE",
       redirect_uri: redirectUri,
       access_type: "offline",
       prompt: "consent",
@@ -2087,6 +2088,11 @@ async function syncLinkedZohoOrder(
     await ensureZohoBooksInvoice(db, region, organizationId, token, order, zoho);
     zoho = await load();
   }
+  // Packed / Dispatched / Out for Delivery / Delivered on the website: package, shipment and
+  // delivery in Zoho, at the sales order's godown location.
+  if (!["draft", ...ZOHO_CLOSED_ORDER_STATES].includes(zohoStatus())) {
+    zoho = await pushZohoFulfilment(region, organizationId, token, order, zoho, load);
+  }
   await saveZohoZohoState(db, order.id, zoho);
   await refreshSalesOrderSnapshotSafe(db, organizationId, zoho);
   const finalTotal = Number(zoho["total"]);
@@ -2218,19 +2224,83 @@ async function refreshSalesOrderSnapshotSafe(db: Awaited<ReturnType<typeof dbAdm
   }
 }
 
-/** Zoho shipment progress as a Grain Bazar status, from packages or the order's shipped status. */
-function zohoFulfillmentStatus(zoho: Record<string, unknown>): "Dispatched" | "Delivered" | null {
-  const packages = Array.isArray(zoho["packages"]) ? zoho["packages"] as Record<string, unknown>[] : [];
-  const statuses = packages.map((pkg) => {
-    const shipment = pkg["shipment_order"];
-    return shipment && typeof shipment === "object"
-      ? str((shipment as Record<string, unknown>)["status"]).toLowerCase()
-      : str(pkg["status"]).toLowerCase();
-  });
-  statuses.push(str(zoho["shipped_status"]).toLowerCase());
-  if (statuses.includes("delivered")) return "Delivered";
-  if (statuses.some((status) => ["shipped", "in_transit", "in transit", "fulfilled"].includes(status))) return "Dispatched";
-  return null;
+/** Zoho fulfilment progress as a Grain Bazar status (Packed / Dispatched / Delivered), from packages and shipments. */
+function zohoFulfillmentStatus(zoho: Record<string, unknown>) {
+  return zohoFulfilmentStatus(zohoPackagesOf(zoho), str(zoho["shipped_status"]));
+}
+
+/**
+ * Website -> Zoho fulfilment for one sales order. Each pass reads Zoho, does the next missing step
+ * (package, then shipment, then delivered) and reads Zoho again, so a retry never makes a second
+ * package or shipment. Zoho numbers them in the location's own series; if the organization has
+ * auto-numbering off, GB-PKG-/GB-SHP- numbers are used instead.
+ */
+async function pushZohoFulfilment(
+  region: Region,
+  organizationId: string,
+  token: string,
+  order: Database["public"]["Tables"]["orders"]["Row"],
+  zoho: Record<string, unknown>,
+  load: () => Promise<Record<string, unknown>>,
+) {
+  const salesOrderId = order.zoho_salesorder_id!;
+  const number = str(zoho["salesorder_number"]) || zohoOrderNumber(order.order_no);
+  const today = indiaDate(new Date().toISOString());
+  const fail = (step: string, cause: unknown): never => {
+    const message = cause instanceof Error ? cause.message : String(cause);
+    throw new Error(`Zoho ${step} for ${number} failed: ${message}.${zohoPermissionHint(message)}`);
+  };
+  /** Creates with Zoho's auto number; if Zoho asks for a number, retries once with our own. */
+  const createNumbered = async (resource: string, query: Record<string, string>, body: Record<string, unknown>, numberField: string, ownNumber: string) => {
+    try {
+      return await inventoryRequest<Record<string, unknown>>(region, organizationId, token, resource, "POST", body, query);
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "";
+      if (!/number/i.test(message)) throw cause;
+      return await inventoryRequest<Record<string, unknown>>(region, organizationId, token, resource, "POST",
+        { ...body, [numberField]: ownNumber }, { ...query, ignore_auto_number_generation: "true" });
+    }
+  };
+  for (let pass = 0; pass < 4; pass += 1) {
+    const next = nextZohoFulfilmentStep(order.order_status, zohoPackagesOf(zoho));
+    if (!next) return zoho;
+    if (next.step === "package") {
+      const lines = (Array.isArray(zoho["line_items"]) ? zoho["line_items"] : []).map(plainObject)
+        .filter((line) => str(line["line_item_id"]) && Number(line["quantity"]) > 0)
+        .map((line) => ({ so_line_item_id: str(line["line_item_id"]), quantity: Number(line["quantity"]) }));
+      if (!lines.length) throw new NeedsReviewError(`Zoho sales order ${number} has no items to pack.`);
+      try {
+        await createNumbered("packages", { salesorder_id: salesOrderId },
+          { date: today, line_items: lines, notes: `Packed for Grain Bazar order ${order.order_no}` },
+          "package_number", `GB-PKG-${order.order_no}`.slice(0, 50));
+      } catch (cause) {
+        fail("package", cause);
+      }
+      console.info(zohoLogLine("zoho_package_created", { order: number }));
+    } else if (next.step === "shipment") {
+      try {
+        await createNumbered("shipmentorders", { package_ids: next.packageId, salesorder_id: salesOrderId },
+          {
+            date: today,
+            delivery_method: order.shipping_method === "Pickup" ? "Customer pickup from godown" : "Grain Bazar delivery",
+            notes: `Dispatched for Grain Bazar order ${order.order_no}`,
+          },
+          "shipment_number", `GB-SHP-${order.order_no}`.slice(0, 50));
+      } catch (cause) {
+        fail("shipment", cause);
+      }
+      console.info(zohoLogLine("zoho_shipment_created", { order: number }));
+    } else {
+      try {
+        await inventoryRequest(region, organizationId, token, `shipmentorders/${encodeURIComponent(next.shipmentId)}/status/delivered`, "POST");
+      } catch (cause) {
+        fail("delivery", cause);
+      }
+      console.info(zohoLogLine("zoho_shipment_delivered", { order: number }));
+    }
+    zoho = await load();
+  }
+  throw new NeedsReviewError(`Zoho sales order ${number} did not reach "${order.order_status}" after creating its package and shipment. Check it in Zoho.`);
 }
 
 /**
@@ -2274,7 +2344,7 @@ async function applyZohoSalesOrderToApp(
     }
   } else if (order.order_status !== "Cancelled") {
     const fulfillment = zohoFulfillmentStatus(zoho);
-    if (fulfillment && fulfillment !== order.order_status) {
+    if (fulfillment && zohoStatusMovesForward(order.order_status, fulfillment)) {
       const { error } = await db.rpc("apply_zoho_order_fulfillment", { _order_id: order.id, _status: fulfillment });
       if (!error) outcome = fulfillment.toLowerCase();
     }
@@ -3044,7 +3114,7 @@ async function pollZohoOrderFulfillment(
   limit = 20,
 ) {
   const { data: orders, error } = await db.from("orders")
-    .select("id,zoho_salesorder_id,zoho_last_polled_at")
+    .select("id,order_status,zoho_salesorder_id,zoho_last_polled_at")
     .not("zoho_salesorder_id", "is", null)
     .order("zoho_last_polled_at", { ascending: true, nullsFirst: true })
     .limit(limit);
@@ -3058,17 +3128,8 @@ async function pollZohoOrderFulfillment(
       );
       const zohoOrder = response.salesorder ?? response.sales_order;
       if (!zohoOrder) throw new Error("Zoho response did not include the mapped sales order");
-      const packages = Array.isArray(zohoOrder["packages"]) ? zohoOrder["packages"] as Record<string, unknown>[] : [];
-      const shipmentStatuses = packages.map((pkg) => {
-        const shipment = pkg["shipment_order"];
-        return shipment && typeof shipment === "object" ? str((shipment as Record<string, unknown>)["status"]).toLowerCase() : str(pkg["status"]).toLowerCase();
-      });
-      const incomingStatus = shipmentStatuses.includes("delivered")
-        ? "Delivered"
-        : shipmentStatuses.some((status) => ["shipped", "in_transit", "in transit"].includes(status))
-          ? "Dispatched"
-          : null;
-      if (incomingStatus) {
+      const incomingStatus = zohoFulfillmentStatus(zohoOrder);
+      if (incomingStatus && zohoStatusMovesForward(order.order_status, incomingStatus)) {
         const { error: applyError } = await db.rpc("apply_zoho_order_fulfillment", { _order_id: order.id, _status: incomingStatus });
         if (applyError) throw new Error("Zoho fulfillment status could not be applied to Grain Bazar");
         result.updated += 1;
