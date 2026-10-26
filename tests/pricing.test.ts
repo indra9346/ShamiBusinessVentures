@@ -72,3 +72,12 @@ test("the shown rate reproduces the exact pack price whenever one can", () => {
     }
   }
 });
+
+test("typing the selling price works the per-QTL rate back out (admin product form)", () => {
+  // 10 kg pack = 0.1 QTL
+  assert.equal(rateForPackPrice(1000, 0.1), 10000);
+  assert.equal(rateForPackPrice(1049.5, 0.1), 10495);
+  // 25 kg bag = 0.25 QTL; 1 L of a 15 L tin per litre = 15
+  assert.equal(rateForPackPrice(1499, 0.25), 5996);
+  assert.equal(rateForPackPrice(2250, 15), 150);
+});
