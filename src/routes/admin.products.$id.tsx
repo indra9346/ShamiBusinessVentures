@@ -5,6 +5,7 @@ import { PanelLayout } from "@/components/panel/PanelLayout";
 import { DataTable, Panel, StatusBadge } from "@/components/panel/widgets";
 import { adminNav } from "@/lib/panel-nav";
 import { getPricingDisplayMode, inr, type PricingDisplayMode } from "@/lib/data";
+import { shownOnStorefront, storefrontPatch } from "@/lib/storefront-visibility";
 import { PricingDisplayModeToggle } from "@/components/panel/PricingDisplayModeToggle";
 import { GodownPricesPanel } from "@/components/panel/GodownPricesPanel";
 import { useApp } from "@/lib/store";
@@ -110,18 +111,21 @@ function AdminProductDetail() {
                     Reject / Delist
                   </Button>
                 )}
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={async () => {
-                    const nextActive = !product.active;
-                    if (await updateProduct(product.id, { active: nextActive })) {
-                      toast.success(`${product.name} ${nextActive ? "enabled" : "disabled"}`);
-                    }
-                  }}
-                >
-                  {product.active ? "Disable" : "Enable"}
-                </Button>
+                {product.status === "approved" && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={async () => {
+                      const show = !shownOnStorefront(product);
+                      const patch = storefrontPatch(product, show);
+                      if (patch && await updateProduct(product.id, patch)) {
+                        toast.success(show ? `${product.name} is now shown on the storefront` : `${product.name} is hidden from the storefront`);
+                      }
+                    }}
+                  >
+                    {shownOnStorefront(product) ? "Hide from storefront" : "Show on storefront"}
+                  </Button>
+                )}
               </div>
             </div>
             <dl className="grid gap-2 text-sm sm:grid-cols-2">
