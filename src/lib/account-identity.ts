@@ -1,6 +1,7 @@
 import type { Order } from "@/lib/data";
 import type { SessionUser } from "@/lib/store";
 import type { Notif } from "@/lib/store";
+import { orderNumberIn } from "@/lib/order-number";
 
 export function normalizePhone(phone: string | undefined) {
   const digits = phone?.replace(/\D/g, "") ?? "";
@@ -29,7 +30,7 @@ export function notificationBelongsToUser(
   if (!user || user.role !== "customer") return false;
   if (notification.source !== "live" && notification.id <= 34) return false;
 
-  const orderId = notification.body.match(/\bORD-\d+\b/)?.[0];
+  const orderId = orderNumberIn(notification.body);
   if (!orderId) return true;
   const order = orders.find((candidate) => candidate.id === orderId);
   return order ? orderBelongsToUser(order, user) : false;

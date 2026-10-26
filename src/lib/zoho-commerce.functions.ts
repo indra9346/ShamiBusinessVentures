@@ -1805,9 +1805,23 @@ async function syncZohoCatalogItem(
     itemId = str(resultItem?.["item_id"]);
     if (!itemId) throw new Error("Zoho Inventory created an item but returned no item ID");
   } else {
-    const updated = await inventoryRequest<{ item?: Record<string, unknown> }>(
+    const updateItem = () => inventoryRequest<{ item?: Record<string, unknown> }>(
       region, organizationId, token, `items/${encodeURIComponent(itemId)}`, "PUT", itemPayload,
     );
+    let updated: { item?: Record<string, unknown> };
+    try {
+      updated = await updateItem();
+    } catch (cause) {
+      // Zoho checks the price against the Commerce MRP on every item update. When the site's MRP
+      // was raised to cover the price, send that MRP first, then update the item once more.
+      const message = cause instanceof Error ? cause.message : "";
+      if (!/greater than (the )?MRP/i.test(message) || shared.mrp === null || shared.mrp < shared.rate) throw cause;
+      const current = await inventoryRequest<{ item?: Record<string, unknown> }>(
+        region, organizationId, token, `items/${encodeURIComponent(itemId)}`, "GET",
+      );
+      await pushCommerceProductValues(db, { region, organizationId, token }, shared.sku, str(current.item?.["group_id"]), "", shared.mrp);
+      updated = await updateItem();
+    }
     resultItem = updated.item;
     // Items first created without stock tracking show a blank stock on hand; switch them on.
     if (shared.stock !== null && str(resultItem?.["item_type"]) !== "inventory") {

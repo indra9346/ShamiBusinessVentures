@@ -1379,8 +1379,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
             throw new Error(message);
           }
         }
-        // order_no is unique: a 4-digit random number collided (and failed checkout) more often
-        // as orders grew. Date plus 5 random digits leaves 100,000 numbers per day.
+        // A provisional number for the demo / preview: the live database numbers the order itself
+        // by its godown, delivery PIN and time (e.g. CLK-577522-261026-143215) and returns it.
         const id = `ORD-${new Date().toISOString().slice(2, 10).replace(/-/g, "")}${String(Math.floor(Math.random() * 100000)).padStart(5, "0")}`;
         const order = buildOrder(
           id,
@@ -1456,8 +1456,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
             toast.error("Order was not placed", { description: message });
             throw new Error(message);
           }
-          pushOrderToZohoInBackground(id);
-          const saved = data as { subtotal: number; discount: number; gst_amount: number; shipping: number; total: number; items: Array<{ product_id: string; unit_price: number }> };
+          const saved = data as { order_no?: string; subtotal: number; discount: number; gst_amount: number; shipping: number; total: number; items: Array<{ product_id: string; unit_price: number }> };
+          if (saved.order_no) order.id = saved.order_no;
+          pushOrderToZohoInBackground(order.id);
           order.subtotal = Number(saved.subtotal);
           order.discount = Number(saved.discount);
           order.tax = Number(saved.gst_amount);
@@ -1507,7 +1508,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           return nextBatches;
         });
 
-        pushNotif("New order received", `${id} was placed worth â‚¹${order.amount.toLocaleString("en-IN")}.`, "info");
+        pushNotif("New order received", `${order.id} was placed worth ₹${order.amount.toLocaleString("en-IN")}.`, "info");
         return order;
       },
       updateOrderStatus: async (id, status) => {
