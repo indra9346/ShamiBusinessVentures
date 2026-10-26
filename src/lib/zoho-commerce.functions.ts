@@ -10,7 +10,7 @@ import {
   zohoPricebookItemsFor, reconcileCatalog, reconcileCustomers, reconcileOrders, shouldRetryZohoCall,
   zohoItemSyncAllows, zohoLogLine,
   zohoOrderNumber, zohoRetryDelayMs, type AppProductForParity, type ZohoItemForParity, type ZohoOrderForReconcile,
-  orderNeedsZohoInvoice, paymentsToRecord,
+  orderNeedsZohoInvoice, paymentsToRecord, roundingWriteOff,
 } from "@/lib/zoho-sync-core";
 
 const REGIONS = {
@@ -2186,6 +2186,18 @@ async function ensureZohoBooksInvoice(
       fail(`recording payment ${payment.reference}`, cause);
     }
     console.info(zohoLogLine("zoho_invoice_payment_recorded", { order: number, amount: payment.amount }));
+  }
+  // Paid in full on the website, but Zoho's separate CGST/SGST rounding left a paisa or two on the
+  // invoice: write that off so Books shows it PAID for exactly what the customer paid.
+  const after = toRecord.length ? await readInvoice() : invoice;
+  const writeOff = roundingWriteOff(Number(order.total), Number(order.paid_amount), Number(after.balance));
+  if (writeOff > 0) {
+    try {
+      await booksRequest(region, organizationId, token, `invoices/${encodeURIComponent(invoiceId)}/writeoff`, "POST");
+    } catch (cause) {
+      fail(`writing off the ₹${writeOff.toFixed(2)} GST rounding`, cause);
+    }
+    console.info(zohoLogLine("zoho_invoice_rounding_written_off", { order: number, amount: writeOff }));
   }
 }
 
