@@ -75,7 +75,7 @@ function CardBody({ c, countLabel }: { c: StoreCategory; countLabel: string }) {
           onError={(e) => {
             (e.currentTarget as HTMLImageElement).src = `/categories/${c.name.toLowerCase()}.jpg`;
           }}
-          className="aspect-[4/3] transition-transform duration-500 group-hover:scale-105 sm:aspect-square"
+          className="aspect-square transition-transform duration-500 group-hover:scale-105"
         />
         <span className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-midnight/70 to-transparent" />
         <span className="absolute bottom-2 left-3 rounded-full bg-gold px-2.5 py-1 text-[10px] font-bold text-midnight sm:bottom-3 sm:left-4 sm:text-[11px]">

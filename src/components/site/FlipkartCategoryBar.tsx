@@ -156,11 +156,10 @@ function BadgeBody({
 
   return (
     <span className="group flex w-[4.5rem] flex-col items-center gap-1.5 transition-all duration-200 hover:-translate-y-1 sm:w-24">
-      {/* Outer ring in the brand colour (a circle within a circle) so each category stands out;
-          the white border on the inner circle leaves a gap between ring and picture. */}
+      {/* Square tile with a brand-colour frame; the photo fills the whole tile. */}
       <span
         className={cn(
-          "rounded-full p-[3px] shadow-xs transition-all duration-200",
+          "rounded-lg p-[2px] shadow-xs transition-all duration-200",
           active
             ? "bg-gradient-to-br from-gold to-amber-500 shadow-[0_2px_8px_rgba(212,175,55,0.35)]"
             : "bg-gradient-to-br from-gold to-gold/60 group-hover:to-amber-500 group-hover:shadow-md",
@@ -168,7 +167,7 @@ function BadgeBody({
       >
       <span
         className={cn(
-          "relative grid h-16 w-16 place-items-center overflow-hidden rounded-full border-[3px] border-card sm:h-20 sm:w-20",
+          "relative grid h-16 w-16 place-items-center overflow-hidden rounded-md sm:h-20 sm:w-20",
           active ? "bg-amber-50" : "bg-card",
         )}
       >

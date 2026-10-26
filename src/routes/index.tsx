@@ -91,9 +91,9 @@ function Index() {
                 key={category.id}
                 to="/categories/$slug"
                 params={{ slug }}
-                className="group flex min-w-0 flex-col items-center rounded-lg border border-border bg-card px-2 py-4 text-center shadow-card transition-all hover:-translate-y-1 hover:border-gold hover:shadow-elevated sm:px-5 sm:py-7"
+                className="group flex min-w-0 flex-col items-center overflow-hidden rounded-lg border border-border bg-card pb-4 text-center shadow-card transition-all hover:-translate-y-1 hover:border-gold hover:shadow-elevated sm:pb-6"
               >
-                <span className="block aspect-square w-full max-w-28 overflow-hidden rounded-full bg-ivory ring-4 ring-ivory sm:max-w-40">
+                <span className="block aspect-square w-full overflow-hidden bg-ivory">
                   <CategoryImage
                     src={category.image || `/categories/${slug}.jpg`}
                     alt={t(category.name)}
