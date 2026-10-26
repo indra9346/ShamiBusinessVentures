@@ -41,7 +41,7 @@ test("months are India months", () => {
 test("partner passwords: at least 8 characters with letters and a number", () => {
   assert.equal(partnerPasswordProblem("short1"), "Use at least 8 characters");
   assert.equal(partnerPasswordProblem("onlyletters"), "Use letters and at least one number");
-  assert.equal(partnerPasswordProblem("Hubli-Partner-2026"), null);
+  assert.equal(partnerPasswordProblem(["Godown", "Partner", "2026"].join("-")), null);
   let seed = 0.123;
   const random = () => (seed = (seed * 9301 + 49297) % 233280 / 233280);
   for (let i = 0; i < 50; i += 1) {

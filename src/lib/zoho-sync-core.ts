@@ -645,3 +645,27 @@ export function invoiceDecision(record: InvoiceRecord | null, invoices: ZohoInvo
   if (!record || record.autoAttempts < 1) return { action: "create", reason: "automatic" };
   return { action: "await_approval" };
 }
+
+/* ---------------------------------------------------------------------------------------------
+ * Zoho's API budget: 5,000 calls a day for the organization. Webhooks bring Zoho's changes at once,
+ * so the scheduled re-check of everything runs hourly, and the site pauses its Zoho calls for an
+ * hour once Zoho reports the daily limit, instead of failing call after call.
+ * ------------------------------------------------------------------------------------------- */
+
+export const INBOUND_POLL_EVERY_MINUTES = 60;
+export const DAILY_LIMIT_PAUSE_MINUTES = 60;
+
+/** Zoho's "maximum call rate limit" (daily API budget used up) message. */
+export const isZohoDailyLimitError = (message: string) => /exceeded the maximum call rate limit|maximum call rate limit of/i.test(message);
+
+/** Whether the scheduled full re-check from Zoho is due (none yet, or the last one is an hour old). */
+export function inboundPollDue(lastAt: string | null | undefined, nowMs: number, everyMinutes = INBOUND_POLL_EVERY_MINUTES) {
+  const last = Date.parse(lastAt ?? "");
+  return !Number.isFinite(last) || nowMs - last >= everyMinutes * 60_000 - 30_000;
+}
+
+/** Whether a pause set after Zoho's daily limit is still running. */
+export function zohoPaused(pausedUntil: string | null | undefined, nowMs: number) {
+  const until = Date.parse(pausedUntil ?? "");
+  return Number.isFinite(until) && until > nowMs;
+}

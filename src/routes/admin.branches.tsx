@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { MapPin, Phone, Plus, RefreshCw, Star, Truck, Warehouse } from "lucide-react";
@@ -266,6 +266,11 @@ function AdminBranches() {
                     ? <>Zoho price list: <span className="font-semibold text-navy">{branch.zohoPricebookName || branch.zohoPricebookId}</span> · {[...prices.values()].filter((byBranch) => byBranch.get(branch.id)?.listed).length} item(s) sold here{[...prices.values()].some((byBranch) => byBranch.get(branch.id)?.pending) ? " · website changes waiting for Zoho" : ""}</>
                     : "Prices: normal price, every item"}
                 </p>
+                {!branch.vendorId && (
+                  <p className="text-xs">
+                    <Link to="/admin/partners" className="font-semibold text-gold hover:underline">Channel partner: login, commission rates and target →</Link>
+                  </p>
+                )}
                 <p className="text-xs text-slate">
                   {branch.pickupEnabled ? "Pickup" : ""}{branch.pickupEnabled && branch.deliveryEnabled ? " + " : ""}
                   {branch.deliveryEnabled ? `Home delivery (${branch.deliveryFee ? inr(branch.deliveryFee) : "free"}${branch.freeDeliveryAbove !== null ? `, free above ${inr(branch.freeDeliveryAbove)}` : ""})` : ""}

@@ -130,3 +130,16 @@ test("item sync seller scope: empty list keeps everyone, otherwise only listed s
   assert.deepEqual(parseZohoItemSyncVendorIds({ vendor: "VENDOR-001" }), []);
   assert.deepEqual(parseZohoItemSyncVendorIds(null), []);
 });
+
+test("Zoho API budget: hourly re-check, pause after the daily limit", async () => {
+  const { inboundPollDue, isZohoDailyLimitError, zohoPaused } = await import("../src/lib/zoho-sync-core.ts");
+  const now = Date.parse("2026-10-26T12:00:00Z");
+  assert.equal(inboundPollDue(null, now), true);
+  assert.equal(inboundPollDue("2026-10-26T11:45:00Z", now), false); // 15 min ago: skip
+  assert.equal(inboundPollDue("2026-10-26T11:00:10Z", now), true); // ~an hour ago: due
+  assert.equal(isZohoDailyLimitError("The API call for this organization has exceeded the maximum call rate limit of 5,000"), true);
+  assert.equal(isZohoDailyLimitError("Selling Price cannot be greater than MRP"), false);
+  assert.equal(zohoPaused("2026-10-26T12:30:00Z", now), true);
+  assert.equal(zohoPaused("2026-10-26T11:30:00Z", now), false);
+  assert.equal(zohoPaused(undefined, now), false);
+});
