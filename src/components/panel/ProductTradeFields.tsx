@@ -15,6 +15,7 @@ import {
   type Product,
   type RatePricing,
 } from "@/lib/data";
+import { rateForPackPrice } from "@/lib/pricing";
 
 /** Form state for the trade-rate and Zoho item fields (inputs stay strings while typing). */
 export type TradeFieldsState = {
@@ -92,6 +93,18 @@ export function ratePricingFromFields(fields: TradeFieldsState): RatePricing | n
     basisUnit: fields.basisUnit,
     basisRate: Number(fields.basisRate),
   };
+}
+
+/**
+ * The admin typed the selling price itself: work the rate per QTL (or litre) back out of it,
+ * so the rate and the price stay in step (₹1,000 for a 10 kg pack → ₹10,000 per QTL).
+ */
+export function withSellingPrice(fields: TradeFieldsState, price: string): TradeFieldsState {
+  const value = Number(price);
+  const pack = toBaseQuantity(Number(fields.packQty), fields.packUnit);
+  const basis = toBaseQuantity(Number(fields.basisQty) || 1, fields.basisUnit);
+  if (!fields.useRate || !(value > 0) || !(pack > 0) || !(basis > 0)) return fields;
+  return { ...fields, basisRate: String(rateForPackPrice(value, pack / basis)) };
 }
 
 /** Checks the fields before save; returns an error message or null. */

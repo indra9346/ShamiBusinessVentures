@@ -25,6 +25,7 @@ import {
   productPatchFromFields,
   tradeFieldsFromProduct,
   validateTradeFields,
+  withSellingPrice,
   type TradeFieldsState,
 } from "@/components/panel/ProductTradeFields";
 import { useApp } from "@/lib/store";
@@ -954,9 +955,11 @@ function AdminProductsPanel() {
                       <Input
                         type="number"
                         value={form.price}
-                        readOnly={trade.useRate}
-                        title={trade.useRate ? "Worked out from the rate above" : undefined}
-                        onChange={(e) => setForm({ ...form, price: e.target.value })}
+                        title={trade.useRate ? "Type a price here or a rate above: the other follows" : undefined}
+                        onChange={(e) => {
+                          setForm({ ...form, price: e.target.value });
+                          setTrade(withSellingPrice(trade, e.target.value));
+                        }}
                       />
                     </div>
                     <div>
@@ -1334,9 +1337,11 @@ function AdminProductsPanel() {
                 <Input
                   type="number"
                   value={editForm.price}
-                  readOnly={editTrade.useRate}
-                  title={editTrade.useRate ? "Worked out from the rate above" : undefined}
-                  onChange={(e) => setEditForm({ ...editForm, price: e.target.value })}
+                  title={editTrade.useRate ? "Type a price here or a rate above: the other follows" : undefined}
+                  onChange={(e) => {
+                    setEditForm({ ...editForm, price: e.target.value });
+                    setEditTrade(withSellingPrice(editTrade, e.target.value));
+                  }}
                 />
               </div>
               <div>
