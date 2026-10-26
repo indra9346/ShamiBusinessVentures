@@ -373,6 +373,30 @@ export type Database = {
         Update: { order_id?: string; order_no?: string; zoho_invoice_id?: string | null; invoice_number?: string | null; status?: string; total?: number | null; balance?: number | null; auto_attempts?: number; admin_approved?: boolean; approved_by?: string | null; approved_at?: string | null; last_event?: string; updated_at?: string }
         Relationships: []
       }
+      channel_partners: {
+        Row: { id: string; user_id: string; branch_id: string; name: string; email: string; phone: string; status: string; created_by: string | null; created_at: string; updated_at: string }
+        Insert: { user_id: string; branch_id: string; name: string; email: string; id?: string; phone?: string; status?: string; created_by?: string | null; created_at?: string; updated_at?: string }
+        Update: { id?: string; user_id?: string; branch_id?: string; name?: string; email?: string; phone?: string; status?: string; created_by?: string | null; created_at?: string; updated_at?: string }
+        Relationships: []
+      }
+      partner_commission_rules: {
+        Row: { id: string; branch_id: string; product_id: string | null; kind: string; value: number; updated_by: string | null; updated_at: string }
+        Insert: { branch_id: string; kind: string; value: number; id?: string; product_id?: string | null; updated_by?: string | null; updated_at?: string }
+        Update: { id?: string; branch_id?: string; product_id?: string | null; kind?: string; value?: number; updated_by?: string | null; updated_at?: string }
+        Relationships: []
+      }
+      partner_targets: {
+        Row: { partner_id: string; month: string; target_sales: number; updated_at: string }
+        Insert: { partner_id: string; month: string; target_sales: number; updated_at?: string }
+        Update: { partner_id?: string; month?: string; target_sales?: number; updated_at?: string }
+        Relationships: []
+      }
+      partner_commissions: {
+        Row: { order_item_id: string; order_id: string; order_no: string; partner_id: string; branch_id: string; product_id: string | null; product_name: string; qty: number; line_total: number; kind: string; rate: number; amount: number; status: string; placed_at: string; earned_at: string | null; updated_at: string }
+        Insert: { order_item_id: string; order_id: string; order_no: string; partner_id: string; branch_id: string; qty: number; line_total: number; kind: string; rate: number; amount: number; product_id?: string | null; product_name?: string; status?: string; placed_at?: string; earned_at?: string | null; updated_at?: string }
+        Update: { order_item_id?: string; order_id?: string; order_no?: string; partner_id?: string; branch_id?: string; product_id?: string | null; product_name?: string; qty?: number; line_total?: number; kind?: string; rate?: number; amount?: number; status?: string; placed_at?: string; earned_at?: string | null; updated_at?: string }
+        Relationships: []
+      }
       notifications: {
         Row: {
           created_at: string
@@ -982,6 +1006,14 @@ export type Database = {
       customer_set_default_address: { Args: { _id: string }; Returns: boolean }
       admin_update_return: { Args: { _id: string; _status: string; _refund_status: string }; Returns: boolean }
       request_zoho_invoice_approval: { Args: { _order_no: string }; Returns: boolean }
+      partner_leaderboard: {
+        Args: { _month?: string }
+        Returns: { rank: number; partner_id: string; partner_name: string; godown: string; sales: number; commission: number; earned: number; target: number; achieved_percent: number | null }[]
+      }
+      partner_commission_lines: {
+        Args: { _month: string }
+        Returns: { order_item_id: string; order_no: string; placed_at: string; order_status: string; payment_status: string; customer_name: string; pin: string; product_name: string; qty: number; line_total: number; kind: string; rate: number; amount: number; status: string; partner_id: string }[]
+      }
       admin_update_payout: { Args: { _id: string; _status: string; _reference?: string | null }; Returns: boolean }
       has_role: {
         Args: {

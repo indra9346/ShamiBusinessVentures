@@ -12,6 +12,7 @@ import {
   zohoOrderNumber, zohoRetryDelayMs, type AppProductForParity, type ZohoItemForParity, type ZohoOrderForReconcile,
   orderNeedsZohoInvoice, paymentsToRecord, roundingWriteOff,
   invoiceDecision, websiteInvoiceStatus, zohoInvoicesOf, type InvoiceRecord,
+  DAILY_LIMIT_PAUSE_MINUTES, inboundPollDue, isZohoDailyLimitError, zohoPaused,
   indiaDate, nextZohoFulfilmentStep, zohoFulfilmentStatus, zohoPackagesOf, zohoStatusMovesForward,
 } from "@/lib/zoho-sync-core";
 
@@ -963,8 +964,15 @@ async function inventoryRequest<T>(
   if (!response) throw new Error(`Zoho Inventory ${resource} could not be reached`);
   const data = (await response.json().catch(() => ({}))) as T & { code?: number; message?: string };
   if (!response.ok || data.code !== 0)
-    throw new Error(data.message ?? `Zoho Inventory ${resource} failed (${response.status})`);
+    throw zohoApiError(data.message ?? `Zoho Inventory ${resource} failed (${response.status})`);
   return data;
+}
+
+/** Set when Zoho reports that the organization's daily API budget is used up (see processZohoSyncOutbox). */
+let zohoDailyLimitHit = false;
+function zohoApiError(message: string) {
+  if (isZohoDailyLimitError(message)) zohoDailyLimitHit = true;
+  return new Error(message);
 }
 
 async function commerceRequest<T>(
@@ -987,7 +995,7 @@ async function commerceRequest<T>(
   });
   const data = (await response.json().catch(() => ({}))) as T & { code?: number; message?: string };
   if (!response.ok || data.code !== 0)
-    throw new Error(data.message ?? `Zoho Commerce ${resource} failed (${response.status})`);
+    throw zohoApiError(data.message ?? `Zoho Commerce ${resource} failed (${response.status})`);
   return data;
 }
 
@@ -3022,8 +3030,14 @@ async function syncZohoOrder(db: Awaited<ReturnType<typeof dbAdmin>>, region: Re
 
   // Pickup orders are created under the godown's Zoho location, so stock leaves that warehouse.
   const locationId = await zohoLocationForOrder(db, order.shipping_address, (order as { branch_id?: string | null }).branch_id);
+  // The godown's channel partner is the order's salesperson in Zoho ("Sales by Salesperson").
+  const branchId = (order as { branch_id?: string | null }).branch_id;
+  const { data: partner } = branchId
+    ? await db.from("channel_partners").select("name").eq("branch_id", branchId).eq("status", "active").maybeSingle()
+    : { data: null };
   const payload: Record<string, unknown> = {
     ...(locationId ? { location_id: locationId } : {}),
+    ...(partner?.name ? { salesperson_name: partner.name } : {}),
     salesorder_number: safeNumber,
     reference_number: String(order.order_no).slice(0, 100),
     customer_id: customerId,
@@ -3078,6 +3092,19 @@ const isCustomFieldError = (cause: unknown) => /custom ?field|cf_|api_name|inval
 
 /** Creates the sales order with the channel field; if the field does not exist in Zoho yet, without it. */
 async function createSalesOrderWithChannel(region: Region, organizationId: string, token: string, payload: Record<string, unknown>) {
+  if (!payload["salesperson_name"]) return createSalesOrderWithChannelField(region, organizationId, token, payload);
+  try {
+    return await createSalesOrderWithChannelField(region, organizationId, token, payload);
+  } catch (cause) {
+    // A salesperson Zoho will not take never blocks the order: create it without one.
+    if (!/sales ?person/i.test(cause instanceof Error ? cause.message : String(cause))) throw cause;
+    console.warn(zohoLogLine("zoho_salesperson_skipped", { error: cause instanceof Error ? cause.message.slice(0, 200) : "unknown" }));
+    const { salesperson_name: _skipped, ...withoutSalesperson } = payload;
+    return createSalesOrderWithChannelField(region, organizationId, token, withoutSalesperson);
+  }
+}
+
+async function createSalesOrderWithChannelField(region: Region, organizationId: string, token: string, payload: Record<string, unknown>) {
   try {
     return await inventoryRequest<{ salesorder?: Record<string, unknown> }>(region, organizationId, token, "salesorders", "POST",
       { ...payload, custom_fields: channelCustomFields }, { ignore_auto_number_generation: "true" });
@@ -3387,6 +3414,31 @@ export const processZohoSyncNow = createServerFn({ method: "POST" })
  */
 export async function processZohoSyncOutbox(limit = 20, options?: { force?: boolean; inbound?: boolean }) {
   const db = await dbAdmin();
+  // Zoho's daily API budget is used up: pause (an hour) instead of failing call after call.
+  const { data: budgetRow } = await db.from("settings").select("value").eq("key", ZOHO_API_BUDGET_SETTING).maybeSingle();
+  const budget = plainObject(budgetRow?.value);
+  if (zohoPaused(str(budget["pausedUntil"]), Date.now()))
+    return { enabled: true, processed: 0, complete: 0, failed: 0, needsReview: 0, paused: true, pausedUntil: str(budget["pausedUntil"]), reason: "Zoho's daily API limit was reached; the sync resumes automatically." };
+  zohoDailyLimitHit = false;
+  try {
+    return await processZohoSyncOutboxRun(db, limit, options, budget);
+  } finally {
+    if (zohoDailyLimitHit) {
+      const pausedUntil = new Date(Date.now() + DAILY_LIMIT_PAUSE_MINUTES * 60_000).toISOString();
+      await db.from("settings").upsert({ key: ZOHO_API_BUDGET_SETTING, value: { ...budget, pausedUntil } as Json, is_public: false, updated_at: new Date().toISOString() });
+      console.warn(zohoLogLine("zoho_daily_limit_pause", { pausedUntil }));
+    }
+  }
+}
+
+const ZOHO_API_BUDGET_SETTING = "zoho_api_budget";
+
+async function processZohoSyncOutboxRun(
+  db: Awaited<ReturnType<typeof dbAdmin>>,
+  limit: number,
+  options: { force?: boolean; inbound?: boolean } | undefined,
+  budget: Record<string, unknown>,
+) {
   const writeEnabled = options?.force || (await isZohoWriteSyncActive(db));
   if (!writeEnabled) return { enabled: false, processed: 0, complete: 0, failed: 0, needsReview: 0 };
   const { data: connection, error: connectionError } = await db.from("zoho_commerce_connection").select("organization_id,region,refresh_token_ciphertext,token_iv,token_tag").eq("id", true).maybeSingle();
@@ -3431,6 +3483,10 @@ export async function processZohoSyncOutbox(limit = 20, options?: { force?: bool
   await runPool(claimed.filter((job) => job.entity_type === "order"), 1, runJob);
 
   if (options?.inbound === false) return summary;
+  // The full re-check of Zoho (contacts, orders, items, godown prices and stock) is a safety net
+  // behind the webhooks: hourly on the scheduled run, at once when an admin asks for it.
+  if (options?.inbound !== true && !inboundPollDue(str(budget["lastInboundPollAt"]), Date.now())) return { ...summary, inbound: "skipped (hourly)" };
+  await db.from("settings").upsert({ key: ZOHO_API_BUDGET_SETTING, value: { ...budget, lastInboundPollAt: new Date().toISOString() } as Json, is_public: false, updated_at: new Date().toISOString() });
   const [contacts, fulfillment, catalog] = await Promise.all([
     pollZohoContactChanges(db, region, connection.organization_id, token, limit),
     applyRecentZohoOrderChanges(db, region, connection.organization_id, token)
@@ -4317,7 +4373,7 @@ async function booksRequest<T>(region: Region, organizationId: string, token: st
     signal: AbortSignal.timeout(20_000),
   });
   const data = (await response.json().catch(() => ({}))) as T & { code?: number; message?: string };
-  if (!response.ok || data.code !== 0) throw new Error(data.message ?? `Zoho Books ${resource} failed (${response.status})`);
+  if (!response.ok || data.code !== 0) throw zohoApiError(data.message ?? `Zoho Books ${resource} failed (${response.status})`);
   return data;
 }
 
