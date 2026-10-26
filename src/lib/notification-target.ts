@@ -1,6 +1,7 @@
 import type { Notif, Role, SessionUser } from "@/lib/store";
 import type { Order } from "@/lib/data";
 import { orderBelongsToUser } from "@/lib/account-identity";
+import { orderNumberIn } from "@/lib/order-number";
 
 export function notificationTarget(
   notification: Notif,
@@ -8,7 +9,7 @@ export function notificationTarget(
   user: SessionUser | null,
   orders: Order[],
 ) {
-  const orderId = notification.body.match(/\bORD-\d+\b/)?.[0];
+  const orderId = orderNumberIn(notification.body);
   const order = orderId ? orders.find((item) => item.id === orderId) : undefined;
 
   if (role === "customer") {
