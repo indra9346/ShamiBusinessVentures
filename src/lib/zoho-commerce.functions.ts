@@ -3022,8 +3022,14 @@ async function syncZohoOrder(db: Awaited<ReturnType<typeof dbAdmin>>, region: Re
 
   // Pickup orders are created under the godown's Zoho location, so stock leaves that warehouse.
   const locationId = await zohoLocationForOrder(db, order.shipping_address, (order as { branch_id?: string | null }).branch_id);
+  // The godown's channel partner is the order's salesperson in Zoho ("Sales by Salesperson").
+  const branchId = (order as { branch_id?: string | null }).branch_id;
+  const { data: partner } = branchId
+    ? await db.from("channel_partners").select("name").eq("branch_id", branchId).eq("status", "active").maybeSingle()
+    : { data: null };
   const payload: Record<string, unknown> = {
     ...(locationId ? { location_id: locationId } : {}),
+    ...(partner?.name ? { salesperson_name: partner.name } : {}),
     salesorder_number: safeNumber,
     reference_number: String(order.order_no).slice(0, 100),
     customer_id: customerId,
@@ -3078,6 +3084,19 @@ const isCustomFieldError = (cause: unknown) => /custom ?field|cf_|api_name|inval
 
 /** Creates the sales order with the channel field; if the field does not exist in Zoho yet, without it. */
 async function createSalesOrderWithChannel(region: Region, organizationId: string, token: string, payload: Record<string, unknown>) {
+  if (!payload["salesperson_name"]) return createSalesOrderWithChannelField(region, organizationId, token, payload);
+  try {
+    return await createSalesOrderWithChannelField(region, organizationId, token, payload);
+  } catch (cause) {
+    // A salesperson Zoho will not take never blocks the order: create it without one.
+    if (!/sales ?person/i.test(cause instanceof Error ? cause.message : String(cause))) throw cause;
+    console.warn(zohoLogLine("zoho_salesperson_skipped", { error: cause instanceof Error ? cause.message.slice(0, 200) : "unknown" }));
+    const { salesperson_name: _skipped, ...withoutSalesperson } = payload;
+    return createSalesOrderWithChannelField(region, organizationId, token, withoutSalesperson);
+  }
+}
+
+async function createSalesOrderWithChannelField(region: Region, organizationId: string, token: string, payload: Record<string, unknown>) {
   try {
     return await inventoryRequest<{ salesorder?: Record<string, unknown> }>(region, organizationId, token, "salesorders", "POST",
       { ...payload, custom_fields: channelCustomFields }, { ignore_auto_number_generation: "true" });

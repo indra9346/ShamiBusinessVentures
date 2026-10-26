@@ -42,6 +42,7 @@ import { Route as AdminInventoryRouteImport } from './routes/admin.inventory'
 import { Route as AdminLoginRouteImport } from './routes/admin.login'
 import { Route as AdminNotificationsRouteImport } from './routes/admin.notifications'
 import { Route as AdminOrdersRouteImport } from './routes/admin.orders'
+import { Route as AdminPartnersRouteImport } from './routes/admin.partners'
 import { Route as AdminPaymentsRouteImport } from './routes/admin.payments'
 import { Route as AdminPayoutsRouteImport } from './routes/admin.payouts'
 import { Route as AdminPricingRouteImport } from './routes/admin.pricing'
@@ -55,6 +56,8 @@ import { Route as AdminZohoRouteImport } from './routes/admin.zoho'
 import { Route as AdminZohoDiagnosticsRouteImport } from './routes/admin.zoho-diagnostics'
 import { Route as CategoriesIndexRouteImport } from './routes/categories.index'
 import { Route as CategoriesSlugRouteImport } from './routes/categories.$slug'
+import { Route as PartnerIndexRouteImport } from './routes/partner.index'
+import { Route as PartnerLoginRouteImport } from './routes/partner.login'
 import { Route as ProductIdRouteImport } from './routes/product.$id'
 import { Route as VendorIndexRouteImport } from './routes/vendor.index'
 import { Route as VendorDashboardRouteImport } from './routes/vendor.dashboard'
@@ -247,6 +250,11 @@ const AdminOrdersRoute = AdminOrdersRouteImport.update({
   path: '/admin/orders',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdminPartnersRoute = AdminPartnersRouteImport.update({
+  id: '/admin/partners',
+  path: '/admin/partners',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AdminPaymentsRoute = AdminPaymentsRouteImport.update({
   id: '/admin/payments',
   path: '/admin/payments',
@@ -311,6 +319,16 @@ const CategoriesSlugRoute = CategoriesSlugRouteImport.update({
   id: '/$slug',
   path: '/$slug',
   getParentRoute: () => CategoriesRoute,
+} as any)
+const PartnerIndexRoute = PartnerIndexRouteImport.update({
+  id: '/partner/',
+  path: '/partner/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PartnerLoginRoute = PartnerLoginRouteImport.update({
+  id: '/partner/login',
+  path: '/partner/login',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const ProductIdRoute = ProductIdRouteImport.update({
   id: '/product/$id',
@@ -476,6 +494,7 @@ export interface FileRoutesByFullPath {
   '/admin/login': typeof AdminLoginRoute
   '/admin/notifications': typeof AdminNotificationsRoute
   '/admin/orders': typeof AdminOrdersRouteWithChildren
+  '/admin/partners': typeof AdminPartnersRoute
   '/admin/payments': typeof AdminPaymentsRoute
   '/admin/payouts': typeof AdminPayoutsRoute
   '/admin/pricing': typeof AdminPricingRoute
@@ -488,6 +507,7 @@ export interface FileRoutesByFullPath {
   '/admin/zoho': typeof AdminZohoRoute
   '/admin/zoho-diagnostics': typeof AdminZohoDiagnosticsRoute
   '/categories/$slug': typeof CategoriesSlugRouteWithChildren
+  '/partner/login': typeof PartnerLoginRoute
   '/product/$id': typeof ProductIdRoute
   '/vendor/dashboard': typeof VendorDashboardRoute
   '/vendor/earnings': typeof VendorEarningsRoute
@@ -503,6 +523,7 @@ export interface FileRoutesByFullPath {
   '/vendor/settings': typeof VendorSettingsRoute
   '/admin/': typeof AdminIndexRoute
   '/categories/': typeof CategoriesIndexRoute
+  '/partner/': typeof PartnerIndexRoute
   '/vendor/': typeof VendorIndexRoute
   '/account/orders/$id': typeof AccountOrdersIdRoute
   '/admin/customers/$id': typeof AdminCustomersIdRoute
@@ -549,6 +570,7 @@ export interface FileRoutesByTo {
   '/admin/login': typeof AdminLoginRoute
   '/admin/notifications': typeof AdminNotificationsRoute
   '/admin/orders': typeof AdminOrdersRouteWithChildren
+  '/admin/partners': typeof AdminPartnersRoute
   '/admin/payments': typeof AdminPaymentsRoute
   '/admin/payouts': typeof AdminPayoutsRoute
   '/admin/pricing': typeof AdminPricingRoute
@@ -561,6 +583,7 @@ export interface FileRoutesByTo {
   '/admin/zoho': typeof AdminZohoRoute
   '/admin/zoho-diagnostics': typeof AdminZohoDiagnosticsRoute
   '/categories/$slug': typeof CategoriesSlugRouteWithChildren
+  '/partner/login': typeof PartnerLoginRoute
   '/product/$id': typeof ProductIdRoute
   '/vendor/dashboard': typeof VendorDashboardRoute
   '/vendor/earnings': typeof VendorEarningsRoute
@@ -576,6 +599,7 @@ export interface FileRoutesByTo {
   '/vendor/settings': typeof VendorSettingsRoute
   '/admin': typeof AdminIndexRoute
   '/categories': typeof CategoriesIndexRoute
+  '/partner': typeof PartnerIndexRoute
   '/vendor': typeof VendorIndexRoute
   '/account/orders/$id': typeof AccountOrdersIdRoute
   '/admin/customers/$id': typeof AdminCustomersIdRoute
@@ -624,6 +648,7 @@ export interface FileRoutesById {
   '/admin/login': typeof AdminLoginRoute
   '/admin/notifications': typeof AdminNotificationsRoute
   '/admin/orders': typeof AdminOrdersRouteWithChildren
+  '/admin/partners': typeof AdminPartnersRoute
   '/admin/payments': typeof AdminPaymentsRoute
   '/admin/payouts': typeof AdminPayoutsRoute
   '/admin/pricing': typeof AdminPricingRoute
@@ -636,6 +661,7 @@ export interface FileRoutesById {
   '/admin/zoho': typeof AdminZohoRoute
   '/admin/zoho-diagnostics': typeof AdminZohoDiagnosticsRoute
   '/categories/$slug': typeof CategoriesSlugRouteWithChildren
+  '/partner/login': typeof PartnerLoginRoute
   '/product/$id': typeof ProductIdRoute
   '/vendor/dashboard': typeof VendorDashboardRoute
   '/vendor/earnings': typeof VendorEarningsRoute
@@ -651,6 +677,7 @@ export interface FileRoutesById {
   '/vendor/settings': typeof VendorSettingsRoute
   '/admin/': typeof AdminIndexRoute
   '/categories/': typeof CategoriesIndexRoute
+  '/partner/': typeof PartnerIndexRoute
   '/vendor/': typeof VendorIndexRoute
   '/account/orders/$id': typeof AccountOrdersIdRoute
   '/admin/customers/$id': typeof AdminCustomersIdRoute
@@ -700,6 +727,7 @@ export interface FileRouteTypes {
     | '/admin/login'
     | '/admin/notifications'
     | '/admin/orders'
+    | '/admin/partners'
     | '/admin/payments'
     | '/admin/payouts'
     | '/admin/pricing'
@@ -712,6 +740,7 @@ export interface FileRouteTypes {
     | '/admin/zoho'
     | '/admin/zoho-diagnostics'
     | '/categories/$slug'
+    | '/partner/login'
     | '/product/$id'
     | '/vendor/dashboard'
     | '/vendor/earnings'
@@ -727,6 +756,7 @@ export interface FileRouteTypes {
     | '/vendor/settings'
     | '/admin/'
     | '/categories/'
+    | '/partner/'
     | '/vendor/'
     | '/account/orders/$id'
     | '/admin/customers/$id'
@@ -773,6 +803,7 @@ export interface FileRouteTypes {
     | '/admin/login'
     | '/admin/notifications'
     | '/admin/orders'
+    | '/admin/partners'
     | '/admin/payments'
     | '/admin/payouts'
     | '/admin/pricing'
@@ -785,6 +816,7 @@ export interface FileRouteTypes {
     | '/admin/zoho'
     | '/admin/zoho-diagnostics'
     | '/categories/$slug'
+    | '/partner/login'
     | '/product/$id'
     | '/vendor/dashboard'
     | '/vendor/earnings'
@@ -800,6 +832,7 @@ export interface FileRouteTypes {
     | '/vendor/settings'
     | '/admin'
     | '/categories'
+    | '/partner'
     | '/vendor'
     | '/account/orders/$id'
     | '/admin/customers/$id'
@@ -847,6 +880,7 @@ export interface FileRouteTypes {
     | '/admin/login'
     | '/admin/notifications'
     | '/admin/orders'
+    | '/admin/partners'
     | '/admin/payments'
     | '/admin/payouts'
     | '/admin/pricing'
@@ -859,6 +893,7 @@ export interface FileRouteTypes {
     | '/admin/zoho'
     | '/admin/zoho-diagnostics'
     | '/categories/$slug'
+    | '/partner/login'
     | '/product/$id'
     | '/vendor/dashboard'
     | '/vendor/earnings'
@@ -874,6 +909,7 @@ export interface FileRouteTypes {
     | '/vendor/settings'
     | '/admin/'
     | '/categories/'
+    | '/partner/'
     | '/vendor/'
     | '/account/orders/$id'
     | '/admin/customers/$id'
@@ -914,6 +950,7 @@ export interface RootRouteChildren {
   AdminLoginRoute: typeof AdminLoginRoute
   AdminNotificationsRoute: typeof AdminNotificationsRoute
   AdminOrdersRoute: typeof AdminOrdersRouteWithChildren
+  AdminPartnersRoute: typeof AdminPartnersRoute
   AdminPaymentsRoute: typeof AdminPaymentsRoute
   AdminPayoutsRoute: typeof AdminPayoutsRoute
   AdminPricingRoute: typeof AdminPricingRoute
@@ -925,6 +962,7 @@ export interface RootRouteChildren {
   AdminVendorsRoute: typeof AdminVendorsRouteWithChildren
   AdminZohoRoute: typeof AdminZohoRoute
   AdminZohoDiagnosticsRoute: typeof AdminZohoDiagnosticsRoute
+  PartnerLoginRoute: typeof PartnerLoginRoute
   ProductIdRoute: typeof ProductIdRoute
   VendorDashboardRoute: typeof VendorDashboardRoute
   VendorEarningsRoute: typeof VendorEarningsRoute
@@ -939,6 +977,7 @@ export interface RootRouteChildren {
   VendorReviewsRoute: typeof VendorReviewsRoute
   VendorSettingsRoute: typeof VendorSettingsRoute
   AdminIndexRoute: typeof AdminIndexRoute
+  PartnerIndexRoute: typeof PartnerIndexRoute
   VendorIndexRoute: typeof VendorIndexRoute
   ApiZohoCallbackRoute: typeof ApiZohoCallbackRoute
   ApiZohoSyncRoute: typeof ApiZohoSyncRoute
@@ -1178,6 +1217,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminOrdersRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/admin/partners': {
+      id: '/admin/partners'
+      path: '/admin/partners'
+      fullPath: '/admin/partners'
+      preLoaderRoute: typeof AdminPartnersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/admin/payments': {
       id: '/admin/payments'
       path: '/admin/payments'
@@ -1268,6 +1314,20 @@ declare module '@tanstack/react-router' {
       fullPath: '/categories/$slug'
       preLoaderRoute: typeof CategoriesSlugRouteImport
       parentRoute: typeof CategoriesRoute
+    }
+    '/partner/': {
+      id: '/partner/'
+      path: '/partner'
+      fullPath: '/partner/'
+      preLoaderRoute: typeof PartnerIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/partner/login': {
+      id: '/partner/login'
+      path: '/partner/login'
+      fullPath: '/partner/login'
+      preLoaderRoute: typeof PartnerLoginRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/product/$id': {
       id: '/product/$id'
@@ -1626,6 +1686,7 @@ const rootRouteChildren: RootRouteChildren = {
   AdminLoginRoute: AdminLoginRoute,
   AdminNotificationsRoute: AdminNotificationsRoute,
   AdminOrdersRoute: AdminOrdersRouteWithChildren,
+  AdminPartnersRoute: AdminPartnersRoute,
   AdminPaymentsRoute: AdminPaymentsRoute,
   AdminPayoutsRoute: AdminPayoutsRoute,
   AdminPricingRoute: AdminPricingRoute,
@@ -1637,6 +1698,7 @@ const rootRouteChildren: RootRouteChildren = {
   AdminVendorsRoute: AdminVendorsRouteWithChildren,
   AdminZohoRoute: AdminZohoRoute,
   AdminZohoDiagnosticsRoute: AdminZohoDiagnosticsRoute,
+  PartnerLoginRoute: PartnerLoginRoute,
   ProductIdRoute: ProductIdRoute,
   VendorDashboardRoute: VendorDashboardRoute,
   VendorEarningsRoute: VendorEarningsRoute,
@@ -1651,6 +1713,7 @@ const rootRouteChildren: RootRouteChildren = {
   VendorReviewsRoute: VendorReviewsRoute,
   VendorSettingsRoute: VendorSettingsRoute,
   AdminIndexRoute: AdminIndexRoute,
+  PartnerIndexRoute: PartnerIndexRoute,
   VendorIndexRoute: VendorIndexRoute,
   ApiZohoCallbackRoute: ApiZohoCallbackRoute,
   ApiZohoSyncRoute: ApiZohoSyncRoute,
