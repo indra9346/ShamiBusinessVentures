@@ -55,3 +55,16 @@ test("a sales order without its invoice list is never read as 'deleted'", () => 
   assert.deepEqual(zohoInvoicesOf({ invoices: [{ invoice_id: "I1", invoice_number: "CLKINV1", status: "Paid", total: "100.5", balance: 0 }] }),
     [{ invoiceId: "I1", number: "CLKINV1", status: "paid", total: 100.5, balance: 0 }]);
 });
+
+test("several webhook secrets can be configured (one per Zoho webhook)", async () => {
+  const { webhookSecrets, verifyZohoSignature } = await import("../src/lib/zoho-sync-core.ts");
+  assert.deepEqual(webhookSecrets("abc123def456, xyz789uvw012"), ["abc123def456", "xyz789uvw012"]);
+  assert.deepEqual(webhookSecrets(" one1one1one1 \n two2two2two2 one1one1one1"), ["one1one1one1", "two2two2two2"]);
+  assert.deepEqual(webhookSecrets(undefined), []);
+  // A call signed with the second secret verifies against the list.
+  const body = JSON.stringify({ invoice: { invoice_id: "I1", reference_number: "GB-ORD-25649" } });
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode("xyz789uvw012"), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const signature = Array.from(new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(body))), (b) => b.toString(16).padStart(2, "0")).join("");
+  const results = await Promise.all(webhookSecrets("abc123def456,xyz789uvw012").map((secret) => verifyZohoSignature(body, signature, secret, { contentType: "application/json;charset=UTF-8" })));
+  assert.deepEqual(results, [null, "hex"]);
+});

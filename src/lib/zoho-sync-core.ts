@@ -79,6 +79,11 @@ export async function verifyZohoSignature(
   return null;
 }
 
+/** The webhook secrets the server accepts: ZOHO_WEBHOOK_SECRET may list several, comma- or space-separated (one per Zoho webhook). */
+export function webhookSecrets(raw: string | null | undefined) {
+  return [...new Set((raw ?? "").split(/[\s,]+/).map((secret) => secret.trim()).filter(Boolean))];
+}
+
 export type GbOrderForReconcile = {
   order_no: string;
   order_status: string;

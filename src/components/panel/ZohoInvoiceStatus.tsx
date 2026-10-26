@@ -52,10 +52,17 @@ export function ZohoInvoiceStatus({ orderNo, audience, className }: { orderNo: s
 
   useEffect(() => {
     void load();
+    // Ask Zoho for the invoice's current state (voided / deleted / paid there shows at once).
+    if (!STATIC_DATA_MODE) {
+      void import("@/lib/zoho-commerce.functions")
+        .then(({ refreshZohoOrderInvoice }) => refreshZohoOrderInvoice({ data: { orderNo } }))
+        .then((result) => { if (result?.refreshed) void load(); })
+        .catch(() => undefined);
+    }
     const onFocus = () => void load();
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
-  }, [load]);
+  }, [load, orderNo]);
 
   const syncNow = async () => {
     const { syncSingleOrderToZoho } = await import("@/lib/zoho-commerce.functions");

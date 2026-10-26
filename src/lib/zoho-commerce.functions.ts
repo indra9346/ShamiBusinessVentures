@@ -2428,7 +2428,14 @@ async function applyZohoSalesOrderToApp(
 
   const modifiedMs = Date.parse(str(zoho["last_modified_time"]));
   const knownMs = Date.parse(order.zoho_last_modified_at ?? "");
-  if (Number.isFinite(modifiedMs) && Number.isFinite(knownMs) && modifiedMs <= knownMs) return "unchanged";
+  if (Number.isFinite(modifiedMs) && Number.isFinite(knownMs) && modifiedMs <= knownMs) {
+    try {
+      await recordZohoInvoiceState(db, order, zoho);
+    } catch {
+      // The next poll or order sync records it.
+    }
+    return "unchanged";
+  }
 
   const status = str(zoho["order_status"] ?? zoho["status"]).toLowerCase();
   let outcome = "recorded";
@@ -2521,6 +2528,56 @@ export async function handleZohoOrderWebhook(salesOrderId: string) {
   if (!response.salesorder) return "missing";
   return applyZohoSalesOrderToApp(db, organizationId, response.salesorder);
 }
+
+/**
+ * Zoho Books invoice webhook (created / edited / voided): finds the invoice's website order (its
+ * sales order, or the GB- order number Zoho copies into the invoice reference) and applies that
+ * sales order, which records the invoice's new state on the website at once.
+ */
+export async function handleZohoInvoiceWebhook(invoice: { salesOrderId: string; reference: string }) {
+  let salesOrderId = invoice.salesOrderId;
+  if (!salesOrderId && invoice.reference.startsWith("GB-")) {
+    const db = await dbAdmin();
+    const { data } = await db.from("orders").select("zoho_salesorder_id").eq("order_no", invoice.reference.slice(3)).maybeSingle();
+    salesOrderId = data?.zoho_salesorder_id ?? "";
+  }
+  if (!salesOrderId) return "not_grain_bazar";
+  return handleZohoOrderWebhook(salesOrderId);
+}
+
+/**
+ * Re-reads the order's Zoho sales order and records its invoice (issued / paid / voided / deleted)
+ * on the website. Read-only towards Zoho. Called when an admin, the order's customer or one of its
+ * vendors opens the order, at most once every 30 seconds per order.
+ */
+export const refreshZohoOrderInvoice = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator(z.object({ orderNo: z.string().trim().min(1).max(80) }))
+  .handler(async ({ data, context }) => {
+    const db = await dbAdmin();
+    const { data: order } = await db.from("orders")
+      .select("id,order_no,order_status,user_id,vendor_ids,zoho_salesorder_id,zoho_last_polled_at")
+      .eq("order_no", data.orderNo).maybeSingle();
+    if (!order?.zoho_salesorder_id) return { refreshed: false };
+    const { data: roles } = await db.from("user_roles").select("role").eq("user_id", context.userId);
+    const isAdmin = (roles ?? []).some((row) => row.role === "admin");
+    let allowed = isAdmin || order.user_id === context.userId;
+    if (!allowed && (roles ?? []).some((row) => row.role === "vendor")) {
+      const { data: profile } = await db.from("profiles").select("vendor_id").eq("id", context.userId).maybeSingle();
+      allowed = Boolean(profile?.vendor_id && (order.vendor_ids ?? []).includes(profile.vendor_id));
+    }
+    if (!allowed) throw new Error("Not allowed");
+    const last = Date.parse(order.zoho_last_polled_at ?? "");
+    if (Number.isFinite(last) && Date.now() - last < 30_000) return { refreshed: false };
+    await db.from("orders").update({ zoho_last_polled_at: new Date().toISOString() }).eq("id", order.id);
+    const { region, organizationId, token } = await zohoOrderContext(db);
+    const response = await inventoryRequest<{ salesorder?: Record<string, unknown> }>(
+      region, organizationId, token, `salesorders/${encodeURIComponent(order.zoho_salesorder_id)}`, "GET",
+    );
+    if (!response.salesorder) return { refreshed: false };
+    await recordZohoInvoiceState(db, order, response.salesorder);
+    return { refreshed: true };
+  });
 
 /** Pushes products to Zoho now and settles their queued catalog jobs. */
 async function syncCatalogProductsDirect(db: Awaited<ReturnType<typeof dbAdmin>>, productIds: string[]) {
