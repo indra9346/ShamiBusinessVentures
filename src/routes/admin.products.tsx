@@ -33,6 +33,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
+import { hiddenReason, shownOnStorefront, storefrontPatch } from "@/lib/storefront-visibility";
 import {
   Select,
   SelectContent,
@@ -379,7 +380,8 @@ function AdminProductsPanel() {
       const matchesQ = !s || p.name.toLowerCase().includes(s) || p.sku.toLowerCase().includes(s);
       const matchesCat = category === "all" || p.category === category;
       const matchesVendor = vendorId === "all" || p.vendorId === vendorId;
-      const matchesStatus = status === "all" || p.status === status;
+      const matchesStatus = status === "all"
+        || (status === "shown" ? shownOnStorefront(p) : status === "hidden" ? !shownOnStorefront(p) : p.status === status);
       return matchesQ && matchesCat && matchesVendor && matchesStatus;
     });
     list = [...list].sort((a, b) => {
@@ -681,11 +683,13 @@ function AdminProductsPanel() {
                 setPage(1);
               }}
             >
-              <SelectTrigger className="h-9 w-32">
+              <SelectTrigger className="h-9 w-40">
                 <SelectValue placeholder="Status" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Status</SelectItem>
+                <SelectItem value="shown">Shown on store</SelectItem>
+                <SelectItem value="hidden">Hidden from store</SelectItem>
                 <SelectItem value="approved">Approved</SelectItem>
                 <SelectItem value="pending">Pending</SelectItem>
                 <SelectItem value="rejected">Rejected</SelectItem>
@@ -1102,7 +1106,7 @@ function AdminProductsPanel() {
       >
         <DataTable
           minWidth={900}
-          columns={["Product", "Category / Vendor", "Price", "Stock", "Status", "Created", "Actions"]}
+          columns={["Product", "Category / Vendor", "Price", "Stock", "Storefront / Approval", "Created", "Actions"]}
           columnClassNames={[
             "w-[32%] min-w-[220px]",
             "min-w-[120px]",
@@ -1171,7 +1175,22 @@ function AdminProductsPanel() {
                   <StatusBadge status={p.status} />
                   {p.active ? "Active in Zoho" : "Inactive in Zoho"}
                 </div>
-              ) : <div className="flex flex-col items-start gap-2">
+              ) : <div className="flex flex-col items-start gap-1.5">
+                <label className="flex items-center gap-2 text-xs font-semibold">
+                  <Switch
+                    checked={shownOnStorefront(p)}
+                    aria-label={`Show ${p.name} on the storefront`}
+                    onCheckedChange={async (show) => {
+                      const patch = storefrontPatch(p, show);
+                      if (patch && await updateProduct(p.id, patch))
+                        toast.success(show ? `${p.name} is now shown on the storefront` : `${p.name} is hidden from the storefront`);
+                    }}
+                  />
+                  <span className={shownOnStorefront(p) ? "text-emerald-700" : "text-slate"}>
+                    {shownOnStorefront(p) ? "Shown on store" : "Hidden"}
+                  </span>
+                </label>
+                {!shownOnStorefront(p) && <span className="text-[11px] text-slate">{hiddenReason(p)}</span>}
                 <Select
                   value={p.status}
                   onValueChange={async (v) => {
@@ -1191,17 +1210,6 @@ function AdminProductsPanel() {
                     <SelectItem value="rejected">Rejected</SelectItem>
                   </SelectContent>
                 </Select>
-                <label className="flex items-center gap-2 text-xs text-slate">
-                  <Switch
-                    checked={p.active}
-                    aria-label={`${p.name} active on storefront`}
-                    onCheckedChange={async (v) => {
-                      if (await updateProduct(p.id, { active: v }))
-                        toast.success(`${p.name} ${v ? "enabled" : "disabled"}`);
-                    }}
-                  />
-                  {p.active ? "Active" : "Inactive"}
-                </label>
               </div>,
               <span className="text-xs text-slate">{formatCreated(p.created)}</span>,
               zoho ? (

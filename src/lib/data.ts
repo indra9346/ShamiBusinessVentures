@@ -6,6 +6,7 @@ import premiumRiceCategoryImg from "@/assets/category-rice-premium.jpg";
 import premiumSugarCategoryImg from "@/assets/category-sugar-premium.jpg";
 import premiumOilCategoryImg from "@/assets/category-oil-premium.jpg";
 import { rateForPackPrice } from "@/lib/pricing";
+import { shownOnStorefront } from "@/lib/storefront-visibility";
 
 export const inr = (n: number) =>
   "₹" + Math.round(n).toLocaleString("en-IN", { maximumFractionDigits: 2 });
@@ -307,8 +308,7 @@ export const isStorefrontCategory = (name: string) =>
 /** Read-only copies imported from Zoho Commerce (vendor_id "zoho:<org>"); the app's own products are the stock master. */
 export const isZohoMirrorProduct = (p: Pick<Product, "vendorId">) =>
   (p.vendorId ?? "").startsWith("zoho:");
-export const isStorefrontProduct = (p: Product) =>
-  p.status === "approved" && p.active !== false && !isZohoMirrorProduct(p);
+export const isStorefrontProduct = (p: Product) => shownOnStorefront(p);
 
 
 const catImage: Record<string, string> = {
