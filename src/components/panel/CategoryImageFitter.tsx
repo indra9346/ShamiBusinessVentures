@@ -5,9 +5,9 @@ import { Button } from "@/components/ui/button";
 import { defaultCategoryImageFit, normalizeCategoryImageFit, type CategoryImageFit } from "@/lib/data";
 
 /**
- * Lets the admin frame a category image for the round storefront badges: drag the big circle to
+ * Lets the admin frame a category image for the square storefront tiles: drag the big square to
  * choose what stays in view, zoom in so the product fills it, and check the live previews of
- * the category strip and homepage circle before saving.
+ * the category strip and homepage card before saving.
  */
 export function CategoryImageFitter({
   src,
@@ -65,7 +65,7 @@ export function CategoryImageFitter({
           onPointerMove={onPointerMove}
           onPointerUp={endDrag}
           onPointerCancel={endDrag}
-          className="relative h-40 w-40 shrink-0 cursor-grab touch-none overflow-hidden rounded-full border-4 border-gold/60 bg-card shadow-card active:cursor-grabbing"
+          className="relative h-40 w-40 shrink-0 cursor-grab touch-none overflow-hidden rounded-lg border-4 border-gold/60 bg-card shadow-card active:cursor-grabbing"
         >
           <CategoryImage src={src} fit={value} loading="eager" />
           <span className="pointer-events-none absolute inset-x-0 bottom-2 mx-auto flex w-max items-center gap-1 rounded-full bg-midnight/60 px-2 py-0.5 text-[10px] font-semibold text-white">
@@ -77,13 +77,13 @@ export function CategoryImageFitter({
           <p className="text-[11px] font-semibold uppercase tracking-wide text-slate">Storefront preview</p>
           <div className="flex items-end gap-4">
             <div className="grid justify-items-center gap-1">
-              <span className="block h-16 w-16 overflow-hidden rounded-full border-2 border-stone-200 bg-card">
+              <span className="block h-16 w-16 overflow-hidden rounded-md border-2 border-gold/70 bg-card">
                 <CategoryImage src={src} fit={value} loading="eager" />
               </span>
               <span className="text-[10px] text-slate">Category strip</span>
             </div>
             <div className="grid justify-items-center gap-1">
-              <span className="block h-24 w-24 overflow-hidden rounded-full bg-ivory ring-4 ring-ivory">
+              <span className="block h-24 w-24 overflow-hidden rounded-md bg-ivory">
                 <CategoryImage src={src} fit={value} loading="eager" />
               </span>
               <span className="text-[10px] text-slate">Homepage</span>

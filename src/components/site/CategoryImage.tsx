@@ -3,7 +3,7 @@ import { normalizeCategoryImageFit, type CategoryImageFit } from "@/lib/data";
 import { cn } from "@/lib/utils";
 
 /**
- * A category image cropped to its container (circle or card) using the admin's saved fit:
+ * A category image cropped to its square tile or card using the admin's saved fit:
  * the focus point is kept in view and the zoom scales around it. The outer span clips, so
  * callers can add hover effects on `className` without fighting the fit transform.
  */
