@@ -508,3 +508,73 @@ export function roundingWriteOff(orderTotal: number, paidAmount: number, invoice
   const balance = Math.round(invoiceBalance * 100) / 100;
   return paidInFull && balance > 0 && balance <= ROUNDING_WRITE_OFF_LIMIT ? balance : 0;
 }
+
+/* ---------------------------------------------------------------------------------------------
+ * Order fulfilment, both ways, at the order's godown location in Zoho:
+ *   website Packed            -> Zoho package          (Zoho package      -> website Packed)
+ *   website Dispatched / Out  -> Zoho shipment          (Zoho shipped      -> website Dispatched)
+ *   website Delivered         -> shipment Delivered     (Zoho delivered    -> website Delivered)
+ * Status only ever moves forward on either side.
+ * ------------------------------------------------------------------------------------------- */
+
+const FULFILMENT_RANK: Record<string, number> = {
+  "Placed": 0, "Awaiting Payment": 0, "Payment Confirmed": 1, "Accepted": 2,
+  "Packed": 3, "Dispatched": 4, "Out for Delivery": 5, "Delivered": 6,
+};
+
+/** How far an order has got (Cancelled and unknown statuses are -1). */
+export const fulfilmentRank = (status: string) => FULFILMENT_RANK[status] ?? -1;
+
+export type ZohoPackageState = { packageId: string; status: string; shipmentId: string; shipmentStatus: string };
+
+/** The packages on a Zoho sales order, with their shipment (if any). */
+export function zohoPackagesOf(salesOrder: Record<string, unknown>): ZohoPackageState[] {
+  const packages = Array.isArray(salesOrder["packages"]) ? salesOrder["packages"] as Record<string, unknown>[] : [];
+  return packages.map((pkg) => {
+    const shipment = pkg["shipment_order"] && typeof pkg["shipment_order"] === "object" ? pkg["shipment_order"] as Record<string, unknown> : {};
+    const text = (value: unknown) => (typeof value === "string" || typeof value === "number" ? String(value) : "");
+    return {
+      packageId: text(pkg["package_id"]),
+      status: text(pkg["status"]).toLowerCase(),
+      shipmentId: text(shipment["shipment_id"] ?? pkg["shipment_id"]),
+      shipmentStatus: text(shipment["status"] ?? pkg["shipment_status"]).toLowerCase(),
+    };
+  }).filter((pkg) => pkg.packageId && pkg.status !== "void");
+}
+
+const SHIPPED_STATES = ["shipped", "in_transit", "in transit", "fulfilled", "delivered"];
+
+/**
+ * The next Zoho step that makes a sales order match the website status, or null when it already
+ * matches. Called again after each step (packages first, then shipment, then delivered).
+ */
+export function nextZohoFulfilmentStep(appStatus: string, packages: ZohoPackageState[]):
+  | { step: "package" }
+  | { step: "shipment"; packageId: string }
+  | { step: "delivered"; shipmentId: string }
+  | null {
+  const rank = fulfilmentRank(appStatus);
+  if (rank < FULFILMENT_RANK["Packed"]!) return null;
+  if (!packages.length) return { step: "package" };
+  if (rank < FULFILMENT_RANK["Dispatched"]!) return null;
+  const unshipped = packages.find((pkg) => !pkg.shipmentId && !SHIPPED_STATES.includes(pkg.status));
+  if (unshipped) return { step: "shipment", packageId: unshipped.packageId };
+  if (rank < FULFILMENT_RANK["Delivered"]!) return null;
+  const undelivered = packages.find((pkg) => pkg.shipmentId && pkg.shipmentStatus !== "delivered" && pkg.status !== "delivered");
+  return undelivered ? { step: "delivered", shipmentId: undelivered.shipmentId } : null;
+}
+
+/** Zoho's fulfilment progress as a website status (Packed / Dispatched / Delivered), or null. */
+export function zohoFulfilmentStatus(packages: ZohoPackageState[], shippedStatus = ""): "Packed" | "Dispatched" | "Delivered" | null {
+  const states = packages.flatMap((pkg) => [pkg.status, pkg.shipmentStatus]).concat(shippedStatus.toLowerCase());
+  if (states.includes("delivered")) return "Delivered";
+  if (states.some((state) => ["shipped", "in_transit", "in transit", "fulfilled"].includes(state))) return "Dispatched";
+  if (packages.length) return "Packed";
+  return null;
+}
+
+/** Whether a status from Zoho moves the website order forward (never backwards, never a cancelled order). */
+export function zohoStatusMovesForward(currentStatus: string, incoming: string) {
+  const current = fulfilmentRank(currentStatus);
+  return current >= 0 && fulfilmentRank(incoming) > current;
+}
