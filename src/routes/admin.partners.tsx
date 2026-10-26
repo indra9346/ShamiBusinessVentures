@@ -86,8 +86,8 @@ function GodownPartnerCard({ godownId, godownName, partner, pastPartners, rules,
 }) {
   return (
     <Panel title={`${godownName}`}>
-      <div className="grid gap-6 lg:grid-cols-2">
-        <div>
+      <div className="grid gap-6 xl:grid-cols-2">
+        <div className="min-w-0">
           <h3 className="mb-2 text-xs font-bold uppercase tracking-wider text-slate">Channel partner</h3>
           {partner ? <PartnerAccount partner={partner} onChange={onChange} /> : <CreatePartnerForm godownId={godownId} godownName={godownName} onChange={onChange} />}
           {pastPartners.length > 0 && (
@@ -101,7 +101,7 @@ function GodownPartnerCard({ godownId, godownName, partner, pastPartners, rules,
           )}
           {partner && <TargetEditor partnerId={partner.id} month={month} />}
         </div>
-        <div>
+        <div className="min-w-0">
           <h3 className="mb-2 text-xs font-bold uppercase tracking-wider text-slate">Commission rates</h3>
           <RateEditor godownId={godownId} rules={rules} onChange={onChange} />
         </div>
@@ -146,13 +146,13 @@ function CreatePartnerForm({ godownId, godownName, onChange }: { godownId: strin
   return (
     <div className="space-y-2 rounded-lg border border-dashed border-border p-3">
       <p className="text-sm text-slate">No partner yet. Create their login and share it with them.</p>
-      <div className="grid gap-2 sm:grid-cols-2">
+      <div className="grid gap-2 md:grid-cols-2 [&>*]:min-w-0">
         <div className="grid gap-1"><Label className="text-xs">Full name</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
         <div className="grid gap-1"><Label className="text-xs">Phone</Label><Input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></div>
         <div className="grid gap-1"><Label className="text-xs">Login email</Label><Input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></div>
         <div className="grid gap-1"><Label className="text-xs">Password</Label>
           <div className="flex gap-1">
-            <Input value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} className="font-mono" />
+            <Input value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} className="min-w-0 font-mono" />
             <Button type="button" variant="outline" size="sm" onClick={() => setForm({ ...form, password: suggestPartnerPassword() })}>New</Button>
           </div>
           {passwordProblem && <span className="text-[11px] text-amber-700">{passwordProblem}</span>}
@@ -279,9 +279,9 @@ function RateEditor({ godownId, rules, onChange }: { godownId: string; rules: Ru
           ))}
         </ul>
       ) : <p className="text-sm text-amber-700">No rates yet: this godown's partner earns nothing until a rate is set.</p>}
-      <div className="grid gap-2 rounded-lg bg-ivory/60 p-2 sm:grid-cols-[2fr_1fr_1fr_auto] sm:items-end">
+      <div className="grid gap-2 rounded-lg bg-ivory/60 p-2 md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)_auto] md:items-end [&>*]:min-w-0">
         <div className="grid gap-1"><Label className="text-xs">Product</Label>
-          <select className="h-8 rounded-md border border-input bg-white px-2 text-sm" value={draft.productId} onChange={(e) => setDraft({ ...draft, productId: e.target.value })}>
+          <select className="h-8 w-full min-w-0 rounded-md border border-input bg-white px-2 text-sm" value={draft.productId} onChange={(e) => setDraft({ ...draft, productId: e.target.value })}>
             <option value="">Default (all other products)</option>
             {real.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}
           </select>
