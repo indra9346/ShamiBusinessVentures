@@ -26,6 +26,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { InvoicePreviewButton } from "@/components/site/InvoicePreviewDialog";
+import { ResizableTable } from "@/hooks/use-column-resize";
 
 export const Route = createFileRoute("/account/orders/$id")({
   head: ({ params }) => ({
@@ -257,7 +258,7 @@ function AccountOrderDetail() {
         <Panel title="Items">
           {order.items.some((item) => item.dbItemId) && order.status === "Delivered" && <div className="mb-4 flex justify-end"><Button variant="outline" onClick={() => setReturnOpen(true)}>Request a return</Button></div>}
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[560px] text-sm">
+            <ResizableTable tableId="account-order-lines" className="w-full min-w-[560px] text-sm">
               <thead>
                 <tr className="border-b border-border text-left text-[11px] font-bold tracking-wider text-slate uppercase">
                   <th className="px-3 py-3">Product</th>
@@ -292,7 +293,7 @@ function AccountOrderDetail() {
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </ResizableTable>
           </div>
         </Panel>
         <Panel title="Order Summary">

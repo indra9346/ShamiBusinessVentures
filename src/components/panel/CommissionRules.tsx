@@ -8,6 +8,7 @@ import { useApp } from "@/lib/store";
 import { useBranches } from "@/lib/branches";
 import { supabase } from "@/integrations/supabase/client";
 import type { Json } from "@/integrations/supabase/types";
+import { ResizableTable } from "@/hooks/use-column-resize";
 
 /** GST state codes (first two digits of a GSTIN). */
 export const GST_STATES: [string, string][] = [
@@ -107,7 +108,7 @@ export function CommissionRules() {
       </div>
       {vendors.length > 0 && (
         <div className="mt-4 overflow-x-auto">
-          <table className="w-full text-sm">
+          <ResizableTable tableId="commission-rules" className="w-full text-sm">
             <thead><tr className="border-b border-border text-left text-xs uppercase text-slate"><th className="py-2">Vendor</th><th>State (GSTIN)</th><th>Rate now</th><th></th></tr></thead>
             <tbody>
               {vendors.map((vendor) => {
@@ -123,7 +124,7 @@ export function CommissionRules() {
                 );
               })}
             </tbody>
-          </table>
+          </ResizableTable>
         </div>
       )}
     </Panel>

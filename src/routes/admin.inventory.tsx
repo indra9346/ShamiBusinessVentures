@@ -35,6 +35,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { downloadCSV } from "@/lib/export-utils";
+import { ResizableTable } from "@/hooks/use-column-resize";
 
 export const Route = createFileRoute("/admin/inventory")({
   head: () => ({
@@ -495,7 +496,7 @@ function AdminInventory() {
               </div>
 
               <div className="max-h-72 overflow-y-auto">
-                <table className="w-full text-left text-xs">
+                <ResizableTable tableId="admin-inventory-batches" className="w-full text-left text-xs">
                   <thead className="border-b border-border bg-muted/40 font-semibold text-slate uppercase">
                     <tr>
                       <th className="p-2">Batch Code</th>
@@ -541,7 +542,7 @@ function AdminInventory() {
                         </tr>
                       ))}
                   </tbody>
-                </table>
+                </ResizableTable>
               </div>
             </div>
           )}

@@ -60,6 +60,7 @@ import {
   type ZohoEditableSalesOrder,
 } from "@/lib/zoho-commerce.functions";
 import { ZohoSalesOrderEditor } from "@/components/panel/ZohoSalesOrderEditor";
+import { ResizableTable } from "@/hooks/use-column-resize";
 
 export const Route = createFileRoute("/admin/zoho")({ component: ZohoCommerceAdmin });
 
@@ -399,7 +400,7 @@ function OrderLineItems({ payload }: { payload: Record<string, unknown> }) {
     <section>
       <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate">Items ({rows.length})</h4>
       <div className="overflow-x-auto rounded-md border border-border bg-card">
-        <table className="w-full min-w-[560px] text-left text-sm">
+        <ResizableTable tableId="admin-zoho-1" className="w-full min-w-[560px] text-left text-sm">
           <thead className="bg-panel text-[11px] uppercase tracking-wide text-slate">
             <tr><th className="px-3 py-2">Item</th><th className="px-3 py-2">SKU</th><th className="px-3 py-2 text-right">Quantity</th><th className="px-3 py-2 text-right">Rate</th><th className="px-3 py-2 text-right">Amount</th></tr>
           </thead>
@@ -426,7 +427,7 @@ function OrderLineItems({ payload }: { payload: Record<string, unknown> }) {
               </tr>
             ))}
           </tbody>
-        </table>
+        </ResizableTable>
       </div>
     </section>
   );
@@ -1537,7 +1538,7 @@ function ZohoCommerceAdmin() {
               {hasVisibleRecords ? (
                 selectedResource === "customers_from_orders" ? (
                   <div className="overflow-x-auto rounded-lg border border-border">
-                    <table className="w-full min-w-[900px] text-left text-sm">
+                    <ResizableTable tableId="admin-zoho-2" className="w-full min-w-[900px] text-left text-sm">
                       <thead className="bg-panel text-[11px] font-semibold uppercase tracking-wide text-slate"><tr><th className="px-4 py-3">Customer / business</th><th className="px-4 py-3">Email</th><th className="px-4 py-3">Phone</th><th className="px-4 py-3">Location</th><th className="px-4 py-3">Orders</th><th className="px-4 py-3">Sales order value</th><th className="px-4 py-3">Last order</th></tr></thead>
                       <tbody className="divide-y divide-border bg-card">
                         {visibleCustomers.map((customer) => (
@@ -1547,7 +1548,7 @@ function ZohoCommerceAdmin() {
                           </tr>
                         ))}
                       </tbody>
-                    </table>
+                    </ResizableTable>
                   </div>
                 ) : selectedResource === "sales_orders" ? (
                   <div className="overflow-hidden rounded-lg border border-border">

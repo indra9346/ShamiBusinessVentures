@@ -6,6 +6,7 @@ import { Panel, StatusBadge } from "@/components/panel/widgets";
 import { adminNav } from "@/lib/panel-nav";
 import { supabase } from "@/integrations/supabase/client";
 import type { Json } from "@/integrations/supabase/types";
+import { ResizableTable } from "@/hooks/use-column-resize";
 
 export const Route = createFileRoute("/admin/enquiries")({
   head: () => ({
@@ -82,7 +83,7 @@ function AdminEnquiries() {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[720px] text-left text-sm">
+            <ResizableTable tableId="admin-enquiries" className="w-full min-w-[720px] text-left text-sm">
               <thead>
                 <tr className="border-b text-xs uppercase text-slate">
                   <th className="p-3">Request</th>
@@ -130,7 +131,7 @@ function AdminEnquiries() {
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </ResizableTable>
           </div>
         )}
         <p className="mt-4 text-xs text-slate">

@@ -4,6 +4,7 @@ import { PanelLayout } from "@/components/panel/PanelLayout";
 import { Panel } from "@/components/panel/widgets";
 import { adminNav } from "@/lib/panel-nav";
 import { Button } from "@/components/ui/button";
+import { ResizableTable } from "@/hooks/use-column-resize";
 
 export const Route = createFileRoute("/admin/zoho-diagnostics")({
   head: () => ({ meta: [{ title: "Zoho diagnostics | Grain Bazar Admin" }, { name: "robots", content: "noindex" }] }),
@@ -121,7 +122,7 @@ function ReconcilePanel() {
             </p>
             {report.issues.length > 0 && (
               <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
+                <ResizableTable tableId="zoho-diagnostics-1" className="w-full text-left text-xs">
                   <thead className="text-slate"><tr><th className="py-1 pr-3">Order</th><th className="py-1 pr-3">Issue</th><th className="py-1">Detail</th></tr></thead>
                   <tbody>
                     {report.issues.map((row, i) => (
@@ -132,7 +133,7 @@ function ReconcilePanel() {
                       </tr>
                     ))}
                   </tbody>
-                </table>
+                </ResizableTable>
               </div>
             )}
             <p className="text-xs text-slate">Ran {new Date(report.ranAt).toLocaleString("en-IN")}.</p>
@@ -216,7 +217,7 @@ function CatalogParityPanel() {
             )}
             {rows.length > 0 && (
               <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
+                <ResizableTable tableId="zoho-diagnostics-2" className="w-full text-left text-xs">
                   <thead className="text-slate"><tr><th className="py-1 pr-3">Product / customer</th><th className="py-1 pr-3">Issue</th><th className="py-1">Detail</th></tr></thead>
                   <tbody>
                     {rows.map((row) => (
@@ -227,7 +228,7 @@ function CatalogParityPanel() {
                       </tr>
                     ))}
                   </tbody>
-                </table>
+                </ResizableTable>
               </div>
             )}
             <p className="text-xs text-slate">Ran {new Date(report.ranAt).toLocaleString("en-IN")} · {report.zohoItemsFetched} Zoho items read.</p>

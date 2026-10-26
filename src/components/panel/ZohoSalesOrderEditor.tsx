@@ -10,6 +10,7 @@ import {
   updateZohoSalesOrder,
   type ZohoEditableSalesOrder,
 } from "@/lib/zoho-commerce.functions";
+import { ResizableTable } from "@/hooks/use-column-resize";
 
 type Address = ZohoEditableSalesOrder["billingAddress"];
 type StatusAction = "" | "confirmed" | "void" | "cancelled";
@@ -198,7 +199,7 @@ export function ZohoSalesOrderEditor({
       </div>
 
       <div className="overflow-x-auto rounded-md border border-border">
-        <table className="w-full min-w-[560px] text-left text-sm">
+        <ResizableTable tableId="zoho-so-editor" className="w-full min-w-[560px] text-left text-sm">
           <thead className="bg-panel text-[11px] uppercase tracking-wide text-slate">
             <tr><th className="px-3 py-2">Item</th><th className="px-3 py-2 text-right">Quantity</th><th className="px-3 py-2 text-right">Rate</th><th className="px-3 py-2 text-right">Amount</th></tr>
           </thead>
@@ -218,7 +219,7 @@ export function ZohoSalesOrderEditor({
               </tr>
             ))}
           </tbody>
-        </table>
+        </ResizableTable>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
