@@ -443,3 +443,55 @@ export function pendingOrderQty(orders: OrderForPending[], since: string, defaul
   }
   return out;
 }
+
+/* ---------------------------------------------------------------------------------------------
+ * Zoho Books invoice + payment for a confirmed website order.
+ * When an admin confirms an order (any status after "Placed" / "Awaiting Payment", except
+ * Cancelled) its Zoho sales order is converted to a Books invoice, and every verified website
+ * payment (UTR) is recorded against that invoice, so Books shows it PAID like the counter sales.
+ * ------------------------------------------------------------------------------------------- */
+
+/** Whether a website order is confirmed by the admin and should have a Zoho Books invoice. */
+export function orderNeedsZohoInvoice(orderStatus: string) {
+  return !["Placed", "Awaiting Payment", "Cancelled"].includes(orderStatus);
+}
+
+/** The Books payment mode for a website payment method (Books keeps the method in the description). */
+export function zohoPaymentMode(method: string | null | undefined) {
+  const value = (method ?? "").toLowerCase();
+  if (value.includes("cash")) return "Cash";
+  if (value.includes("card")) return "Credit Card";
+  if (value.includes("cheque") || value.includes("check")) return "Check";
+  return "Bank Transfer";
+}
+
+export type WebsitePayment = { amount: number; txnRef: string; method: string | null; paidAt: string };
+export type PaymentToRecord = { amount: number; reference: string; date: string; mode: string; method: string };
+
+/** yyyy-mm-dd of a timestamp in India time (Books dates are the organization's local dates). */
+export function indiaDate(timestamp: string) {
+  const time = Date.parse(timestamp);
+  const at = Number.isFinite(time) ? new Date(time + 330 * 60_000) : new Date(Date.now() + 330 * 60_000);
+  return at.toISOString().slice(0, 10);
+}
+
+/**
+ * The website payments still to record in Books against an invoice: each verified payment whose
+ * UTR is not already on the invoice (case-insensitive), oldest first, never more than the
+ * invoice's balance. Re-running after a partial failure therefore never records a payment twice.
+ */
+export function paymentsToRecord(payments: WebsitePayment[], recordedReferences: string[], invoiceBalance: number): PaymentToRecord[] {
+  const recorded = new Set(recordedReferences.map((ref) => ref.trim().toLowerCase()).filter(Boolean));
+  let balance = Math.round(Math.max(0, invoiceBalance) * 100);
+  const result: PaymentToRecord[] = [];
+  for (const payment of [...payments].sort((a, b) => Date.parse(a.paidAt) - Date.parse(b.paidAt))) {
+    const reference = payment.txnRef.trim();
+    const amount = Math.round(Number(payment.amount) * 100);
+    if (!reference || !(amount > 0) || recorded.has(reference.toLowerCase()) || balance <= 0) continue;
+    const applied = Math.min(amount, balance);
+    balance -= applied;
+    recorded.add(reference.toLowerCase());
+    result.push({ amount: applied / 100, reference, date: indiaDate(payment.paidAt), mode: zohoPaymentMode(payment.method), method: payment.method ?? "" });
+  }
+  return result;
+}

@@ -12,7 +12,7 @@
     "preview": "vite preview",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "test:zoho": "node --experimental-strip-types --test tests/zoho-sync-core.test.ts tests/zoho-parity.test.ts tests/zoho-godown.test.ts tests/pricing.test.ts tests/godown-rules.test.ts tests/column-widths.test.ts"
+    "test:zoho": "node --experimental-strip-types --test tests/zoho-sync-core.test.ts tests/zoho-parity.test.ts tests/zoho-godown.test.ts tests/pricing.test.ts tests/godown-rules.test.ts tests/column-widths.test.ts tests/zoho-invoice.test.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
