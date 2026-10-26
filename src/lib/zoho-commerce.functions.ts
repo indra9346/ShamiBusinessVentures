@@ -10,6 +10,7 @@ import {
   zohoPricebookItemsFor, reconcileCatalog, reconcileCustomers, reconcileOrders, shouldRetryZohoCall,
   zohoItemSyncAllows, zohoLogLine,
   zohoOrderNumber, zohoRetryDelayMs, type AppProductForParity, type ZohoItemForParity, type ZohoOrderForReconcile,
+  orderNeedsZohoInvoice, paymentsToRecord,
 } from "@/lib/zoho-sync-core";
 
 const REGIONS = {
@@ -145,7 +146,7 @@ export const startZohoAuthorization = createServerFn({ method: "POST" })
       response_type: "code",
       client_id: reqEnv("ZOHO_CLIENT_ID"),
       scope:
-        "ZohoCommerce.items.READ,ZohoCommerce.items.CREATE,ZohoCommerce.items.UPDATE,ZohoCommerce.coupons.READ,ZohoCommerce.coupons.CREATE,ZohoCommerce.coupons.UPDATE,ZohoCommerce.salesorders.READ,ZohoCommerce.salesorders.CREATE,ZohoCommerce.salesorders.UPDATE,ZohoCommerce.settings.READ,ZohoCommerce.settings.UPDATE,ZohoCommerce.sitesIndex.READ,ZohoCommerce.webhooks.READ,ZohoCommerce.webhooks.CREATE,ZohoInventory.contacts.READ,ZohoInventory.contacts.CREATE,ZohoInventory.contacts.UPDATE,ZohoInventory.items.READ,ZohoInventory.items.CREATE,ZohoInventory.items.UPDATE,ZohoInventory.salesorders.READ,ZohoInventory.salesorders.CREATE,ZohoInventory.salesorders.UPDATE,ZohoInventory.inventoryadjustments.READ,ZohoInventory.inventoryadjustments.CREATE,ZohoInventory.settings.READ,ZohoInventory.settings.UPDATE,ZohoBooks.salesorders.CREATE",
+        "ZohoCommerce.items.READ,ZohoCommerce.items.CREATE,ZohoCommerce.items.UPDATE,ZohoCommerce.coupons.READ,ZohoCommerce.coupons.CREATE,ZohoCommerce.coupons.UPDATE,ZohoCommerce.salesorders.READ,ZohoCommerce.salesorders.CREATE,ZohoCommerce.salesorders.UPDATE,ZohoCommerce.settings.READ,ZohoCommerce.settings.UPDATE,ZohoCommerce.sitesIndex.READ,ZohoCommerce.webhooks.READ,ZohoCommerce.webhooks.CREATE,ZohoInventory.contacts.READ,ZohoInventory.contacts.CREATE,ZohoInventory.contacts.UPDATE,ZohoInventory.items.READ,ZohoInventory.items.CREATE,ZohoInventory.items.UPDATE,ZohoInventory.salesorders.READ,ZohoInventory.salesorders.CREATE,ZohoInventory.salesorders.UPDATE,ZohoInventory.inventoryadjustments.READ,ZohoInventory.inventoryadjustments.CREATE,ZohoInventory.settings.READ,ZohoInventory.settings.UPDATE,ZohoBooks.salesorders.CREATE,ZohoBooks.invoices.READ,ZohoBooks.invoices.CREATE,ZohoBooks.customerpayments.READ,ZohoBooks.customerpayments.CREATE",
       redirect_uri: redirectUri,
       access_type: "offline",
       prompt: "consent",
@@ -2001,7 +2002,9 @@ async function zohoLineItemsForOrder(
   return lineItems;
 }
 
-const ZOHO_CLOSED_ORDER_STATES = ["void", "cancelled", "closed"];
+const ZOHO_CLOSED_ORDER_STATES = ["void", "cancelled"];
+/** Zoho closes a sales order once it is fully invoiced and shipped: nothing left to edit there. */
+const ZOHO_FINISHED_ORDER_STATES = ["closed", "fulfilled"];
 
 /**
  * Grain Bazar -> Zoho for an order already in Zoho: a Grain Bazar cancellation voids the Zoho
@@ -2042,7 +2045,7 @@ async function syncLinkedZohoOrder(
   } else if (ZOHO_CLOSED_ORDER_STATES.includes(zohoStatus())) {
     await saveZohoZohoState(db, order.id, zoho);
     throw new NeedsReviewError(`Zoho sales order ${str(zoho["salesorder_number"])} is ${zohoStatus()} in Zoho, but Grain Bazar order ${order.order_no} is ${order.order_status}. Cancel it in Grain Bazar or create a new Zoho order.`);
-  } else {
+  } else if (!ZOHO_FINISHED_ORDER_STATES.includes(zohoStatus())) {
     const zohoTotal = Number(zoho["total"]);
     const invoiced = str(zoho["invoiced_status"]).toLowerCase();
     if (Number.isFinite(zohoTotal) && Math.abs(zohoTotal - Number(order.total)) > 0.01) {
@@ -2079,11 +2082,111 @@ async function syncLinkedZohoOrder(
       zoho = await load();
     }
   }
+  // Confirmed by the admin: the Zoho Books invoice, with the verified payments recorded on it.
+  if (orderNeedsZohoInvoice(order.order_status) && !["draft", ...ZOHO_CLOSED_ORDER_STATES].includes(zohoStatus())) {
+    await ensureZohoBooksInvoice(db, region, organizationId, token, order, zoho);
+    zoho = await load();
+  }
   await saveZohoZohoState(db, order.id, zoho);
   await refreshSalesOrderSnapshotSafe(db, organizationId, zoho);
   const finalTotal = Number(zoho["total"]);
   if (order.order_status !== "Cancelled" && Number.isFinite(finalTotal) && Math.abs(finalTotal - Number(order.total)) > 2)
     throw new NeedsReviewError(`Zoho sales order ${str(zoho["salesorder_number"])} totals ₹${finalTotal.toFixed(2)}; Grain Bazar order ${order.order_no} totals ₹${Number(order.total).toFixed(2)}. Review taxes, discount and shipping.`);
+}
+
+/**
+ * Zoho Books invoice for a confirmed website order: converts its sales order to an invoice (Books
+ * "invoices/fromsalesorder", so it gets the godown location's invoice series), marks it sent,
+ * then records each verified website payment (by UTR) against it, so Books shows the order PAID.
+ * Every step looks at Zoho first, so a retry never makes a second invoice or payment.
+ */
+async function ensureZohoBooksInvoice(
+  db: Awaited<ReturnType<typeof dbAdmin>>,
+  region: Region,
+  organizationId: string,
+  token: string,
+  order: Database["public"]["Tables"]["orders"]["Row"],
+  zoho: Record<string, unknown>,
+) {
+  const salesOrderId = order.zoho_salesorder_id!;
+  const number = str(zoho["salesorder_number"]) || zohoOrderNumber(order.order_no);
+  const fail = (step: string, cause: unknown): never => {
+    const message = cause instanceof Error ? cause.message : String(cause);
+    throw new Error(`Zoho Books invoice for ${number}: ${step} failed: ${message}.${zohoPermissionHint(message)}`);
+  };
+  type BooksInvoice = { invoice_id?: string; invoice_number?: string; status?: string; total?: number; balance?: number; customer_id?: string };
+  const linked = (Array.isArray(zoho["invoices"]) ? zoho["invoices"] : []).map(plainObject)
+    .filter((invoice) => str(invoice["invoice_id"]) && !["void"].includes(str(invoice["status"]).toLowerCase()));
+  let invoiceId = str(linked[0]?.["invoice_id"]);
+  if (!invoiceId) {
+    const invoiced = str(zoho["invoiced_status"]).toLowerCase();
+    if (invoiced && invoiced !== "not_invoiced" && invoiced !== "null")
+      throw new NeedsReviewError(`Zoho sales order ${number} is already invoiced, but its invoice could not be read. Check the invoice and payment for Grain Bazar order ${order.order_no} in Zoho Books.`);
+    try {
+      const created = await booksRequest<{ invoice?: BooksInvoice }>(region, organizationId, token, `invoices/fromsalesorder?salesorder_id=${encodeURIComponent(salesOrderId)}`, "POST");
+      invoiceId = str(created.invoice?.invoice_id);
+    } catch (cause) {
+      fail("creating the invoice", cause);
+    }
+    if (!invoiceId) throw new Error(`Zoho Books did not return the invoice created for ${number}`);
+    console.info(zohoLogLine("zoho_invoice_created", { order: number }));
+  }
+  const readInvoice = async () => {
+    try {
+      const response = await booksRequest<{ invoice?: BooksInvoice }>(region, organizationId, token, `invoices/${encodeURIComponent(invoiceId)}`, "GET");
+      if (!response.invoice) throw new Error("no invoice returned");
+      return response.invoice;
+    } catch (cause) {
+      return fail("reading the invoice", cause);
+    }
+  };
+  let invoice = await readInvoice();
+  if (str(invoice.status).toLowerCase() === "draft") {
+    try {
+      await booksRequest(region, organizationId, token, `invoices/${encodeURIComponent(invoiceId)}/status/sent`, "POST");
+    } catch (cause) {
+      fail("marking the invoice sent", cause);
+    }
+    invoice = await readInvoice();
+  }
+  const invoiceTotal = Number(invoice.total);
+  if (Number.isFinite(invoiceTotal) && Math.abs(invoiceTotal - Number(order.total)) > 2)
+    throw new NeedsReviewError(`Zoho Books invoice ${str(invoice.invoice_number)} totals ₹${invoiceTotal.toFixed(2)}; Grain Bazar order ${order.order_no} totals ₹${Number(order.total).toFixed(2)}. Payments were not recorded; correct the invoice in Zoho Books.`);
+
+  // Verified website payments (admin-confirmed UTRs) not yet on the invoice.
+  const { data: payments, error } = await db.from("payments").select("amount,txn_ref,method,created_at,status")
+    .eq("order_id", order.id).eq("status", "Paid");
+  if (error) throw new Error("Could not read the order's payments from Grain Bazar");
+  if (!payments?.length) return;
+  let recorded: string[] = [];
+  try {
+    const response = await booksRequest<{ payments?: { reference_number?: string }[] }>(region, organizationId, token, `invoices/${encodeURIComponent(invoiceId)}/payments`, "GET");
+    recorded = (response.payments ?? []).map((payment) => str(payment.reference_number));
+  } catch (cause) {
+    fail("reading the invoice's payments", cause);
+  }
+  const toRecord = paymentsToRecord(
+    payments.map((payment) => ({ amount: Number(payment.amount), txnRef: str(payment.txn_ref), method: payment.method, paidAt: payment.created_at })),
+    recorded,
+    Number(invoice.balance),
+  );
+  const customerId = str(invoice.customer_id) || str(zoho["customer_id"]);
+  for (const payment of toRecord) {
+    try {
+      await booksRequest(region, organizationId, token, "customerpayments", "POST", {
+        customer_id: customerId,
+        payment_mode: payment.mode,
+        amount: payment.amount,
+        date: payment.date,
+        reference_number: payment.reference,
+        description: `Grain Bazar order ${order.order_no} · ${payment.method || "website payment"} · UTR ${payment.reference}`,
+        invoices: [{ invoice_id: invoiceId, amount_applied: payment.amount }],
+      });
+    } catch (cause) {
+      fail(`recording payment ${payment.reference}`, cause);
+    }
+    console.info(zohoLogLine("zoho_invoice_payment_recorded", { order: number, amount: payment.amount }));
+  }
 }
 
 /** Records Zoho's status and change time on the Grain Bazar order (shown in the admin). */

@@ -51,6 +51,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
 import { InvoicePreviewButton } from "@/components/site/InvoicePreviewDialog";
+import { ResizableTable } from "@/hooks/use-column-resize";
 
 export const Route = createFileRoute("/admin/orders/$id")({
   head: ({ params }) => ({
@@ -659,7 +660,7 @@ function AdminOrderDetail() {
             Item quantities, selling price, and FIFO inventory cost layer information
           </p>
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[700px] text-sm">
+            <ResizableTable tableId="admin-order-lines" className="w-full min-w-[700px] text-sm">
               <thead>
                 <tr className="border-b border-border text-left text-[11px] font-bold tracking-wider text-slate uppercase">
                   <th className="px-3 py-3">Product</th>
@@ -806,7 +807,7 @@ function AdminOrderDetail() {
                   );
                 })}
               </tbody>
-            </table>
+            </ResizableTable>
           </div>
         </Panel>
       </div>

@@ -1,4 +1,5 @@
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
+import { useColumnResize } from "@/hooks/use-column-resize";
 import { TrendingDown, TrendingUp } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -121,6 +122,7 @@ export function DataTable({
   empty = "No records found",
   columnClassNames,
   minWidth = 640,
+  tableId,
 }: {
   columns: string[];
   rows: ReactNode[][];
@@ -129,7 +131,13 @@ export function DataTable({
   columnClassNames?: (string | undefined)[];
   /** Table min width in px before it scrolls sideways. */
   minWidth?: number;
+  /** Where its column widths are remembered; defaults to this page and these columns. */
+  tableId?: string;
 }) {
+  // Columns resize like Excel / Zoho: drag a header's right edge, double-click it to fit.
+  const tableRef = useRef<HTMLTableElement>(null);
+  const page = typeof window === "undefined" ? "" : window.location.pathname;
+  useColumnResize(tableRef, tableId ?? `${page}::${columns.join("|")}`);
   if (rows.length === 0) {
     return (
       <div className="grid place-items-center gap-2 py-14 text-center">
@@ -140,7 +148,7 @@ export function DataTable({
   }
   return (
     <div className="overflow-x-auto">
-      <table className="w-full text-sm" style={{ minWidth }}>
+      <table ref={tableRef} className="w-full text-sm" style={{ minWidth }}>
         <thead>
           <tr className="border-b border-border text-left">
             {columns.map((c, j) => (

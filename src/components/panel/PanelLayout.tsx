@@ -1,5 +1,5 @@
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
-import { AlertTriangle, Bell, LogOut, Menu, RefreshCw, Search, X } from "lucide-react";
+import { AlertTriangle, Bell, ChevronsLeft, ChevronsRight, LogOut, Menu, RefreshCw, Search, X } from "lucide-react";
 import { useState, useMemo, useEffect, type ReactNode } from "react";
 import { toast } from "sonner";
 import { LogoMark } from "@/components/brand/Logo";
@@ -31,6 +31,7 @@ type PanelSearchResult = {
 };
 
 const ROLE_VERIFICATION_TIMEOUT_MS = 15_000;
+const SIDEBAR_COLLAPSED_KEY = "gb-panel-sidebar-collapsed";
 
 export function PanelLayout({
   items,
@@ -46,6 +47,17 @@ export function PanelLayout({
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
+  // Desktop sidebar: full width, or a narrow rail of icons with small labels (like Zoho). Remembered
+  // on this device.
+  const [collapsed, setCollapsed] = useState(false);
+  useEffect(() => {
+    try { setCollapsed(localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1"); } catch { /* storage blocked */ }
+  }, []);
+  const toggleCollapsed = () => {
+    const next = !collapsed;
+    setCollapsed(next);
+    try { localStorage.setItem(SIDEBAR_COLLAPSED_KEY, next ? "1" : "0"); } catch { /* storage blocked */ }
+  };
   const [notifOpen, setNotifOpen] = useState(false);
   const [globalQuery, setGlobalQuery] = useState("");
   const {
@@ -422,12 +434,12 @@ export function PanelLayout({
     tone === "customer" ? "bg-navy" : tone === "vendor" ? "bg-midnight" : "bg-midnight";
   const pageBg = tone === "admin" ? "bg-[oklch(0.972_0.004_258)]" : "bg-panel";
 
-  const sidebar = (
-    <div className={cn("flex h-full w-64 flex-col", sidebarBg)}>
-      <div className="flex items-center justify-between border-b border-white/10 px-5 py-4">
-        <Link to="/" className="flex items-center">
+  const renderSidebar = (rail: boolean) => (
+    <div className={cn("flex h-full flex-col transition-[width] duration-200 ease-out", rail ? "w-[88px]" : "w-64", sidebarBg)}>
+      <div className={cn("flex items-center border-b border-white/10 py-4", rail ? "justify-center px-2" : "justify-between px-5")}>
+        <Link to="/" className="flex items-center" title="Grain Bazar">
           <LogoMark className="h-9 w-9 rounded-lg bg-card p-1.5 object-contain shadow-sm" />
-          <span className="ml-2 text-sm font-extrabold tracking-wide text-white">GRAIN BAZAR</span>
+          {!rail && <span className="ml-2 text-sm font-extrabold tracking-wide text-white">GRAIN BAZAR</span>}
         </Link>
         <button
           onClick={() => setOpen(false)}
@@ -437,10 +449,12 @@ export function PanelLayout({
           <X className="h-5 w-5" />
         </button>
       </div>
-      <p className="px-5 pt-5 pb-2 text-[11px] font-semibold tracking-[0.18em] text-gold uppercase">
-        {tone} panel
-      </p>
-      <nav className="flex-1 space-y-1 overflow-y-auto px-3 pb-6">
+      {!rail && (
+        <p className="px-5 pt-5 pb-2 text-[11px] font-semibold tracking-[0.18em] text-gold uppercase">
+          {tone} panel
+        </p>
+      )}
+      <nav className={cn("flex-1 overflow-x-hidden overflow-y-auto pb-6", rail ? "space-y-0.5 px-1 pt-3 [scrollbar-width:thin]" : "space-y-1 px-3")}>
         {items.map((item) => {
           const active = pathname === item.to;
           return (
@@ -448,15 +462,22 @@ export function PanelLayout({
               key={item.to}
               to={item.to}
               onClick={() => setOpen(false)}
+              title={rail ? item.label : undefined}
+              aria-label={rail ? item.label : undefined}
               className={cn(
-                "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
+                "rounded-lg font-medium transition-colors",
+                rail
+                  ? "flex flex-col items-center gap-1 px-0.5 py-2 text-[10px] leading-tight"
+                  : "flex items-center gap-3 px-3 py-2.5 text-sm",
                 active
-                  ? "bg-white/10 text-gold shadow-[inset_3px_0_0_0_var(--gold)]"
+                  ? rail
+                    ? "bg-white/10 text-gold"
+                    : "bg-white/10 text-gold shadow-[inset_3px_0_0_0_var(--gold)]"
                   : "text-white/70 hover:bg-white/5 hover:text-gold",
               )}
             >
-              <item.icon className="h-4 w-4 shrink-0" />
-              <span className="truncate">{item.label}</span>
+              <item.icon className={cn("shrink-0", rail ? "h-5 w-5" : "h-4 w-4")} />
+              <span className={cn(rail ? "line-clamp-2 w-full text-center" : "truncate")}>{item.label}</span>
             </Link>
           );
         })}
@@ -466,20 +487,37 @@ export function PanelLayout({
             logout();
             navigate({ to: "/" });
           }}
-          className="mt-2 flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-white/70 transition-colors hover:bg-white/5 hover:text-danger"
+          title={rail ? "Logout" : undefined}
+          className={cn(
+            "mt-2 w-full rounded-lg font-medium text-white/70 transition-colors hover:bg-white/5 hover:text-danger",
+            rail ? "flex flex-col items-center gap-1 px-1 py-2 text-[10px]" : "flex items-center gap-3 px-3 py-2.5 text-sm",
+          )}
         >
-          <LogOut className="h-4 w-4" /> Logout
+          <LogOut className={rail ? "h-5 w-5" : "h-4 w-4"} /> Logout
         </button>
       </nav>
+      <button
+        type="button"
+        onClick={toggleCollapsed}
+        title={rail ? "Expand menu" : "Collapse menu"}
+        aria-label={rail ? "Expand menu" : "Collapse menu"}
+        aria-expanded={!rail}
+        className={cn(
+          "hidden items-center border-t border-white/10 py-3 text-white/60 transition-colors hover:bg-white/5 hover:text-gold lg:flex",
+          rail ? "justify-center" : "justify-end gap-2 px-5 text-xs font-medium",
+        )}
+      >
+        {rail ? <ChevronsRight className="h-5 w-5" /> : <>Collapse <ChevronsLeft className="h-4 w-4" /></>}
+      </button>
     </div>
   );
 
   return (
     <div className={cn("flex min-h-screen w-full", pageBg)}>
-      <aside className="sticky top-0 hidden h-screen shrink-0 lg:block">{sidebar}</aside>
+      <aside className="sticky top-0 hidden h-screen shrink-0 lg:block">{renderSidebar(collapsed)}</aside>
       {open && (
         <div className="fixed inset-0 z-50 flex lg:hidden">
-          <div className="animate-rise">{sidebar}</div>
+          <div className="animate-rise">{renderSidebar(false)}</div>
           <button
             className="flex-1 bg-midnight/60"
             onClick={() => setOpen(false)}

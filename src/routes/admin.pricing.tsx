@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { ResizableTable } from "@/hooks/use-column-resize";
 
 export const Route = createFileRoute("/admin/pricing")({
   head: () => ({ meta: [{ title: "Pricing | Grain Bazar Admin" }, { name: "robots", content: "noindex" }] }),
@@ -236,7 +237,7 @@ function AdminPricing() {
           <p className="text-sm text-slate">No lots yet. Add the first one above.</p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1400px] text-right text-xs">
+            <ResizableTable tableId="admin-price-lots" className="w-full min-w-[1400px] text-right text-xs">
               <thead>
                 <tr className="border-b border-border text-[11px] uppercase text-slate">
                   {["Unique ID", "Date", "Folio", "Factory", "Item", "Qty (Qntl)", "Price", "Commission"].map((h) => <th key={h} className="px-2 py-2 text-left first:pl-0">{h}</th>)}
@@ -288,7 +289,7 @@ function AdminPricing() {
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </ResizableTable>
           </div>
         )}
       </Panel>
