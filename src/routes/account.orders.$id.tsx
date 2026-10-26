@@ -27,6 +27,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { InvoicePreviewButton } from "@/components/site/InvoicePreviewDialog";
 import { ResizableTable } from "@/hooks/use-column-resize";
+import { ZohoInvoiceStatus } from "@/components/panel/ZohoInvoiceStatus";
 
 export const Route = createFileRoute("/account/orders/$id")({
   head: ({ params }) => ({
@@ -251,6 +252,7 @@ function AccountOrderDetail() {
               <dd className="font-medium text-navy">{order.date}</dd>
             </div>
           </dl>
+          <ZohoInvoiceStatus orderNo={order.id} audience="customer" className="mt-3" />
         </Panel>
       </div>
 

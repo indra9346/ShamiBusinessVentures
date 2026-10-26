@@ -26,6 +26,7 @@ import { adminNav } from "@/lib/panel-nav";
 import { canCancelOrder, inr, orderStages, type OrderStatus } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { useBranches, zohoLocationLabel } from "@/lib/branches";
+import { ZohoInvoiceStatus } from "@/components/panel/ZohoInvoiceStatus";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { syncSingleOrderToZoho } from "@/lib/zoho-commerce.functions";
 import { PickupPointCard } from "@/components/site/PickupPointCard";
@@ -378,6 +379,7 @@ function AdminOrderDetail() {
                 ? `Order is synchronized with Zoho under Sales Order ${zohoSalesOrderId}, in ${zohoLocationLabel(orderBranch)}.`
                 : "Active write sync will automatically mirror this sales order into Zoho Inventory & Commerce."}
             </p>
+            {zohoSalesOrderId && <ZohoInvoiceStatus orderNo={order.id} audience="admin" className="mt-3" />}
           </div>
         </div>
         <div className="flex items-center gap-2">

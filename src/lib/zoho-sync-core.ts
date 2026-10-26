@@ -578,3 +578,65 @@ export function zohoStatusMovesForward(currentStatus: string, incoming: string) 
   const current = fulfilmentRank(currentStatus);
   return current >= 0 && fulfilmentRank(incoming) > current;
 }
+
+/* ---------------------------------------------------------------------------------------------
+ * The order's Zoho Books invoice, tracked on the website (table zoho_order_invoices):
+ * the first invoice is automatic when an admin confirms; if it is later deleted or voided in
+ * Zoho the website records that, and a new one is created only after an admin approves it.
+ * ------------------------------------------------------------------------------------------- */
+
+export type ZohoInvoiceRef = { invoiceId: string; number: string; status: string; total: number | null; balance: number | null };
+export type InvoiceRecord = { zohoInvoiceId: string | null; invoiceNumber: string | null; status: string; autoAttempts: number; adminApproved: boolean };
+
+const amountOrNull = (value: unknown) => {
+  const amount = typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value) : NaN;
+  return Number.isFinite(amount) ? amount : null;
+};
+
+/** Zoho's invoice status as the website shows it. */
+export function websiteInvoiceStatus(zohoStatus: string) {
+  const status = zohoStatus.toLowerCase().replace(/\s+/g, "_");
+  if (status === "paid") return "paid";
+  if (status === "partially_paid") return "partially_paid";
+  if (status === "overdue") return "overdue";
+  if (status === "void") return "void";
+  return "sent";
+}
+
+/**
+ * The invoices listed on a Zoho sales order (detail record only), or null when the record does not
+ * carry the list (Zoho's list endpoints leave it out), so a missing list is never read as "deleted".
+ */
+export function zohoInvoicesOf(salesOrder: Record<string, unknown>): ZohoInvoiceRef[] | null {
+  if (!Array.isArray(salesOrder["invoices"])) return null;
+  return (salesOrder["invoices"] as Record<string, unknown>[]).map((invoice) => ({
+    invoiceId: String(invoice["invoice_id"] ?? ""),
+    number: String(invoice["invoice_number"] ?? ""),
+    status: String(invoice["status"] ?? "").toLowerCase(),
+    total: amountOrNull(invoice["total"]),
+    balance: amountOrNull(invoice["balance"]),
+  })).filter((invoice) => invoice.invoiceId);
+}
+
+export type InvoiceDecision =
+  | { action: "track"; invoice: ZohoInvoiceRef }
+  | { action: "create"; reason: "automatic" | "approved" }
+  | { action: "lost"; status: "void" | "deleted"; number: string }
+  | { action: "await_approval" };
+
+/**
+ * What to do about a confirmed order's invoice, given what the website recorded and what Zoho
+ * lists now: keep tracking the live invoice; record that a known invoice was voided/deleted in
+ * Zoho; create the first invoice automatically; create another only after admin approval.
+ */
+export function invoiceDecision(record: InvoiceRecord | null, invoices: ZohoInvoiceRef[]): InvoiceDecision {
+  const live = invoices.find((invoice) => invoice.status !== "void");
+  if (live) return { action: "track", invoice: live };
+  if (record?.zohoInvoiceId && !["void", "deleted"].includes(record.status)) {
+    const voided = invoices.find((invoice) => invoice.invoiceId === record.zohoInvoiceId);
+    return { action: "lost", status: voided ? "void" : "deleted", number: record.invoiceNumber ?? voided?.number ?? "" };
+  }
+  if (record?.adminApproved) return { action: "create", reason: "approved" };
+  if (!record || record.autoAttempts < 1) return { action: "create", reason: "automatic" };
+  return { action: "await_approval" };
+}
