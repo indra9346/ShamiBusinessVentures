@@ -15,6 +15,69 @@ import {
   DAILY_LIMIT_PAUSE_MINUTES, inboundPollDue, isZohoDailyLimitError, zohoPaused,
   indiaDate, nextZohoFulfilmentStep, zohoFulfilmentStatus, zohoPackagesOf, zohoStatusMovesForward,
 } from "@/lib/zoho-sync-core";
+import {
+  ZOHO_CALL_DEFAULT_PURPOSE, ZOHO_CALL_LOG_SETTING, describeZohoCall, mergeZohoCalls, type ZohoCall, type ZohoCallLog,
+} from "@/lib/zoho-call-log";
+
+// ---------------------------------------------------------------- Zoho API call log
+// Every Zoho API call made from this file is noted with what it was for, and saved to
+// settings.zoho_api_calls (Admin > Zoho Commerce > Zoho API calls). Zoho's own API Usage page
+// counts calls per module; this says why. Best effort: logging never blocks or fails a sync.
+type PurposeStore = { run<T>(store: string, fn: () => T): T; getStore(): string | undefined };
+const purposeStore: PurposeStore | null = (() => {
+  try {
+    const nodeProcess = (globalThis as { process?: { getBuiltinModule?: (id: string) => unknown } }).process;
+    const hooks = nodeProcess?.getBuiltinModule?.("node:async_hooks") as { AsyncLocalStorage?: new () => PurposeStore } | undefined;
+    return hooks?.AsyncLocalStorage ? new hooks.AsyncLocalStorage() : null;
+  } catch {
+    return null;
+  }
+})();
+
+/** Runs `fn` with every Zoho call made inside it logged under `purpose`. */
+export function withZohoPurpose<T>(purpose: string, fn: () => Promise<T>): Promise<T> {
+  return purposeStore ? purposeStore.run(purpose, fn) : fn();
+}
+
+const pendingZohoCalls: ZohoCall[] = [];
+let zohoCallFlushTimer: ReturnType<typeof setTimeout> | null = null;
+function noteZohoCall(url: string, method: string, ok: boolean) {
+  const call = describeZohoCall(url);
+  if (!call) return;
+  pendingZohoCalls.push({ at: new Date().toISOString(), purpose: purposeStore?.getStore() ?? ZOHO_CALL_DEFAULT_PURPOSE, method, ok, ...call });
+  zohoCallFlushTimer ??= setTimeout(() => {
+    zohoCallFlushTimer = null;
+    void flushZohoCallLog();
+  }, 20_000);
+}
+
+/** Saves the calls noted since the last save. Never throws. */
+export async function flushZohoCallLog() {
+  if (!pendingZohoCalls.length) return;
+  const calls = pendingZohoCalls.splice(0);
+  try {
+    const db = await dbAdmin();
+    const { data } = await db.from("settings").select("value").eq("key", ZOHO_CALL_LOG_SETTING).maybeSingle();
+    const log = mergeZohoCalls(data?.value as ZohoCallLog | null, calls);
+    await db.from("settings").upsert({ key: ZOHO_CALL_LOG_SETTING, value: log as unknown as Json, is_public: false, updated_at: new Date().toISOString() });
+  } catch {
+    // The log is best effort.
+  }
+}
+
+/** Every fetch in this file goes through here, so each Zoho API call is logged. */
+const fetch: typeof globalThis.fetch = async (input, init) => {
+  const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+  const method = (init?.method ?? "GET").toUpperCase();
+  try {
+    const response = await globalThis.fetch(input, init);
+    noteZohoCall(url, method, response.ok);
+    return response;
+  } catch (cause) {
+    noteZohoCall(url, method, false);
+    throw cause;
+  }
+};
 
 const REGIONS = {
   com: ["https://accounts.zoho.com", "https://commerce.zoho.com", "https://www.zohoapis.com"],
@@ -2606,11 +2669,12 @@ export const refreshZohoOrderInvoice = createServerFn({ method: "POST" })
     if (Number.isFinite(last) && Date.now() - last < 30_000) return { refreshed: false };
     await db.from("orders").update({ zoho_last_polled_at: new Date().toISOString() }).eq("id", order.id);
     const { region, organizationId, token } = await zohoOrderContext(db);
-    const response = await inventoryRequest<{ salesorder?: Record<string, unknown> }>(
+    const response = await withZohoPurpose("Order page: invoice check", () => inventoryRequest<{ salesorder?: Record<string, unknown> }>(
       region, organizationId, token, `salesorders/${encodeURIComponent(order.zoho_salesorder_id)}`, "GET",
-    );
+    ));
     if (!response.salesorder) return { refreshed: false };
-    await recordZohoInvoiceState(db, order, response.salesorder);
+    await withZohoPurpose("Order page: invoice check", () => recordZohoInvoiceState(db, order, response.salesorder!));
+    await flushZohoCallLog();
     return { refreshed: true };
   });
 
@@ -3458,6 +3522,7 @@ export async function processZohoSyncOutbox(limit = 20, options?: { force?: bool
   try {
     return await processZohoSyncOutboxRun(db, limit, options, budget);
   } finally {
+    await flushZohoCallLog();
     if (zohoDailyLimitHit) {
       const pausedUntil = new Date(Date.now() + DAILY_LIMIT_PAUSE_MINUTES * 60_000).toISOString();
       await db.from("settings").upsert({ key: ZOHO_API_BUDGET_SETTING, value: { ...budget, pausedUntil } as Json, is_public: false, updated_at: new Date().toISOString() });
@@ -3490,11 +3555,11 @@ async function processZohoSyncOutboxRun(
     const startedAt = Date.now();
     try {
       if (job.entity_type === "customer")
-        await syncZohoCustomer(db, region, connection.organization_id, token, job.entity_id, ctx);
+        await withZohoPurpose("Website → Zoho: customer", () => syncZohoCustomer(db, region, connection.organization_id, token, job.entity_id, ctx));
       else if (job.entity_type === "order")
-        await syncZohoOrder(db, region, connection.organization_id, token, job);
+        await withZohoPurpose("Website → Zoho: order", () => syncZohoOrder(db, region, connection.organization_id, token, job));
       else
-        await syncZohoCatalogItem(db, region, connection.organization_id, token, job.entity_id, ctx);
+        await withZohoPurpose("Website → Zoho: product", () => syncZohoCatalogItem(db, region, connection.organization_id, token, job.entity_id, ctx));
     } catch (cause) {
       errorMessage = (cause instanceof Error ? cause.message : "Unexpected Zoho sync failure").slice(0, 1000);
       const isQuotaLimit =
@@ -3523,17 +3588,17 @@ async function processZohoSyncOutboxRun(
   if (options?.inbound !== true && !inboundPollDue(str(budget["lastInboundPollAt"]), Date.now())) return { ...summary, inbound: "skipped (hourly)" };
   await db.from("settings").upsert({ key: ZOHO_API_BUDGET_SETTING, value: { ...budget, lastInboundPollAt: new Date().toISOString() } as Json, is_public: false, updated_at: new Date().toISOString() });
   const [contacts, fulfillment, catalog] = await Promise.all([
-    pollZohoContactChanges(db, region, connection.organization_id, token, limit),
-    applyRecentZohoOrderChanges(db, region, connection.organization_id, token)
-      .then(() => pollZohoOrderFulfillment(db, region, connection.organization_id, token, limit)),
-    pollZohoCatalogChanges(db, region, connection.organization_id, token, limit),
+    withZohoPurpose("Hourly check: customers", () => pollZohoContactChanges(db, region, connection.organization_id, token, limit)),
+    withZohoPurpose("Hourly check: orders", () => applyRecentZohoOrderChanges(db, region, connection.organization_id, token)
+      .then(() => pollZohoOrderFulfillment(db, region, connection.organization_id, token, limit))),
+    withZohoPurpose("Hourly check: products", () => pollZohoCatalogChanges(db, region, connection.organization_id, token, limit)),
   ]);
   // Godown prices (Zoho price lists) and godown stock (Zoho locations), both ways. After the
   // catalogue pull, so new item links are in place; after the order jobs, so new sales orders
   // already hold their stock in Zoho.
-  const godownPrices = await syncZohoGodownPrices(db, region, connection.organization_id, token)
+  const godownPrices = await withZohoPurpose("Hourly check: godown prices", () => syncZohoGodownPrices(db, region, connection.organization_id, token))
     .catch((cause: unknown) => ({ godowns: 0, prices: 0, sentToZoho: 0, failed: 1, errors: [cause instanceof Error ? cause.message : String(cause)] }));
-  const godownStock = await syncZohoGodownStock(db, region, connection.organization_id, token)
+  const godownStock = await withZohoPurpose("Hourly check: godown stock", () => syncZohoGodownStock(db, region, connection.organization_id, token))
     .catch((cause: unknown) => ({ enabled: true, items: 0, pulled: 0, sentToZoho: 0, failed: 1, errors: [cause instanceof Error ? cause.message : String(cause)] }));
   return {
     ...summary,
@@ -3888,9 +3953,9 @@ async function pushOrderToZohoDirect(db: Awaited<ReturnType<typeof dbAdmin>>, or
     .in("status", ["pending", "failed", "needs_review"]);
   try {
     // attempts: 2 first looks for an earlier half-finished push by its Reference#.
-    await syncZohoOrder(db, region, connection.organization_id, token, {
+    await withZohoPurpose("Website → Zoho: order (instant)", () => syncZohoOrder(db, region, connection.organization_id, token, {
       id: "direct", entity_type: "order", entity_id: orderId, attempts: 2,
-    } as ZohoSyncJob);
+    } as ZohoSyncJob));
   } catch (cause) {
     const message = (cause instanceof Error ? cause.message : "Zoho rejected the order").slice(0, 900);
     // Same split as the queue worker: a timeout or Zoho outage is retried by the next sync run;
