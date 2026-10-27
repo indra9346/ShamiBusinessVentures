@@ -86,6 +86,8 @@ export type GodownTotals = {
 };
 
 export type SaleLine = {
+  /** The order item (links the line to its partner commission). */
+  itemId: string;
   time: string;
   godownId: string;
   godown: string;
@@ -207,6 +209,7 @@ export function buildGodownReport(input: {
         }
       }
       lines.push({
+        itemId: item.id,
         time: order.created_at,
         godownId,
         godown: row.godown,
