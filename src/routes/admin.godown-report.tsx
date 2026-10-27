@@ -12,6 +12,7 @@ import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { downloadCSV } from "@/lib/export-utils";
 import { buildGodownReport, istHour, istToday, profitOrLoss, type GodownTotals, type SaleLine } from "@/lib/godown-report";
 import { Button } from "@/components/ui/button";
+import { ResizableTable } from "@/hooks/use-column-resize";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/admin/godown-report")({
@@ -207,7 +208,7 @@ function SummaryTable({ rows, all }: { rows: GodownTotals[]; all: GodownTotals }
   ];
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[1200px] text-left text-sm">
+      <ResizableTable tableId="godown-report-summary" className="w-full min-w-[1200px] text-left text-sm">
         <thead>
           <tr className="border-b border-border text-[11px] font-bold uppercase tracking-wider text-slate">
             <th className="sticky left-0 bg-card px-2 py-2">Godown</th>
@@ -226,7 +227,7 @@ function SummaryTable({ rows, all }: { rows: GodownTotals[]; all: GodownTotals }
             {cols.map(([label, cell]) => <td key={label} className="whitespace-nowrap px-2 py-2 text-right">{cell(all)}</td>)}
           </tr>
         </tbody>
-      </table>
+      </ResizableTable>
     </div>
   );
 }
@@ -236,7 +237,7 @@ function HourlyStrip({ godowns }: { godowns: GodownTotals[] }) {
   const label = (hour: number) => `${String(hour).padStart(2, "0")}:00–${String(hour + 1).padStart(2, "0")}:00`;
   return (
     <div className="overflow-x-auto">
-      <table className="w-full text-left text-sm">
+      <ResizableTable tableId="godown-report-hourly" className="w-full text-left text-sm">
         <thead>
           <tr className="border-b border-border text-[11px] font-bold uppercase tracking-wider text-slate">
             <th className="px-2 py-2">Time (IST)</th>
@@ -251,7 +252,7 @@ function HourlyStrip({ godowns }: { godowns: GodownTotals[] }) {
             </tr>
           ))}
         </tbody>
-      </table>
+      </ResizableTable>
     </div>
   );
 }
@@ -260,7 +261,7 @@ function SalesTable({ lines }: { lines: SaleLine[] }) {
   if (!lines.length) return <p className="py-6 text-center text-sm text-slate">No sales in this period.</p>;
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[1100px] text-left text-sm">
+      <ResizableTable tableId="godown-report-sales" className="w-full min-w-[1100px] text-left text-sm">
         <thead>
           <tr className="border-b border-border text-[11px] font-bold uppercase tracking-wider text-slate">
             {["Time (IST)", "Godown", "Order", "Customer", "Product", "Qty", "Sale", "Cost", "Profit / loss", "Commission", "Status", "Zoho"].map((h) => (
@@ -289,7 +290,7 @@ function SalesTable({ lines }: { lines: SaleLine[] }) {
             );
           })}
         </tbody>
-      </table>
+      </ResizableTable>
     </div>
   );
 }

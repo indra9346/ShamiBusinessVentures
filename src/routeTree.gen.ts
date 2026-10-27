@@ -54,6 +54,7 @@ import { Route as AdminReviewsRouteImport } from './routes/admin.reviews'
 import { Route as AdminSettingsRouteImport } from './routes/admin.settings'
 import { Route as AdminVendorsRouteImport } from './routes/admin.vendors'
 import { Route as AdminZohoRouteImport } from './routes/admin.zoho'
+import { Route as AdminZohoApiCallsRouteImport } from './routes/admin.zoho-api-calls'
 import { Route as AdminZohoDiagnosticsRouteImport } from './routes/admin.zoho-diagnostics'
 import { Route as CategoriesIndexRouteImport } from './routes/categories.index'
 import { Route as CategoriesSlugRouteImport } from './routes/categories.$slug'
@@ -311,6 +312,11 @@ const AdminZohoRoute = AdminZohoRouteImport.update({
   path: '/admin/zoho',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdminZohoApiCallsRoute = AdminZohoApiCallsRouteImport.update({
+  id: '/admin/zoho-api-calls',
+  path: '/admin/zoho-api-calls',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AdminZohoDiagnosticsRoute = AdminZohoDiagnosticsRouteImport.update({
   id: '/admin/zoho-diagnostics',
   path: '/admin/zoho-diagnostics',
@@ -512,6 +518,7 @@ export interface FileRoutesByFullPath {
   '/admin/settings': typeof AdminSettingsRoute
   '/admin/vendors': typeof AdminVendorsRouteWithChildren
   '/admin/zoho': typeof AdminZohoRoute
+  '/admin/zoho-api-calls': typeof AdminZohoApiCallsRoute
   '/admin/zoho-diagnostics': typeof AdminZohoDiagnosticsRoute
   '/categories/$slug': typeof CategoriesSlugRouteWithChildren
   '/partner/login': typeof PartnerLoginRoute
@@ -589,6 +596,7 @@ export interface FileRoutesByTo {
   '/admin/settings': typeof AdminSettingsRoute
   '/admin/vendors': typeof AdminVendorsRouteWithChildren
   '/admin/zoho': typeof AdminZohoRoute
+  '/admin/zoho-api-calls': typeof AdminZohoApiCallsRoute
   '/admin/zoho-diagnostics': typeof AdminZohoDiagnosticsRoute
   '/categories/$slug': typeof CategoriesSlugRouteWithChildren
   '/partner/login': typeof PartnerLoginRoute
@@ -668,6 +676,7 @@ export interface FileRoutesById {
   '/admin/settings': typeof AdminSettingsRoute
   '/admin/vendors': typeof AdminVendorsRouteWithChildren
   '/admin/zoho': typeof AdminZohoRoute
+  '/admin/zoho-api-calls': typeof AdminZohoApiCallsRoute
   '/admin/zoho-diagnostics': typeof AdminZohoDiagnosticsRoute
   '/categories/$slug': typeof CategoriesSlugRouteWithChildren
   '/partner/login': typeof PartnerLoginRoute
@@ -748,6 +757,7 @@ export interface FileRouteTypes {
     | '/admin/settings'
     | '/admin/vendors'
     | '/admin/zoho'
+    | '/admin/zoho-api-calls'
     | '/admin/zoho-diagnostics'
     | '/categories/$slug'
     | '/partner/login'
@@ -825,6 +835,7 @@ export interface FileRouteTypes {
     | '/admin/settings'
     | '/admin/vendors'
     | '/admin/zoho'
+    | '/admin/zoho-api-calls'
     | '/admin/zoho-diagnostics'
     | '/categories/$slug'
     | '/partner/login'
@@ -903,6 +914,7 @@ export interface FileRouteTypes {
     | '/admin/settings'
     | '/admin/vendors'
     | '/admin/zoho'
+    | '/admin/zoho-api-calls'
     | '/admin/zoho-diagnostics'
     | '/categories/$slug'
     | '/partner/login'
@@ -974,6 +986,7 @@ export interface RootRouteChildren {
   AdminSettingsRoute: typeof AdminSettingsRoute
   AdminVendorsRoute: typeof AdminVendorsRouteWithChildren
   AdminZohoRoute: typeof AdminZohoRoute
+  AdminZohoApiCallsRoute: typeof AdminZohoApiCallsRoute
   AdminZohoDiagnosticsRoute: typeof AdminZohoDiagnosticsRoute
   PartnerLoginRoute: typeof PartnerLoginRoute
   ProductIdRoute: typeof ProductIdRoute
@@ -1312,6 +1325,13 @@ declare module '@tanstack/react-router' {
       path: '/admin/zoho'
       fullPath: '/admin/zoho'
       preLoaderRoute: typeof AdminZohoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/zoho-api-calls': {
+      id: '/admin/zoho-api-calls'
+      path: '/admin/zoho-api-calls'
+      fullPath: '/admin/zoho-api-calls'
+      preLoaderRoute: typeof AdminZohoApiCallsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/admin/zoho-diagnostics': {
@@ -1718,6 +1738,7 @@ const rootRouteChildren: RootRouteChildren = {
   AdminSettingsRoute: AdminSettingsRoute,
   AdminVendorsRoute: AdminVendorsRouteWithChildren,
   AdminZohoRoute: AdminZohoRoute,
+  AdminZohoApiCallsRoute: AdminZohoApiCallsRoute,
   AdminZohoDiagnosticsRoute: AdminZohoDiagnosticsRoute,
   PartnerLoginRoute: PartnerLoginRoute,
   ProductIdRoute: ProductIdRoute,

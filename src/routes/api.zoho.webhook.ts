@@ -48,7 +48,7 @@ export const Route = createFileRoute("/api/zoho/webhook")({
   server: {
     handlers: {
       POST: async ({ request }) => {
-        const { zohoWebhookKey, handleZohoOrderWebhook, handleZohoItemWebhook, handleZohoInvoiceWebhook } = await import("@/lib/zoho-commerce.functions");
+        const { zohoWebhookKey, handleZohoOrderWebhook, handleZohoItemWebhook, handleZohoInvoiceWebhook, withZohoPurpose, flushZohoCallLog } = await import("@/lib/zoho-commerce.functions");
         // Authentication, strongest first. The payload is never trusted either way: the record
         // is re-read from Zoho.
         // 1. Signed: Zoho's X-Zoho-Webhook-Signature (HMAC of the body with the webhook Secret,
@@ -85,11 +85,13 @@ export const Route = createFileRoute("/api/zoho/webhook")({
         const record = recordFrom(body);
         if (!record) return Response.json({ ok: true, ignored: "no sales order, invoice or item id" });
         try {
-          const outcome = record.kind === "salesorder"
-            ? await handleZohoOrderWebhook(record.id)
-            : record.kind === "invoice"
-              ? await handleZohoInvoiceWebhook(record)
-              : await handleZohoItemWebhook(record.id);
+          const outcome = await withZohoPurpose(`Zoho webhook: ${record.kind === "salesorder" ? "sales order" : record.kind}`, () =>
+            record.kind === "salesorder"
+              ? handleZohoOrderWebhook(record.id)
+              : record.kind === "invoice"
+                ? handleZohoInvoiceWebhook(record)
+                : handleZohoItemWebhook(record.id));
+          await flushZohoCallLog();
           console.info(zohoLogLine("webhook_applied", { kind: record.kind, zohoId: record.id, outcome }));
           return Response.json({ ok: true, outcome });
         } catch (cause) {

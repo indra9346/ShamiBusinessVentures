@@ -9,6 +9,7 @@ import {
   CreditCard,
   FileBarChart,
   FileSpreadsheet,
+  Activity,
   Inbox,
   LayoutDashboard,
   Link2,
@@ -58,5 +59,6 @@ export const adminNav = [
   { label: "Godown Report", to: "/admin/godown-report", icon: FileSpreadsheet },
   { label: "Notifications", to: "/admin/notifications", icon: Bell },
   { label: "Zoho Commerce", to: "/admin/zoho", icon: Link2 },
+  { label: "Zoho API Calls", to: "/admin/zoho-api-calls", icon: Activity },
   { label: "Settings", to: "/admin/settings", icon: Settings },
 ];
