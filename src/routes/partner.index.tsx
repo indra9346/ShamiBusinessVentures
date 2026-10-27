@@ -4,6 +4,7 @@ import { IndianRupee, LogOut, RefreshCw, Target, Timer, Trophy } from "lucide-re
 import { LogoMark } from "@/components/brand/Logo";
 import { Panel, StatCard } from "@/components/panel/widgets";
 import { CommissionLinesTable, PartnerLeaderboard, TargetBar, commissionTotals, usePartnerData } from "@/components/partners/PartnerWidgets";
+import { MyPartnerReport } from "@/components/partners/MyPartnerReport";
 import { supabase } from "@/integrations/supabase/client";
 import { inrPrecise } from "@/lib/data";
 import { describeRate, monthLabel, monthStart, targetProgress, type CommissionKind } from "@/lib/partners";
@@ -105,6 +106,8 @@ function PartnerDashboard() {
             </div>
           ) : <p className="text-sm text-slate">No target set for this month yet.</p>}
         </Panel>
+
+        <MyPartnerReport partnerName={me.name} />
 
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
           <Panel title="Leaderboard">
