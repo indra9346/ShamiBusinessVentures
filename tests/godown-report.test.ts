@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildGodownReport, istHour, istRange, istToday, NO_GODOWN, profitOrLoss, type ReportOrder } from "../src/lib/godown-report.ts";
+import { buildGodownReport, godownReportSheets, istHour, istRange, istStamp, istToday, NO_GODOWN, profitOrLoss, type ReportOrder } from "../src/lib/godown-report.ts";
 
 const order = (id: string, extra: Partial<ReportOrder> = {}): ReportOrder => ({
   id, order_no: `CLK-577522-271026-10000${id}`, branch_id: "BR-CLK", created_at: "2026-10-27T05:00:00Z", // 10:30 IST
@@ -79,4 +79,52 @@ test("unknown purchase rate is flagged, not counted as zero cost; orders without
   assert.equal(report.lines[0]!.margin, null);
   // A godown with no sales that day is still in the report.
   assert.equal(report.godowns.find((row) => row.godownId === "BR-CLK")!.sales, 0);
+});
+
+test("refunds, delivered orders, vendor pickup points and the Excel sheets", () => {
+  const report = buildGodownReport({
+    godowns: [{ id: "BR-CLK", name: "Challakere" }],
+    orders: [
+      order("1", { order_status: "Delivered", subtotal: 1000, total: 1050, paid_amount: 1050 }),
+      // Paid, then refunded and not cancelled (a return): neither collected nor due.
+      order("2", { payment_status: "Refunded", subtotal: 500, total: 525, paid_amount: 0 }),
+      // Part paid.
+      order("3", { payment_status: "Partially Paid", subtotal: 2000, total: 2100, paid_amount: 1000 }),
+      // A vendor pickup point keeps its own name.
+      order("4", { branch_id: "VP-7", subtotal: 100, total: 105, paid_amount: 105 }),
+    ],
+    items: [
+      { id: "i1", order_id: "1", product_id: "P1", product_name: "Rice", qty: 1, unit_price: 1000, line_total: 1000 },
+      { id: "i2", order_id: "2", product_id: "P1", product_name: "Rice", qty: 1, unit_price: 500, line_total: 500 },
+      { id: "i3", order_id: "3", product_id: "P1", product_name: "Rice", qty: 2, unit_price: 1000, line_total: 2000 },
+      { id: "i4", order_id: "4", product_id: "P1", product_name: "Rice", qty: 1, unit_price: 100, line_total: 100 },
+    ],
+    costs: { P1: 400 },
+    commissions: {},
+    branchNames: { "VP-7": "Vendor point Hosur" },
+  });
+  const clk = report.godowns.find((row) => row.godownId === "BR-CLK")!;
+  assert.equal(clk.deliveredOrders, 1);
+  assert.equal(clk.refundedOrders, 1);
+  assert.equal(clk.refunded, 525);
+  assert.equal(clk.collected, 2050);
+  assert.equal(clk.due, 1100); // only the part-paid order
+  assert.equal(report.godowns.find((row) => row.godownId === "VP-7")!.godown, "Vendor point Hosur");
+
+  const meta = { period: "27 Oct 2026", generatedAt: "2026-10-27T06:30:00Z" };
+  const sheets = godownReportSheets(report, meta);
+  assert.deepEqual(sheets.map((s) => s.name), ["Summary", "Challakere", "Vendor point Hosur", "All sales"]);
+  assert.equal(sheets[0]!.rows[4]![0], "Godown");
+  assert.equal(sheets[0]!.rows.at(-1)![0], "Total");
+  assert.equal(sheets[3]!.rows.length, 1 + 4);
+  // The godown sheet's net profit line is the bold one.
+  const challakere = sheets[1]!;
+  assert.equal(challakere.rows[challakere.boldRows![1]!]![0], "Net profit / loss (₹)");
+  assert.equal(challakere.rows[challakere.boldRows![2]!]![0], "Sales by hour (IST)");
+  assert.equal(challakere.rows[challakere.boldRows![3]!]![0], "Date & time (IST)");
+  // One godown only: its summary and its own sheet, no other godown's sales.
+  const one = godownReportSheets(report, meta, "BR-CLK");
+  assert.deepEqual(one.map((s) => s.name), ["Summary", "Challakere"]);
+  assert.ok(one[1]!.rows.every((row) => row[1] !== "Vendor point Hosur"));
+  assert.equal(istStamp("2026-10-27T05:40:04Z"), "27-10-2026 11:10");
 });
