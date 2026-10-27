@@ -10,7 +10,7 @@ import { useApp } from "@/lib/store";
 import { inrPrecise } from "@/lib/data";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { DEFAULT_UPI_SETTINGS, isValidVpa, settingsProblem, upiPaymentUri, type UpiSettings } from "@/lib/upi-pay";
-import { reviewUpiPayment, saveUpiSettings, useUpiPayments } from "@/lib/upi-store";
+import { loadUpiAudit, reviewUpiPayment, saveUpiSettings, useUpiPayments, type UpiAuditRow } from "@/lib/upi-store";
 import { ResizableTable } from "@/hooks/use-column-resize";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -35,7 +35,9 @@ function AdminUpiPayments() {
   const [form, setForm] = useState<UpiSettings>(DEFAULT_UPI_SETTINGS);
   const [saving, setSaving] = useState(false);
   const [busy, setBusy] = useState("");
+  const [audit, setAudit] = useState<UpiAuditRow[]>([]);
   useEffect(() => { if (settings) setForm(settings); }, [settings]);
+  useEffect(() => { void loadUpiAudit().then(setAudit); }, [settings]);
 
   const problem = settingsProblem(form);
   const previewQr = useMemo(() => (isValidVpa(form.vpa) ? renderSVG(upiPaymentUri(form, 1, "TEST-1"), { border: 2 }) : ""), [form]);
@@ -56,11 +58,15 @@ function AdminUpiPayments() {
   };
 
   const confirm = async (orderNo: string, amount: number, utr: string) => {
+    if (!window.confirm(`Confirm ${inrPrecise(amount)} for ${orderNo}?\n\nOnly confirm after you see a credit with UTR ${utr} for this amount in the bank account.`)) return;
     setBusy(orderNo);
     try {
-      // The same confirmation admins use for manual payments: marks the order paid with this UTR.
-      if (!(await confirmPayment(orderNo, amount, utr))) throw new Error("The order could not be marked paid");
-      reviewUpiPayment(orderNo, "confirmed");
+      if (STATIC_DATA_MODE) {
+        // Demo: mark the demo order paid the way a manual payment does.
+        if (!(await confirmPayment(orderNo, amount, utr))) throw new Error("The order could not be marked paid");
+      }
+      // Live: one database step records the payment (order paid, sent to Zoho Books) and closes the UTR.
+      await reviewUpiPayment(orderNo, "confirmed");
       toast.success(`${orderNo} marked paid`, { description: `UTR ${utr}` });
     } catch (cause) {
       toast.error("Could not confirm", { description: cause instanceof Error ? cause.message : undefined });
@@ -68,11 +74,18 @@ function AdminUpiPayments() {
       setBusy("");
     }
   };
-  const reject = (orderNo: string) => {
+  const reject = async (orderNo: string) => {
     const note = window.prompt("Why is this UTR not accepted? The customer sees this.", "No matching credit in the bank account");
     if (note === null) return;
-    reviewUpiPayment(orderNo, "rejected", note.trim() || undefined);
-    toast.message(`${orderNo}: UTR rejected`, { description: "The customer can enter a corrected UTR." });
+    setBusy(orderNo);
+    try {
+      await reviewUpiPayment(orderNo, "rejected", note.trim() || undefined);
+      toast.message(`${orderNo}: UTR rejected`, { description: "The customer is told and can send a corrected UTR." });
+    } catch (cause) {
+      toast.error("Could not reject", { description: cause instanceof Error ? cause.message : undefined });
+    } finally {
+      setBusy("");
+    }
   };
 
   return (
@@ -82,9 +95,10 @@ function AdminUpiPayments() {
           <ShieldAlert className="mr-1 inline h-4 w-4" /> Demo / mock: settings and payments here are kept only in this browser. No real money moves.
         </p>
       ) : (
-        <p className="mb-4 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950">
-          <ShieldAlert className="mr-1 inline h-4 w-4" /> Direct UPI is being tested. It stays off on the live store until the test is approved.
-        </p>
+        <div className="mb-4 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-950">
+          <p className="font-semibold"><ShieldAlert className="mr-1 inline h-4 w-4" /> Where the money goes</p>
+          <p className="mt-1">Customers pay the business UPI ID below, and their bank sends the money straight to the bank account that UPI ID is linked to (the company's current account). The website never holds money. Before switching on, scan the ₹1 test QR: your UPI app shows the bank-registered name of the account, and it must be the company's. Every change of the UPI ID is logged below and every admin is notified.</p>
+        </div>
       )}
 
       <div className="mb-6 grid gap-4 sm:grid-cols-3">
@@ -113,7 +127,7 @@ function AdminUpiPayments() {
                     <td className="px-2 py-2">
                       <div className="flex gap-2">
                         <Button size="sm" className="bg-emerald-600 text-white hover:bg-emerald-700" disabled={busy === s.orderNo} onClick={() => void confirm(s.orderNo, s.amount, s.utr)}>Confirm paid</Button>
-                        <Button size="sm" variant="outline" className="text-danger" disabled={busy === s.orderNo} onClick={() => reject(s.orderNo)}>Reject</Button>
+                        <Button size="sm" variant="outline" className="text-danger" disabled={busy === s.orderNo} onClick={() => void reject(s.orderNo)}>Reject</Button>
                       </div>
                     </td>
                   </tr>
@@ -141,10 +155,10 @@ function AdminUpiPayments() {
               <Input type="number" min={5} max={60} value={form.payWindowMinutes} onChange={(e) => setForm({ ...form, payWindowMinutes: Number(e.target.value) })} />
             </div>
             <label className="flex items-center gap-3 self-end text-sm">
-              <Switch checked={form.enabled} disabled={!STATIC_DATA_MODE} onCheckedChange={(enabled) => setForm({ ...form, enabled })} />
+              <Switch checked={form.enabled} onCheckedChange={(enabled) => setForm({ ...form, enabled })} />
               <span>
                 <span className="font-semibold text-navy">Show "Pay by UPI" at checkout</span>
-                {!STATIC_DATA_MODE && <span className="block text-[11px] text-slate">Available after the test is approved</span>}
+                <span className="block text-[11px] text-slate">Off until a UPI ID is entered and you switch it on</span>
               </span>
             </label>
           </div>
@@ -160,6 +174,20 @@ function AdminUpiPayments() {
           ) : <p className="text-sm text-slate">Enter a valid UPI ID to see a test QR.</p>}
         </Panel>
       </div>
+
+      {audit.length > 0 && (
+        <Panel title="UPI ID change log" className="mt-6">
+          <ul className="space-y-1 text-sm">
+            {audit.map((a, i) => (
+              <li key={`${a.changedAt}-${i}`} className="flex flex-wrap gap-x-3 border-b border-border/60 pb-1">
+                <span className="text-xs text-slate">{istTime(a.changedAt)}</span>
+                <span className="font-mono text-xs">{a.oldVpa || "—"} → <b>{a.newVpa || "—"}</b></span>
+                <span className="text-xs">{a.newEnabled ? "switched ON" : "OFF"}{a.payeeName ? ` · ${a.payeeName}` : ""}</span>
+              </li>
+            ))}
+          </ul>
+        </Panel>
+      )}
 
       {done.length > 0 && (
         <Panel title="Checked payments" className="mt-6">

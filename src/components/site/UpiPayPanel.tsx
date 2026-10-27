@@ -4,9 +4,24 @@ import { toast } from "sonner";
 import { CheckCircle2, Clock, Copy, ShieldCheck, Smartphone, XCircle } from "lucide-react";
 import { inrPrecise } from "@/lib/data";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
-import { secondsLeft, normaliseUtr, upiAppLinks, upiPaymentUri, utrProblem, type UpiSettings } from "@/lib/upi-pay";
+import { secondsLeft, normaliseUtr, settingsProblem, upiAppLinks, upiPaymentUri, utrProblem, type UpiSettings } from "@/lib/upi-pay";
 import { submitUpiPayment, useUpiPayments } from "@/lib/upi-store";
 import { cn } from "@/lib/utils";
+
+/**
+ * The order page's "Pay by UPI" box: shown while a UPI order is unpaid and direct UPI is on (or a
+ * UTR was already sent, so the customer sees its status), hidden otherwise.
+ */
+export function OrderUpiPay({ orderNo, status, payment, method, balance, customer }: {
+  orderNo: string; status: string; payment: string; method: string; balance: number; customer: string;
+}) {
+  const { settings, submissions } = useUpiPayments();
+  const sent = submissions.find((item) => item.orderNo === orderNo);
+  const on = settings?.enabled && !settingsProblem(settings);
+  if (!settings || status === "Cancelled") return null;
+  if (!sent && (!on || payment === "Paid" || balance <= 0 || !/upi/i.test(method))) return null;
+  return <div className="mb-6"><UpiPayPanel settings={settings} orderNo={orderNo} amount={sent?.amount ?? balance} customer={customer} /></div>;
+}
 
 /**
  * Pay the order by UPI straight to the company's bank account (no gateway, no commission):
@@ -22,6 +37,7 @@ export function UpiPayPanel({ settings, orderNo, amount, customer }: { settings:
   const [now, setNow] = useState(() => Date.now());
   const [utr, setUtr] = useState("");
   const [error, setError] = useState("");
+  const [sending, setSending] = useState(false);
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
@@ -29,15 +45,18 @@ export function UpiPayPanel({ settings, orderNo, amount, customer }: { settings:
   const left = secondsLeft(openedAt, settings.payWindowMinutes, now);
   const clock = `${String(Math.floor(left / 60)).padStart(2, "0")}:${String(left % 60).padStart(2, "0")}`;
 
-  const submit = (value = utr) => {
+  const submit = async (value = utr) => {
     const problem = utrProblem(value);
     if (problem) { setError(problem); return; }
+    setSending(true);
     try {
-      submitUpiPayment({ orderNo, amount, utr: normaliseUtr(value), customer });
+      await submitUpiPayment({ orderNo, amount, utr: normaliseUtr(value), customer });
       setError("");
       toast.success("Payment details sent", { description: "We will confirm it as soon as it reaches our bank." });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not send the payment details");
+    } finally {
+      setSending(false);
     }
   };
 
@@ -111,11 +130,11 @@ export function UpiPayPanel({ settings, orderNo, amount, customer }: { settings:
             <input id={`utr-${orderNo}`} inputMode="numeric" autoComplete="off" maxLength={16} placeholder="e.g. 612345678901" value={utr}
               onChange={(e) => { setUtr(e.target.value); setError(""); }}
               className="h-10 min-w-0 flex-1 rounded-md border border-input bg-white px-3 font-mono text-sm tracking-wider" />
-            <button type="button" onClick={() => submit()} className="h-10 rounded-md bg-navy px-4 text-sm font-semibold text-white hover:bg-midnight">I have paid</button>
+            <button type="button" disabled={sending} onClick={() => void submit()} className="h-10 rounded-md bg-navy px-4 text-sm font-semibold text-white hover:bg-midnight disabled:opacity-60">{sending ? "Sending…" : "I have paid"}</button>
           </div>
           {error && <p className="mt-1.5 text-xs font-semibold text-danger">{error}</p>}
           {STATIC_DATA_MODE && (
-            <button type="button" onClick={() => { const fake = String(Math.floor(1e11 + Math.random() * 9e11)); setUtr(fake); submit(fake); }}
+            <button type="button" onClick={() => { const fake = String(Math.floor(1e11 + Math.random() * 9e11)); setUtr(fake); void submit(fake); }}
               className="mt-2 text-xs font-semibold text-slate underline">Demo only: simulate paying and entering a UTR</button>
           )}
         </div>

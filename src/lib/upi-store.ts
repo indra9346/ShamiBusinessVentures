@@ -3,16 +3,16 @@ import { supabase } from "@/integrations/supabase/client";
 import type { Json } from "@/integrations/supabase/types";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import {
-  DEFAULT_UPI_SETTINGS, UPI_SETTINGS_KEY, reviewSubmission, upsertSubmission,
+  DEFAULT_UPI_SETTINGS, UPI_SETTINGS_KEY, normaliseUtr, reviewSubmission, upsertSubmission,
   type UpiSettings, type UpiSubmission,
 } from "@/lib/upi-pay";
 
 /*
- * Where the direct-UPI settings and the customers' UTR submissions are kept.
- * MOCK: in the static demo both live in this browser (localStorage), so the whole flow can be
- * shown without touching the live database. On the live site the settings are read from
- * settings.upi_direct (off until the admin switches it on); live UTR submissions need their own
- * database table, which comes with the real integration, so they are refused here for now.
+ * Where the direct-UPI settings and the customers' UTRs are kept.
+ * Live: settings.upi_direct (public, admin-written; every UPI ID change is logged and every admin
+ * notified by the database) and the upi_payment_submissions table, changed only through the
+ * submit_upi_utr / review_upi_utr functions (the amount always comes from the order).
+ * Static demo: the same flow kept in this browser, so it can be shown without a database.
  */
 
 const DEMO_SETTINGS = "gb-demo-upi-settings";
@@ -33,8 +33,17 @@ const writeJson = (key: string, value: unknown) => {
   } catch {
     // Private mode: the demo still works for this page view.
   }
-  window.dispatchEvent(new Event(CHANGED));
 };
+const changed = () => window.dispatchEvent(new Event(CHANGED));
+
+type SubmissionRow = {
+  order_no: string; amount: number | string; utr: string; customer_name: string; submitted_at: string;
+  status: string; reviewed_at: string | null; note: string | null;
+};
+const fromRow = (row: SubmissionRow): UpiSubmission => ({
+  orderNo: row.order_no, amount: Number(row.amount), utr: row.utr, customer: row.customer_name, submittedAt: row.submitted_at,
+  status: row.status as UpiSubmission["status"], ...(row.reviewed_at ? { reviewedAt: row.reviewed_at } : {}), ...(row.note ? { note: row.note } : {}),
+});
 
 export async function loadUpiSettings(): Promise<UpiSettings> {
   if (STATIC_DATA_MODE) return { ...DEFAULT_UPI_SETTINGS, ...readJson<Partial<UpiSettings>>(DEMO_SETTINGS, {}) };
@@ -43,43 +52,82 @@ export async function loadUpiSettings(): Promise<UpiSettings> {
 }
 
 export async function saveUpiSettings(settings: UpiSettings) {
-  if (STATIC_DATA_MODE) { writeJson(DEMO_SETTINGS, settings); return; }
+  if (STATIC_DATA_MODE) { writeJson(DEMO_SETTINGS, settings); changed(); return; }
   // Public: the UPI ID and name are shown to every customer at checkout anyway.
   const { error } = await supabase.from("settings").upsert({
     key: UPI_SETTINGS_KEY, value: settings as unknown as Json, is_public: true, updated_at: new Date().toISOString(),
   });
   if (error) throw new Error(error.message);
-  window.dispatchEvent(new Event(CHANGED));
+  changed();
 }
 
-export function loadUpiSubmissions(): UpiSubmission[] {
-  return STATIC_DATA_MODE ? readJson<UpiSubmission[]>(DEMO_SUBMISSIONS, []) : [];
+/** Admins get every submission; a customer only their own (row security in the database). */
+export async function loadUpiSubmissions(): Promise<UpiSubmission[]> {
+  if (STATIC_DATA_MODE) return readJson<UpiSubmission[]>(DEMO_SUBMISSIONS, []);
+  const { data, error } = await supabase.from("upi_payment_submissions")
+    .select("order_no,amount,utr,customer_name,submitted_at,status,reviewed_at,note")
+    .order("submitted_at", { ascending: false }).limit(500);
+  if (error) return [];
+  return (data ?? []).map(fromRow);
 }
 
-export function submitUpiPayment(submission: Omit<UpiSubmission, "status" | "submittedAt">) {
-  if (!STATIC_DATA_MODE) throw new Error("Direct UPI is in testing; it is not taking real payments yet");
-  writeJson(DEMO_SUBMISSIONS, upsertSubmission(loadUpiSubmissions(), { ...submission, status: "submitted", submittedAt: new Date().toISOString() }));
+export async function submitUpiPayment(submission: { orderNo: string; amount: number; utr: string; customer: string }) {
+  if (STATIC_DATA_MODE) {
+    writeJson(DEMO_SUBMISSIONS, upsertSubmission(readJson<UpiSubmission[]>(DEMO_SUBMISSIONS, []),
+      { ...submission, utr: normaliseUtr(submission.utr), status: "submitted", submittedAt: new Date().toISOString() }));
+    changed();
+    return;
+  }
+  const { error } = await supabase.rpc("submit_upi_utr", { _order_no: submission.orderNo, _utr: normaliseUtr(submission.utr) });
+  if (error) throw new Error(error.message);
+  changed();
 }
 
-export function reviewUpiPayment(orderNo: string, status: "confirmed" | "rejected", note?: string) {
-  if (!STATIC_DATA_MODE) throw new Error("Direct UPI is in testing; it is not taking real payments yet");
-  writeJson(DEMO_SUBMISSIONS, reviewSubmission(loadUpiSubmissions(), orderNo, status, new Date().toISOString(), note));
+/** Admin decision. Confirming records the payment (order paid, sent to Zoho Books) in the same step. */
+export async function reviewUpiPayment(orderNo: string, decision: "confirmed" | "rejected", note?: string) {
+  if (STATIC_DATA_MODE) {
+    writeJson(DEMO_SUBMISSIONS, reviewSubmission(readJson<UpiSubmission[]>(DEMO_SUBMISSIONS, []), orderNo, decision, new Date().toISOString(), note));
+    changed();
+    return;
+  }
+  const { error } = await supabase.rpc("review_upi_utr", { _order_no: orderNo, _decision: decision, _note: note ?? null });
+  if (error) throw new Error(error.message);
+  changed();
 }
 
-/** Settings and submissions, kept current across tabs and components. */
+export type UpiAuditRow = { changedAt: string; oldVpa: string | null; newVpa: string | null; newEnabled: boolean | null; payeeName: string | null };
+/** Admin: the log of UPI ID changes, newest first. */
+export async function loadUpiAudit(): Promise<UpiAuditRow[]> {
+  if (STATIC_DATA_MODE) return [];
+  const { data } = await supabase.from("upi_settings_audit").select("changed_at,old_vpa,new_vpa,new_enabled,payee_name")
+    .order("changed_at", { ascending: false }).limit(50);
+  return (data ?? []).map((row) => ({ changedAt: row.changed_at, oldVpa: row.old_vpa, newVpa: row.new_vpa, newEnabled: row.new_enabled, payeeName: row.payee_name }));
+}
+
+/** Settings and submissions, kept current: after every change here, across tabs, and live from the database. */
 export function useUpiPayments() {
   const [settings, setSettings] = useState<UpiSettings | null>(null);
   const [submissions, setSubmissions] = useState<UpiSubmission[]>([]);
   const refresh = useCallback(async () => {
-    setSettings(await loadUpiSettings());
-    setSubmissions(loadUpiSubmissions());
+    const [nextSettings, nextSubmissions] = await Promise.all([loadUpiSettings(), loadUpiSubmissions()]);
+    setSettings(nextSettings);
+    setSubmissions(nextSubmissions);
   }, []);
   useEffect(() => {
     void refresh();
     const onChange = () => void refresh();
     window.addEventListener(CHANGED, onChange);
     window.addEventListener("storage", onChange);
-    return () => { window.removeEventListener(CHANGED, onChange); window.removeEventListener("storage", onChange); };
+    window.addEventListener("focus", onChange);
+    const channel = STATIC_DATA_MODE ? null : supabase.channel(`upi-${Math.random().toString(36).slice(2)}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "upi_payment_submissions" }, onChange)
+      .subscribe();
+    return () => {
+      window.removeEventListener(CHANGED, onChange);
+      window.removeEventListener("storage", onChange);
+      window.removeEventListener("focus", onChange);
+      if (channel) void supabase.removeChannel(channel);
+    };
   }, [refresh]);
   return { settings, submissions, refresh };
 }

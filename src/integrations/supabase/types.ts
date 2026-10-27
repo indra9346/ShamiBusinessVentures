@@ -385,6 +385,18 @@ export type Database = {
         Update: { id?: string; branch_id?: string; product_id?: string | null; kind?: string; value?: number; updated_by?: string | null; updated_at?: string }
         Relationships: []
       }
+      upi_payment_submissions: {
+        Row: { id: string; order_id: string; order_no: string; user_id: string | null; customer_name: string; amount: number; utr: string; status: string; note: string | null; submitted_at: string; reviewed_at: string | null; reviewed_by: string | null }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
+      upi_settings_audit: {
+        Row: { id: number; changed_at: string; changed_by: string | null; old_vpa: string | null; new_vpa: string | null; old_enabled: boolean | null; new_enabled: boolean | null; payee_name: string | null }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
       partner_targets: {
         Row: { partner_id: string; month: string; target_sales: number; updated_at: string }
         Insert: { partner_id: string; month: string; target_sales: number; updated_at?: string }
@@ -1006,6 +1018,8 @@ export type Database = {
       customer_set_default_address: { Args: { _id: string }; Returns: boolean }
       admin_update_return: { Args: { _id: string; _status: string; _refund_status: string }; Returns: boolean }
       request_zoho_invoice_approval: { Args: { _order_no: string }; Returns: boolean }
+      submit_upi_utr: { Args: { _order_no: string; _utr: string }; Returns: { id: string; order_id: string; order_no: string; user_id: string | null; customer_name: string; amount: number; utr: string; status: string; note: string | null; submitted_at: string; reviewed_at: string | null; reviewed_by: string | null } }
+      review_upi_utr: { Args: { _order_no: string; _decision: string; _note?: string | null }; Returns: { id: string; order_id: string; order_no: string; user_id: string | null; customer_name: string; amount: number; utr: string; status: string; note: string | null; submitted_at: string; reviewed_at: string | null; reviewed_by: string | null } }
       partner_leaderboard: {
         Args: { _month?: string }
         Returns: { rank: number; partner_id: string; partner_name: string; godown: string; sales: number; commission: number; earned: number; target: number; achieved_percent: number | null }[]
