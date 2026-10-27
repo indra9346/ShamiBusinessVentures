@@ -1,4 +1,5 @@
 import { createFileRoute, Link, notFound } from "@tanstack/react-router";
+import { pageHead, jsonLdScript, breadcrumbJsonLd, productJsonLd, SITE_NAME } from "@/lib/seo";
 import { useState, useEffect } from "react";
 import { Heart, Minus, Plus, ShieldCheck, Star, Truck, Store, ShoppingCart } from "lucide-react";
 import { toast } from "sonner";
@@ -34,18 +35,36 @@ export const Route = createFileRoute("/product/$id")({
     if (!loaderData?.product) {
       return {
         meta: [
-          { title: loaderData?.catalogUnavailable ? "Catalog temporarily unavailable | Shami" : "Product not found | Shami" },
+          { title: loaderData?.catalogUnavailable ? `Catalog temporarily unavailable | ${SITE_NAME}` : `Product not found | ${SITE_NAME}` },
           { name: "robots", content: "noindex" },
         ],
       };
     }
     const p = loaderData.product;
+    const path = `/product/${encodeURIComponent(p.id)}`;
+    const categorySlug = (p.category ?? "").toLowerCase().replace(/^cooking oil$/, "oil").replace(/[^a-z0-9]+/g, "-");
     return {
-      meta: [
-        { title: `${p.name} — ${inr(p.price)} | Shami Business Ventures` },
-        { name: "description", content: `${p.name} from Grain Bazar. ${p.weight} pack at ${inr(p.price)}.` },
-        { property: "og:title", content: `${p.name} | Shami` },
-        { property: "og:description", content: `${p.weight} · ${inr(p.price)} · Sold by Grain Bazar` },
+      ...pageHead({
+        title: `${p.name} at ${inr(p.price)} | ${SITE_NAME}`,
+        description: `Buy ${p.name}${p.weight ? ` (${p.weight})` : ""} at ${inr(p.price)} + GST from Grain Bazar. ${p.description ? `${p.description} ` : ""}GST invoice, pickup or delivery from Challakere and Hubli.`,
+        path,
+        type: "product",
+        ...(p.image ? { image: p.image } : {}),
+      }),
+      scripts: [
+        jsonLdScript(productJsonLd({
+          id: p.id, name: p.name, price: p.price, stock: p.stock,
+          ...(p.description ? { description: p.description } : {}),
+          ...(p.image ? { image: p.image } : {}),
+          ...(p.sku ? { sku: p.sku } : {}),
+          ...(p.brand ? { brand: p.brand } : {}),
+          ...(p.category ? { category: p.category } : {}),
+        })),
+        jsonLdScript(breadcrumbJsonLd([
+          { name: "Home", path: "/" },
+          ...(p.category ? [{ name: p.category, path: `/categories/${categorySlug}` }] : []),
+          { name: p.name, path },
+        ])),
       ],
     };
   },

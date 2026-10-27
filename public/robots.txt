@@ -1,14 +1,15 @@
-User-agent: Googlebot
-Allow: /
-
-User-agent: Bingbot
-Allow: /
-
-User-agent: Twitterbot
-Allow: /
-
-User-agent: facebookexternalhit
-Allow: /
-
+# Grain Bazar (grainbazar.com): shop, category and product pages are open to every search
+# engine; private pages (accounts, admin, vendor and partner panels, cart, checkout) are not.
 User-agent: *
 Allow: /
+Disallow: /admin
+Disallow: /vendor
+Disallow: /partner
+Disallow: /account
+Disallow: /cart
+Disallow: /checkout
+Disallow: /wishlist
+Disallow: /api/
+Disallow: /reset-password
+
+Sitemap: https://grainbazar.com/sitemap.xml

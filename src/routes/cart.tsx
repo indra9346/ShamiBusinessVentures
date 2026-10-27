@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { pageHead, SITE_NAME } from "@/lib/seo";
 import { Minus, Plus, ShoppingBag, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -12,14 +13,7 @@ import { Input } from "@/components/ui/input";
 import { showCartNotification } from "@/components/site/CartFloatingNotification";
 
 export const Route = createFileRoute("/cart")({
-  head: () => ({
-    meta: [
-      { title: "Your Cart | Shami Business Ventures" },
-      { name: "description", content: "Review your sugar and grocery cart, apply coupons and proceed to checkout." },
-      { property: "og:title", content: "Your Cart | Shami" },
-      { property: "og:description", content: "Review items, apply coupons and checkout securely." },
-    ],
-  }),
+  head: () => pageHead({ title: `Your Cart | ${SITE_NAME}`, description: "Review your cart, apply coupons and check out.", path: "/cart", noindex: true }),
   component: Cart,
 });
 

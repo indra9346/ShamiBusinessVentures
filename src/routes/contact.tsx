@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { pageHead, SITE_NAME } from "@/lib/seo";
 import { useState } from "react";
 import { CheckCircle2, Mail, MapPin, MessageSquare, Phone, RotateCcw, Send } from "lucide-react";
 import { z } from "zod";
@@ -29,17 +30,10 @@ export const Route = createFileRoute("/contact")({
       ? { packSize: search["packSize"].trim().slice(0, 60) }
       : {}),
   }),
-  head: () => ({
-    meta: [
-      { title: "Contact the Shami Supply Desk | care@shamiventures.in" },
-      {
-        name: "description",
-        content:
-          "Reach Shami Business Ventures Pvt. Ltd. at care@shamiventures.in for bulk quotes, vendor onboarding and institutional supply support.",
-      },
-      { property: "og:title", content: "Contact Shami Business Ventures" },
-      { property: "og:description", content: "Bulk quotes, vendor onboarding and order support." },
-    ],
+  head: () => pageHead({
+    title: `Contact Us | Bulk Rice, Sugar & Oil Orders | ${SITE_NAME}`,
+    description: "Contact Grain Bazar (Shami Business Ventures Pvt. Ltd.) for bulk quotes on rice, sugar and cooking oil, vendor onboarding and order support.",
+    path: "/contact",
   }),
   component: Contact,
 });

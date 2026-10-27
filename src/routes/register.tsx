@@ -1,4 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { pageHead, SITE_NAME } from "@/lib/seo";
 import { useState } from "react";
 import { toast } from "sonner";
 import { AuthCard } from "@/components/site/AuthCard";
@@ -9,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { supabase } from "@/integrations/supabase/client";
 
 export const Route = createFileRoute("/register")({
-  head: () => ({ meta: [{ title: "Create Account | Shami Business Ventures" }, { name: "description", content: "Register as a buyer for bulk and retail essentials." }] }),
+  head: () => pageHead({ title: `Create Account | ${SITE_NAME}`, description: "Register as a buyer for bulk and retail rice, sugar and oil.", path: "/register", noindex: true }),
   component: RegisterPage,
 });
 

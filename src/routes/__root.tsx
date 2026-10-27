@@ -12,6 +12,7 @@ import { useEffect, type ReactNode } from "react";
 import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
 import { AppProvider } from "@/lib/store";
+import { absoluteUrl, DEFAULT_DESCRIPTION, DEFAULT_IMAGE, LEGAL_NAME, SITE_NAME } from "@/lib/seo";
 import { LanguageProvider } from "@/lib/i18n";
 import { Toaster } from "@/components/ui/sonner";
 import { CartFloatingNotifier } from "@/components/site/CartFloatingNotification";
@@ -83,21 +84,15 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Shami Business Ventures — Premium Sugar & Grocery Marketplace" },
-      {
-        name: "description",
-        content:
-          "Premium multi-vendor marketplace for sugar, rice, oils and pulses by Shami Business Ventures Pvt. Ltd.",
-      },
-      { name: "author", content: "Shami Business Ventures Pvt. Ltd." },
-      { property: "og:title", content: "Shami Business Ventures — Premium Marketplace" },
-      {
-        property: "og:description",
-        content: "Trusted wholesale and retail sugar, rice, oils and pulses from verified vendors.",
-      },
+      { title: `${SITE_NAME} | Rice, Sugar & Cooking Oil from Shami Business Ventures` },
+      { name: "description", content: DEFAULT_DESCRIPTION },
+      { name: "author", content: LEGAL_NAME },
+      { name: "theme-color", content: "#2f5d46" },
+      { property: "og:site_name", content: SITE_NAME },
+      { property: "og:locale", content: "en_IN" },
       { property: "og:type", content: "website" },
+      { property: "og:image", content: absoluteUrl(DEFAULT_IMAGE) },
       { name: "twitter:card", content: "summary_large_image" },
-      { name: "twitter:site", content: "@Lovable" },
     ],
     links: [
       {

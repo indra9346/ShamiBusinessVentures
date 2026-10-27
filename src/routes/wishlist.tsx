@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { pageHead, SITE_NAME } from "@/lib/seo";
 import { Heart } from "lucide-react";
 import { SiteLayout, Breadcrumbs } from "@/components/site/SiteLayout";
 import { ProductCard } from "@/components/site/ProductCard";
@@ -6,14 +7,7 @@ import { isStorefrontProduct } from "@/lib/data";
 import { useApp } from "@/lib/store";
 
 export const Route = createFileRoute("/wishlist")({
-  head: () => ({
-    meta: [
-      { title: "My Wishlist | Shami Business Ventures" },
-      { name: "description", content: "Saved S1 sugar products in your Shami wishlist." },
-      { property: "og:title", content: "My Wishlist | Shami" },
-      { property: "og:description", content: "Products you saved for later." },
-    ],
-  }),
+  head: () => pageHead({ title: `My Wishlist | ${SITE_NAME}`, description: "Products you saved for later.", path: "/wishlist", noindex: true }),
   component: Wishlist,
 });
 
