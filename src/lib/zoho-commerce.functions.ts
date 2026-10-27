@@ -9,7 +9,7 @@ import {
   cleanEmailList, godownPricesFromPricebook, godownStockFromZohoItem, mergeGodownPrices, newOrderEmail, parseZohoItemSyncVendorIds, pendingOrderQty, sameGodownPrices,
   zohoPricebookItemsFor, reconcileCatalog, reconcileCustomers, reconcileOrders, shouldRetryZohoCall,
   zohoItemSyncAllows, zohoLogLine,
-  zohoOrderNumber, zohoRetryDelayMs, type AppProductForParity, type ZohoItemForParity, type ZohoOrderForReconcile,
+  zohoOrderNumber, websiteOrderNoOf, WEBSITE_ORDER_NUMBER, zohoRetryDelayMs, type AppProductForParity, type ZohoItemForParity, type ZohoOrderForReconcile,
   orderNeedsZohoInvoice, paymentsToRecord, roundingWriteOff,
   invoiceDecision, websiteInvoiceStatus, zohoInvoicesOf, type InvoiceRecord,
   DAILY_LIMIT_PAUSE_MINUTES, inboundPollDue, isZohoDailyLimitError, zohoPaused,
@@ -941,8 +941,8 @@ async function inventoryRequest<T>(
     signal: AbortSignal.timeout(20_000),
   });
   // Up to 2 retries with backoff: 429 for any method (Zoho did not process it); 5xx and network
-  // errors only for GET/PUT. A POST is never resent blindly; order creation looks up its unique
-  // GB- number on the next attempt instead (see syncZohoOrder).
+  // errors only for GET/PUT. A POST is never resent blindly; order creation looks the order up by
+  // its Reference# (the website order number) on the next attempt instead (see syncZohoOrder).
   const MAX_RETRIES = 2;
   let response: Response | null = null;
   for (let retry = 0; ; retry += 1) {
@@ -2137,7 +2137,7 @@ async function ensureZohoBooksInvoice(
   zoho: Record<string, unknown>,
 ) {
   const salesOrderId = order.zoho_salesorder_id!;
-  const number = str(zoho["salesorder_number"]) || zohoOrderNumber(order.order_no);
+  const number = str(zoho["salesorder_number"]) || order.order_no;
   const fail = (step: string, cause: unknown): never => {
     const message = cause instanceof Error ? cause.message : String(cause);
     throw new Error(`Zoho Books invoice for ${number}: ${step} failed: ${message}.${zohoPermissionHint(message)}`);
@@ -2355,7 +2355,7 @@ function zohoFulfillmentStatus(zoho: Record<string, unknown>) {
  * Website -> Zoho fulfilment for one sales order. Each pass reads Zoho, does the next missing step
  * (package, then shipment, then delivered) and reads Zoho again, so a retry never makes a second
  * package or shipment. Zoho numbers them in the location's own series; if the organization has
- * auto-numbering off, GB-PKG-/GB-SHP- numbers are used instead.
+ * auto-numbering off, PKG-/SHP- plus the website order number are used instead.
  */
 async function pushZohoFulfilment(
   region: Region,
@@ -2366,7 +2366,7 @@ async function pushZohoFulfilment(
   load: () => Promise<Record<string, unknown>>,
 ) {
   const salesOrderId = order.zoho_salesorder_id!;
-  const number = str(zoho["salesorder_number"]) || zohoOrderNumber(order.order_no);
+  const number = str(zoho["salesorder_number"]) || order.order_no;
   const today = indiaDate(new Date().toISOString());
   const fail = (step: string, cause: unknown): never => {
     const message = cause instanceof Error ? cause.message : String(cause);
@@ -2394,7 +2394,7 @@ async function pushZohoFulfilment(
       try {
         await createNumbered("packages", { salesorder_id: salesOrderId },
           { date: today, line_items: lines, notes: `Packed for Grain Bazar order ${order.order_no}` },
-          "package_number", `GB-PKG-${order.order_no}`.slice(0, 50));
+          "package_number", `PKG-${order.order_no}`.slice(0, 50));
       } catch (cause) {
         fail("package", cause);
       }
@@ -2407,7 +2407,7 @@ async function pushZohoFulfilment(
             delivery_method: order.shipping_method === "Pickup" ? "Customer pickup from godown" : "Grain Bazar delivery",
             notes: `Dispatched for Grain Bazar order ${order.order_no}`,
           },
-          "shipment_number", `GB-SHP-${order.order_no}`.slice(0, 50));
+          "shipment_number", `SHP-${order.order_no}`.slice(0, 50));
       } catch (cause) {
         fail("shipment", cause);
       }
@@ -2441,8 +2441,9 @@ async function applyZohoSalesOrderToApp(
   if (!zohoId) return "ignored";
   const columns = "id,order_no,order_status,total,zoho_salesorder_id,zoho_last_modified_at";
   let { data: order } = await db.from("orders").select(columns).eq("zoho_salesorder_id", zohoId).maybeSingle();
-  if (!order && number.startsWith("GB-")) {
-    const byNumber = await db.from("orders").select(columns).eq("order_no", number.slice(3)).is("zoho_salesorder_id", null).maybeSingle();
+  const websiteOrderNo = websiteOrderNoOf({ salesorder_number: number, reference_number: str(zoho["reference_number"]) });
+  if (!order && websiteOrderNo) {
+    const byNumber = await db.from("orders").select(columns).eq("order_no", websiteOrderNo).is("zoho_salesorder_id", null).maybeSingle();
     order = byNumber.data;
     if (order) await db.from("orders").update({ zoho_salesorder_id: zohoId }).eq("id", order.id).is("zoho_salesorder_id", null);
   }
@@ -2503,11 +2504,20 @@ async function applyRecentZohoOrderChanges(
 ) {
   const result = await inventoryRequest<{ salesorders?: Record<string, unknown>[] }>(
     region, organizationId, token, "salesorders", "GET", undefined,
-    { sort_column: "last_modified_time", sort_order: "D", per_page: "50", search_text: "GB-" },
+    { sort_column: "last_modified_time", sort_order: "D", per_page: "50" },
   );
   const summary = { checked: 0, changed: 0 };
-  for (const row of result.salesorders ?? []) {
-    if (!str(row["salesorder_number"]).startsWith("GB-")) continue;
+  // Only orders that belong to the website, and only when Zoho changed them since the last apply
+  // (one full read per changed order keeps this inside Zoho's daily API budget).
+  const rows = result.salesorders ?? [];
+  const { data: linked } = await db.from("orders").select("zoho_salesorder_id,zoho_last_modified_at")
+    .in("zoho_salesorder_id", rows.map((row) => str(row["salesorder_id"])).filter(Boolean));
+  const knownModified = new Map((linked ?? []).map((row) => [row.zoho_salesorder_id!, Date.parse(row.zoho_last_modified_at ?? "")]));
+  for (const row of rows) {
+    const id = str(row["salesorder_id"]);
+    const known = knownModified.get(id);
+    if (known === undefined && !websiteOrderNoOf({ salesorder_number: str(row["salesorder_number"]), reference_number: str(row["reference_number"]) })) continue;
+    if (known !== undefined && Number.isFinite(known) && Date.parse(str(row["last_modified_time"])) <= known) continue;
     summary.checked += 1;
     try {
       // Fetch the full order (packages, line items) before applying it.
@@ -2553,14 +2563,17 @@ export async function handleZohoOrderWebhook(salesOrderId: string) {
 
 /**
  * Zoho Books invoice webhook (created / edited / voided): finds the invoice's website order (its
- * sales order, or the GB- order number Zoho copies into the invoice reference) and applies that
+ * sales order, or the website order number in the invoice reference) and applies that
  * sales order, which records the invoice's new state on the website at once.
  */
 export async function handleZohoInvoiceWebhook(invoice: { salesOrderId: string; reference: string }) {
   let salesOrderId = invoice.salesOrderId;
-  if (!salesOrderId && invoice.reference.startsWith("GB-")) {
+  const websiteOrderNo = invoice.reference.startsWith("GB-")
+    ? invoice.reference.slice(3)
+    : WEBSITE_ORDER_NUMBER.test(invoice.reference.trim()) ? invoice.reference.trim() : "";
+  if (!salesOrderId && websiteOrderNo) {
     const db = await dbAdmin();
-    const { data } = await db.from("orders").select("zoho_salesorder_id").eq("order_no", invoice.reference.slice(3)).maybeSingle();
+    const { data } = await db.from("orders").select("zoho_salesorder_id").eq("order_no", websiteOrderNo).maybeSingle();
     salesOrderId = data?.zoho_salesorder_id ?? "";
   }
   if (!salesOrderId) return "not_grain_bazar";
@@ -2896,12 +2909,18 @@ export const listZohoLocations = createServerFn({ method: "GET" })
     }
   });
 
-async function findZohoSalesOrdersByNumber(region: Region, organizationId: string, token: string, salesOrderNumber: string) {
+/**
+ * The Zoho sales orders for one website order: newer ones carry the website order number in
+ * Reference# (their own number comes from the godown's Zoho series), older ones are GB-<order no>.
+ */
+async function findZohoSalesOrdersForOrder(region: Region, organizationId: string, token: string, orderNo: string) {
   const result = await inventoryRequest<{ salesorders?: Record<string, unknown>[] }>(
     region, organizationId, token, "salesorders", "GET", undefined,
-    { salesorder_number: salesOrderNumber, per_page: "200" },
+    { search_text: orderNo, per_page: "200" },
   );
-  return (result.salesorders ?? []).filter((row) => str(row["salesorder_number"]) === salesOrderNumber);
+  const key = websiteOrderNoOf({ salesorder_number: zohoOrderNumber(orderNo) }) ?? orderNo;
+  return (result.salesorders ?? []).filter((row) =>
+    websiteOrderNoOf({ salesorder_number: str(row["salesorder_number"]), reference_number: str(row["reference_number"]) }) === key);
 }
 
 /** Inventory and Commerce share one organization; a pushed order must also be listed in Commerce > Orders. */
@@ -2914,7 +2933,7 @@ async function assertVisibleInZohoCommerce(region: Region, organizationId: strin
   }
 }
 
-/** Records a sales order found in Zoho by its GB- number on the site order, then syncs it. */
+/** Records a sales order found in Zoho by its Reference# (or older GB- number) on the site order, then syncs it. */
 async function linkAndSyncZohoOrder(
   db: Awaited<ReturnType<typeof dbAdmin>>,
   region: Region,
@@ -2944,8 +2963,8 @@ async function syncZohoOrder(db: Awaited<ReturnType<typeof dbAdmin>>, region: Re
   // Cancelled before it ever reached Zoho: never create an open sales order that would commit
   // stock the site has already given back. If an earlier push did reach Zoho, link and void it.
   if (order.order_status === "Cancelled") {
-    const matches = await findZohoSalesOrdersByNumber(region, organizationId, token, zohoOrderNumber(order.order_no));
-    if (matches.length > 1) throw new NeedsReviewError(`More than one Zoho sales order uses ${zohoOrderNumber(order.order_no)}`);
+    const matches = await findZohoSalesOrdersForOrder(region, organizationId, token, order.order_no);
+    if (matches.length > 1) throw new NeedsReviewError(`More than one Zoho sales order is for ${order.order_no}`);
     if (matches.length === 1) await linkAndSyncZohoOrder(db, region, organizationId, token, order, items ?? [], str(matches[0]!["salesorder_id"]));
     return;
   }
@@ -3010,12 +3029,11 @@ async function syncZohoOrder(db: Awaited<ReturnType<typeof dbAdmin>>, region: Re
   if (!items?.length) throw new NeedsReviewError("Order has no line items");
 
   const lineItems = await zohoLineItemsForOrder(db, region, organizationId, token, items);
-  const safeNumber = zohoOrderNumber(order.order_no);
   // A previous request may have reached Zoho even if the response was lost.
-  // On retries, search Zoho first by the unique sales-order number.
+  // On retries, search Zoho first for a sales order with this website order number.
   if (job.attempts > 1) {
-    const matches = await findZohoSalesOrdersByNumber(region, organizationId, token, safeNumber);
-    if (matches.length > 1) throw new NeedsReviewError(`More than one Zoho sales order uses ${safeNumber}`);
+    const matches = await findZohoSalesOrdersForOrder(region, organizationId, token, order.order_no);
+    if (matches.length > 1) throw new NeedsReviewError(`More than one Zoho sales order is for ${order.order_no}`);
     if (matches.length === 1) {
       // Bring the found sales order up to date too (status, lines), not just link it.
       await linkAndSyncZohoOrder(db, region, organizationId, token, order, items, str(matches[0]!["salesorder_id"]));
@@ -3038,7 +3056,8 @@ async function syncZohoOrder(db: Awaited<ReturnType<typeof dbAdmin>>, region: Re
   const payload: Record<string, unknown> = {
     ...(locationId ? { location_id: locationId } : {}),
     ...(partner?.name ? { salesperson_name: partner.name } : {}),
-    salesorder_number: safeNumber,
+    // No salesorder_number: Zoho numbers the order in the godown location's own transaction series
+    // (Settings > Transaction Number Series). The website order number goes in Reference#.
     reference_number: String(order.order_no).slice(0, 100),
     customer_id: customerId,
     date: datePart(order.created_at, new Date().toISOString().slice(0, 10)),
@@ -3053,11 +3072,12 @@ async function syncZohoOrder(db: Awaited<ReturnType<typeof dbAdmin>>, region: Re
     ...(orderGstInfo.isValid && orderGstInfo.gstin ? { gst_no: orderGstInfo.gstin } : {}),
     ...(orderGstInfo.placeOfContact ? { place_of_supply: orderGstInfo.placeOfContact } : {}),
   };
-  const created = await createSalesOrderWithChannel(region, organizationId, token, payload);
+  const created = await createSalesOrderWithChannel(region, organizationId, token, payload, order.order_no);
+  const safeNumber = str(created.salesorder?.["salesorder_number"]) || order.order_no;
   const salesOrderId = str(created.salesorder?.["salesorder_id"]);
   if (!salesOrderId) throw new Error("Zoho created a sales order but returned no salesorder_id");
   const { error: saveError } = await db.from("orders").update({ zoho_salesorder_id: salesOrderId }).eq("id", order.id).is("zoho_salesorder_id", null);
-  if (saveError) throw new Error("Zoho sales order created, but its ID could not be stored; retry will check Zoho's unique order number");
+  if (saveError) throw new Error("Zoho sales order created, but its ID could not be stored; the retry finds it by its Reference#");
   await saveZohoZohoState(db, order.id, created.salesorder ?? {});
   // Official Zoho notification: Zoho Books "Email a sales order" (Books workflow email alerts do
   // not fire for orders created through the API). Never blocks or fails the order sync.
@@ -3091,28 +3111,43 @@ const channelCustomFields = [{ api_name: ZOHO_CHANNEL_FIELD, value: ZOHO_CHANNEL
 const isCustomFieldError = (cause: unknown) => /custom ?field|cf_|api_name|invalid.*field/i.test(cause instanceof Error ? cause.message : String(cause));
 
 /** Creates the sales order with the channel field; if the field does not exist in Zoho yet, without it. */
-async function createSalesOrderWithChannel(region: Region, organizationId: string, token: string, payload: Record<string, unknown>) {
-  if (!payload["salesperson_name"]) return createSalesOrderWithChannelField(region, organizationId, token, payload);
+async function createSalesOrderWithChannel(region: Region, organizationId: string, token: string, payload: Record<string, unknown>, orderNo: string) {
+  if (!payload["salesperson_name"]) return createSalesOrderNumbered(region, organizationId, token, payload, orderNo);
   try {
-    return await createSalesOrderWithChannelField(region, organizationId, token, payload);
+    return await createSalesOrderNumbered(region, organizationId, token, payload, orderNo);
   } catch (cause) {
     // A salesperson Zoho will not take never blocks the order: create it without one.
     if (!/sales ?person/i.test(cause instanceof Error ? cause.message : String(cause))) throw cause;
     console.warn(zohoLogLine("zoho_salesperson_skipped", { error: cause instanceof Error ? cause.message.slice(0, 200) : "unknown" }));
     const { salesperson_name: _skipped, ...withoutSalesperson } = payload;
-    return createSalesOrderWithChannelField(region, organizationId, token, withoutSalesperson);
+    return createSalesOrderNumbered(region, organizationId, token, withoutSalesperson, orderNo);
   }
 }
 
-async function createSalesOrderWithChannelField(region: Region, organizationId: string, token: string, payload: Record<string, unknown>) {
+/**
+ * Zoho numbers the order itself, in the godown location's transaction series. Only if the
+ * organization has sales-order auto-numbering switched off does it get the website order number.
+ */
+async function createSalesOrderNumbered(region: Region, organizationId: string, token: string, payload: Record<string, unknown>, orderNo: string) {
+  try {
+    return await createSalesOrderWithChannelField(region, organizationId, token, payload, {});
+  } catch (cause) {
+    if (!/number/i.test(cause instanceof Error ? cause.message : String(cause))) throw cause;
+    console.warn(zohoLogLine("zoho_order_own_number", { order: orderNo }));
+    return createSalesOrderWithChannelField(region, organizationId, token,
+      { ...payload, salesorder_number: orderNo.slice(0, 50) }, { ignore_auto_number_generation: "true" });
+  }
+}
+
+async function createSalesOrderWithChannelField(region: Region, organizationId: string, token: string, payload: Record<string, unknown>, query: Record<string, string>) {
   try {
     return await inventoryRequest<{ salesorder?: Record<string, unknown> }>(region, organizationId, token, "salesorders", "POST",
-      { ...payload, custom_fields: channelCustomFields }, { ignore_auto_number_generation: "true" });
+      { ...payload, custom_fields: channelCustomFields }, query);
   } catch (cause) {
     if (!isCustomFieldError(cause)) throw cause;
     console.warn(`Zoho has no "${ZOHO_CHANNEL_FIELD}" sales order field yet; order created without the channel mark.`);
     return inventoryRequest<{ salesorder?: Record<string, unknown> }>(region, organizationId, token, "salesorders", "POST",
-      payload, { ignore_auto_number_generation: "true" });
+      payload, query);
   }
 }
 
@@ -3852,7 +3887,7 @@ async function pushOrderToZohoDirect(db: Awaited<ReturnType<typeof dbAdmin>>, or
     .eq("entity_type", "order").eq("entity_id", orderId)
     .in("status", ["pending", "failed", "needs_review"]);
   try {
-    // attempts: 2 first looks for an earlier half-finished push by the GB- number.
+    // attempts: 2 first looks for an earlier half-finished push by its Reference#.
     await syncZohoOrder(db, region, connection.organization_id, token, {
       id: "direct", entity_type: "order", entity_id: orderId, attempts: 2,
     } as ZohoSyncJob);
@@ -4303,7 +4338,7 @@ export const probeZohoSalesChannel = createServerFn({ method: "POST" })
 
 /**
  * Reconciliation report (read-only): Grain Bazar orders from the last `days` days against the
- * Zoho sales orders numbered GB-..., matched by that unique number. Lists missing, unlinked,
+ * Zoho sales orders, matched by Reference# (the website order number; GB-… for older orders). Lists missing, unlinked,
  * duplicated, cancelled-on-one-side and total differences. Changes nothing in either system.
  */
 export const reconcileZohoOrders = createServerFn({ method: "POST" })
@@ -4320,8 +4355,8 @@ export const reconcileZohoOrders = createServerFn({ method: "POST" })
       .order("created_at", { ascending: false })
       .limit(1000);
     if (error) throw new Error("Could not read Grain Bazar orders");
-    // Per-order lookups with endpoints the sync already uses: by stored Zoho ID, else by the unique
-    // GB- number. Capped per run to stay well inside Zoho's per-minute API limit.
+    // Per-order lookups with endpoints the sync already uses: by stored Zoho ID, else by the website
+    // order number (Reference#, or GB- for older orders). Capped to stay inside Zoho's API limit.
     const MAX_LOOKUPS = 80;
     const rows = (orders ?? []).slice(0, MAX_LOOKUPS);
     const truncated = (orders ?? []).length > rows.length;
@@ -4329,6 +4364,7 @@ export const reconcileZohoOrders = createServerFn({ method: "POST" })
     const toRecon = (row: Record<string, unknown>): ZohoOrderForReconcile => ({
       salesorder_id: str(row["salesorder_id"]),
       salesorder_number: str(row["salesorder_number"]),
+      reference_number: str(row["reference_number"]),
       status: str(row["order_status"] ?? row["status"]),
       total: Number(row["total"]),
     });
@@ -4342,7 +4378,7 @@ export const reconcileZohoOrders = createServerFn({ method: "POST" })
           // Deleted in Zoho or not readable: fall through to the number search.
         }
       }
-      const found = await findZohoSalesOrdersByNumber(region, organizationId, token, zohoOrderNumber(order.order_no));
+      const found = await findZohoSalesOrdersForOrder(region, organizationId, token, order.order_no);
       zohoOrders.push(...found.map(toRecon));
     });
     const report = reconcileOrders((orders ?? []).map((o) => ({ ...o, total: Number(o.total) })), zohoOrders);
@@ -4446,7 +4482,7 @@ export const sendZohoOrderTestEmail = createServerFn({ method: "POST" })
     if (error) throw new Error("Could not read orders");
     if (!order?.zoho_salesorder_id) throw new Error("No open website order is linked to Zoho yet.");
     const { region, organizationId, token } = await zohoOrderContext(db);
-    const number = zohoOrderNumber(order.order_no);
+    const number = order.order_no;
     const email = newOrderEmail({ number, customer: order.customer_name ?? "", total: Number(order.total) || 0, delivery: str(order.shipping_method) });
     await booksRequest(region, organizationId, token, `salesorders/${encodeURIComponent(order.zoho_salesorder_id)}/email`, "POST", {
       to_mail_ids: config.to,
