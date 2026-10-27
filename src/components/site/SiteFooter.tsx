@@ -97,39 +97,48 @@ export function SiteFooter() {
               aria-label="love"
               title="Crafted with passion"
             >
-              <span className="inline-block animate-realistic-3d-heart transform-gpu">
-                <svg
-                  viewBox="0 0 32 32"
-                  className="h-4.5 w-4.5 sm:h-5 sm:w-5"
-                  fill="none"
-                  xmlns="http://www.w3.org/2000/svg"
-                >
-                  <defs>
-                    <radialGradient id="footerHeart3d" cx="35%" cy="30%" r="65%">
-                      <stop offset="0%" stopColor="#ff5a79" />
-                      <stop offset="40%" stopColor="#ef233c" />
-                      <stop offset="85%" stopColor="#a30022" />
-                      <stop offset="100%" stopColor="#590012" />
-                    </radialGradient>
-                    <linearGradient id="footerHeartHighlight" x1="20%" y1="15%" x2="55%" y2="55%">
-                      <stop offset="0%" stopColor="#ffffff" stopOpacity="0.85" />
-                      <stop offset="100%" stopColor="#ffffff" stopOpacity="0" />
-                    </linearGradient>
-                  </defs>
-                  <path
-                    d="M16 28.5C15.6 28.5 15.2 28.3 14.9 28C11.5 24.6 3 17.5 3 10.5C3 5.8 6.8 2 11.5 2C13.8 2 15.1 3.1 16 4.2C16.9 3.1 18.2 2 20.5 2C25.2 2 29 5.8 29 10.5C29 17.5 20.5 24.6 17.1 28C16.8 28.3 16.4 28.5 16 28.5Z"
-                    fill="url(#footerHeart3d)"
-                  />
-                  <ellipse
-                    cx="10.5"
-                    cy="7.5"
-                    rx="4.5"
-                    ry="2.5"
-                    transform="rotate(-35 10.5 7.5)"
-                    fill="url(#footerHeartHighlight)"
-                  />
-                </svg>
-              </span>
+              {/* A crisp heart; two golden sparks run up its border from the bottom tip and meet at the top. */}
+              <svg
+                viewBox="0 0 32 32"
+                className="footer-heart h-5 w-5 sm:h-6 sm:w-6"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                <defs>
+                  <linearGradient id="footerHeartFill" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#ff4d6d" />
+                    <stop offset="100%" stopColor="#d90429" />
+                  </linearGradient>
+                  <linearGradient id="footerHeartGold" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#fff3b0" />
+                    <stop offset="100%" stopColor="#f5b400" />
+                  </linearGradient>
+                </defs>
+                <path
+                  d="M16 28.5C15.6 28.5 15.2 28.3 14.9 28C11.5 24.6 3 17.5 3 10.5C3 5.8 6.8 2 11.5 2C13.8 2 15.1 3.1 16 4.2C16.9 3.1 18.2 2 20.5 2C25.2 2 29 5.8 29 10.5C29 17.5 20.5 24.6 17.1 28C16.8 28.3 16.4 28.5 16 28.5Z"
+                  fill="url(#footerHeartFill)"
+                  stroke="#f5b400"
+                  strokeOpacity="0.45"
+                  strokeWidth="1.2"
+                  strokeLinejoin="round"
+                />
+                <path
+                  className="footer-heart-spark"
+                  pathLength={100}
+                  d="M16 28.5C15.6 28.5 15.2 28.3 14.9 28C11.5 24.6 3 17.5 3 10.5C3 5.8 6.8 2 11.5 2C13.8 2 15.1 3.1 16 4.2"
+                  stroke="url(#footerHeartGold)"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                />
+                <path
+                  className="footer-heart-spark"
+                  pathLength={100}
+                  d="M16 28.5C16.4 28.5 16.8 28.3 17.1 28C20.5 24.6 29 17.5 29 10.5C29 5.8 25.2 2 20.5 2C18.2 2 16.9 3.1 16 4.2"
+                  stroke="url(#footerHeartGold)"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                />
+              </svg>
             </span>
             <span className="font-medium tracking-wide">by</span>
             <a
