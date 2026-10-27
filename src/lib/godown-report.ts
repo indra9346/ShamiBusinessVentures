@@ -12,7 +12,8 @@
  *                    without one is flagged, never counted as pure profit); the discount is
  *                    shared in proportion
  *   Partner commission  the godown channel partner's commission on those lines
- *   Net profit       Gross profit + Delivery charges − Partner commission (negative = loss)
+ *   Net profit       Gross profit + Delivery charges − Partner commission on those same lines
+ *                    (negative = loss); like gross profit it leaves out lines without a rate
  *   Loss (below cost)   what was lost on lines sold under their purchase rate
  *   Cancelled        value of cancelled orders (sales that did not happen)
  */
@@ -65,6 +66,8 @@ export type GodownTotals = {
   linesWithoutCost: number;
   /** Sales of lines without a purchase rate (left out of profit). */
   salesWithoutCost: number;
+  /** Partner commission on lines whose purchase rate is known (the part net profit deducts). */
+  costedCommission: number;
   grossProfit: number;
   commission: number;
   netProfit: number;
@@ -113,7 +116,7 @@ export function istRange(from: string, to: string) {
 
 const emptyTotals = (godownId: string, godown: string): GodownTotals => ({
   godownId, godown, orders: 0, cancelledOrders: 0, unitsSold: 0, sales: 0, discount: 0, netSales: 0, gst: 0,
-  delivery: 0, billed: 0, collected: 0, due: 0, cost: 0, linesWithoutCost: 0, salesWithoutCost: 0, grossProfit: 0, commission: 0,
+  delivery: 0, billed: 0, collected: 0, due: 0, cost: 0, linesWithoutCost: 0, salesWithoutCost: 0, costedCommission: 0, grossProfit: 0, commission: 0,
   netProfit: 0, lossBelowCost: 0, cancelledValue: 0, hourly: Array.from({ length: 24 }, () => 0),
 });
 
@@ -180,6 +183,7 @@ export function buildGodownReport(input: {
           row.salesWithoutCost += Number(item.line_total);
         } else {
           row.cost += cost;
+          row.costedCommission += commission;
           if (margin! < 0) row.lossBelowCost += -margin!;
         }
       }
@@ -222,7 +226,8 @@ export function buildGodownReport(input: {
       ...row, sales, discount, netSales, cost, salesWithoutCost, grossProfit, commission, delivery, billed, collected,
       gst: rupees(row.gst),
       due: rupees(Math.max(0, billed - collected)),
-      netProfit: rupees(grossProfit + delivery - commission),
+      costedCommission: rupees(row.costedCommission),
+      netProfit: rupees(grossProfit + delivery - row.costedCommission),
       lossBelowCost: rupees(row.lossBelowCost),
       cancelledValue: rupees(row.cancelledValue),
       hourly: row.hourly.map(rupees),
@@ -234,7 +239,7 @@ export function buildGodownReport(input: {
   const all = godowns.reduce((sum, row) => {
     const next = { ...sum };
     for (const key of ["orders", "cancelledOrders", "unitsSold", "sales", "discount", "netSales", "gst", "delivery", "billed",
-      "collected", "due", "cost", "linesWithoutCost", "salesWithoutCost", "grossProfit", "commission", "netProfit", "lossBelowCost", "cancelledValue"] as const)
+      "collected", "due", "cost", "linesWithoutCost", "salesWithoutCost", "costedCommission", "grossProfit", "commission", "netProfit", "lossBelowCost", "cancelledValue"] as const)
       next[key] = rupees(sum[key] + row[key]);
     next.hourly = sum.hourly.map((value, hour) => rupees(value + row.hourly[hour]!));
     return next;

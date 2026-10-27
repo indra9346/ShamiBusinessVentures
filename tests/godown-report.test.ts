@@ -67,13 +67,15 @@ test("unknown purchase rate is flagged, not counted as zero cost; orders without
     orders: [order("1", { branch_id: null, subtotal: 500, total: 525 })],
     items: [{ id: "i1", order_id: "1", product_id: "P050", product_name: "New oil", qty: 1, unit_price: 500, line_total: 500 }],
     costs: {},
-    commissions: {},
+    commissions: { i1: 2.5 },
   });
   const direct = report.godowns.find((row) => row.godownId === NO_GODOWN)!;
   assert.equal(direct.linesWithoutCost, 1);
   assert.equal(direct.salesWithoutCost, 500);
   assert.equal(direct.cost, 0);
   assert.equal(direct.grossProfit, 0); // not ₹500 of "profit"
+  assert.equal(direct.commission, 2.5); // shown as commission
+  assert.equal(direct.netProfit, 0); // but not as a ₹2.50 "loss" on a line whose profit is unknown
   assert.equal(report.lines[0]!.margin, null);
   // A godown with no sales that day is still in the report.
   assert.equal(report.godowns.find((row) => row.godownId === "BR-CLK")!.sales, 0);
