@@ -53,6 +53,7 @@ import { Route as AdminReportsRouteImport } from './routes/admin.reports'
 import { Route as AdminReturnsRouteImport } from './routes/admin.returns'
 import { Route as AdminReviewsRouteImport } from './routes/admin.reviews'
 import { Route as AdminSettingsRouteImport } from './routes/admin.settings'
+import { Route as AdminUpiPaymentsRouteImport } from './routes/admin.upi-payments'
 import { Route as AdminVendorsRouteImport } from './routes/admin.vendors'
 import { Route as AdminZohoRouteImport } from './routes/admin.zoho'
 import { Route as AdminZohoApiCallsRouteImport } from './routes/admin.zoho-api-calls'
@@ -308,6 +309,11 @@ const AdminSettingsRoute = AdminSettingsRouteImport.update({
   path: '/admin/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdminUpiPaymentsRoute = AdminUpiPaymentsRouteImport.update({
+  id: '/admin/upi-payments',
+  path: '/admin/upi-payments',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AdminVendorsRoute = AdminVendorsRouteImport.update({
   id: '/admin/vendors',
   path: '/admin/vendors',
@@ -523,6 +529,7 @@ export interface FileRoutesByFullPath {
   '/admin/returns': typeof AdminReturnsRoute
   '/admin/reviews': typeof AdminReviewsRoute
   '/admin/settings': typeof AdminSettingsRoute
+  '/admin/upi-payments': typeof AdminUpiPaymentsRoute
   '/admin/vendors': typeof AdminVendorsRouteWithChildren
   '/admin/zoho': typeof AdminZohoRoute
   '/admin/zoho-api-calls': typeof AdminZohoApiCallsRoute
@@ -602,6 +609,7 @@ export interface FileRoutesByTo {
   '/admin/returns': typeof AdminReturnsRoute
   '/admin/reviews': typeof AdminReviewsRoute
   '/admin/settings': typeof AdminSettingsRoute
+  '/admin/upi-payments': typeof AdminUpiPaymentsRoute
   '/admin/vendors': typeof AdminVendorsRouteWithChildren
   '/admin/zoho': typeof AdminZohoRoute
   '/admin/zoho-api-calls': typeof AdminZohoApiCallsRoute
@@ -683,6 +691,7 @@ export interface FileRoutesById {
   '/admin/returns': typeof AdminReturnsRoute
   '/admin/reviews': typeof AdminReviewsRoute
   '/admin/settings': typeof AdminSettingsRoute
+  '/admin/upi-payments': typeof AdminUpiPaymentsRoute
   '/admin/vendors': typeof AdminVendorsRouteWithChildren
   '/admin/zoho': typeof AdminZohoRoute
   '/admin/zoho-api-calls': typeof AdminZohoApiCallsRoute
@@ -765,6 +774,7 @@ export interface FileRouteTypes {
     | '/admin/returns'
     | '/admin/reviews'
     | '/admin/settings'
+    | '/admin/upi-payments'
     | '/admin/vendors'
     | '/admin/zoho'
     | '/admin/zoho-api-calls'
@@ -844,6 +854,7 @@ export interface FileRouteTypes {
     | '/admin/returns'
     | '/admin/reviews'
     | '/admin/settings'
+    | '/admin/upi-payments'
     | '/admin/vendors'
     | '/admin/zoho'
     | '/admin/zoho-api-calls'
@@ -924,6 +935,7 @@ export interface FileRouteTypes {
     | '/admin/returns'
     | '/admin/reviews'
     | '/admin/settings'
+    | '/admin/upi-payments'
     | '/admin/vendors'
     | '/admin/zoho'
     | '/admin/zoho-api-calls'
@@ -997,6 +1009,7 @@ export interface RootRouteChildren {
   AdminReturnsRoute: typeof AdminReturnsRoute
   AdminReviewsRoute: typeof AdminReviewsRoute
   AdminSettingsRoute: typeof AdminSettingsRoute
+  AdminUpiPaymentsRoute: typeof AdminUpiPaymentsRoute
   AdminVendorsRoute: typeof AdminVendorsRouteWithChildren
   AdminZohoRoute: typeof AdminZohoRoute
   AdminZohoApiCallsRoute: typeof AdminZohoApiCallsRoute
@@ -1331,6 +1344,13 @@ declare module '@tanstack/react-router' {
       path: '/admin/settings'
       fullPath: '/admin/settings'
       preLoaderRoute: typeof AdminSettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/upi-payments': {
+      id: '/admin/upi-payments'
+      path: '/admin/upi-payments'
+      fullPath: '/admin/upi-payments'
+      preLoaderRoute: typeof AdminUpiPaymentsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/admin/vendors': {
@@ -1757,6 +1777,7 @@ const rootRouteChildren: RootRouteChildren = {
   AdminReturnsRoute: AdminReturnsRoute,
   AdminReviewsRoute: AdminReviewsRoute,
   AdminSettingsRoute: AdminSettingsRoute,
+  AdminUpiPaymentsRoute: AdminUpiPaymentsRoute,
   AdminVendorsRoute: AdminVendorsRouteWithChildren,
   AdminZohoRoute: AdminZohoRoute,
   AdminZohoApiCallsRoute: AdminZohoApiCallsRoute,
