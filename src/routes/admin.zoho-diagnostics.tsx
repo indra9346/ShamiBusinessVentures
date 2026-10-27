@@ -76,7 +76,7 @@ const ISSUE_LABELS: Record<string, string> = {
   zoho_without_grain_bazar_order: "In Zoho only",
 };
 
-/** Read-only order reconciliation: Grain Bazar orders vs Zoho sales orders (GB-...). */
+/** Read-only order reconciliation: Grain Bazar orders vs Zoho sales orders (matched by Reference#). */
 function ReconcilePanel() {
   const [days, setDays] = useState(14);
   const [busy, setBusy] = useState(false);
@@ -86,7 +86,7 @@ function ReconcilePanel() {
     <div className="mt-6">
       <Panel title="Order reconciliation">
         <p className="mb-3 text-sm text-slate">
-          Compares recent Grain Bazar orders with their Zoho sales orders (number GB-…). Read-only: nothing is created or changed in either system.
+          Compares recent Grain Bazar orders with their Zoho sales orders (numbered in each godown's Zoho series; matched by Reference# = website order number, or GB-… for older orders). Read-only: nothing is created or changed in either system.
         </p>
         <div className="flex flex-wrap items-center gap-2">
           <label className="text-sm text-navy" htmlFor="reconcile-days">Last</label>

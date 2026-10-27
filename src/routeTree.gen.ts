@@ -38,6 +38,7 @@ import { Route as AdminCouponsRouteImport } from './routes/admin.coupons'
 import { Route as AdminCustomersRouteImport } from './routes/admin.customers'
 import { Route as AdminDashboardRouteImport } from './routes/admin.dashboard'
 import { Route as AdminEnquiriesRouteImport } from './routes/admin.enquiries'
+import { Route as AdminGodownReportRouteImport } from './routes/admin.godown-report'
 import { Route as AdminInventoryRouteImport } from './routes/admin.inventory'
 import { Route as AdminLoginRouteImport } from './routes/admin.login'
 import { Route as AdminNotificationsRouteImport } from './routes/admin.notifications'
@@ -228,6 +229,11 @@ const AdminDashboardRoute = AdminDashboardRouteImport.update({
 const AdminEnquiriesRoute = AdminEnquiriesRouteImport.update({
   id: '/admin/enquiries',
   path: '/admin/enquiries',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminGodownReportRoute = AdminGodownReportRouteImport.update({
+  id: '/admin/godown-report',
+  path: '/admin/godown-report',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AdminInventoryRoute = AdminInventoryRouteImport.update({
@@ -490,6 +496,7 @@ export interface FileRoutesByFullPath {
   '/admin/customers': typeof AdminCustomersRouteWithChildren
   '/admin/dashboard': typeof AdminDashboardRoute
   '/admin/enquiries': typeof AdminEnquiriesRouteWithChildren
+  '/admin/godown-report': typeof AdminGodownReportRoute
   '/admin/inventory': typeof AdminInventoryRoute
   '/admin/login': typeof AdminLoginRoute
   '/admin/notifications': typeof AdminNotificationsRoute
@@ -566,6 +573,7 @@ export interface FileRoutesByTo {
   '/admin/customers': typeof AdminCustomersRouteWithChildren
   '/admin/dashboard': typeof AdminDashboardRoute
   '/admin/enquiries': typeof AdminEnquiriesRouteWithChildren
+  '/admin/godown-report': typeof AdminGodownReportRoute
   '/admin/inventory': typeof AdminInventoryRoute
   '/admin/login': typeof AdminLoginRoute
   '/admin/notifications': typeof AdminNotificationsRoute
@@ -644,6 +652,7 @@ export interface FileRoutesById {
   '/admin/customers': typeof AdminCustomersRouteWithChildren
   '/admin/dashboard': typeof AdminDashboardRoute
   '/admin/enquiries': typeof AdminEnquiriesRouteWithChildren
+  '/admin/godown-report': typeof AdminGodownReportRoute
   '/admin/inventory': typeof AdminInventoryRoute
   '/admin/login': typeof AdminLoginRoute
   '/admin/notifications': typeof AdminNotificationsRoute
@@ -723,6 +732,7 @@ export interface FileRouteTypes {
     | '/admin/customers'
     | '/admin/dashboard'
     | '/admin/enquiries'
+    | '/admin/godown-report'
     | '/admin/inventory'
     | '/admin/login'
     | '/admin/notifications'
@@ -799,6 +809,7 @@ export interface FileRouteTypes {
     | '/admin/customers'
     | '/admin/dashboard'
     | '/admin/enquiries'
+    | '/admin/godown-report'
     | '/admin/inventory'
     | '/admin/login'
     | '/admin/notifications'
@@ -876,6 +887,7 @@ export interface FileRouteTypes {
     | '/admin/customers'
     | '/admin/dashboard'
     | '/admin/enquiries'
+    | '/admin/godown-report'
     | '/admin/inventory'
     | '/admin/login'
     | '/admin/notifications'
@@ -946,6 +958,7 @@ export interface RootRouteChildren {
   AdminCustomersRoute: typeof AdminCustomersRouteWithChildren
   AdminDashboardRoute: typeof AdminDashboardRoute
   AdminEnquiriesRoute: typeof AdminEnquiriesRouteWithChildren
+  AdminGodownReportRoute: typeof AdminGodownReportRoute
   AdminInventoryRoute: typeof AdminInventoryRoute
   AdminLoginRoute: typeof AdminLoginRoute
   AdminNotificationsRoute: typeof AdminNotificationsRoute
@@ -1187,6 +1200,13 @@ declare module '@tanstack/react-router' {
       path: '/admin/enquiries'
       fullPath: '/admin/enquiries'
       preLoaderRoute: typeof AdminEnquiriesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/godown-report': {
+      id: '/admin/godown-report'
+      path: '/admin/godown-report'
+      fullPath: '/admin/godown-report'
+      preLoaderRoute: typeof AdminGodownReportRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/admin/inventory': {
@@ -1682,6 +1702,7 @@ const rootRouteChildren: RootRouteChildren = {
   AdminCustomersRoute: AdminCustomersRouteWithChildren,
   AdminDashboardRoute: AdminDashboardRoute,
   AdminEnquiriesRoute: AdminEnquiriesRouteWithChildren,
+  AdminGodownReportRoute: AdminGodownReportRoute,
   AdminInventoryRoute: AdminInventoryRoute,
   AdminLoginRoute: AdminLoginRoute,
   AdminNotificationsRoute: AdminNotificationsRoute,

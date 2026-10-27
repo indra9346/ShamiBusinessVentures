@@ -4,7 +4,11 @@
  * are unit-tested directly (`npm run test:zoho`).
  */
 
-/** Zoho sales-order number for a Grain Bazar order. It is unique in Zoho, which is what makes pushes idempotent. */
+/**
+ * The GB- sales-order number older website orders were created with in Zoho. New orders take the
+ * godown's own Zoho transaction series (CLK-…, HBL-…) and carry the website order number in the
+ * sales order's Reference#, so this is only used to find those older orders.
+ */
 export function zohoOrderNumber(orderNo: string | number) {
   return `GB-${String(orderNo).replace(/[^A-Za-z0-9-]/g, "-").slice(-40)}`;
 }
@@ -94,9 +98,24 @@ export type GbOrderForReconcile = {
 export type ZohoOrderForReconcile = {
   salesorder_id: string;
   salesorder_number: string;
+  /** The website order number, kept in the sales order's Reference#. */
+  reference_number?: string;
   status: string;
   total: number;
 };
+
+/** A website order number as it appears in a Zoho Reference#: godown numbers and older ORD- ones. */
+export const WEBSITE_ORDER_NUMBER = /^(?:[A-Z]{2,6}-\d{6}-\d{6}-\d{6}(?:-\d{1,3})?|ORD-\d+)$/;
+
+/**
+ * The website order a Zoho sales order belongs to, or null when it is not a Grain Bazar order:
+ * older ones by their GB- number, newer ones (numbered in the godown's Zoho series) by Reference#.
+ */
+export function websiteOrderNoOf(zoho: { salesorder_number: string; reference_number?: string }): string | null {
+  if (zoho.salesorder_number.startsWith("GB-")) return zoho.salesorder_number.slice(3);
+  const reference = (zoho.reference_number ?? "").trim();
+  return WEBSITE_ORDER_NUMBER.test(reference) ? reference : null;
+}
 export type ReconcileIssue =
   | "missing_in_zoho"
   | "linked_but_not_listed"
@@ -115,29 +134,32 @@ const TOTAL_TOLERANCE = 2;
  * Read-only: it reports differences and changes nothing.
  */
 export function reconcileOrders(gbOrders: GbOrderForReconcile[], zohoOrders: ZohoOrderForReconcile[]) {
-  const byNumber = new Map<string, ZohoOrderForReconcile[]>();
+  // Keyed by website order number: GB- numbers (older orders) or Reference# (godown series).
+  const byOrderNo = new Map<string, ZohoOrderForReconcile[]>();
   for (const zoho of zohoOrders) {
-    if (!zoho.salesorder_number.startsWith("GB-")) continue;
-    const list = byNumber.get(zoho.salesorder_number) ?? [];
+    const orderNo = websiteOrderNoOf(zoho);
+    if (!orderNo) continue;
+    const list = byOrderNo.get(orderNo) ?? [];
     list.push(zoho);
-    byNumber.set(zoho.salesorder_number, list);
+    byOrderNo.set(orderNo, list);
   }
   const issues: ReconcileRow[] = [];
   let inSync = 0;
   const seen = new Set<string>();
   for (const order of gbOrders) {
-    const number = zohoOrderNumber(order.order_no);
-    seen.add(number);
-    const matches = byNumber.get(number) ?? [];
+    const key = websiteOrderNoOf({ salesorder_number: zohoOrderNumber(order.order_no) }) ?? order.order_no;
+    seen.add(key);
+    const matches = byOrderNo.get(key) ?? [];
     if (matches.length > 1) {
-      issues.push({ orderNo: order.order_no, issue: "duplicate_in_zoho", detail: `${matches.length} Zoho sales orders use ${number}` });
+      issues.push({ orderNo: order.order_no, issue: "duplicate_in_zoho", detail: `${matches.length} Zoho sales orders are for ${order.order_no} (${matches.map((m) => m.salesorder_number).join(", ")})` });
       continue;
     }
     const zoho = matches[0];
+    const number = zoho?.salesorder_number ?? order.order_no;
     if (!zoho) {
       issues.push(order.zoho_salesorder_id
-        ? { orderNo: order.order_no, issue: "linked_but_not_listed", detail: `Linked to Zoho ID ${order.zoho_salesorder_id}, but ${number} was not in the Zoho orders fetched; open it in Zoho to confirm`, zohoId: order.zoho_salesorder_id }
-        : { orderNo: order.order_no, issue: "missing_in_zoho", detail: `No Zoho sales order ${number}; it has not been pushed yet` });
+        ? { orderNo: order.order_no, issue: "linked_but_not_listed", detail: `Linked to Zoho ID ${order.zoho_salesorder_id}, but it was not in the Zoho orders fetched; open it in Zoho to confirm`, zohoId: order.zoho_salesorder_id }
+        : { orderNo: order.order_no, issue: "missing_in_zoho", detail: `No Zoho sales order for ${order.order_no}; it has not been pushed yet` });
       continue;
     }
     if (order.zoho_salesorder_id && order.zoho_salesorder_id !== zoho.salesorder_id) {
@@ -161,9 +183,10 @@ export function reconcileOrders(gbOrders: GbOrderForReconcile[], zohoOrders: Zoh
     }
     inSync += 1;
   }
-  for (const [number, list] of byNumber) {
-    if (!seen.has(number))
-      issues.push({ orderNo: number, issue: "zoho_without_grain_bazar_order", detail: `Zoho has ${number}, but no Grain Bazar order in this period matches it`, zohoId: list[0]?.salesorder_id ?? "" });
+  for (const [orderNo, list] of byOrderNo) {
+    const number = list[0]?.salesorder_number ?? orderNo;
+    if (!seen.has(orderNo))
+      issues.push({ orderNo: number, issue: "zoho_without_grain_bazar_order", detail: `Zoho has ${number} (for ${orderNo}), but no Grain Bazar order in this period matches it`, zohoId: list[0]?.salesorder_id ?? "" });
   }
   return { checked: gbOrders.length, inSync, issues };
 }

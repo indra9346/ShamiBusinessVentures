@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   reconcileOrders,
+  websiteOrderNoOf,
   shouldRetryZohoCall,
   webhookKeyMatches,
   zohoLogLine,
@@ -142,4 +143,23 @@ test("Zoho API budget: hourly re-check, pause after the daily limit", async () =
   assert.equal(zohoPaused("2026-10-26T12:30:00Z", now), true);
   assert.equal(zohoPaused("2026-10-26T11:30:00Z", now), false);
   assert.equal(zohoPaused(undefined, now), false);
+});
+
+test("Zoho sales order -> website order: Reference# for godown-series numbers, GB- for older ones", () => {
+  assert.equal(websiteOrderNoOf({ salesorder_number: "CLK-SO-00012", reference_number: "CLK-577522-271026-103512" }), "CLK-577522-271026-103512");
+  assert.equal(websiteOrderNoOf({ salesorder_number: "HBL-SO-5001", reference_number: "HBL-580020-271026-110000-2" }), "HBL-580020-271026-110000-2");
+  assert.equal(websiteOrderNoOf({ salesorder_number: "GB-ORD-26102686593", reference_number: "ORD-26102686593" }), "ORD-26102686593");
+  assert.equal(websiteOrderNoOf({ salesorder_number: "SO-00031", reference_number: "PO 4471 from walk-in" }), null);
+  assert.equal(websiteOrderNoOf({ salesorder_number: "SO-00031" }), null);
+});
+
+test("reconcile: orders numbered in the godown series match by Reference#", () => {
+  const no = "CLK-577522-271026-103512";
+  const zoho = (id: string, extra = {}) => ({ salesorder_id: id, salesorder_number: "CLK-SO-0001", reference_number: no, status: "confirmed", total: 500, ...extra });
+  assert.deepEqual(reconcileOrders([gb(no, { zoho_salesorder_id: "c1" })], [zoho("c1")]).issues, []);
+  const twice = reconcileOrders([gb(no, { zoho_salesorder_id: "c1" })], [zoho("c1"), zoho("c2", { salesorder_number: "CLK-SO-0002" })]);
+  assert.equal(twice.issues[0]?.issue, "duplicate_in_zoho");
+  const orphan = reconcileOrders([], [zoho("c9", { salesorder_number: "CLK-SO-0009" })]);
+  assert.equal(orphan.issues[0]?.issue, "zoho_without_grain_bazar_order");
+  assert.equal(orphan.issues[0]?.orderNo, "CLK-SO-0009");
 });
