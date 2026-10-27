@@ -1,4 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { pageHead, SITE_NAME } from "@/lib/seo";
 import { useEffect, useState } from "react";
 import { z } from "zod";
 import { toast } from "sonner";
@@ -14,21 +15,7 @@ export const Route = createFileRoute("/login")({
     next: z.enum(["/checkout"]).optional(),
     productId: z.string().optional(),
   }),
-  head: () => ({
-    meta: [
-      { title: "Customer Login | Shami Business Ventures" },
-      {
-        name: "description",
-        content:
-          "Sign in with an email or phone OTP to track orders, manage addresses and download GST invoices.",
-      },
-      { property: "og:title", content: "Customer Login | Shami" },
-      {
-        property: "og:description",
-        content: "Access your Shami marketplace account with email or mobile OTP verification.",
-      },
-    ],
-  }),
+  head: () => pageHead({ title: `Customer Login | ${SITE_NAME}`, description: "Sign in with an email or phone OTP to track orders, manage addresses and download GST invoices.", path: "/login", noindex: true }),
   component: LoginPage,
 });
 

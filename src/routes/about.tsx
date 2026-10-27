@@ -1,20 +1,14 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { pageHead, SITE_NAME } from "@/lib/seo";
 import { Building2, Factory, Globe2, Users } from "lucide-react";
 import { SiteLayout, Breadcrumbs, SectionHeading } from "@/components/site/SiteLayout";
 import { LogoMark } from "@/components/brand/Logo";
 
 export const Route = createFileRoute("/about")({
-  head: () => ({
-    meta: [
-      { title: "About Shami Business Ventures Pvt. Ltd." },
-      {
-        name: "description",
-        content:
-          "Shami Business Ventures Pvt. Ltd. operates a premium multi-vendor marketplace for sugar and essentials across India.",
-      },
-      { property: "og:title", content: "About Shami Business Ventures Pvt. Ltd." },
-      { property: "og:description", content: "Mill-direct sourcing, verified vendors and institutional-grade logistics." },
-    ],
+  head: () => pageHead({
+    title: `About Us | ${SITE_NAME} by Shami Business Ventures Pvt. Ltd.`,
+    description: "Grain Bazar is the online store of Shami Business Ventures Pvt. Ltd.: rice, sugar and cooking oil from verified mills, sold from our godowns in Challakere and Hubli, Karnataka.",
+    path: "/about",
   }),
   component: About,
 });

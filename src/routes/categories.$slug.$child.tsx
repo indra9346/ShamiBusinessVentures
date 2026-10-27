@@ -1,4 +1,5 @@
 import { createFileRoute, Link, redirect } from "@tanstack/react-router";
+import { pageHead, SITE_NAME } from "@/lib/seo";
 import { SiteLayout } from "@/components/site/SiteLayout";
 import { TileGrid } from "@/components/site/TileGrid";
 import { getCategoryNode } from "@/lib/category-tree";
@@ -17,20 +18,11 @@ export const Route = createFileRoute("/categories/$slug/$child")({
   head: ({ params }) => {
     const child = getCategoryNode(params.slug)?.children?.[params.child];
     const name = child?.name ?? "Brands";
-    return {
-      meta: [
-        { title: `${name} brands | Shami Business Ventures` },
-        {
-          name: "description",
-          content: `Choose a ${name} brand and see live pricing, pack sizes and stock.`,
-        },
-        { property: "og:title", content: `${name} brands | Shami Business Ventures` },
-        {
-          property: "og:description",
-          content: `Verified ${name} brands with GST invoicing and pan-India delivery.`,
-        },
-      ],
-    };
+    return pageHead({
+      title: `${name} | ${SITE_NAME}`,
+      description: `Choose ${name.toLowerCase()} at Grain Bazar and see live prices, pack sizes and stock, with GST invoices.`,
+      path: `/categories/${params.slug}/${params.child}`,
+    });
   },
   component: ChildLevel,
 });

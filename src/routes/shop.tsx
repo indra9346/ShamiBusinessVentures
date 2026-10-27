@@ -1,4 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { pageHead } from "@/lib/seo";
 import { useEffect, useMemo, useState } from "react";
 import { LayoutGrid, List, RotateCcw, Search, SlidersHorizontal, X } from "lucide-react";
 import { SiteLayout } from "@/components/site/SiteLayout";
@@ -23,17 +24,10 @@ export const Route = createFileRoute("/shop")({
     category: typeof s["category"] === "string" ? (s["category"] as string) : undefined,
     sort: typeof s["sort"] === "string" ? (s["sort"] as string) : undefined,
   }),
-  head: () => ({
-    meta: [
-      { title: "Shop Essentials | Grain Bazar" },
-      {
-        name: "description",
-        content:
-          "Browse premium rice, sugar and edible oil packs from verified mills and producers. GST invoicing and fast delivery.",
-      },
-      { property: "og:title", content: "Shop Essentials | Grain Bazar" },
-      { property: "og:description", content: "Filter by price, vendor, category and SKU across verified products." },
-    ],
+  head: () => pageHead({
+    title: "Shop Rice, Sugar & Cooking Oil | Grain Bazar",
+    description: "Shop raw, steam and basmati rice, S1 sugar 50 kg bags and sunflower and groundnut oil tins at godown prices. GST invoice, pickup or delivery from Challakere and Hubli.",
+    path: "/shop",
   }),
   component: Shop,
 });

@@ -1,4 +1,5 @@
 import { createFileRoute, Link, Outlet, useMatch, useNavigate } from "@tanstack/react-router";
+import { pageHead, jsonLdScript, breadcrumbJsonLd, SITE_NAME } from "@/lib/seo";
 import { ProductCard } from "@/components/site/ProductCard";
 import { LayoutGrid } from "lucide-react";
 import { SiteLayout } from "@/components/site/SiteLayout";
@@ -27,19 +28,15 @@ export const Route = createFileRoute("/categories/$slug")({
   head: ({ params }) => {
     const node = getCategoryNode(params.slug);
     const name = node?.name ?? "Category";
+    const path = `/categories/${params.slug}`;
     return {
-      meta: [
-        { title: `${name} products | Shami Business Ventures` },
-        {
-          name: "description",
-          content: `Browse ${name} products, grades and pack sizes from verified suppliers.`,
-        },
-        { property: "og:title", content: `${name} products | Shami Business Ventures` },
-        {
-          property: "og:description",
-          content: `Browse ${name} products by type and brand.`,
-        },
-      ],
+      ...pageHead({
+        title: `Buy ${name} Online at Godown Price | ${SITE_NAME}`,
+        description: `Buy ${name.toLowerCase()} online at Grain Bazar: every grade and pack size with today's godown price and stock, GST invoice, pickup or delivery from Challakere and Hubli.`,
+        path,
+        ...(node?.image ? { image: node.image } : {}),
+      }),
+      scripts: [jsonLdScript(breadcrumbJsonLd([{ name: "Home", path: "/" }, { name: "Categories", path: "/categories" }, { name, path }]))],
     };
   },
   component: CategoryLevel,

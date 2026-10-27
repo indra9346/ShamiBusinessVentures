@@ -1,4 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { pageHead, SITE_NAME } from "@/lib/seo";
 import { useEffect, useState } from "react";
 import { z } from "zod";
 import { Check, CreditCard } from "lucide-react";
@@ -25,20 +26,7 @@ const ADDRESS_AUTOCOMPLETE: Record<string, string> = {
 
 export const Route = createFileRoute("/checkout")({
   validateSearch: z.object({ productId: z.string().optional(), coupon: z.string().optional() }),
-  head: () => ({
-    meta: [
-      { title: "Secure Checkout | Shami Business Ventures" },
-      {
-        name: "description",
-        content: "Choose your delivery address, shipping option and available payment method.",
-      },
-      { property: "og:title", content: "Secure Checkout | Shami" },
-      {
-        property: "og:description",
-        content: "Address, delivery, payment and order review in one flow.",
-      },
-    ],
-  }),
+  head: () => pageHead({ title: `Secure Checkout | ${SITE_NAME}`, description: "Choose your address, delivery and payment, and place your order.", path: "/checkout", noindex: true }),
   component: Checkout,
 });
 

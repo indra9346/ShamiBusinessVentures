@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { pageHead } from "@/lib/seo";
 import { SiteLayout, SectionHeading } from "@/components/site/SiteLayout";
 import { CategoryCards, useVisibleCategories } from "@/components/site/CategoryCards";
 import { FlipkartCategoryBar } from "@/components/site/FlipkartCategoryBar";
@@ -7,17 +8,10 @@ import { isStorefrontProduct } from "@/lib/data";
 import { useApp } from "@/lib/store";
 
 export const Route = createFileRoute("/categories/")({
-  head: () => ({
-    meta: [
-      { title: "Categories — Rice, Sugar & Oil | Shami Business Ventures" },
-      {
-        name: "description",
-        content:
-          "Browse Shami Business Ventures categories — premium rice grades, Grade S1 refined sugar and edible oils from verified mills.",
-      },
-      { property: "og:title", content: "Rice, Sugar & Oil Categories | Shami Business Ventures" },
-      { property: "og:description", content: "Category catalogue with live product counts and grades." },
-    ],
+  head: () => pageHead({
+    title: "Rice, Sugar & Cooking Oil Categories | Grain Bazar",
+    description: "Browse rice grades (raw, steam, basmati), Grade S1 refined sugar and edible oils at Grain Bazar by Shami Business Ventures, with godown prices and stock.",
+    path: "/categories",
   }),
   component: Categories,
 });

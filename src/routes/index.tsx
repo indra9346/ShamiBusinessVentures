@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { CategoryImage } from "@/components/site/CategoryImage";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { pageHead, jsonLdScript, organizationJsonLd, websiteJsonLd, DEFAULT_DESCRIPTION } from "@/lib/seo";
 import { ArrowRight } from "lucide-react";
 import { SiteLayout } from "@/components/site/SiteLayout";
 import { Button } from "@/components/ui/button";
@@ -13,20 +14,12 @@ import { FlipkartCategoryBar } from "@/components/site/FlipkartCategoryBar";
 
 export const Route = createFileRoute("/")({
   head: () => ({
-    meta: [
-      { title: "Grain Bazar | Rice, Sugar & Oil" },
-      {
-        name: "description",
-        content: "Find and buy quality rice, sugar and oil products with ease at Grain Bazar.",
-      },
-      { property: "og:title", content: "Grain Bazar | Rice, Sugar & Oil" },
-      {
-        property: "og:description",
-        content: "Buy quality grocery products from verified vendors, all in one place.",
-      },
-      { property: "og:type", content: "website" },
-      { name: "twitter:card", content: "summary_large_image" },
-    ],
+    ...pageHead({
+      title: "Grain Bazar | Buy Rice, Sugar & Cooking Oil Online in Karnataka",
+      description: DEFAULT_DESCRIPTION,
+      path: "/",
+    }),
+    scripts: [jsonLdScript(organizationJsonLd()), jsonLdScript(websiteJsonLd())],
   }),
   component: Index,
 });
