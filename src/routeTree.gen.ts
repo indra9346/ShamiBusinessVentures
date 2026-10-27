@@ -83,6 +83,7 @@ import { Route as AdminEnquiriesIdRouteImport } from './routes/admin.enquiries.$
 import { Route as AdminOrdersIdRouteImport } from './routes/admin.orders.$id'
 import { Route as AdminProductsIdRouteImport } from './routes/admin.products.$id'
 import { Route as AdminVendorsIdRouteImport } from './routes/admin.vendors.$id'
+import { Route as ApiPaymentsBankAlertRouteImport } from './routes/api.payments.bank-alert'
 import { Route as ApiZohoCallbackRouteImport } from './routes/api.zoho.callback'
 import { Route as ApiZohoSyncRouteImport } from './routes/api.zoho.sync'
 import { Route as ApiZohoWebhookRouteImport } from './routes/api.zoho.webhook'
@@ -460,6 +461,11 @@ const AdminVendorsIdRoute = AdminVendorsIdRouteImport.update({
   path: '/$id',
   getParentRoute: () => AdminVendorsRoute,
 } as any)
+const ApiPaymentsBankAlertRoute = ApiPaymentsBankAlertRouteImport.update({
+  id: '/api/payments/bank-alert',
+  path: '/api/payments/bank-alert',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiZohoCallbackRoute = ApiZohoCallbackRouteImport.update({
   id: '/api/zoho/callback',
   path: '/api/zoho/callback',
@@ -566,6 +572,7 @@ export interface FileRoutesByFullPath {
   '/admin/orders/$id': typeof AdminOrdersIdRoute
   '/admin/products/$id': typeof AdminProductsIdRoute
   '/admin/vendors/$id': typeof AdminVendorsIdRoute
+  '/api/payments/bank-alert': typeof ApiPaymentsBankAlertRoute
   '/api/zoho/callback': typeof ApiZohoCallbackRoute
   '/api/zoho/sync': typeof ApiZohoSyncRoute
   '/api/zoho/webhook': typeof ApiZohoWebhookRoute
@@ -647,6 +654,7 @@ export interface FileRoutesByTo {
   '/admin/orders/$id': typeof AdminOrdersIdRoute
   '/admin/products/$id': typeof AdminProductsIdRoute
   '/admin/vendors/$id': typeof AdminVendorsIdRoute
+  '/api/payments/bank-alert': typeof ApiPaymentsBankAlertRoute
   '/api/zoho/callback': typeof ApiZohoCallbackRoute
   '/api/zoho/sync': typeof ApiZohoSyncRoute
   '/api/zoho/webhook': typeof ApiZohoWebhookRoute
@@ -730,6 +738,7 @@ export interface FileRoutesById {
   '/admin/orders/$id': typeof AdminOrdersIdRoute
   '/admin/products/$id': typeof AdminProductsIdRoute
   '/admin/vendors/$id': typeof AdminVendorsIdRoute
+  '/api/payments/bank-alert': typeof ApiPaymentsBankAlertRoute
   '/api/zoho/callback': typeof ApiZohoCallbackRoute
   '/api/zoho/sync': typeof ApiZohoSyncRoute
   '/api/zoho/webhook': typeof ApiZohoWebhookRoute
@@ -814,6 +823,7 @@ export interface FileRouteTypes {
     | '/admin/orders/$id'
     | '/admin/products/$id'
     | '/admin/vendors/$id'
+    | '/api/payments/bank-alert'
     | '/api/zoho/callback'
     | '/api/zoho/sync'
     | '/api/zoho/webhook'
@@ -895,6 +905,7 @@ export interface FileRouteTypes {
     | '/admin/orders/$id'
     | '/admin/products/$id'
     | '/admin/vendors/$id'
+    | '/api/payments/bank-alert'
     | '/api/zoho/callback'
     | '/api/zoho/sync'
     | '/api/zoho/webhook'
@@ -977,6 +988,7 @@ export interface FileRouteTypes {
     | '/admin/orders/$id'
     | '/admin/products/$id'
     | '/admin/vendors/$id'
+    | '/api/payments/bank-alert'
     | '/api/zoho/callback'
     | '/api/zoho/sync'
     | '/api/zoho/webhook'
@@ -1044,6 +1056,7 @@ export interface RootRouteChildren {
   AdminIndexRoute: typeof AdminIndexRoute
   PartnerIndexRoute: typeof PartnerIndexRoute
   VendorIndexRoute: typeof VendorIndexRoute
+  ApiPaymentsBankAlertRoute: typeof ApiPaymentsBankAlertRoute
   ApiZohoCallbackRoute: typeof ApiZohoCallbackRoute
   ApiZohoSyncRoute: typeof ApiZohoSyncRoute
   ApiZohoWebhookRoute: typeof ApiZohoWebhookRoute
@@ -1569,6 +1582,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminVendorsIdRouteImport
       parentRoute: typeof AdminVendorsRoute
     }
+    '/api/payments/bank-alert': {
+      id: '/api/payments/bank-alert'
+      path: '/api/payments/bank-alert'
+      fullPath: '/api/payments/bank-alert'
+      preLoaderRoute: typeof ApiPaymentsBankAlertRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/zoho/callback': {
       id: '/api/zoho/callback'
       path: '/api/zoho/callback'
@@ -1820,6 +1840,7 @@ const rootRouteChildren: RootRouteChildren = {
   AdminIndexRoute: AdminIndexRoute,
   PartnerIndexRoute: PartnerIndexRoute,
   VendorIndexRoute: VendorIndexRoute,
+  ApiPaymentsBankAlertRoute: ApiPaymentsBankAlertRoute,
   ApiZohoCallbackRoute: ApiZohoCallbackRoute,
   ApiZohoSyncRoute: ApiZohoSyncRoute,
   ApiZohoWebhookRoute: ApiZohoWebhookRoute,

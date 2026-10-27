@@ -9,6 +9,8 @@ import {
 } from "react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { AWAITING_PAYMENT, isHeldStatus, type PaymentHold } from "@/lib/payment-hold";
+import { loadUpiSettings } from "@/lib/upi-store";
 import type { Database } from "@/integrations/supabase/types";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { branchForPin, branchStockOf, defaultBranchOf, godownPriceOf, useAdminBranch, useBranches, useShopperPin } from "@/lib/branches";
@@ -24,6 +26,9 @@ function pushOrderToZohoInBackground(orderNo: string) {
     })
     .catch((cause: unknown) => console.warn("Zoho will receive this order change on the next sync run", cause));
 }
+
+/** Static demo: held checkouts by order number, until their simulated payment makes them orders. */
+const demoHeldOrders = new Map<string, Order>();
 
 /** Sends admin and vendor product edits to Zoho in the background; the daily run is the backup. */
 function pushProductsToZohoInBackground(productIds: string[]) {
@@ -183,7 +188,14 @@ type AppState = {
     shipping?: number;
     source?: string;
     paymentDueDate?: string;
+    /** Customer checkout: the result is a held request that becomes an order only when paid. */
+    payFirst?: boolean;
   }) => Promise<Order>;
+  /** Checkouts waiting for payment (and recently expired ones). Not orders: kept out of `orders`. */
+  paymentHolds: PaymentHold[];
+  cancelPaymentHold: (orderNo: string) => Promise<boolean>;
+  /** Static demo only: the bank SMS for this held checkout "arrives". */
+  simulateBankAlert: (orderNo: string) => void;
   updateOrderStatus: (id: string, status: OrderStatus) => Promise<boolean>;
   updateOrderItem: (orderId: string, index: number, patch: { qty?: number; capacity?: string; unitPrice?: number }) => Promise<boolean>;
   updateOrderDelivery: (orderId: string, delivery: string) => void;
@@ -238,6 +250,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [categories, setCategories] = useState<StoreCategory[]>(STATIC_DATA_MODE ? storeCategorySeed : []);
   const [batches, setBatches] = useState<PurchaseBatch[]>(STATIC_DATA_MODE ? seedBatches : []);
   const [orders, setOrders] = useState<Order[]>(STATIC_DATA_MODE ? seedOrders : []);
+  const [paymentHolds, setPaymentHolds] = useState<PaymentHold[]>([]);
   const [vendors, setVendors] = useState<Vendor[]>(STATIC_DATA_MODE ? seedVendors : []);
   const [customers, setCustomers] = useState<Customer[]>(STATIC_DATA_MODE ? seedCustomers : []);
   const [reviews, setReviews] = useState<Review[]>(STATIC_DATA_MODE ? seedReviews : []);
@@ -387,7 +400,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
               fulfillmentByOrder.set(fulfillment.order_id, [...(fulfillmentByOrder.get(fulfillment.order_id) ?? []), fulfillment]);
             }
             const allowedStatuses: OrderStatus[] = ["Placed", "Payment Confirmed", "Accepted", "Packed", "Dispatched", "Out for Delivery", "Delivered", "Cancelled"];
-            setOrders((orderRows ?? []).map((row) => {
+            // Unpaid checkouts are not orders: they are kept apart for the payment screens.
+            setPaymentHolds((orderRows ?? []).filter((row) => isHeldStatus(row.order_status)).map((row) => ({
+              orderNo: row.order_no, amount: Number(row.total) - Number(row.paid_amount), createdAt: row.created_at,
+              status: row.order_status as PaymentHold["status"], holdUntil: row.payment_hold_until ?? null, outcome: (row.payment_hold_outcome ?? null) as PaymentHold["outcome"],
+              lines: (itemsByOrder.get(row.id) ?? []).map((item) => ({ productId: item.product_id, qty: Number(item.qty) })),
+            })));
+            setOrders((orderRows ?? []).filter((row) => !isHeldStatus(row.order_status)).map((row) => {
               const orderDate = new Date(row.created_at);
               const shippingAddress = row.shipping_address && typeof row.shipping_address === "object" && !Array.isArray(row.shipping_address)
                 ? row.shipping_address as Record<string, unknown>
@@ -1359,7 +1378,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       getAverageSellingPrice: (product) => getProductAverageSellingPrice(product, orders),
 
       orders,
-      placeOrder: async ({ lines, method, payment, coupon, customerIndex = 0, customerOverride, shippingAddress, delivery, subtotal, discount, tax, shipping, source, paymentDueDate }) => {
+      placeOrder: async ({ lines, method, payment, coupon, customerIndex = 0, customerOverride, shippingAddress, delivery, subtotal, discount, tax, shipping, source, paymentDueDate, payFirst = false }) => {
         if (method === "Cash on Delivery" || method === "COD") {
           throw new Error("Cash on delivery is not enabled for this store. Please select an online payment method (UPI, Card, Net Banking).");
         }
@@ -1438,7 +1457,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             state: order.state,
             pin: order.pin,
           };
-          const { data, error } = await supabase.rpc("place_marketplace_order_with_coupon", {
+          const { data, error } = await supabase.rpc(payFirst ? "start_paid_checkout" : "place_marketplace_order_with_coupon", {
             _order_no: id,
             _target_user_id: customerOverride?.id ?? authUser.id,
             _customer_name: order.customer,
@@ -1456,24 +1475,40 @@ export function AppProvider({ children }: { children: ReactNode }) {
             toast.error("Order was not placed", { description: message });
             throw new Error(message);
           }
-          const saved = data as { order_no?: string; subtotal: number; discount: number; gst_amount: number; shipping: number; total: number; items: Array<{ product_id: string; unit_price: number }> };
+          const saved = data as { order_no?: string; subtotal: number; discount: number; gst_amount: number; shipping: number; total: number; items: Array<{ product_id: string; unit_price: number }>; order_status?: string; hold_until?: string | null };
           if (saved.order_no) order.id = saved.order_no;
-          pushOrderToZohoInBackground(order.id);
+          // A held checkout is not an order yet: Zoho gets it when the payment is matched.
+          if (saved.order_status !== AWAITING_PAYMENT) pushOrderToZohoInBackground(order.id);
+          if (saved.order_status === AWAITING_PAYMENT) order.holdUntil = saved.hold_until ?? null;
           order.subtotal = Number(saved.subtotal);
           order.discount = Number(saved.discount);
           order.tax = Number(saved.gst_amount);
           order.shipping = Number(saved.shipping);
           order.amount = Number(saved.total);
-          order.payment = "Pending";
-          order.status = "Placed";
-          order.paidAmount = 0;
+          order.payment = saved.order_status === "Payment Confirmed" ? "Paid" : "Pending";
+          order.status = saved.order_status === "Payment Confirmed" ? "Payment Confirmed" : "Placed";
+          order.paidAmount = saved.order_status === "Payment Confirmed" ? order.amount : 0;
           order.txn = "";
           order.items = order.items.map((item) => ({
             ...item,
             unitPrice: Number(saved.items.find((savedItem) => savedItem.product_id === item.product.id)?.unit_price ?? item.unitPrice),
           }));
         }
-        setOrders((o) => [order, ...o]);
+        if (payFirst && STATIC_DATA_MODE) {
+          // The demo holds the checkout for the admin's payment window, like the database does.
+          const minutes = Math.min(60, Math.max(5, (await loadUpiSettings()).payWindowMinutes || 15));
+          order.holdUntil = new Date(Date.now() + minutes * 60_000).toISOString();
+        }
+        const held = Boolean(order.holdUntil);
+        if (held) {
+          setPaymentHolds((list) => [{
+            orderNo: order.id, amount: order.amount, status: AWAITING_PAYMENT, holdUntil: order.holdUntil ?? null, createdAt: new Date().toISOString(),
+            lines: lines.map((line) => ({ productId: line.product.id, qty: line.qty })),
+          }, ...list.filter((hold) => hold.orderNo !== order.id)]);
+          if (STATIC_DATA_MODE) demoHeldOrders.set(order.id, order);
+        } else {
+          setOrders((o) => [order, ...o]);
+        }
 
         // Consume inventory stock
         setProducts((list) =>
@@ -1508,8 +1543,35 @@ export function AppProvider({ children }: { children: ReactNode }) {
           return nextBatches;
         });
 
-        pushNotif("New order received", `${order.id} was placed worth ₹${order.amount.toLocaleString("en-IN")}.`, "info");
+        if (!held) pushNotif("New order received", `${order.id} was placed worth ₹${order.amount.toLocaleString("en-IN")}.`, "info");
         return order;
+      },
+      paymentHolds,
+      cancelPaymentHold: async (orderNo) => {
+        if (!STATIC_DATA_MODE) {
+          const { error } = await supabase.rpc("cancel_payment_hold", { _order_no: orderNo });
+          if (error) { toast.error("Could not cancel", { description: error.message }); return false; }
+        }
+        const hold = paymentHolds.find((item) => item.orderNo === orderNo);
+        setPaymentHolds((list) => list.map((item) => item.orderNo === orderNo ? { ...item, status: "Payment Expired", holdUntil: null, outcome: "dropped" } : item));
+        if (STATIC_DATA_MODE && hold) {
+          // The reserved stock goes back.
+          setProducts((list) => list.map((p) => {
+            const qty = hold.lines.filter((line) => line.productId === p.id).reduce((sum, line) => sum + line.qty, 0);
+            return qty ? { ...p, stock: p.stock + qty, sold: Math.max(0, p.sold - qty) } : p;
+          }));
+          demoHeldOrders.delete(orderNo);
+        }
+        return true;
+      },
+      simulateBankAlert: (orderNo) => {
+        if (!STATIC_DATA_MODE) return;
+        const order = demoHeldOrders.get(orderNo);
+        if (!order) return;
+        demoHeldOrders.delete(orderNo);
+        setPaymentHolds((list) => list.map((item) => item.orderNo === orderNo ? { ...item, status: "Payment Confirmed", holdUntil: null } : item));
+        setOrders((o) => [{ ...order, holdUntil: null, status: "Payment Confirmed", payment: "Paid", paidAmount: order.amount, method: "UPI" }, ...o]);
+        pushNotif("New order received", `${order.id} was paid by UPI and placed worth ₹${order.amount.toLocaleString("en-IN")}.`, "info");
       },
       updateOrderStatus: async (id, status) => {
         const existing = orders.find((order) => order.id === id);
@@ -1909,7 +1971,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         return true;
       },
     };
-  }, [branchState, adminBranchId, hydrated, authReady, user, cart, wishlist, wishlistsByUser, categories, viewProducts, batches, orders, vendors, customers, reviews, returns, coupons, notifications, addresses, addressesByUser, productCatalogStatus, categoryCatalogStatus, saveProduct, logout]);
+  }, [branchState, adminBranchId, hydrated, authReady, user, cart, wishlist, wishlistsByUser, categories, viewProducts, batches, orders, paymentHolds, vendors, customers, reviews, returns, coupons, notifications, addresses, addressesByUser, productCatalogStatus, categoryCatalogStatus, saveProduct, logout]);
 
   // An administrator working in one godown sees that branch's orders, and stock as that branch's count.
   const scopedValue = useMemo<AppState>(() => {

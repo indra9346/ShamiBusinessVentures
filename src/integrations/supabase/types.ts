@@ -385,6 +385,12 @@ export type Database = {
         Update: { id?: string; branch_id?: string; product_id?: string | null; kind?: string; value?: number; updated_by?: string | null; updated_at?: string }
         Relationships: []
       }
+      bank_credits: {
+        Row: { id: string; received_at: string; source: string; sender: string | null; raw: string | null; amount: number; utr: string; payer: string | null; status: string; order_id: string | null; order_no: string | null; note: string | null }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
       upi_payment_submissions: {
         Row: { id: string; order_id: string; order_no: string; user_id: string | null; customer_name: string; amount: number; utr: string; status: string; note: string | null; submitted_at: string; reviewed_at: string | null; reviewed_by: string | null }
         Insert: never
@@ -608,6 +614,8 @@ export type Database = {
           order_status: string
           paid_amount: number
           parent_order_no: string | null
+          payment_hold_outcome: string | null
+          payment_hold_until: string | null
           payment_method: string | null
           payment_status: string
           shipping: number
@@ -643,6 +651,8 @@ export type Database = {
           order_status?: string
           paid_amount?: number
           parent_order_no?: string | null
+          payment_hold_outcome?: string | null
+          payment_hold_until?: string | null
           payment_method?: string | null
           payment_status?: string
           shipping?: number
@@ -678,6 +688,8 @@ export type Database = {
           order_status?: string
           paid_amount?: number
           parent_order_no?: string | null
+          payment_hold_outcome?: string | null
+          payment_hold_until?: string | null
           payment_method?: string | null
           payment_status?: string
           shipping?: number
@@ -1018,6 +1030,14 @@ export type Database = {
       customer_set_default_address: { Args: { _id: string }; Returns: boolean }
       admin_update_return: { Args: { _id: string; _status: string; _refund_status: string }; Returns: boolean }
       request_zoho_invoice_approval: { Args: { _order_no: string }; Returns: boolean }
+      start_paid_checkout: {
+        Args: { _order_no: string; _target_user_id: string; _customer_name: string; _customer_email: string; _customer_phone: string | null; _customer_gstin: string | null; _shipping_address: Json; _shipping_method: string; _payment_method: string; _items: Json; _coupon?: string | null }
+        Returns: Json
+      }
+      expire_payment_holds: { Args: Record<PropertyKey, never>; Returns: number }
+      cancel_payment_hold: { Args: { _order_no: string }; Returns: boolean }
+      record_bank_credit: { Args: { _utr: string; _amount: number; _payer?: string; _raw?: string; _source?: string; _sender?: string }; Returns: Json }
+      settle_bank_credit: { Args: { _credit_id: string; _note: string }; Returns: { id: string; status: string; note: string | null } }
       submit_upi_utr: { Args: { _order_no: string; _utr: string }; Returns: { id: string; order_id: string; order_no: string; user_id: string | null; customer_name: string; amount: number; utr: string; status: string; note: string | null; submitted_at: string; reviewed_at: string | null; reviewed_by: string | null } }
       review_upi_utr: { Args: { _order_no: string; _decision: string; _note?: string | null }; Returns: { id: string; order_id: string; order_no: string; user_id: string | null; customer_name: string; amount: number; utr: string; status: string; note: string | null; submitted_at: string; reviewed_at: string | null; reviewed_by: string | null } }
       partner_leaderboard: {

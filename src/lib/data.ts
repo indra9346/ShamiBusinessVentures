@@ -779,6 +779,8 @@ export type Order = {
   dbOrderId?: string;
   /** Per-vendor status for split marketplace fulfillment. */
   vendorStatuses?: { vendorId: string; vendor: string; status: OrderStatus }[];
+  /** Set on a checkout that waits for payment (it is not an order until paid): when the hold ends. */
+  holdUntil?: string | null;
 };
 
 /** Customer funds received for an order, excluding cancelled or fully refunded orders. */

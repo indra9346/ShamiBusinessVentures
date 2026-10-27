@@ -3,6 +3,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import type { Database } from "@/integrations/supabase/types";
+import { HELD_STATUS_FILTER } from "@/lib/payment-hold";
 import { buildGodownReport, istRange, type ReportItem, type ReportOrder } from "@/lib/godown-report";
 
 /*
@@ -43,7 +44,7 @@ export const godownReport = createServerFn({ method: "POST" })
 
     let ordersQuery = db.from("orders")
       .select("id,order_no,branch_id,created_at,order_status,payment_status,customer_name,subtotal,discount,gst_amount,shipping,total,paid_amount,zoho_salesorder_id")
-      .gte("created_at", fromIso).lt("created_at", toIso).order("created_at").limit(5000);
+      .gte("created_at", fromIso).lt("created_at", toIso).not("order_status", "in", HELD_STATUS_FILTER).order("created_at").limit(5000);
     if (data.branchId) ordersQuery = data.branchId === "none" ? ordersQuery.is("branch_id", null) : ordersQuery.eq("branch_id", data.branchId);
     const { data: orderRows, error: ordersError } = await ordersQuery;
     if (ordersError) throw new Error("Could not read orders");

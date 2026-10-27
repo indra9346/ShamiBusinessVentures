@@ -457,7 +457,8 @@ export function pendingOrderQty(orders: OrderForPending[], since: string, defaul
   const cutoff = Date.parse(since);
   const out = new Map<string, Map<string, number>>();
   for (const order of orders) {
-    if (order.order_status === "Cancelled") continue;
+    // A cancelled order, or a checkout whose payment time ran out, gave its stock back.
+    if (order.order_status === "Cancelled" || order.order_status === "Payment Expired") continue;
     if (!Number.isFinite(cutoff) || Date.parse(order.created_at) < cutoff) continue;
     const zohoStatus = (order.zoho_order_status ?? "").toLowerCase();
     if (order.zoho_salesorder_id && zohoStatus !== "" && zohoStatus !== "draft") continue;
