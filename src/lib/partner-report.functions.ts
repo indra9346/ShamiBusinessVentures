@@ -3,6 +3,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import type { Database } from "@/integrations/supabase/types";
+import { HELD_STATUS_FILTER } from "@/lib/payment-hold";
 import { istRange, type ReportItem, type ReportOrder } from "@/lib/godown-report";
 import {
   buildPartnerReport, partnerSafeReport, type PartnerCommissionRow, type PartnerTargetRow, type ReportPartner,
@@ -52,7 +53,7 @@ async function loadPartnerReport(db: ReturnType<typeof serviceClient>, from: str
 
   const { data: orderRows, error: ordersError } = await db.from("orders")
     .select("id,order_no,branch_id,created_at,order_status,payment_status,customer_name,subtotal,discount,gst_amount,shipping,total,paid_amount,zoho_salesorder_id")
-    .in("branch_id", branchIds).gte("created_at", fromIso).lt("created_at", toIso).order("created_at").limit(MAX_ORDERS);
+    .in("branch_id", branchIds).gte("created_at", fromIso).lt("created_at", toIso).not("order_status", "in", HELD_STATUS_FILTER).order("created_at").limit(MAX_ORDERS);
   if (ordersError) throw new Error("Could not read orders");
   const orderIds = (orderRows ?? []).map((row) => row.id);
 

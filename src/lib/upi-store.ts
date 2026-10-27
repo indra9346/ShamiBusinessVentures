@@ -104,14 +104,38 @@ export async function loadUpiAudit(): Promise<UpiAuditRow[]> {
   return (data ?? []).map((row) => ({ changedAt: row.changed_at, oldVpa: row.old_vpa, newVpa: row.new_vpa, newEnabled: row.new_enabled, payeeName: row.payee_name }));
 }
 
-/** Settings and submissions, kept current: after every change here, across tabs, and live from the database. */
+export type BankCredit = {
+  id: string; receivedAt: string; amount: number; utr: string; payer: string | null; sender: string | null;
+  status: "matched" | "unmatched" | "ambiguous" | "mismatch" | "late" | "settled"; orderNo: string | null; note: string | null; raw: string | null;
+};
+/** Admin: money-received SMS alerts from the company phone, newest first (customers see none). */
+export async function loadBankCredits(): Promise<BankCredit[]> {
+  if (STATIC_DATA_MODE) return [];
+  const { data } = await supabase.from("bank_credits").select("id,received_at,amount,utr,payer,sender,status,order_no,note,raw")
+    .order("received_at", { ascending: false }).limit(200);
+  return (data ?? []).map((row) => ({
+    id: row.id, receivedAt: row.received_at, amount: Number(row.amount), utr: row.utr, payer: row.payer, sender: row.sender,
+    status: row.status as BankCredit["status"], orderNo: row.order_no, note: row.note, raw: row.raw,
+  }));
+}
+
+/** Admin: a credit that needed a person was dealt with (refunded, order placed by hand, not for the shop). */
+export async function settleBankCredit(id: string, note: string) {
+  const { error } = await supabase.rpc("settle_bank_credit", { _credit_id: id, _note: note });
+  if (error) throw new Error(error.message);
+  changed();
+}
+
+/** Settings, submissions and bank alerts, kept current: after every change here, across tabs, and live from the database. */
 export function useUpiPayments() {
   const [settings, setSettings] = useState<UpiSettings | null>(null);
   const [submissions, setSubmissions] = useState<UpiSubmission[]>([]);
+  const [credits, setCredits] = useState<BankCredit[]>([]);
   const refresh = useCallback(async () => {
-    const [nextSettings, nextSubmissions] = await Promise.all([loadUpiSettings(), loadUpiSubmissions()]);
+    const [nextSettings, nextSubmissions, nextCredits] = await Promise.all([loadUpiSettings(), loadUpiSubmissions(), loadBankCredits()]);
     setSettings(nextSettings);
     setSubmissions(nextSubmissions);
+    setCredits(nextCredits);
   }, []);
   useEffect(() => {
     void refresh();
@@ -121,6 +145,7 @@ export function useUpiPayments() {
     window.addEventListener("focus", onChange);
     const channel = STATIC_DATA_MODE ? null : supabase.channel(`upi-${Math.random().toString(36).slice(2)}`)
       .on("postgres_changes", { event: "*", schema: "public", table: "upi_payment_submissions" }, onChange)
+      .on("postgres_changes", { event: "*", schema: "public", table: "bank_credits" }, onChange)
       .subscribe();
     return () => {
       window.removeEventListener(CHANGED, onChange);
@@ -129,5 +154,5 @@ export function useUpiPayments() {
       if (channel) void supabase.removeChannel(channel);
     };
   }, [refresh]);
-  return { settings, submissions, refresh };
+  return { settings, submissions, credits, refresh };
 }

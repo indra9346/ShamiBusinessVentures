@@ -29,6 +29,8 @@ import { InvoicePreviewButton } from "@/components/site/InvoicePreviewDialog";
 import { ResizableTable } from "@/hooks/use-column-resize";
 import { ZohoInvoiceStatus } from "@/components/panel/ZohoInvoiceStatus";
 import { OrderUpiPay } from "@/components/site/UpiPayPanel";
+import { HeldCheckoutPay } from "@/components/site/HeldCheckoutPay";
+import { useUpiPayments } from "@/lib/upi-store";
 
 export const Route = createFileRoute("/account/orders/$id")({
   head: ({ params }) => ({
@@ -60,7 +62,8 @@ export const Route = createFileRoute("/account/orders/$id")({
 
 function AccountOrderDetail() {
   const { id } = Route.useParams();
-  const { user, orders, updateOrderStatus, requestReturn } = useApp();
+  const { user, orders, updateOrderStatus, requestReturn, paymentHolds } = useApp();
+  const { settings: upiSettings } = useUpiPayments();
   const [returnOpen, setReturnOpen] = useState(false);
   const [returnItemIndex, setReturnItemIndex] = useState("0");
   const [returnQuantity, setReturnQuantity] = useState("1");
@@ -69,6 +72,16 @@ function AccountOrderDetail() {
   const order = orders.find(
     (candidate) => candidate.id === id && orderBelongsToUser(candidate, user),
   );
+
+  // A checkout waiting for payment is not an order yet: show its payment screen.
+  const hold = order ? undefined : paymentHolds.find((candidate) => candidate.orderNo === id);
+  if (!order && hold && upiSettings) {
+    return (
+      <PanelLayout items={accountNav} tone="customer" title={hold.orderNo} subtitle="Waiting for payment">
+        <HeldCheckoutPay settings={upiSettings} orderNo={hold.orderNo} amount={hold.amount} holdUntil={hold.holdUntil} customer={user?.name ?? ""} />
+      </PanelLayout>
+    );
+  }
 
   if (!order) {
     return (

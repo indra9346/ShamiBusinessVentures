@@ -493,7 +493,7 @@ export const queueZohoInitialExport = createServerFn({ method: "POST" })
       db.from("orders")
         .select("id")
         .is("zoho_salesorder_id", null)
-        .not("order_status", "in", "(Cancelled,Awaiting Payment)"),
+        .not("order_status", "in", '(Cancelled,"Awaiting Payment","Payment Expired")'),
       db.from("zoho_sync_outbox")
         .select("entity_type,entity_id")
         .in("status", ["pending", "processing", "failed", "needs_review"]),
@@ -3020,6 +3020,8 @@ async function syncZohoOrder(db: Awaited<ReturnType<typeof dbAdmin>>, region: Re
   ]);
   if (orderError || itemsError) throw new Error("Could not read the order and items from Grain Bazar");
   if (!order) return;
+  // An unpaid checkout (or one whose payment time ran out) is not an order: Zoho never sees it.
+  if (["Awaiting Payment", "Payment Expired"].includes(order.order_status)) return;
   if (order.zoho_salesorder_id) {
     await syncLinkedZohoOrder(db, region, organizationId, token, order, items ?? []);
     return;
@@ -4003,6 +4005,24 @@ export const syncSingleOrderToZoho = createServerFn({ method: "POST" })
     if (error || !order) throw new Error("Order not found for Zoho synchronization");
     return { success: true, zohoSalesOrderId: await pushOrderToZohoDirect(db, order.id) };
   });
+
+/**
+ * Server-only: sends an order to Zoho at once (used when a bank alert confirms a paid order).
+ * Never throws; a failure stays in the queue for the 15-minute sync.
+ */
+export async function pushPaidOrderToZohoNow(orderNo: string): Promise<boolean> {
+  try {
+    const db = await dbAdmin();
+    const { data: order } = await db.from("orders").select("id").eq("order_no", orderNo).maybeSingle();
+    if (!order || !(await isZohoWriteSyncActive(db))) return false;
+    await withZohoPurpose("Website → Zoho: paid order (bank alert)", () => pushOrderToZohoDirect(db, order.id));
+    await flushZohoCallLog();
+    return true;
+  } catch (cause) {
+    console.warn(`Zoho push for ${orderNo} deferred to the queue:`, cause);
+    return false;
+  }
+}
 
 /**
  * Called right after an order is placed or changed (status, items, cancellation), so Zoho

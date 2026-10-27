@@ -15,7 +15,7 @@ import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
 import { UseMyLocationButton, type CapturedLocation } from "@/components/site/UseMyLocationButton";
 import { PickContactButton } from "@/components/site/PickContactButton";
-import { UpiPayPanel } from "@/components/site/UpiPayPanel";
+import { HeldCheckoutPay } from "@/components/site/HeldCheckoutPay";
 import { useUpiPayments } from "@/lib/upi-store";
 import { settingsProblem } from "@/lib/upi-pay";
 
@@ -30,7 +30,7 @@ export const Route = createFileRoute("/checkout")({
   component: Checkout,
 });
 
-const steps = ["Address", "Delivery", "Payment", "Review", "Confirmation"];
+const steps = ["Address", "Delivery", "Payment", "Review", "Pay"];
 const methods = ["UPI", "Credit Card", "Debit Card", "Net Banking"];
 const defaultShipping = { freeAbove: 10000, standard: 250, express: 650 };
 
@@ -104,7 +104,9 @@ function Checkout() {
   // A coupon applied on the cart page carries over.
   const [couponCode, setCouponCode] = useState(cartCoupon?.trim().toUpperCase() ?? "");
   const [placedId, setPlacedId] = useState<string | null>(null);
-  const [placedOrders, setPlacedOrders] = useState<{ id: string; amount: number }[]>([]);
+  const [placedOrders, setPlacedOrders] = useState<{ id: string; amount: number; holdUntil: string | null }[]>([]);
+  // Every held checkout from this visit has been paid and is now an order.
+  const allPaid = placedOrders.length > 0 && placedOrders.every((placed) => orders.some((order) => order.id === placed.id));
   // Direct UPI to the company's own account (no gateway fee), when the admin has switched it on.
   const { settings: upiSettings } = useUpiPayments();
   const directUpi = upiSettings && upiSettings.enabled && !settingsProblem(upiSettings) ? upiSettings : null;
@@ -294,6 +296,10 @@ function Checkout() {
       setChangingAddress(false);
     }
     if (step === 3) {
+      if (!directUpi) {
+        toast.error("Online payment is being set up", { description: "Orders open as soon as UPI payment is switched on. Please call or WhatsApp us to order now." });
+        return;
+      }
       if (!shippingRatesReady) {
         toast.error("Checkout is waiting for the current shipping rules. Refresh and try again.");
         return;
@@ -309,8 +315,9 @@ function Checkout() {
           const groupFulfil = point ? (fulfil === "Delivery" && point.deliveryEnabled) || !point.pickupEnabled ? "Delivery" : "Pickup" : fulfil;
           placed.push(await placeOrder({
             lines: group.lines,
-            method,
+            method: "UPI",
             payment: "Pending",
+            payFirst: true,
             ...(selectedAddress ? { shippingAddress: selectedAddress } : {}),
             ...(appliedCoupon && orderGroups.length === 1 ? { coupon: appliedCoupon.code } : {}),
             subtotal,
@@ -343,8 +350,8 @@ function Checkout() {
         toast.error("Some items were not ordered", { description: "They are still in your cart. Review them and place another order." });
       } else clearCart();
       setPlacedId(placed.map((order) => order.id).join(", "));
-      setPlacedOrders(placed.map((order) => ({ id: order.id, amount: order.amount })));
-      toast.success(placed.length > 1 ? `${placed.length} orders placed` : "Order placed", { description: `${placed.map((order) => order.id).join(", ")} confirmed` });
+      setPlacedOrders(placed.map((order) => ({ id: order.id, amount: order.amount, holdUntil: order.holdUntil ?? null })));
+      toast.success("Pay now to place your order", { description: "Prices and stock are held for you while you pay." });
       setStep(step + 1);
       return;
     }
@@ -627,34 +634,21 @@ function Checkout() {
 
             {step === 2 && (
               <>
-                <h2 className="text-lg font-bold text-navy">Preferred Payment Method</h2>
+                <h2 className="text-lg font-bold text-navy">Payment</h2>
                 {directUpi ? (
-                  <p className="mt-2 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
-                    Pay by <span className="font-semibold">UPI with no extra charges</span>: right after you place the order you get a
-                    QR code and UPI app buttons for the exact amount, paid straight to {directUpi.payeeName}.
-                  </p>
+                  <div className="mt-2 flex items-start gap-3 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
+                    <CreditCard className="mt-0.5 h-4 w-4 shrink-0" />
+                    <p>
+                      Pay by <span className="font-semibold">UPI with no extra charges</span> (Google Pay, PhonePe, Paytm or any UPI app),
+                      straight to {directUpi.payeeName}. Your order is placed and confirmed the moment the payment reaches us.
+                    </p>
+                  </div>
                 ) : (
                   <p className="mt-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
-                    Online payment is not enabled yet. Your selection is a preference only; the order
-                    will stay pending until payment is arranged and verified.
+                    Online payment is being set up, so orders can't be placed on the website yet.
+                    Please <Link to="/contact" className="font-semibold underline">call or WhatsApp us</Link> to order.
                   </p>
                 )}
-                <div className="mt-5 grid gap-3 sm:grid-cols-2">
-                  {methods.map((m) => (
-                    <button
-                      key={m}
-                      onClick={() => setMethod(m)}
-                      className={cn(
-                        "flex items-center gap-3 rounded-lg border p-4 text-sm font-semibold",
-                        method === m
-                          ? "border-gold bg-ivory text-navy"
-                          : "border-border text-slate hover:border-gold",
-                      )}
-                    >
-                      <CreditCard className="h-4 w-4 text-gold" /> {m}
-                    </button>
-                  ))}
-                </div>
                 <div className="mt-5">
                   <label className="mb-1.5 block text-xs font-semibold text-charcoal">
                     Have a coupon?
@@ -719,7 +713,7 @@ function Checkout() {
                 <dl className="mt-5 space-y-1.5 text-sm text-slate">
                   <div>Address: {selectedAddress?.line}</div>
                   <div>{fulfil === "Delivery" ? `Home delivery: ${shipCost === 0 ? "free" : inr(shipCost)}` : "Pickup: from our godown (free)"}</div>
-                  <div>Payment: {method}</div>
+                  <div>Payment: UPI (pay on the next step; the order is placed when paid)</div>
                   {appliedCoupon && <div>Coupon: {appliedCoupon.code}</div>}
                 </dl>
               </>
@@ -727,27 +721,25 @@ function Checkout() {
 
             {step === 4 && (
               <div className="py-6 text-center">
-                <span className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-success/10 text-success">
+                <span className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-gold/15 text-gold">
                   <Check className="h-7 w-7" />
                 </span>
-                <h2 className="mt-5 text-xl font-bold text-navy">Order Confirmed</h2>
+                <h2 className="mt-5 text-xl font-bold text-navy">{allPaid ? "Order placed and confirmed" : "Pay to place your order"}</h2>
                 <p className="mt-2 text-sm text-slate">
-                  Order ID <span className="font-bold text-gold">{placedId}</span> · Total{" "}
-                  {inrPrecise(summary.total)} ·{" "}
-                  {directUpi && method === "UPI"
-                    ? "Pay now by UPI below to confirm your order."
-                    : "Payment pending. Online payment is not enabled yet; payment must be arranged and verified separately."}{" "}
-                  {fulfil === "Pickup" ? "We will let you know when it is ready to collect." : "Delivery in 2–4 business days."}
+                  {allPaid
+                    ? `Total ${inrPrecise(summary.total)} paid by UPI. `
+                    : `Total ${inrPrecise(summary.total)}. Prices and stock are held for you while you pay; the order is placed and confirmed the moment the payment reaches us. `}
+                  {fulfil === "Pickup" ? "We will let you know when it is ready to collect." : "Delivery in 2–4 business days after payment."}
                 </p>
-                {directUpi && method === "UPI" && placedOrders.length > 0 && (
+                {directUpi && placedOrders.length > 0 && (
                   <div className="mx-auto mt-6 max-w-2xl space-y-4">
                     {placedOrders.map((order) => (
-                      <UpiPayPanel key={order.id} settings={directUpi} orderNo={order.id} amount={order.amount} customer={user?.name ?? ""} />
+                      <HeldCheckoutPay key={order.id} settings={directUpi} orderNo={order.id} amount={order.amount} holdUntil={order.holdUntil} customer={user?.name ?? ""} />
                     ))}
                   </div>
                 )}
                 <div className="mt-6 flex flex-wrap justify-center gap-3">
-                  {placedId && !placedId.includes(",") && (
+                  {allPaid && placedId && !placedId.includes(",") && (
                     <Link
                       to="/account/orders/$id"
                       params={{ id: placedId }}
@@ -756,7 +748,7 @@ function Checkout() {
                       View Order
                     </Link>
                   )}
-                  {placedId?.includes(",") && (
+                  {allPaid && placedId?.includes(",") && (
                     <Link to="/account/orders" className="rounded-md bg-navy px-6 py-3 text-sm font-semibold text-white hover:bg-midnight">
                       View Orders
                     </Link>
@@ -795,7 +787,7 @@ function Checkout() {
                   onClick={goNext}
                   className="rounded-md bg-gold px-6 py-2.5 text-sm font-bold text-midnight transition-colors hover:bg-gold-light disabled:cursor-wait disabled:opacity-60"
                 >
-                  {placingOrder ? "Placing order…" : step === 3 ? "Place Order" : "Continue"}
+                  {placingOrder ? "Holding your order…" : step === 3 ? "Continue to pay" : "Continue"}
                 </button>
               </div>
             )}

@@ -6,7 +6,8 @@ import { PanelLayout } from "@/components/panel/PanelLayout";
 import { DataTable, Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { Pager } from "@/components/panel/pager";
 import { accountNav } from "@/lib/account-nav";
-import { canCancelOrder, inr, orderStages, type OrderStatus } from "@/lib/data";
+import { canCancelOrder, inr, inrPrecise, orderStages, type OrderStatus } from "@/lib/data";
+import { AWAITING_PAYMENT, clockText, holdSecondsLeft } from "@/lib/payment-hold";
 import { useApp } from "@/lib/store";
 import { Input } from "@/components/ui/input";
 import {
@@ -52,7 +53,8 @@ const PAGE_SIZE = 10;
 function AccountOrders() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const routeSearch = Route.useSearch();
-  const { user, orders, updateOrderStatus, addToCart } = useApp();
+  const { user, orders, updateOrderStatus, addToCart, paymentHolds } = useApp();
+  const unpaid = paymentHolds.filter((hold) => hold.status === AWAITING_PAYMENT);
   const [q, setQ] = useState(routeSearch.q ?? "");
   const [status, setStatus] = useState("all");
   const [sort, setSort] = useState("date-desc");
@@ -106,6 +108,22 @@ function AccountOrders() {
       title="My Orders"
       subtitle="Your complete order history"
     >
+      {unpaid.length > 0 && (
+        <Panel title="Waiting for payment" className="mb-6">
+          <p className="mb-3 text-sm text-slate">These are not orders yet: each is placed the moment its UPI payment reaches us. Unpaid ones end on their own and nothing is due.</p>
+          <ul className="divide-y divide-border">
+            {unpaid.map((hold) => (
+              <li key={hold.orderNo} className="flex flex-wrap items-center justify-between gap-3 py-2.5">
+                <div>
+                  <p className="font-semibold text-navy">{hold.orderNo}</p>
+                  <p className="text-xs text-slate">{inrPrecise(hold.amount)} · {holdSecondsLeft(hold.holdUntil) > 0 ? `pay within ${clockText(holdSecondsLeft(hold.holdUntil))}` : "checking the payment"}</p>
+                </div>
+                <Link to="/account/orders/$id" params={{ id: hold.orderNo }} className="rounded-md bg-gold px-4 py-2 text-sm font-bold text-midnight hover:bg-gold-light">Pay now</Link>
+              </li>
+            ))}
+          </ul>
+        </Panel>
+      )}
       <div className="grid gap-4 sm:grid-cols-3">
         <StatCard label="Total Orders" value={String(myOrders.length)} icon={Package} highlight />
         <StatCard label="Active" value={String(active)} icon={Package} />

@@ -2,7 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { renderSVG } from "uqr";
 import { toast } from "sonner";
-import { CheckCircle2, QrCode, ShieldAlert, XCircle } from "lucide-react";
+import { CheckCircle2, Clock, KeyRound, MessageSquare, QrCode, ShieldAlert, Smartphone, XCircle } from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { Panel, StatCard } from "@/components/panel/widgets";
 import { adminNav } from "@/lib/panel-nav";
@@ -10,7 +10,9 @@ import { useApp } from "@/lib/store";
 import { inrPrecise } from "@/lib/data";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { DEFAULT_UPI_SETTINGS, isValidVpa, settingsProblem, upiPaymentUri, type UpiSettings } from "@/lib/upi-pay";
-import { loadUpiAudit, reviewUpiPayment, saveUpiSettings, useUpiPayments, type UpiAuditRow } from "@/lib/upi-store";
+import { loadUpiAudit, reviewUpiPayment, saveUpiSettings, settleBankCredit, useUpiPayments, type BankCredit, type UpiAuditRow } from "@/lib/upi-store";
+import { parseBankCredit } from "@/lib/bank-alert";
+import { AWAITING_PAYMENT, clockText, holdSecondsLeft } from "@/lib/payment-hold";
 import { ResizableTable } from "@/hooks/use-column-resize";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -30,8 +32,11 @@ const istTime = (iso: string) => new Date(iso).toLocaleString("en-IN", { timeZon
  * after paying, to be checked against the bank account and confirmed (marks the order paid).
  */
 function AdminUpiPayments() {
-  const { settings, submissions } = useUpiPayments();
-  const { confirmPayment } = useApp();
+  const { settings, submissions, credits } = useUpiPayments();
+  const { confirmPayment, paymentHolds, simulateBankAlert } = useApp();
+  const awaiting = paymentHolds.filter((hold) => hold.status === AWAITING_PAYMENT);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => { const timer = window.setInterval(() => setNow(Date.now()), 15_000); return () => window.clearInterval(timer); }, []);
   const [form, setForm] = useState<UpiSettings>(DEFAULT_UPI_SETTINGS);
   const [saving, setSaving] = useState(false);
   const [busy, setBusy] = useState("");
@@ -62,8 +67,9 @@ function AdminUpiPayments() {
     setBusy(orderNo);
     try {
       if (STATIC_DATA_MODE) {
-        // Demo: mark the demo order paid the way a manual payment does.
-        if (!(await confirmPayment(orderNo, amount, utr))) throw new Error("The order could not be marked paid");
+        // Demo: a held checkout becomes an order; an older demo order is marked paid like a manual payment.
+        if (awaiting.some((hold) => hold.orderNo === orderNo)) simulateBankAlert(orderNo);
+        else if (!(await confirmPayment(orderNo, amount, utr))) throw new Error("The order could not be marked paid");
       }
       // Live: one database step records the payment (order paid, sent to Zoho Books) and closes the UTR.
       await reviewUpiPayment(orderNo, "confirmed");
@@ -137,6 +143,30 @@ function AdminUpiPayments() {
           </div>
         )}
       </Panel>
+
+      <Panel title="Waiting for payment (not orders yet)" className="mb-6">
+        <p className="mb-3 text-xs text-slate">Checkouts whose customer has not paid yet. Their stock is held; they become orders the moment the bank alert (or your confirmation) matches the payment, and end on their own when the time is up.</p>
+        {!awaiting.length ? <p className="text-sm text-slate">Nobody is paying right now.</p> : (
+          <ul className="divide-y divide-border text-sm">
+            {awaiting.map((hold) => {
+              const left = holdSecondsLeft(hold.holdUntil, now);
+              return (
+                <li key={hold.orderNo} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                  <span className="font-mono text-xs text-navy">{hold.orderNo}</span>
+                  <span className="font-semibold tabular-nums">{inrPrecise(hold.amount)}</span>
+                  <span className={cn("inline-flex items-center gap-1 text-xs", left > 0 ? "text-amber-700" : "text-slate")}><Clock className="h-3.5 w-3.5" />{left > 0 ? `${clockText(left)} left` : "time up: UTR being checked"}</span>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </Panel>
+
+      <BankAlertsPanel credits={credits} onDemoMatch={(amount) => {
+        const hold = awaiting.find((candidate) => Math.abs(candidate.amount - amount) < 0.005);
+        if (hold) { simulateBankAlert(hold.orderNo); toast.success(`${hold.orderNo} paid and placed`); }
+        else toast.message("No checkout is waiting for that amount", { description: "Kept as unmatched money." });
+      }} />
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_260px]">
         <Panel title="Settings">
@@ -214,5 +244,116 @@ function AdminUpiPayments() {
         </Panel>
       )}
     </PanelLayout>
+  );
+}
+
+const CREDIT_STATUS: Record<BankCredit["status"], { label: string; tone: string }> = {
+  matched: { label: "Order paid automatically", tone: "text-emerald-700" },
+  unmatched: { label: "No checkout for it", tone: "text-slate" },
+  ambiguous: { label: "Several checkouts: waiting for the customer's UTR", tone: "text-amber-700" },
+  mismatch: { label: "Wrong amount: you decide", tone: "text-danger" },
+  late: { label: "Paid after time ran out: refund or place by hand", tone: "text-danger" },
+  settled: { label: "Settled", tone: "text-slate" },
+};
+
+/**
+ * Automatic capture: the company phone forwards each bank SMS to the website, which reads the
+ * amount and UTR and confirms the matching checkout. Shows the set-up, an SMS tester, and every
+ * alert received, with the ones that need a person.
+ */
+function BankAlertsPanel({ credits, onDemoMatch }: { credits: BankCredit[]; onDemoMatch: (amount: number) => void }) {
+  const [sample, setSample] = useState("");
+  const [busy, setBusy] = useState("");
+  const [suggestedKey, setSuggestedKey] = useState("");
+  const parsed = sample.trim() ? parseBankCredit(sample) : null;
+  const endpoint = typeof window === "undefined" ? "https://grainbazar.com/api/payments/bank-alert" : `${window.location.origin}/api/payments/bank-alert`;
+  const lastAlert = credits[0]?.receivedAt;
+  const needsYou = credits.filter((credit) => ["ambiguous", "mismatch", "late"].includes(credit.status));
+
+  const settle = async (credit: BankCredit) => {
+    const note = window.prompt(`What was done about ₹${credit.amount} (UTR ${credit.utr})? For example: refunded on 28 Oct, or order placed by hand.`, "");
+    if (!note?.trim()) return;
+    setBusy(credit.id);
+    try {
+      await settleBankCredit(credit.id, note.trim());
+      toast.success("Marked settled");
+    } catch (cause) {
+      toast.error("Could not settle", { description: cause instanceof Error ? cause.message : undefined });
+    } finally {
+      setBusy("");
+    }
+  };
+
+  return (
+    <Panel title="Automatic payment capture (bank SMS)" className="mb-6">
+      <div className="grid gap-5 lg:grid-cols-2">
+        <div className="space-y-2 text-sm text-charcoal">
+          <p className="flex items-center gap-2 font-semibold text-navy"><Smartphone className="h-4 w-4 text-gold" /> Set up once on the company phone (the SIM that gets the bank's credit SMS)</p>
+          <ol className="list-decimal space-y-1 pl-5 text-[13px]">
+            <li>Install a free SMS-forwarding app (for example <b>SMS to URL Forwarder</b> on Android) and allow it to read SMS.</li>
+            <li>Make a long random key (button below) and save it in Hostinger as the environment variable <code className="rounded bg-muted px-1">BANK_ALERT_KEY</code>, then redeploy.</li>
+            <li>In the app, forward the bank's SMS sender (e.g. SBIUPI, HDFCBK) to this address with method POST:
+              <code className="mt-1 block break-all rounded bg-muted px-2 py-1 text-[12px]">{endpoint}?key=YOUR_KEY</code></li>
+            <li>Send yourself ₹1 by UPI to the business UPI ID: the alert appears below within a minute.</li>
+          </ol>
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            <Button size="sm" variant="outline" onClick={() => {
+              const bytes = new Uint8Array(24);
+              crypto.getRandomValues(bytes);
+              setSuggestedKey(Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join(""));
+            }}><KeyRound className="mr-1 h-3.5 w-3.5" /> Make a key</Button>
+            {suggestedKey && <code className="break-all rounded bg-muted px-2 py-1 text-[12px]">{suggestedKey}</code>}
+          </div>
+          <p className="text-[11px] text-slate">The key is shown only here and is not saved by this page. Keep it private: anyone with it could send fake alerts.</p>
+          <p className="text-xs text-slate">Last alert received: <b>{lastAlert ? istTime(lastAlert) : "none yet"}</b></p>
+        </div>
+        <div className="space-y-2">
+          <p className="flex items-center gap-2 text-sm font-semibold text-navy"><MessageSquare className="h-4 w-4 text-gold" /> Test a bank SMS</p>
+          <textarea value={sample} onChange={(e) => setSample(e.target.value)} rows={4} placeholder="Paste a money-received SMS from the bank"
+            className="w-full rounded-md border border-input bg-white p-2 text-sm" />
+          {sample.trim() && (parsed ? (
+            <p className="rounded-md bg-emerald-50 p-2 text-sm text-emerald-900">Read as <b>{inrPrecise(parsed.amount)}</b> received · UTR <b className="font-mono">{parsed.utr}</b>{parsed.payer ? ` · from ${parsed.payer}` : ""}</p>
+          ) : (
+            <p className="rounded-md bg-amber-50 p-2 text-sm text-amber-900">Not read as a payment (a debit, or no amount / 12-digit UTR). Such SMS are ignored.</p>
+          ))}
+          {STATIC_DATA_MODE && parsed && (
+            <Button size="sm" className="bg-navy text-white" onClick={() => onDemoMatch(parsed.amount)}>Demo: receive this SMS</Button>
+          )}
+        </div>
+      </div>
+
+      {needsYou.length > 0 && (
+        <p className="mt-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-800">{needsYou.length} payment{needsYou.length === 1 ? "" : "s"} need you: refund, or place the order by hand, then mark settled.</p>
+      )}
+      {credits.length > 0 && (
+        <div className="mt-4 overflow-x-auto">
+          <ResizableTable tableId="upi-bank-alerts" className="w-full min-w-[820px] text-left text-sm">
+            <thead><tr className="border-b border-border text-[11px] font-bold uppercase tracking-wider text-slate">
+              <th className="px-2 py-2">Received</th><th className="px-2 py-2 text-right">Amount</th><th className="px-2 py-2">UTR</th>
+              <th className="px-2 py-2">From</th><th className="px-2 py-2">Order</th><th className="px-2 py-2">Result</th><th className="px-2 py-2" />
+            </tr></thead>
+            <tbody>
+              {credits.map((credit) => (
+                <tr key={credit.id} className="border-b border-border/60" title={credit.raw ?? undefined}>
+                  <td className="whitespace-nowrap px-2 py-2 text-xs text-slate">{istTime(credit.receivedAt)}</td>
+                  <td className="px-2 py-2 text-right font-semibold tabular-nums">{inrPrecise(credit.amount)}</td>
+                  <td className="px-2 py-2 font-mono text-xs">{credit.utr}</td>
+                  <td className="px-2 py-2 text-xs">{credit.payer ?? credit.sender ?? "—"}</td>
+                  <td className="px-2 py-2 font-mono text-xs">{credit.orderNo ?? "—"}</td>
+                  <td className={cn("px-2 py-2 text-xs font-semibold", CREDIT_STATUS[credit.status].tone)}>
+                    {CREDIT_STATUS[credit.status].label}{credit.note ? ` · ${credit.note}` : ""}
+                  </td>
+                  <td className="px-2 py-2">
+                    {["ambiguous", "mismatch", "late", "unmatched"].includes(credit.status) && (
+                      <Button size="sm" variant="outline" disabled={busy === credit.id} onClick={() => void settle(credit)}>Mark settled</Button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </ResizableTable>
+        </div>
+      )}
+    </Panel>
   );
 }
