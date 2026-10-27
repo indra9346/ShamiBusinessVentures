@@ -14,6 +14,9 @@ import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
 import { UseMyLocationButton, type CapturedLocation } from "@/components/site/UseMyLocationButton";
 import { PickContactButton } from "@/components/site/PickContactButton";
+import { UpiPayPanel } from "@/components/site/UpiPayPanel";
+import { useUpiPayments } from "@/lib/upi-store";
+import { settingsProblem } from "@/lib/upi-pay";
 
 const ADDRESS_AUTOCOMPLETE: Record<string, string> = {
   label: "off", name: "name", phone: "tel-national", line: "street-address",
@@ -113,6 +116,10 @@ function Checkout() {
   // A coupon applied on the cart page carries over.
   const [couponCode, setCouponCode] = useState(cartCoupon?.trim().toUpperCase() ?? "");
   const [placedId, setPlacedId] = useState<string | null>(null);
+  const [placedOrders, setPlacedOrders] = useState<{ id: string; amount: number }[]>([]);
+  // Direct UPI to the company's own account (no gateway fee), when the admin has switched it on.
+  const { settings: upiSettings } = useUpiPayments();
+  const directUpi = upiSettings && upiSettings.enabled && !settingsProblem(upiSettings) ? upiSettings : null;
   const [savingAddress, setSavingAddress] = useState(false);
   const [placingOrder, setPlacingOrder] = useState(false);
   const [confirmationSummary, setConfirmationSummary] = useState<{
@@ -348,6 +355,7 @@ function Checkout() {
         toast.error("Some items were not ordered", { description: "They are still in your cart. Review them and place another order." });
       } else clearCart();
       setPlacedId(placed.map((order) => order.id).join(", "));
+      setPlacedOrders(placed.map((order) => ({ id: order.id, amount: order.amount })));
       toast.success(placed.length > 1 ? `${placed.length} orders placed` : "Order placed", { description: `${placed.map((order) => order.id).join(", ")} confirmed` });
       setStep(step + 1);
       return;
@@ -632,10 +640,17 @@ function Checkout() {
             {step === 2 && (
               <>
                 <h2 className="text-lg font-bold text-navy">Preferred Payment Method</h2>
-                <p className="mt-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
-                  Online payment is not enabled yet. Your selection is a preference only; the order
-                  will stay pending until payment is arranged and verified.
-                </p>
+                {directUpi ? (
+                  <p className="mt-2 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
+                    Pay by <span className="font-semibold">UPI with no extra charges</span>: right after you place the order you get a
+                    QR code and UPI app buttons for the exact amount, paid straight to {directUpi.payeeName}.
+                  </p>
+                ) : (
+                  <p className="mt-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
+                    Online payment is not enabled yet. Your selection is a preference only; the order
+                    will stay pending until payment is arranged and verified.
+                  </p>
+                )}
                 <div className="mt-5 grid gap-3 sm:grid-cols-2">
                   {methods.map((m) => (
                     <button
@@ -730,10 +745,19 @@ function Checkout() {
                 <h2 className="mt-5 text-xl font-bold text-navy">Order Confirmed</h2>
                 <p className="mt-2 text-sm text-slate">
                   Order ID <span className="font-bold text-gold">{placedId}</span> · Total{" "}
-                  {inrPrecise(summary.total)} · Payment pending. Online payment is not enabled yet; payment
-                  must be arranged and verified separately.{" "}
+                  {inrPrecise(summary.total)} ·{" "}
+                  {directUpi && method === "UPI"
+                    ? "Pay now by UPI below to confirm your order."
+                    : "Payment pending. Online payment is not enabled yet; payment must be arranged and verified separately."}{" "}
                   {fulfil === "Pickup" ? "We will let you know when it is ready to collect." : "Delivery in 2–4 business days."}
                 </p>
+                {directUpi && method === "UPI" && placedOrders.length > 0 && (
+                  <div className="mx-auto mt-6 max-w-2xl space-y-4">
+                    {placedOrders.map((order) => (
+                      <UpiPayPanel key={order.id} settings={directUpi} orderNo={order.id} amount={order.amount} customer={user?.name ?? ""} />
+                    ))}
+                  </div>
+                )}
                 <div className="mt-6 flex flex-wrap justify-center gap-3">
                   {placedId && !placedId.includes(",") && (
                     <Link
