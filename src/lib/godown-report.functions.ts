@@ -36,7 +36,7 @@ export const godownReport = createServerFn({ method: "POST" })
     const { fromIso, toIso } = istRange(data.from, data.to);
 
     const [branchesResult, productsResult] = await Promise.all([
-      db.from("branches").select("id,name,code,vendor_id,sort_order").is("vendor_id", null).order("sort_order"),
+      db.from("branches").select("id,name,code,vendor_id,sort_order").order("sort_order"),
       db.from("catalog_products").select("id,payload").not("vendor_id", "like", "zoho:%"),
     ]);
     if (branchesResult.error || productsResult.error) throw new Error("Could not read godowns and products");
@@ -81,9 +81,11 @@ export const godownReport = createServerFn({ method: "POST" })
       shipping: Number(row.shipping), total: Number(row.total), paid_amount: Number(row.paid_amount),
       invoice_number: invoices.get(row.id) ?? null,
     }));
+    // Godowns are listed even with no sales; vendor pickup points only when they had orders.
+    const branchNames = Object.fromEntries((branchesResult.data ?? []).map((branch) => [branch.id, branch.vendor_id ? `${branch.name} (vendor point)` : branch.name]));
     const godowns = (branchesResult.data ?? [])
-      .filter((branch) => !data.branchId || branch.id === data.branchId)
+      .filter((branch) => !branch.vendor_id && (!data.branchId || branch.id === data.branchId))
       .map((branch) => ({ id: branch.id, name: branch.name, code: branch.code }));
-    const report = buildGodownReport({ godowns, orders, items, costs, commissions });
+    const report = buildGodownReport({ godowns, orders, items, costs, commissions, branchNames });
     return { ...report, from: data.from, to: data.to, generatedAt: new Date().toISOString(), truncated: (orderRows ?? []).length >= 5000 };
   });
