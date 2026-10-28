@@ -781,6 +781,9 @@ export type Order = {
   vendorStatuses?: { vendorId: string; vendor: string; status: OrderStatus }[];
   /** Set on a checkout that waits for payment (it is not an order until paid): when the hold ends. */
   holdUntil?: string | null;
+  /** Business (B2B) purchase: the buyer's legal name registered with `gstin`. */
+  businessName?: string;
+  isB2b?: boolean;
 };
 
 /** Customer funds received for an order, excluding cancelled or fully refunded orders. */

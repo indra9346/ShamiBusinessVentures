@@ -613,6 +613,8 @@ export type Database = {
           order_no: string
           order_status: string
           paid_amount: number
+          business_legal_name: string | null
+          is_b2b: boolean
           parent_order_no: string | null
           payment_hold_outcome: string | null
           payment_hold_until: string | null
@@ -650,6 +652,8 @@ export type Database = {
           order_no: string
           order_status?: string
           paid_amount?: number
+          business_legal_name?: string | null
+          is_b2b?: boolean
           parent_order_no?: string | null
           payment_hold_outcome?: string | null
           payment_hold_until?: string | null
@@ -687,6 +691,8 @@ export type Database = {
           order_no?: string
           order_status?: string
           paid_amount?: number
+          business_legal_name?: string | null
+          is_b2b?: boolean
           parent_order_no?: string | null
           payment_hold_outcome?: string | null
           payment_hold_until?: string | null
@@ -1031,9 +1037,10 @@ export type Database = {
       admin_update_return: { Args: { _id: string; _status: string; _refund_status: string }; Returns: boolean }
       request_zoho_invoice_approval: { Args: { _order_no: string }; Returns: boolean }
       start_paid_checkout: {
-        Args: { _order_no: string; _target_user_id: string; _customer_name: string; _customer_email: string; _customer_phone: string | null; _customer_gstin: string | null; _shipping_address: Json; _shipping_method: string; _payment_method: string; _items: Json; _coupon?: string | null }
+        Args: { _order_no: string; _target_user_id: string; _customer_name: string; _customer_email: string; _customer_phone: string | null; _customer_gstin: string | null; _shipping_address: Json; _shipping_method: string; _payment_method: string; _items: Json; _coupon?: string | null; _is_b2b?: boolean | null; _business_gstin?: string | null; _business_name?: string | null }
         Returns: Json
       }
+      godown_contact_phones: { Args: Record<PropertyKey, never>; Returns: { branch_id: string; phone: string | null }[] }
       expire_payment_holds: { Args: Record<PropertyKey, never>; Returns: number }
       cancel_payment_hold: { Args: { _order_no: string }; Returns: boolean }
       record_bank_credit: { Args: { _utr: string; _amount: number; _payer?: string; _raw?: string; _source?: string; _sender?: string }; Returns: Json }

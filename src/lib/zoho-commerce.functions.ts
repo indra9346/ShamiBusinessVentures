@@ -14,6 +14,8 @@ import {
   invoiceDecision, websiteInvoiceStatus, zohoInvoicesOf, type InvoiceRecord,
   DAILY_LIMIT_PAUSE_MINUTES, inboundPollDue, isZohoDailyLimitError, zohoPaused,
   indiaDate, nextZohoFulfilmentStep, zohoFulfilmentStatus, zohoPackagesOf, zohoStatusMovesForward,
+  einvoiceProblems,
+  zohoGstFields,
 } from "@/lib/zoho-sync-core";
 import {
   ZOHO_CALL_DEFAULT_PURPOSE, ZOHO_CALL_LOG_SETTING, describeZohoCall, mergeZohoCalls, type ZohoCall, type ZohoCallLog,
@@ -2205,7 +2207,7 @@ async function ensureZohoBooksInvoice(
     const message = cause instanceof Error ? cause.message : String(cause);
     throw new Error(`Zoho Books invoice for ${number}: ${step} failed: ${message}.${zohoPermissionHint(message)}`);
   };
-  type BooksInvoice = { invoice_id?: string; invoice_number?: string; status?: string; total?: number; balance?: number; customer_id?: string };
+  type BooksInvoice = { invoice_id?: string; invoice_number?: string; status?: string; total?: number; balance?: number; customer_id?: string; gst_treatment?: string; gst_no?: string; place_of_supply?: string };
   const linked = (Array.isArray(zoho["invoices"]) ? zoho["invoices"] : []).map(plainObject)
     .filter((invoice) => str(invoice["invoice_id"]) && !["void"].includes(str(invoice["status"]).toLowerCase()));
   let invoiceId = str(linked[0]?.["invoice_id"]);
@@ -2232,6 +2234,13 @@ async function ensureZohoBooksInvoice(
     }
   };
   let invoice = await readInvoice();
+  // B2B: the invoice (made from the sales order) must carry the buyer's GSTIN as a registered business,
+  // or the IRP rejects it. Checked while it is still a draft; nothing is sent until it is right.
+  const expected = zohoGstFields(order.customer_gstin, "invoice");
+  if (expected["gst_treatment"] === "business_gst"
+    && (str(invoice.gst_treatment) !== "business_gst" || str(invoice.gst_no).toUpperCase() !== String(expected["gst_no"]))) {
+    throw new NeedsReviewError(`Zoho Books invoice ${str(invoice.invoice_number) || number} for B2B order ${order.order_no} is not marked "Registered Business - Regular" with GSTIN ${String(expected["gst_no"])} (it shows ${str(invoice.gst_treatment) || "no GST treatment"}${str(invoice.gst_no) ? `, GSTIN ${str(invoice.gst_no)}` : ""}). Open it in Zoho Books, set the customer's GST treatment and GSTIN, save, then Retry.`);
+  }
   if (str(invoice.status).toLowerCase() === "draft") {
     try {
       await booksRequest(region, organizationId, token, `invoices/${encodeURIComponent(invoiceId)}/status/sent`, "POST");
@@ -3067,9 +3076,8 @@ async function syncZohoOrder(db: Awaited<ReturnType<typeof dbAdmin>>, region: Re
           is_primary_contact: true,
         }],
         notes: directNotes.join(" | "),
-        gst_treatment: gstInfo.isValid ? "business_gst" : "consumer",
-        ...(gstInfo.isValid && gstInfo.gstin ? { gst_no: gstInfo.gstin } : {}),
-        ...(gstInfo.placeOfContact ? { place_of_contact: gstInfo.placeOfContact } : {}),
+        ...(gstInfo.isValid && order.business_legal_name ? { company_name: order.business_legal_name } : {}),
+        ...zohoGstFields(order.customer_gstin, "contact"),
         billing_address: {
           address: str(shippingAddr["line"] || shippingAddr["address"] || "Direct Order"),
           city: str(shippingAddr["city"] || "Bengaluru"),
@@ -3111,6 +3119,19 @@ async function syncZohoOrder(db: Awaited<ReturnType<typeof dbAdmin>>, region: Re
     `Grain Bazar order ${order.order_no}; payment ${order.payment_status}; app total ₹${Number(order.total).toFixed(2)}. Verify tax treatment and total in Zoho before invoicing.`,
   ];
   if (orderGstInfo.note) notesParts.push(orderGstInfo.note);
+  if (orderGstInfo.isValid) {
+    // Business (B2B) purchase: say who the buyer is and whether the invoice can go to the IRP as is.
+    const billing = typeof order.shipping_address === "object" && order.shipping_address !== null ? order.shipping_address as Record<string, unknown> : {};
+    const problems = einvoiceProblems({
+      gstin: order.customer_gstin,
+      legalName: order.business_legal_name,
+      address: { line: str(billing["line"]), city: str(billing["city"]), state: str(billing["state"]), pin: str(billing["pin"]) },
+      lines: lineItems.map((line) => ({ name: str((line as Record<string, unknown>)["name"]) || str((line as Record<string, unknown>)["description"]), hsn: str((line as Record<string, unknown>)["hsn_or_sac"]) })),
+    });
+    notesParts.push(`B2B buyer: ${order.business_legal_name || order.customer_name} · GSTIN ${orderGstInfo.gstin}.`);
+    notesParts.push(problems.length ? `E-invoice (IRP) check: fix before pushing to IRP: ${problems.join("; ")}.` : "E-invoice (IRP) check: ready.");
+    console.info(zohoLogLine("einvoice_readiness", { order: order.order_no, ready: problems.length === 0, problems: problems.join("; ") }));
+  }
 
   // Pickup orders are created under the godown's Zoho location, so stock leaves that warehouse.
   const locationId = await zohoLocationForOrder(db, order.shipping_address, (order as { branch_id?: string | null }).branch_id);
@@ -3134,9 +3155,7 @@ async function syncZohoOrder(db: Awaited<ReturnType<typeof dbAdmin>>, region: Re
     shipping_charge: Number(order.shipping) || 0,
     is_inclusive_tax: false,
     notes: notesParts.join(" "),
-    gst_treatment: orderGstInfo.isValid ? "business_gst" : "consumer",
-    ...(orderGstInfo.isValid && orderGstInfo.gstin ? { gst_no: orderGstInfo.gstin } : {}),
-    ...(orderGstInfo.placeOfContact ? { place_of_supply: orderGstInfo.placeOfContact } : {}),
+    ...zohoGstFields(order.customer_gstin, "order"),
   };
   const created = await createSalesOrderWithChannel(region, organizationId, token, payload, order.order_no);
   const safeNumber = str(created.salesorder?.["salesorder_number"]) || order.order_no;
