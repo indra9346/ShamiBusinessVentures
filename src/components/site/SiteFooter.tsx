@@ -148,11 +148,37 @@ export function SiteFooter() {
               className="inline-flex items-center transition-all duration-300 hover:scale-105 hover:opacity-95"
               title="Web Hosting Baba — https://webhostingbaba.com/"
             >
-              <img
-                src={webHostingBabaLogo}
-                alt="Web Hosting Baba"
-                className="h-6 w-auto object-contain rounded shadow-sm"
-              />
+              <span className="relative inline-block">
+                <img
+                  src={webHostingBabaLogo}
+                  alt="Web Hosting Baba"
+                  className="block h-6 w-auto object-contain rounded shadow-sm"
+                />
+                {/* Golden sparks run up both sides of the Baba face (beard tip to topknot) and meet at the top.
+                    Coordinates are the logo's own pixels (236 × 66). */}
+                <svg viewBox="0 0 236 66" className="footer-heart pointer-events-none absolute inset-0 h-full w-full" aria-hidden="true">
+                  <path
+                    className="footer-heart-spark"
+                    pathLength={100}
+                    d="M171.5 59 L166 54 L163 47 L161 39 L159.5 32 L160 25 L161.5 19 L165.5 15.5 L169.5 12 L171 8.5 L175.5 6.5"
+                    stroke="url(#footerHeartGold)"
+                    strokeWidth="2.4"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    fill="none"
+                  />
+                  <path
+                    className="footer-heart-spark"
+                    pathLength={100}
+                    d="M171.5 59 L176.5 54 L178.5 47 L181 39 L183.5 32 L183.5 25 L182.5 19 L181 15 L180.5 10 L178.5 7.5 L175.5 6.5"
+                    stroke="url(#footerHeartGold)"
+                    strokeWidth="2.4"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    fill="none"
+                  />
+                </svg>
+              </span>
             </a>
           </div>
         </div>
