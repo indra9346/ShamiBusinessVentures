@@ -1161,7 +1161,8 @@ async function upsertZohoContact(
     contact_persons: [person],
     notes: notesParts.join(" | "),
     // Zoho allows "consumer" only on customers; an unregistered vendor is "business_none".
-    gst_treatment: gstInfo.isValid ? "business_gst" : contactType === "vendor" ? "business_none" : "consumer",
+    // A customer buying in their company's name without a GSTIN is an unregistered business.
+    gst_treatment: gstInfo.isValid ? "business_gst" : contactType === "vendor" || profile.company?.trim() ? "business_none" : "consumer",
     ...(gstInfo.isValid && gstInfo.gstin ? { gst_no: gstInfo.gstin } : {}),
     ...(gstInfo.placeOfContact ? { place_of_contact: gstInfo.placeOfContact } : {}),
     ...(mainAddress ? { billing_address: mainAddress, shipping_address: mainAddress } : {}),
@@ -2207,7 +2208,7 @@ async function ensureZohoBooksInvoice(
     const message = cause instanceof Error ? cause.message : String(cause);
     throw new Error(`Zoho Books invoice for ${number}: ${step} failed: ${message}.${zohoPermissionHint(message)}`);
   };
-  type BooksInvoice = { invoice_id?: string; invoice_number?: string; status?: string; total?: number; balance?: number; customer_id?: string; gst_treatment?: string; gst_no?: string; place_of_supply?: string };
+  type BooksInvoice = { invoice_id?: string; invoice_number?: string; status?: string; total?: number; balance?: number; customer_id?: string; customer_name?: string; gst_treatment?: string; gst_no?: string; place_of_supply?: string };
   const linked = (Array.isArray(zoho["invoices"]) ? zoho["invoices"] : []).map(plainObject)
     .filter((invoice) => str(invoice["invoice_id"]) && !["void"].includes(str(invoice["status"]).toLowerCase()));
   let invoiceId = str(linked[0]?.["invoice_id"]);
@@ -2234,12 +2235,23 @@ async function ensureZohoBooksInvoice(
     }
   };
   let invoice = await readInvoice();
-  // B2B: the invoice (made from the sales order) must carry the buyer's GSTIN as a registered business,
-  // or the IRP rejects it. Checked while it is still a draft; nothing is sent until it is right.
-  const expected = zohoGstFields(order.customer_gstin, "invoice");
+  // Business purchases: the invoice (made from the sales order) must carry the buyer's GSTIN as a
+  // registered business (or the IRP rejects it), or be an unregistered business when only a company
+  // name was given, and be billed to that company. Checked while it is still a draft; nothing is sent
+  // until it is right.
+  const expected = zohoGstFields(order.customer_gstin, "invoice", order.business_legal_name);
+  const invoiceLabel = `Zoho Books invoice ${str(invoice.invoice_number) || number} for business order ${order.order_no}`;
   if (expected["gst_treatment"] === "business_gst"
     && (str(invoice.gst_treatment) !== "business_gst" || str(invoice.gst_no).toUpperCase() !== String(expected["gst_no"]))) {
-    throw new NeedsReviewError(`Zoho Books invoice ${str(invoice.invoice_number) || number} for B2B order ${order.order_no} is not marked "Registered Business - Regular" with GSTIN ${String(expected["gst_no"])} (it shows ${str(invoice.gst_treatment) || "no GST treatment"}${str(invoice.gst_no) ? `, GSTIN ${str(invoice.gst_no)}` : ""}). Open it in Zoho Books, set the customer's GST treatment and GSTIN, save, then Retry.`);
+    throw new NeedsReviewError(`${invoiceLabel} is not marked "Registered Business - Regular" with GSTIN ${String(expected["gst_no"])} (it shows ${str(invoice.gst_treatment) || "no GST treatment"}${str(invoice.gst_no) ? `, GSTIN ${str(invoice.gst_no)}` : ""}). Open it in Zoho Books, set the customer's GST treatment and GSTIN, save, then Retry.`);
+  }
+  if (expected["gst_treatment"] === "business_none" && str(invoice.gst_treatment) !== "business_none") {
+    throw new NeedsReviewError(`${invoiceLabel} is not marked "Business - Unregistered" (it shows ${str(invoice.gst_treatment) || "no GST treatment"}). Open it in Zoho Books, set the customer's GST treatment, save, then Retry.`);
+  }
+  const company = (order.business_legal_name ?? "").trim();
+  const sameName = (a: string, b: string) => a.replace(/\s+/g, " ").trim().toLowerCase() === b.replace(/\s+/g, " ").trim().toLowerCase();
+  if (company && str(invoice.customer_name) && !sameName(str(invoice.customer_name), company)) {
+    throw new NeedsReviewError(`${invoiceLabel} is billed to "${str(invoice.customer_name)}", not the company "${company}" the customer entered at checkout. Open the customer in Zoho Books, set the name to "${company}", save, then Retry.`);
   }
   if (str(invoice.status).toLowerCase() === "draft") {
     try {
@@ -3067,7 +3079,7 @@ async function syncZohoOrder(db: Awaited<ReturnType<typeof dbAdmin>>, region: Re
 
       const directContact: Record<string, unknown> = {
         contact_type: "customer",
-        contact_name: order.customer_name?.trim() || orderEmail,
+        contact_name: order.business_legal_name?.trim() || order.customer_name?.trim() || orderEmail,
         contact_persons: [{
           ...splitContactName(order.customer_name || "Customer"),
           email: orderEmail,
@@ -3076,8 +3088,8 @@ async function syncZohoOrder(db: Awaited<ReturnType<typeof dbAdmin>>, region: Re
           is_primary_contact: true,
         }],
         notes: directNotes.join(" | "),
-        ...(gstInfo.isValid && order.business_legal_name ? { company_name: order.business_legal_name } : {}),
-        ...zohoGstFields(order.customer_gstin, "contact"),
+        ...(order.business_legal_name ? { company_name: order.business_legal_name } : {}),
+        ...zohoGstFields(order.customer_gstin, "contact", order.business_legal_name),
         billing_address: {
           address: str(shippingAddr["line"] || shippingAddr["address"] || "Direct Order"),
           city: str(shippingAddr["city"] || "Bengaluru"),
@@ -3119,6 +3131,9 @@ async function syncZohoOrder(db: Awaited<ReturnType<typeof dbAdmin>>, region: Re
     `Grain Bazar order ${order.order_no}; payment ${order.payment_status}; app total ₹${Number(order.total).toFixed(2)}. Verify tax treatment and total in Zoho before invoicing.`,
   ];
   if (orderGstInfo.note) notesParts.push(orderGstInfo.note);
+  if (order.business_legal_name && !orderGstInfo.isValid) {
+    notesParts.push(`Business buyer (unregistered, no GSTIN): ${order.business_legal_name}.`);
+  }
   if (orderGstInfo.isValid) {
     // Business (B2B) purchase: say who the buyer is and whether the invoice can go to the IRP as is.
     const billing = typeof order.shipping_address === "object" && order.shipping_address !== null ? order.shipping_address as Record<string, unknown> : {};
@@ -3155,7 +3170,7 @@ async function syncZohoOrder(db: Awaited<ReturnType<typeof dbAdmin>>, region: Re
     shipping_charge: Number(order.shipping) || 0,
     is_inclusive_tax: false,
     notes: notesParts.join(" "),
-    ...zohoGstFields(order.customer_gstin, "order"),
+    ...zohoGstFields(order.customer_gstin, "order", order.business_legal_name),
   };
   const created = await createSalesOrderWithChannel(region, organizationId, token, payload, order.order_no);
   const safeNumber = str(created.salesorder?.["salesorder_number"]) || order.order_no;

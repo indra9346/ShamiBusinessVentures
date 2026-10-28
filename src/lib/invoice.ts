@@ -323,7 +323,7 @@ export async function buildInvoicePdf(order: Order, options: InvoiceOptions = {}
         addressHasCity ? "" : cityLine,
         order.phone ? `Phone ${order.phone}` : "",
         order.email,
-        order.gstin ? `GSTIN ${order.gstin}` : "Unregistered (B2C)",
+        order.gstin ? `GSTIN ${order.gstin}` : order.businessName ? "Unregistered business (no GSTIN)" : "Unregistered (B2C)",
       ],
     },
     { title: shipTitle, rows: shipRows },

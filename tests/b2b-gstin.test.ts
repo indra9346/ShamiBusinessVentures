@@ -3,14 +3,17 @@ import assert from "node:assert/strict";
 import { businessDetailsProblem, gstStateCodeOf, normaliseGstin } from "../src/lib/gstin.ts";
 import { einvoiceProblems, zohoGstFields } from "../src/lib/zoho-sync-core.ts";
 
-test("checkout: business details are checked like the database checks them", () => {
+test("checkout: company details are checked like the database checks them", () => {
   assert.equal(businessDetailsProblem("29ABCDE1234F1Z5", "Kiran Traders", "Karnataka"), null);
   assert.equal(normaliseGstin(" 29abcde 1234f1z5 "), "29ABCDE1234F1Z5");
   assert.equal(businessDetailsProblem(" 29abcde1234f1z5 ", "Kiran Traders", "karnataka"), null);
-  assert.match(businessDetailsProblem("", "Kiran Traders", "Karnataka")!, /Enter your GSTIN/);
+  // Company name is required; the GSTIN is optional (an unregistered business).
+  assert.equal(businessDetailsProblem("", "Kiran Traders", "Karnataka"), null);
+  assert.equal(businessDetailsProblem("   ", "Kiran Traders", "Karnataka"), null);
+  assert.match(businessDetailsProblem("", "", "Karnataka")!, /Enter your company name/);
   assert.match(businessDetailsProblem("29ABCDE1234F1Z", "Kiran Traders", "Karnataka")!, /15 characters/);
   assert.match(businessDetailsProblem("29ABCDE1234F1X5", "Kiran Traders", "Karnataka")!, /not a valid GSTIN/);
-  assert.match(businessDetailsProblem("29ABCDE1234F1Z5", " ", "Karnataka")!, /legal business name/);
+  assert.match(businessDetailsProblem("29ABCDE1234F1Z5", " ", "Karnataka")!, /Enter your company name/);
   // The GSTIN's state (first two digits) must be the billing address's state.
   assert.match(businessDetailsProblem("27ABCDE1234F1Z5", "Kiran Traders", "Karnataka")!, /state code 27.*Karnataka \(29\)/);
   // Unknown state name: the format check still applies, the state check is skipped.
@@ -27,7 +30,16 @@ test("Zoho: a GSTIN makes contact, sales order and invoice a registered business
 test("Zoho: no or invalid GSTIN is a consumer (B2C), never a half-filled business record", () => {
   for (const gstin of [null, "", "NA", "29ABCDE1234F1Z", "unregistered"]) {
     assert.deepEqual(zohoGstFields(gstin, "order"), { gst_treatment: "consumer" });
+    assert.deepEqual(zohoGstFields(gstin, "invoice", "  "), { gst_treatment: "consumer" });
   }
+});
+
+test("Zoho: a company name without a GSTIN is an unregistered business; with one, registered", () => {
+  for (const record of ["contact", "order", "invoice"] as const) {
+    assert.deepEqual(zohoGstFields(null, record, "Kiran Traders"), { gst_treatment: "business_none" });
+    assert.deepEqual(zohoGstFields("", record, "Kiran Traders"), { gst_treatment: "business_none" });
+  }
+  assert.equal(zohoGstFields("29ABCDE1234F1Z5", "invoice", "Kiran Traders")["gst_treatment"], "business_gst");
 });
 
 test("IRP e-invoice readiness: GSTIN, legal name, full address with 6-digit PIN, 6/8-digit HSN", () => {
