@@ -13,6 +13,7 @@ import { DEFAULT_UPI_SETTINGS, isValidVpa, settingsProblem, upiPaymentUri, type 
 import { loadUpiAudit, reviewUpiPayment, saveUpiSettings, settleBankCredit, useUpiPayments, type BankCredit, type UpiAuditRow } from "@/lib/upi-store";
 import { parseBankCredit } from "@/lib/bank-alert";
 import { AWAITING_PAYMENT, clockText, holdSecondsLeft } from "@/lib/payment-hold";
+import { CustomersPayingNow } from "@/components/panel/CustomersPayingNow";
 import { ResizableTable } from "@/hooks/use-column-resize";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -35,8 +36,6 @@ function AdminUpiPayments() {
   const { settings, submissions, credits } = useUpiPayments();
   const { confirmPayment, paymentHolds, simulateBankAlert } = useApp();
   const awaiting = paymentHolds.filter((hold) => hold.status === AWAITING_PAYMENT);
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => { const timer = window.setInterval(() => setNow(Date.now()), 15_000); return () => window.clearInterval(timer); }, []);
   const [form, setForm] = useState<UpiSettings>(DEFAULT_UPI_SETTINGS);
   const [saving, setSaving] = useState(false);
   const [busy, setBusy] = useState("");
@@ -146,20 +145,7 @@ function AdminUpiPayments() {
 
       <Panel title="Waiting for payment (not orders yet)" className="mb-6">
         <p className="mb-3 text-xs text-slate">Checkouts whose customer has not paid yet. Their stock is held; they become orders the moment the bank alert (or your confirmation) matches the payment, and end on their own when the time is up.</p>
-        {!awaiting.length ? <p className="text-sm text-slate">Nobody is paying right now.</p> : (
-          <ul className="divide-y divide-border text-sm">
-            {awaiting.map((hold) => {
-              const left = holdSecondsLeft(hold.holdUntil, now);
-              return (
-                <li key={hold.orderNo} className="flex flex-wrap items-center justify-between gap-2 py-2">
-                  <span className="font-mono text-xs text-navy">{hold.orderNo}</span>
-                  <span className="font-semibold tabular-nums">{inrPrecise(hold.amount)}</span>
-                  <span className={cn("inline-flex items-center gap-1 text-xs", left > 0 ? "text-amber-700" : "text-slate")}><Clock className="h-3.5 w-3.5" />{left > 0 ? `${clockText(left)} left` : "time up: UTR being checked"}</span>
-                </li>
-              );
-            })}
-          </ul>
-        )}
+        <CustomersPayingNow />
       </Panel>
 
       <BankAlertsPanel credits={credits} onDemoMatch={(amount) => {

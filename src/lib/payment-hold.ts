@@ -34,6 +34,8 @@ export type PaymentHold = {
   status: typeof AWAITING_PAYMENT | typeof PAYMENT_EXPIRED | "Payment Confirmed";
   holdUntil: string | null;
   createdAt: string;
+  /** Who is paying (shown to admins). */
+  customer?: string | undefined;
   outcome?: "expired" | "dropped" | null | undefined;
   /** Product ids and quantities, to put the items back in the cart if it is not paid. */
   lines: { productId: string; qty: number }[];

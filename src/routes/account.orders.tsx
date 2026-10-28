@@ -8,6 +8,7 @@ import { Pager } from "@/components/panel/pager";
 import { accountNav } from "@/lib/account-nav";
 import { canCancelOrder, inr, inrPrecise, orderStages, type OrderStatus } from "@/lib/data";
 import { AWAITING_PAYMENT, clockText, holdSecondsLeft } from "@/lib/payment-hold";
+import { useServerNow } from "@/lib/server-clock";
 import { useApp } from "@/lib/store";
 import { Input } from "@/components/ui/input";
 import {
@@ -55,6 +56,7 @@ function AccountOrders() {
   const routeSearch = Route.useSearch();
   const { user, orders, updateOrderStatus, addToCart, paymentHolds } = useApp();
   const unpaid = paymentHolds.filter((hold) => hold.status === AWAITING_PAYMENT);
+  const now = useServerNow();
   const [q, setQ] = useState(routeSearch.q ?? "");
   const [status, setStatus] = useState("all");
   const [sort, setSort] = useState("date-desc");
@@ -116,7 +118,7 @@ function AccountOrders() {
               <li key={hold.orderNo} className="flex flex-wrap items-center justify-between gap-3 py-2.5">
                 <div>
                   <p className="font-semibold text-navy">{hold.orderNo}</p>
-                  <p className="text-xs text-slate">{inrPrecise(hold.amount)} · {holdSecondsLeft(hold.holdUntil) > 0 ? `pay within ${clockText(holdSecondsLeft(hold.holdUntil))}` : "checking the payment"}</p>
+                  <p className="text-xs text-slate">{inrPrecise(hold.amount)} · {holdSecondsLeft(hold.holdUntil, now) > 0 ? `pay within ${clockText(holdSecondsLeft(hold.holdUntil, now))}` : "checking the payment"}</p>
                 </div>
                 <Link to="/account/orders/$id" params={{ id: hold.orderNo }} className="rounded-md bg-gold px-4 py-2 text-sm font-bold text-midnight hover:bg-gold-light">Pay now</Link>
               </li>

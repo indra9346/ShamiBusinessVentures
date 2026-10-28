@@ -7,6 +7,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { inrPrecise } from "@/lib/data";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { AWAITING_PAYMENT, clockText, holdSecondsLeft, holdView, type PaymentHold } from "@/lib/payment-hold";
+import { serverNow, useServerNow } from "@/lib/server-clock";
 import { useApp } from "@/lib/store";
 import { normaliseUtr, upiAppLinks, upiPaymentUri, utrProblem, type UpiSettings } from "@/lib/upi-pay";
 import { submitUpiPayment, useUpiPayments } from "@/lib/upi-store";
@@ -26,7 +27,8 @@ export function HeldCheckoutPay({ settings, orderNo, amount, holdUntil, customer
   const storeHold = paymentHolds.find((hold) => hold.orderNo === orderNo);
   // Read straight from the database too, so the screen moves on even if the live feed is slow.
   const [liveStatus, setLiveStatus] = useState<{ status: string; outcome: string | null } | null>(null);
-  const [now, setNow] = useState(() => Date.now());
+  // The database decides when the hold ends, so the countdown runs on the server's clock.
+  const now = useServerNow();
   const [utr, setUtr] = useState("");
   const [error, setError] = useState("");
   const [sending, setSending] = useState(false);
@@ -41,24 +43,26 @@ export function HeldCheckoutPay({ settings, orderNo, amount, holdUntil, customer
   const view = holdView(hold, submission?.status === "submitted", now);
   const left = holdSecondsLeft(hold.holdUntil ?? holdUntil, now);
 
+  const finished = view === "confirmed" || view === "expired" || view === "dropped";
+  const timeUp = view === "closing";
   useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, []);
-
-  useEffect(() => {
-    if (STATIC_DATA_MODE || view === "confirmed" || view === "expired" || view === "dropped") return;
+    if (STATIC_DATA_MODE || finished) return;
     let stopped = false;
     const check = async () => {
       // Past the time: let the database end it (stock back) before reading the status.
-      if (holdSecondsLeft(holdUntil) === 0) await supabase.rpc("expire_payment_holds");
+      if (holdSecondsLeft(holdUntil, serverNow()) === 0) await supabase.rpc("expire_payment_holds");
       const { data } = await supabase.from("orders").select("order_status,payment_hold_outcome").eq("order_no", orderNo).maybeSingle();
       if (!stopped && data) setLiveStatus({ status: data.order_status, outcome: data.payment_hold_outcome ?? null });
     };
     void check();
-    const timer = window.setInterval(() => void check(), 5000);
-    return () => { stopped = true; window.clearInterval(timer); };
-  }, [orderNo, holdUntil, view]);
+    // The moment the payment is matched (or the hold ends) the database row changes: show it at once.
+    const channel = supabase.channel(`hold-${orderNo}-${Math.random().toString(36).slice(2)}`)
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "orders", filter: `order_no=eq.${orderNo}` }, () => void check())
+      .subscribe();
+    // A backstop in case the live feed drops: every 3 s, every second once the time is up.
+    const timer = window.setInterval(() => void check(), timeUp ? 1000 : 3000);
+    return () => { stopped = true; window.clearInterval(timer); void supabase.removeChannel(channel); };
+  }, [orderNo, holdUntil, finished, timeUp]);
 
   // The demo's hold ends on the screen's clock.
   useEffect(() => {
