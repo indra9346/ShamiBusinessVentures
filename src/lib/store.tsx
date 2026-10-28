@@ -14,6 +14,7 @@ import { loadUpiSettings } from "@/lib/upi-store";
 import type { Database } from "@/integrations/supabase/types";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { branchForPin, branchStockOf, defaultBranchOf, godownPriceOf, useAdminBranch, useBranches, useShopperPin } from "@/lib/branches";
+import { isOutsideServiceArea, OUT_OF_AREA_EVENT } from "@/lib/godown-rules";
 
 /** Sends a placed or changed order to Zoho in the background; the daily run is the backup. */
 function pushOrderToZohoInBackground(orderNo: string) {
@@ -1110,6 +1111,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
       productCatalogStatus,
       categoryCatalogStatus,
       addToCart: (id, qty = 1) => {
+        // Only the PIN codes our godowns serve can buy: elsewhere show "not in your area yet" instead.
+        const shopperPin = chosenPin || fallbackPin;
+        if (isShopper && branchState.ready && isOutsideServiceArea(branchState.branches, branchState.features.branchRouting, shopperPin)) {
+          window.dispatchEvent(new CustomEvent(OUT_OF_AREA_EVENT, { detail: { pin: shopperPin } }));
+          return;
+        }
         const product = products.find((item) => item.id === id);
         const addAmount = Math.max(1, Math.floor(Number(qty) || 1));
         const available = product ? getAvailablePurchaseQuantity(product) : null;
@@ -1991,7 +1998,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         return true;
       },
     };
-  }, [branchState, adminBranchId, hydrated, authReady, user, cart, wishlist, wishlistsByUser, categories, viewProducts, batches, orders, paymentHolds, vendors, customers, reviews, returns, coupons, notifications, addresses, addressesByUser, productCatalogStatus, categoryCatalogStatus, saveProduct, logout]);
+  }, [branchState, chosenPin, fallbackPin, isShopper, adminBranchId, hydrated, authReady, user, cart, wishlist, wishlistsByUser, categories, viewProducts, batches, orders, paymentHolds, vendors, customers, reviews, returns, coupons, notifications, addresses, addressesByUser, productCatalogStatus, categoryCatalogStatus, saveProduct, logout]);
 
   // An administrator working in one godown sees that branch's orders, and stock as that branch's count.
   const scopedValue = useMemo<AppState>(() => {

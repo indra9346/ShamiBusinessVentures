@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { godownOfferOf, orderGodownFor, zohoLocationLabel } from "../src/lib/godown-rules.ts";
+import { godownOfferOf, isOutsideServiceArea, orderGodownFor, servingGodownOf, zohoLocationLabel } from "../src/lib/godown-rules.ts";
 import type { Branch, BranchState, GodownPrice } from "../src/lib/branches.ts";
 
 const branch = (over: Partial<Branch>): Branch => ({
@@ -60,4 +60,20 @@ test("the order page names the order's Zoho location, not Head Office", () => {
   assert.equal(zohoLocationLabel(challakere), 'the Zoho location "CLK Shami Business Ventures"');
   assert.equal(zohoLocationLabel(branch({ name: "New godown" })), "the primary Zoho location");
   assert.equal(zohoLocationLabel(null), "the primary Zoho location");
+});
+
+test("only PINs an admin added to a godown are in the service area", () => {
+  const branches = [challakere, hubli];
+  assert.equal(servingGodownOf(branches, "577522")?.id, "BR-CLK");
+  assert.equal(servingGodownOf(branches, "580021")?.id, "BR-HBL");
+  // Bengaluru 560040: no godown lists it, so no "nearest godown" fallback for buying.
+  assert.equal(servingGodownOf(branches, "560040"), null);
+  assert.equal(isOutsideServiceArea(branches, true, "560040"), true);
+  assert.equal(isOutsideServiceArea(branches, true, "577 522"), false);
+  // No PIN yet: not decided (checkout asks for the address).
+  assert.equal(isOutsideServiceArea(branches, true, ""), false);
+  // PIN matching off: the site sells everywhere, as before.
+  assert.equal(isOutsideServiceArea(branches, false, "560040"), false);
+  // An inactive godown's PINs are not served.
+  assert.equal(isOutsideServiceArea([{ ...hubli, active: false }], true, "580021"), true);
 });

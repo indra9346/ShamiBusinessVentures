@@ -16,6 +16,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { UseMyLocationButton, type CapturedLocation } from "@/components/site/UseMyLocationButton";
 import { PickContactButton } from "@/components/site/PickContactButton";
 import { HeldCheckoutPay } from "@/components/site/HeldCheckoutPay";
+import { NotInYourArea } from "@/components/site/NotInYourArea";
+import { isOutsideServiceArea } from "@/lib/godown-rules";
 import { useUpiPayments } from "@/lib/upi-store";
 import { settingsProblem } from "@/lib/upi-pay";
 
@@ -284,11 +286,18 @@ function Checkout() {
     // A filled-in new address is saved by Continue itself (no separate "Save address" needed).
     if (step === 0 && addressFormOpen && (addressForm.line.trim() || addressForm.pin.trim() || !addr)) {
       if (!(await saveAddress())) return;
+      // Saved, but we don't sell to that PIN yet: stay here and show why.
+      if (isOutsideServiceArea(branches, features.branchRouting, addressForm.pin)) return;
       setStep(1);
       return;
     }
     if (step === 0 && !addr) {
       toast.error("Please select or add a delivery address");
+      return;
+    }
+    if (addressOutside) {
+      toast.error(`We don't deliver to PIN ${selectedAddress?.pin} yet`, { description: "Choose an address in our service area, or send us a request below." });
+      setStep(0);
       return;
     }
     if (step === 0) {
@@ -405,6 +414,8 @@ function Checkout() {
   };
 
   const selectedAddress = addresses.find((a) => a.id === addr);
+  // Only the PIN codes our godowns serve can order (the database refuses the rest too).
+  const addressOutside = isOutsideServiceArea(branches, features.branchRouting, selectedAddress?.pin);
 
   // After an order is placed the cart is (correctly) empty; keep showing its confirmation.
   if (!placedId && (productCatalogStatus !== "ready" || unresolvedCartLines || checkoutItems.length === 0)) {
@@ -472,6 +483,7 @@ function Checkout() {
             {step === 0 && (
               <>
                 <h2 className="text-lg font-bold text-navy">Your address</h2>
+                {addressOutside && selectedAddress && <NotInYourArea pin={selectedAddress.pin} compact className="mt-4" />}
                 {selectedAddress && !changingAddress && !addressFormOpen && (
                   <div className="mt-5 space-y-3">
                     <div className="rounded-lg border border-gold bg-ivory p-4">

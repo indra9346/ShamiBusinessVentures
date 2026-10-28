@@ -538,3 +538,20 @@ table[data-col-resized] > tbody > tr > td {
     animation: none;
   }
 }
+
+/* "Not in your area yet": the delivery circle breathes, the customer's pin searches. */
+@keyframes gb-zone-pulse { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
+@keyframes gb-radar { 0% { transform: scale(0.6); opacity: 0.9; } 100% { transform: scale(3); opacity: 0; } }
+@keyframes gb-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
+@keyframes gb-blink { 0%, 38%, 72%, 100% { opacity: 0; transform: scale(0.6); } 46%, 64% { opacity: 1; transform: scale(1); } }
+@keyframes gb-pop-in { from { opacity: 0; transform: translateY(6px) scale(0.98); } to { opacity: 1; transform: none; } }
+.gb-zone-ring { animation: gb-zone-pulse 2.4s ease-in-out infinite; }
+.gb-radar { transform-box: fill-box; transform-origin: center; animation: gb-radar 2s ease-out infinite; }
+.gb-radar-2 { animation-delay: 1s; }
+.gb-bob { animation: gb-bob 1.6s ease-in-out infinite; }
+.gb-blink { transform-box: fill-box; transform-origin: center; animation: gb-blink 5s linear infinite; }
+.gb-pop-in { animation: gb-pop-in 0.35s ease-out both; }
+@media (prefers-reduced-motion: reduce) {
+  .gb-zone-ring, .gb-radar, .gb-bob, .gb-blink, .gb-pop-in { animation: none; }
+  .gb-blink { opacity: 1; }
+}
