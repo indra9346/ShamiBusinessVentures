@@ -28,7 +28,19 @@ function pushOrderToZohoInBackground(orderNo: string) {
 }
 
 /** Static demo: held checkouts by order number, until their simulated payment makes them orders. */
+const DEMO_HOLDS_KEY = "gb-demo-payment-holds";
 const demoHeldOrders = new Map<string, Order>();
+/** The demo keeps held checkouts in this browser, so the customer and admin pages both see them after a reload. */
+function readDemoHolds(): PaymentHold[] {
+  if (!STATIC_DATA_MODE || typeof window === "undefined") return [];
+  try {
+    const saved = JSON.parse(window.localStorage.getItem(DEMO_HOLDS_KEY) ?? "null") as { holds: PaymentHold[]; orders: Order[] } | null;
+    for (const order of saved?.orders ?? []) demoHeldOrders.set(order.id, order);
+    return saved?.holds ?? [];
+  } catch {
+    return [];
+  }
+}
 
 /** Sends admin and vendor product edits to Zoho in the background; the daily run is the backup. */
 function pushProductsToZohoInBackground(productIds: string[]) {
@@ -250,7 +262,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [categories, setCategories] = useState<StoreCategory[]>(STATIC_DATA_MODE ? storeCategorySeed : []);
   const [batches, setBatches] = useState<PurchaseBatch[]>(STATIC_DATA_MODE ? seedBatches : []);
   const [orders, setOrders] = useState<Order[]>(STATIC_DATA_MODE ? seedOrders : []);
-  const [paymentHolds, setPaymentHolds] = useState<PaymentHold[]>([]);
+  const [paymentHolds, setPaymentHolds] = useState<PaymentHold[]>(readDemoHolds);
+  useEffect(() => {
+    if (!STATIC_DATA_MODE) return;
+    try {
+      window.localStorage.setItem(DEMO_HOLDS_KEY, JSON.stringify({ holds: paymentHolds, orders: [...demoHeldOrders.values()] }));
+    } catch {
+      // Private mode: the demo still works for this page view.
+    }
+  }, [paymentHolds]);
   const [vendors, setVendors] = useState<Vendor[]>(STATIC_DATA_MODE ? seedVendors : []);
   const [customers, setCustomers] = useState<Customer[]>(STATIC_DATA_MODE ? seedCustomers : []);
   const [reviews, setReviews] = useState<Review[]>(STATIC_DATA_MODE ? seedReviews : []);
@@ -402,7 +422,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             const allowedStatuses: OrderStatus[] = ["Placed", "Payment Confirmed", "Accepted", "Packed", "Dispatched", "Out for Delivery", "Delivered", "Cancelled"];
             // Unpaid checkouts are not orders: they are kept apart for the payment screens.
             setPaymentHolds((orderRows ?? []).filter((row) => isHeldStatus(row.order_status)).map((row) => ({
-              orderNo: row.order_no, amount: Number(row.total) - Number(row.paid_amount), createdAt: row.created_at,
+              orderNo: row.order_no, amount: Number(row.total) - Number(row.paid_amount), createdAt: row.created_at, customer: row.customer_name || undefined,
               status: row.order_status as PaymentHold["status"], holdUntil: row.payment_hold_until ?? null, outcome: (row.payment_hold_outcome ?? null) as PaymentHold["outcome"],
               lines: (itemsByOrder.get(row.id) ?? []).map((item) => ({ productId: item.product_id, qty: Number(item.qty) })),
             })));
@@ -1502,7 +1522,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const held = Boolean(order.holdUntil);
         if (held) {
           setPaymentHolds((list) => [{
-            orderNo: order.id, amount: order.amount, status: AWAITING_PAYMENT, holdUntil: order.holdUntil ?? null, createdAt: new Date().toISOString(),
+            orderNo: order.id, amount: order.amount, status: AWAITING_PAYMENT, holdUntil: order.holdUntil ?? null, createdAt: new Date().toISOString(), customer: order.customer,
             lines: lines.map((line) => ({ productId: line.product.id, qty: line.qty })),
           }, ...list.filter((hold) => hold.orderNo !== order.id)]);
           if (STATIC_DATA_MODE) demoHeldOrders.set(order.id, order);

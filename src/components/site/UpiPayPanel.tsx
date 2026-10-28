@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { CheckCircle2, Clock, Copy, ShieldCheck, Smartphone, XCircle } from "lucide-react";
 import { inrPrecise } from "@/lib/data";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
-import { secondsLeft, normaliseUtr, settingsProblem, upiAppLinks, upiPaymentUri, utrProblem, type UpiSettings } from "@/lib/upi-pay";
+import { normaliseUtr, settingsProblem, upiAppLinks, upiPaymentUri, utrProblem, type UpiSettings } from "@/lib/upi-pay";
 import { submitUpiPayment, useUpiPayments } from "@/lib/upi-store";
 import { cn } from "@/lib/utils";
 
@@ -33,17 +33,9 @@ export function UpiPayPanel({ settings, orderNo, amount, customer }: { settings:
   const submission = submissions.find((item) => item.orderNo === orderNo);
   const uri = useMemo(() => upiPaymentUri(settings, amount, orderNo), [settings, amount, orderNo]);
   const qrSvg = useMemo(() => renderSVG(uri, { border: 2, ecc: "M" }), [uri]);
-  const [openedAt] = useState(() => Date.now());
-  const [now, setNow] = useState(() => Date.now());
   const [utr, setUtr] = useState("");
   const [error, setError] = useState("");
   const [sending, setSending] = useState(false);
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, []);
-  const left = secondsLeft(openedAt, settings.payWindowMinutes, now);
-  const clock = `${String(Math.floor(left / 60)).padStart(2, "0")}:${String(left % 60).padStart(2, "0")}`;
 
   const submit = async (value = utr) => {
     const problem = utrProblem(value);
@@ -78,8 +70,9 @@ export function UpiPayPanel({ settings, orderNo, amount, customer }: { settings:
           <p className="text-xs text-slate">Order {orderNo} · to {settings.payeeName}</p>
         </div>
         {submission?.status !== "submitted" && (
-          <span className={cn("inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold", left > 0 ? "bg-amber-50 text-amber-800" : "bg-slate-100 text-slate")}>
-            <Clock className="h-3.5 w-3.5" /> {left > 0 ? `Pay within ${clock}` : "Time over: you can still pay and enter the UTR"}
+          // An order placed before pay-first has no payment window: no countdown, just unpaid.
+          <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800">
+            <Clock className="h-3.5 w-3.5" /> Unpaid
           </span>
         )}
       </div>
