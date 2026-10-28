@@ -26,15 +26,16 @@ export function gstStateCodeOf(stateName: string | null | undefined): string | n
 }
 
 /**
- * What is wrong with a business purchase's details, or null when fine. A GSTIN needs the legal
- * name registered with it, and must belong to the state of the billing address (its first two digits).
+ * What is wrong with the company details for the invoice, or null when fine. The company name is
+ * required; the GSTIN is optional, but when given it must be valid and belong to the state of the
+ * billing address (its first two digits).
  */
 export function businessDetailsProblem(rawGstin: string, legalName: string, addressState?: string | null): string | null {
+  if (legalName.trim().length < 2) return "Enter your company name for the invoice";
   const gstin = normaliseGstin(rawGstin);
-  if (!gstin) return "Enter your GSTIN, or switch off \"Buying for a business\"";
+  if (!gstin) return null;
   if (gstin.length !== 15) return "A GSTIN has 15 characters";
   if (!GSTIN_REGEX.test(gstin)) return "This is not a valid GSTIN (for example 29ABCDE1234F1Z5)";
-  if (legalName.trim().length < 2) return "Enter the legal business name registered with this GSTIN";
   const code = gstStateCodeOf(addressState);
   if (code && gstin.slice(0, 2) !== code) {
     return `This GSTIN is registered in state code ${gstin.slice(0, 2)}, but the address is in ${addressState} (${code}). Use an address in the GSTIN's state.`;

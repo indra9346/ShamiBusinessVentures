@@ -711,12 +711,13 @@ export const ZOHO_PLACE_CODES: Record<string, string> = {
 
 /**
  * The GST fields of a Zoho contact, sales order or invoice. A valid GSTIN makes it a registered
- * business ("business_gst", gst_no, place from the GSTIN's state); anything else is a consumer.
+ * business ("business_gst", gst_no, place from the GSTIN's state); a company name without a GSTIN
+ * is an unregistered business ("business_none"); anything else is a consumer.
  * Contacts carry the place as place_of_contact, orders and invoices as place_of_supply.
  */
-export function zohoGstFields(rawGstin: string | null | undefined, record: "contact" | "order" | "invoice"): Record<string, string | boolean> {
+export function zohoGstFields(rawGstin: string | null | undefined, record: "contact" | "order" | "invoice", companyName?: string | null): Record<string, string | boolean> {
   const gstin = (rawGstin ?? "").replace(/\s+/g, "").toUpperCase();
-  if (!GSTIN_PATTERN.test(gstin)) return { gst_treatment: "consumer" };
+  if (!GSTIN_PATTERN.test(gstin)) return { gst_treatment: (companyName ?? "").trim() ? "business_none" : "consumer" };
   const place = ZOHO_PLACE_CODES[gstin.slice(0, 2)];
   return {
     gst_treatment: "business_gst",
