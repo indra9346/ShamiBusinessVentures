@@ -7,6 +7,27 @@ import type { Branch, BranchState } from "./branches";
 
 export const defaultBranchOf = (branches: Branch[]) => branches.find((branch) => branch.isDefault && branch.active) ?? branches.find((branch) => branch.active && !branch.vendorId) ?? null;
 
+/** Window events: someone outside the service area tried to buy; open the location bar's PIN dialog. */
+export const OUT_OF_AREA_EVENT = "gb-out-of-area";
+export const OPEN_PIN_DIALOG_EVENT = "gb-open-pin-dialog";
+
+/** The godown whose service area (the PIN codes an admin added to it) includes this PIN; null when none. */
+export function servingGodownOf(branches: Branch[], pin: string | null | undefined): Branch | null {
+  const clean = (pin ?? "").replace(/\D/g, "");
+  if (clean.length !== 6) return null;
+  return branches.find((branch) => branch.active && !branch.vendorId && branch.servesPincodes.includes(clean)) ?? null;
+}
+
+/**
+ * With PIN matching on, customers can buy only in a godown's service area: a 6-digit PIN that no
+ * active godown lists is outside it (the database refuses that checkout too). No PIN yet = not decided.
+ */
+export function isOutsideServiceArea(branches: Branch[], routingOn: boolean, pin: string | null | undefined): boolean {
+  if (!routingOn) return false;
+  const clean = (pin ?? "").replace(/\D/g, "");
+  return clean.length === 6 && servingGodownOf(branches, clean) === null;
+}
+
 /** The godown serving a PIN code: one that lists it, else the default godown. */
 export function branchForPin(branches: Branch[], pin: string | null | undefined) {
   const active = branches.filter((branch) => branch.active && !branch.vendorId);

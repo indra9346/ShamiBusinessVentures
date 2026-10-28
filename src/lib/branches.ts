@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { defaultBranchOf } from "@/lib/godown-rules";
+import { products as seedProducts } from "@/lib/data";
 
 export { branchForPin, branchStockOf, defaultBranchOf, godownOfferOf, godownPriceOf, orderGodownFor, zohoLocationLabel } from "@/lib/godown-rules";
 
@@ -96,8 +97,24 @@ export type BranchState = {
   vendorPoints: Map<string, string>;
 };
 
+/**
+ * Static demo with localStorage "gb-demo-pin-matching" = "on": PIN matching as on the live site
+ * (Challakere's PINs only, its stock = the demo stock), to try the service-area screens.
+ */
+function demoPinMatching(): boolean {
+  try {
+    return STATIC_DATA_MODE && typeof window !== "undefined" && window.localStorage.getItem("gb-demo-pin-matching") === "on";
+  } catch {
+    return false;
+  }
+}
+const demoRouting = demoPinMatching();
 let cache: BranchState = STATIC_DATA_MODE
-  ? { ready: true, branches: [DEMO_BRANCH], stock: new Map(), prices: new Map(), features: defaultFeatures, vendorPoints: new Map() }
+  ? {
+      ready: true, branches: [DEMO_BRANCH], prices: new Map(), vendorPoints: new Map(),
+      stock: demoRouting ? new Map(seedProducts.map((product) => [product.id, new Map([[DEMO_BRANCH.id, product.stock]])])) : new Map(),
+      features: { ...defaultFeatures, branchRouting: demoRouting },
+    }
   : { ready: false, branches: [], stock: new Map(), prices: new Map(), features: defaultFeatures, vendorPoints: new Map() };
 const listeners = new Set<(state: BranchState) => void>();
 let loading: Promise<void> | null = null;
