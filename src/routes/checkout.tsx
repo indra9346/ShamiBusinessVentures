@@ -28,6 +28,10 @@ const ADDRESS_AUTOCOMPLETE: Record<string, string> = {
   city: "address-level2", state: "address-level1", pin: "postal-code", landmark: "off",
 };
 
+/** The customer's default address, else their first one ("" when none). */
+const preferredAddressId = (list: { id: string; default?: boolean }[]) =>
+  (list.find((address) => address.default) ?? list[0])?.id ?? "";
+
 export const Route = createFileRoute("/checkout")({
   validateSearch: z.object({ productId: z.string().optional(), coupon: z.string().optional() }),
   head: () => pageHead({ title: `Secure Checkout | ${SITE_NAME}`, description: "Choose your address, delivery and payment, and place your order.", path: "/checkout", noindex: true }),
@@ -63,13 +67,13 @@ function Checkout() {
       void navigate({ to: "/login", search: { next: "/checkout", productId }, replace: true });
   }, [hydrated, authReady, user, navigate, productId]);
   const [step, setStep] = useState(0);
-  const [addr, setAddr] = useState(addresses[0]?.id ?? "");
+  const [addr, setAddr] = useState(preferredAddressId(addresses));
   // The customer's default address is used automatically; the list and form open only on request.
   const [changingAddress, setChangingAddress] = useState(false);
   const [addressFormOpen, setAddressFormOpen] = useState(addresses.length === 0);
   useEffect(() => {
     if (!addr && addresses.length > 0)
-      setAddr(addresses.find((address) => address.default)?.id ?? addresses[0]!.id);
+      setAddr(preferredAddressId(addresses));
     if (addresses.length > 0) setAddressFormOpen(false);
   }, [addresses, addr]);
   const [addressPoint, setAddressPoint] = useState<{ latitude: number; longitude: number; locationAccuracy: number; locatedAt: string } | null>(null);
@@ -179,10 +183,11 @@ function Checkout() {
   }, []);
   useEffect(() => {
     if (addresses.length > 0) setAddressFormOpen(false);
+    // The default address, not simply the oldest one (a removed address falls back the same way).
     if (addr && !addresses.some((address) => address.id === addr)) {
-      setAddr(addresses[0]?.id ?? "");
+      setAddr(preferredAddressId(addresses));
     } else if (!addr && addresses.length > 0) {
-      setAddr(addresses[0]!.id);
+      setAddr(preferredAddressId(addresses));
     }
   }, [addresses, addr]);
   useEffect(() => {
@@ -215,6 +220,8 @@ function Checkout() {
   const [shopperPin, setShopperPin] = useShopperPin();
   useEffect(() => {
     if (!features.branchRouting || !/^\d{6}$/.test(addressPin) || addressPin === shopperPin) return;
+    // An address no godown serves keeps the current prices; the address step says "not in your area".
+    if (isOutsideServiceArea(branches, features.branchRouting, addressPin)) return;
     const before = branchForPin(branches, shopperPin || ((addresses.find((a) => a.default) ?? addresses[0])?.pin ?? ""));
     setShopperPin(addressPin);
     if (before && fulfilBranch && before.id !== fulfilBranch.id) {
