@@ -97,10 +97,10 @@ export function NotInYourArea({ pin, compact = false, className }: { pin: string
             </form>
           ) : (
             <div className="mt-4 grid gap-2 sm:grid-cols-2">
-              <Button type="button" onClick={() => setKind("service")} className="h-auto justify-start gap-2 bg-gold py-2.5 text-left font-bold text-midnight hover:bg-gold-light">
+              <Button type="button" onClick={() => setKind("service")} className="h-auto min-w-0 justify-start gap-2 whitespace-normal bg-gold py-2.5 text-left font-bold leading-snug text-midnight hover:bg-gold-light">
                 <MapPinned className="h-4 w-4 shrink-0" /> Request service in my area
               </Button>
-              <Button type="button" variant="outline" onClick={() => setKind("partner")} className="h-auto justify-start gap-2 border-navy py-2.5 text-left font-bold text-navy hover:bg-navy hover:text-white">
+              <Button type="button" variant="outline" onClick={() => setKind("partner")} className="h-auto min-w-0 justify-start gap-2 whitespace-normal border-navy py-2.5 text-left font-bold leading-snug text-navy hover:bg-navy hover:text-white">
                 <Handshake className="h-4 w-4 shrink-0" /> Become our Channel Partner here
               </Button>
             </div>
