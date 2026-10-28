@@ -51,7 +51,7 @@ export const DEFAULT_INVOICE_COMPANY: InvoiceCompany = {
   gstin: "29ABJCS7870F1ZR",
   pan: "ABJCS7870F",
   phone: "8310084308",
-  email: "shamibusinessventurespvtltd@gmail.com",
+  email: "headoffice@shamibusiness.com",
 };
 
 /** GST state codes, for "Place of Supply" and the CGST+SGST vs IGST decision. */
@@ -75,15 +75,17 @@ const round2 = (value: number) => Math.round((value + Number.EPSILON) * 100) / 1
 const money = (value: number) => Number(value || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const rupees = (value: number) => `Rs. ${money(value)}`;
 
-type InvoiceContext = { company: InvoiceCompany; prefix: string; pickup: PickupSettings; branches: Branch[] };
+/** `phones`: each godown's contact mobile (its channel partner's), printed on that godown's invoices. */
+type InvoiceContext = { company: InvoiceCompany; prefix: string; pickup: PickupSettings; branches: Branch[]; phones: Map<string, string> };
 
 async function loadInvoiceContext(): Promise<InvoiceContext> {
-  const fallback: InvoiceContext = { company: DEFAULT_INVOICE_COMPANY, prefix: "GB/INV/", pickup: defaultPickupSettings, branches: [DEMO_BRANCH] };
+  const fallback: InvoiceContext = { company: DEFAULT_INVOICE_COMPANY, prefix: "GB/INV/", pickup: defaultPickupSettings, branches: [DEMO_BRANCH], phones: new Map() };
   if (STATIC_DATA_MODE) return fallback;
   try {
-    const [{ data }, { data: branchRows }] = await Promise.all([
+    const [{ data }, { data: branchRows }, { data: phoneRows }] = await Promise.all([
       supabase.from("settings").select("key,value").eq("is_public", true).in("key", ["company", "tax", PICKUP_SETTINGS_KEY]),
       supabase.from("branches").select("*"),
+      supabase.rpc("godown_contact_phones"),
     ]);
     const byKey = new Map((data ?? []).map((row) => [row.key, asRecord(row.value)]));
     const saved = byKey.get("company") ?? {};
@@ -106,6 +108,7 @@ async function loadInvoiceContext(): Promise<InvoiceContext> {
       prefix: prefix || fallback.prefix,
       pickup: byKey.has(PICKUP_SETTINGS_KEY) ? parsePickupSettings(byKey.get(PICKUP_SETTINGS_KEY)) : defaultPickupSettings,
       branches: (branchRows ?? []).map((row) => branchFromRow(row as Record<string, unknown>)),
+      phones: new Map((phoneRows ?? []).filter((row) => row.phone).map((row) => [row.branch_id, row.phone as string])),
     };
   } catch {
     return fallback;
@@ -207,8 +210,10 @@ export async function buildInvoicePdf(order: Order, options: InvoiceOptions = {}
   const orderBranch = context.branches.find((branch) => branch.id === order.branchId) ?? defaultBranchOf(context.branches);
   const isPickup = /^pickup/i.test(order.delivery || "") || (order.shipping === 0 && !(orderBranch?.deliveryEnabled ?? context.pickup.homeDelivery));
   const legacyPoint = pickupPointForPin(context.pickup, order.pin);
+  // The godown's contact on its invoices: that area's channel partner's mobile, else the godown's phone.
+  const godownPhone = (orderBranch && context.phones.get(orderBranch.id)) || orderBranch?.phone || company.phone;
   const pickupPoint = !isPickup ? null : orderBranch
-    ? { name: orderBranch.name, address: orderBranch.address, phone: orderBranch.phone, instructions: orderBranch.instructions }
+    ? { name: orderBranch.name, address: orderBranch.address, phone: godownPhone, instructions: orderBranch.instructions }
     : legacyPoint;
   const customerGstState = /^[0-9]{2}/.test(order.gstin ?? "") ? order.gstin!.slice(0, 2) : "";
   const deliveryStateCode = STATE_CODES[(order.state || "").trim().toLowerCase()] ?? "";
@@ -247,7 +252,7 @@ export async function buildInvoicePdf(order: Order, options: InvoiceOptions = {}
     pdf.setFontSize(8);
     pdf.setTextColor(...muted);
     pdf.text(`A brand of ${company.legalName}`, tx, 23.5);
-    pdf.text(`GSTIN ${company.gstin}  ·  ${company.phone}  ·  ${company.email}`, tx, 27.5);
+    pdf.text(`GSTIN ${company.gstin}  ·  ${godownPhone}  ·  ${company.email}`, tx, 27.5);
     pdf.setFont("helvetica", "bold");
     pdf.setFontSize(15);
     pdf.setTextColor(...ink);
@@ -296,7 +301,7 @@ export async function buildInvoicePdf(order: Order, options: InvoiceOptions = {}
   });
   y += Math.ceil(meta.length / 2) * 5.2 + 3;
 
-  // Address cards (the "Billed by" card style), three across.
+  // Address cards (the "Sold by" card style), three across.
   const cardGap = 4;
   const cardW = (usable - cardGap * 2) / 3;
   const shipTitle = pickupPoint ? "Pickup from" : "Ship to";
@@ -307,11 +312,13 @@ export async function buildInvoicePdf(order: Order, options: InvoiceOptions = {}
     ? [pickupPoint.name, pickupPoint.address, pickupPoint.phone ? `Phone ${pickupPoint.phone}` : "", pickupPoint.instructions]
     : [order.customer, order.address, addressHasCity ? "" : cityLine, order.phone ? `Phone ${order.phone}` : ""];
   const cards: { title: string; rows: string[] }[] = [
-    { title: "Billed by", rows: [company.legalName, company.brand, ...company.addressLines, `GSTIN ${company.gstin}`, `PAN ${company.pan}`] },
+    { title: "Sold by", rows: [company.legalName, company.brand, ...company.addressLines, `GSTIN ${company.gstin}`, `Phone ${godownPhone}`] },
     {
       title: "Bill to",
       rows: [
-        order.customer || "Customer",
+        // A business purchase is billed to the legal name registered with its GSTIN.
+        order.businessName || order.customer || "Customer",
+        order.businessName && order.customer ? `Attn: ${order.customer}` : "",
         order.address,
         addressHasCity ? "" : cityLine,
         order.phone ? `Phone ${order.phone}` : "",

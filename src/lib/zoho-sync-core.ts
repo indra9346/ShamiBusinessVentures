@@ -693,3 +693,63 @@ export function zohoPaused(pausedUntil: string | null | undefined, nowMs: number
   const until = Date.parse(pausedUntil ?? "");
   return Number.isFinite(until) && until > nowMs;
 }
+
+/* ---------------------------------------------------------------------------------------------
+ * GST on Zoho records (B2B with a GSTIN, else B2C) and e-invoice (IRP) readiness.
+ * ------------------------------------------------------------------------------------------- */
+
+const GSTIN_PATTERN = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/;
+/** Zoho's two-letter place codes by GST state code. */
+export const ZOHO_PLACE_CODES: Record<string, string> = {
+  "01": "JK", "02": "HP", "03": "PB", "04": "CH", "05": "UT", "06": "HR", "07": "DL",
+  "08": "RJ", "09": "UP", "10": "BR", "11": "SK", "12": "AR", "13": "NL", "14": "MN",
+  "15": "MZ", "16": "TR", "17": "ML", "18": "AS", "19": "WB", "20": "JH", "21": "OR",
+  "22": "CT", "23": "MP", "24": "GJ", "26": "DN", "27": "MH", "28": "AP", "29": "KA",
+  "30": "GA", "31": "LD", "32": "KL", "33": "TN", "34": "PY", "35": "AN", "36": "TS",
+  "37": "AD", "38": "LA",
+};
+
+/**
+ * The GST fields of a Zoho contact, sales order or invoice. A valid GSTIN makes it a registered
+ * business ("business_gst", gst_no, place from the GSTIN's state); anything else is a consumer.
+ * Contacts carry the place as place_of_contact, orders and invoices as place_of_supply.
+ */
+export function zohoGstFields(rawGstin: string | null | undefined, record: "contact" | "order" | "invoice"): Record<string, string | boolean> {
+  const gstin = (rawGstin ?? "").replace(/\s+/g, "").toUpperCase();
+  if (!GSTIN_PATTERN.test(gstin)) return { gst_treatment: "consumer" };
+  const place = ZOHO_PLACE_CODES[gstin.slice(0, 2)];
+  return {
+    gst_treatment: "business_gst",
+    gst_no: gstin,
+    ...(place ? (record === "contact" ? { place_of_contact: place } : { place_of_supply: place }) : {}),
+    ...(record === "invoice" ? { is_reverse_charge_applicable: false } : {}),
+  };
+}
+
+export type EinvoiceInput = {
+  gstin: string | null | undefined;
+  legalName: string | null | undefined;
+  address: { line?: string | null; city?: string | null; state?: string | null; pin?: string | null };
+  lines: { name: string; hsn: string | null | undefined }[];
+};
+
+/**
+ * What a B2B invoice still lacks for the Invoice Registration Portal (IRN + QR): a valid GSTIN,
+ * the legal name, a complete billing address with a 6-digit PIN, and a 6- or 8-digit HSN on every
+ * line. Empty = ready.
+ */
+export function einvoiceProblems(input: EinvoiceInput): string[] {
+  const problems: string[] = [];
+  const gstin = (input.gstin ?? "").replace(/\s+/g, "").toUpperCase();
+  if (!GSTIN_PATTERN.test(gstin)) problems.push("buyer GSTIN missing or invalid");
+  if ((input.legalName ?? "").trim().length < 2) problems.push("buyer legal name missing");
+  if (!(input.address.line ?? "").trim()) problems.push("billing address line missing");
+  if (!(input.address.city ?? "").trim()) problems.push("billing city missing");
+  if (!(input.address.state ?? "").trim()) problems.push("billing state missing");
+  if (!/^[1-9][0-9]{5}$/.test((input.address.pin ?? "").trim())) problems.push("billing PIN code must be 6 digits");
+  for (const line of input.lines) {
+    const hsn = (line.hsn ?? "").replace(/\s+/g, "");
+    if (!/^(\d{6}|\d{8})$/.test(hsn)) problems.push(`HSN of ${line.name || "an item"} must be 6 or 8 digits (now "${hsn || "none"}")`);
+  }
+  return problems;
+}

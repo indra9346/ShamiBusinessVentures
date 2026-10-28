@@ -20,6 +20,8 @@ import { NotInYourArea } from "@/components/site/NotInYourArea";
 import { isOutsideServiceArea } from "@/lib/godown-rules";
 import { useUpiPayments } from "@/lib/upi-store";
 import { settingsProblem } from "@/lib/upi-pay";
+import { businessDetailsProblem, normaliseGstin } from "@/lib/gstin";
+import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 
 const ADDRESS_AUTOCOMPLETE: Record<string, string> = {
   label: "off", name: "name", phone: "tel-national", line: "street-address",
@@ -105,6 +107,23 @@ function Checkout() {
   const [method, setMethod] = useState("UPI");
   // A coupon applied on the cart page carries over.
   const [couponCode, setCouponCode] = useState(cartCoupon?.trim().toUpperCase() ?? "");
+  // Buying for a business (B2B): GSTIN + legal name go on the order, its Zoho invoice and the e-invoice.
+  const [isBusiness, setIsBusiness] = useState(false);
+  const [bizGstin, setBizGstin] = useState("");
+  const [bizName, setBizName] = useState("");
+  const [bizTouched, setBizTouched] = useState(false);
+  useEffect(() => {
+    // A customer who bought for their business before gets their GSTIN and legal name filled in.
+    if (STATIC_DATA_MODE || !user?.id) return;
+    let active = true;
+    void supabase.from("profiles").select("gstin,company").eq("id", user.id).maybeSingle().then(({ data }) => {
+      if (!active || !data?.gstin) return;
+      setBizGstin(data.gstin);
+      setBizName(data.company ?? "");
+      setIsBusiness(true);
+    });
+    return () => { active = false; };
+  }, [user?.id]);
   const [placedId, setPlacedId] = useState<string | null>(null);
   const [placedOrders, setPlacedOrders] = useState<{ id: string; amount: number; holdUntil: string | null }[]>([]);
   // Every held checkout from this visit has been paid and is now an order.
@@ -304,6 +323,14 @@ function Checkout() {
       setAddressFormOpen(false);
       setChangingAddress(false);
     }
+    if (step === 3 && isBusiness) {
+      const problem = businessDetailsProblem(bizGstin, bizName, selectedAddress?.state);
+      if (problem) {
+        setBizTouched(true);
+        toast.error("Check the business details", { description: problem });
+        return;
+      }
+    }
     if (step === 3) {
       if (!directUpi) {
         toast.error("Online payment is being set up", { description: "Orders open as soon as UPI payment is switched on. Please call or WhatsApp us to order now." });
@@ -327,6 +354,7 @@ function Checkout() {
             method: "UPI",
             payment: "Pending",
             payFirst: true,
+            business: isBusiness ? { isB2b: true, gstin: normaliseGstin(bizGstin), legalName: bizName.trim() } : { isB2b: false },
             ...(selectedAddress ? { shippingAddress: selectedAddress } : {}),
             ...(appliedCoupon && orderGroups.length === 1 ? { coupon: appliedCoupon.code } : {}),
             subtotal,
@@ -690,6 +718,59 @@ function Checkout() {
             {step === 3 && (
               <>
                 <h2 className="text-lg font-bold text-navy">Order Review</h2>
+                <div className="mt-4 rounded-lg border border-border bg-ivory/50 p-3">
+                  <label className="flex cursor-pointer items-start gap-2.5 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={isBusiness}
+                      onChange={(e) => { setIsBusiness(e.target.checked); setBizTouched(false); }}
+                      className="mt-0.5 h-4 w-4 accent-[#2f5d46]"
+                    />
+                    <span>
+                      <span className="font-semibold text-navy">Buying for a business? Add GSTIN (optional)</span>
+                      <span className="block text-xs text-slate">Your GST tax invoice will carry your GSTIN and business name, so you can claim input tax credit.</span>
+                    </span>
+                  </label>
+                  {isBusiness && (() => {
+                    const problem = businessDetailsProblem(bizGstin, bizName, selectedAddress?.state);
+                    const show = bizTouched || bizGstin.length >= 15;
+                    return (
+                      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                        <div>
+                          <label className="mb-1 block text-xs font-semibold text-charcoal" htmlFor="biz-gstin">GSTIN</label>
+                          <input
+                            id="biz-gstin"
+                            value={bizGstin}
+                            maxLength={15}
+                            autoComplete="off"
+                            spellCheck={false}
+                            placeholder="e.g. 29ABCDE1234F1Z5"
+                            onChange={(e) => setBizGstin(normaliseGstin(e.target.value).slice(0, 15))}
+                            onBlur={() => setBizTouched(true)}
+                            className={cn("h-10 w-full rounded-md border bg-white px-3 font-mono text-sm uppercase tracking-wider", show && problem && /GSTIN|15 characters|state code/.test(problem) ? "border-danger" : "border-border")}
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-xs font-semibold text-charcoal" htmlFor="biz-name">Legal business name</label>
+                          <input
+                            id="biz-name"
+                            value={bizName}
+                            maxLength={150}
+                            placeholder="As registered for GST"
+                            onChange={(e) => setBizName(e.target.value)}
+                            onBlur={() => setBizTouched(true)}
+                            className="h-10 w-full rounded-md border border-border bg-white px-3 text-sm"
+                          />
+                        </div>
+                        {show && problem ? (
+                          <p className="text-xs font-semibold text-danger sm:col-span-2">{problem}</p>
+                        ) : !problem ? (
+                          <p className="text-xs font-semibold text-emerald-700 sm:col-span-2">GSTIN looks right · state {normaliseGstin(bizGstin).slice(0, 2)}</p>
+                        ) : null}
+                      </div>
+                    );
+                  })()}
+                </div>
                 <div className="mt-5 space-y-3">
                   {checkoutItems.map(({ product, qty }) => (
                     <div
@@ -726,6 +807,9 @@ function Checkout() {
                   <div>Address: {selectedAddress?.line}</div>
                   <div>{fulfil === "Delivery" ? `Home delivery: ${shipCost === 0 ? "free" : inr(shipCost)}` : "Pickup: from our godown (free)"}</div>
                   <div>Payment: UPI (pay on the next step; the order is placed when paid)</div>
+                  {isBusiness && !businessDetailsProblem(bizGstin, bizName, selectedAddress?.state) && (
+                    <div>Tax invoice for: {bizName.trim()} · GSTIN {normaliseGstin(bizGstin)}</div>
+                  )}
                   {appliedCoupon && <div>Coupon: {appliedCoupon.code}</div>}
                 </dl>
               </>

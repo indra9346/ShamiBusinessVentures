@@ -203,6 +203,8 @@ type AppState = {
     paymentDueDate?: string;
     /** Customer checkout: the result is a held request that becomes an order only when paid. */
     payFirst?: boolean;
+    /** Buying for a business (B2B): the buyer's GSTIN and legal name; isB2b false = a personal purchase. */
+    business?: { isB2b: boolean; gstin?: string; legalName?: string };
   }) => Promise<Order>;
   /** Checkouts waiting for payment (and recently expired ones). Not orders: kept out of `orders`. */
   paymentHolds: PaymentHold[];
@@ -454,7 +456,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
               return {
                 id: row.order_no, date: Number.isNaN(orderDate.getTime()) ? row.created_at : orderDate.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }), createdAt: row.created_at,
                 customer: row.customer_name, customerId: row.user_id || "", email: row.customer_email, phone: row.customer_phone || "",
-                ...(row.customer_gstin ? { gstin: row.customer_gstin } : {}), items: orderItems, subtotal: Number(row.subtotal), discount: Number(row.discount),
+                ...(row.customer_gstin ? { gstin: row.customer_gstin } : {}),
+                ...(row.business_legal_name ? { businessName: row.business_legal_name } : {}),
+                ...(row.is_b2b ? { isB2b: true } : {}),
+                items: orderItems, subtotal: Number(row.subtotal), discount: Number(row.discount),
                 tax: Number(row.gst_amount), shipping: Number(row.shipping), amount: Number(row.total), payment,
                 ...(Number(row.paid_amount) ? { paidAmount: Number(row.paid_amount) } : {}), method: row.payment_method || "", txn: latestPayment?.txn_ref || "",
                 ...(latestPayment?.txn_ref ? { utr: latestPayment.txn_ref } : {}),
@@ -1405,7 +1410,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       getAverageSellingPrice: (product) => getProductAverageSellingPrice(product, orders),
 
       orders,
-      placeOrder: async ({ lines, method, payment, coupon, customerIndex = 0, customerOverride, shippingAddress, delivery, subtotal, discount, tax, shipping, source, paymentDueDate, payFirst = false }) => {
+      placeOrder: async ({ lines, method, payment, coupon, customerIndex = 0, customerOverride, shippingAddress, delivery, subtotal, discount, tax, shipping, source, paymentDueDate, payFirst = false, business }) => {
         if (method === "Cash on Delivery" || method === "COD") {
           throw new Error("Cash on delivery is not enabled for this store. Please select an online payment method (UPI, Card, Net Banking).");
         }
@@ -1496,6 +1501,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
             _payment_method: method,
             _items: lines.map((line) => ({ product_id: line.product.id, qty: line.qty })),
             _coupon: coupon ?? null,
+            ...(payFirst && business ? {
+              _is_b2b: business.isB2b,
+              _business_gstin: business.isB2b ? business.gstin ?? null : null,
+              _business_name: business.isB2b ? business.legalName ?? null : null,
+            } : {}),
           });
           if (error || !data) {
             const message = error?.message ?? "The order could not be saved";
@@ -1507,6 +1517,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
           // A held checkout is not an order yet: Zoho gets it when the payment is matched.
           if (saved.order_status !== AWAITING_PAYMENT) pushOrderToZohoInBackground(order.id);
           if (saved.order_status === AWAITING_PAYMENT) order.holdUntil = saved.hold_until ?? null;
+          if (business?.isB2b && business.gstin) {
+            order.gstin = business.gstin;
+            order.businessName = business.legalName ?? "";
+            order.isB2b = true;
+          }
           order.subtotal = Number(saved.subtotal);
           order.discount = Number(saved.discount);
           order.tax = Number(saved.gst_amount);
