@@ -107,7 +107,7 @@ export function useEmailOtp({ shouldCreateUser = true, requiredRole }: OtpOption
         const msg = result.error.message || "";
         const errCode = (result.error as { code?: string }).code || "";
         if (errCode === "phone_provider_disabled" || msg.toLowerCase().includes("unsupported phone provider")) {
-          showAuthNotice("SMS Provider Not Configured in Supabase", "Phone OTP requires enabling an SMS provider (e.g. Twilio) or test numbers in your Supabase Auth dashboard. You can use Email OTP to sign in.");
+          showAuthNotice("Phone sign-in is not available right now", "Please sign in with Email OTP for now.");
           return false;
         }
         if (errCode === "otp_disabled" || msg.toLowerCase().includes("signups not allowed for otp")) {

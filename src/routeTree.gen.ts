@@ -83,6 +83,7 @@ import { Route as AdminEnquiriesIdRouteImport } from './routes/admin.enquiries.$
 import { Route as AdminOrdersIdRouteImport } from './routes/admin.orders.$id'
 import { Route as AdminProductsIdRouteImport } from './routes/admin.products.$id'
 import { Route as AdminVendorsIdRouteImport } from './routes/admin.vendors.$id'
+import { Route as ApiAuthSendSmsRouteImport } from './routes/api.auth.send-sms'
 import { Route as ApiPaymentsBankAlertRouteImport } from './routes/api.payments.bank-alert'
 import { Route as ApiZohoCallbackRouteImport } from './routes/api.zoho.callback'
 import { Route as ApiZohoSyncRouteImport } from './routes/api.zoho.sync'
@@ -461,6 +462,11 @@ const AdminVendorsIdRoute = AdminVendorsIdRouteImport.update({
   path: '/$id',
   getParentRoute: () => AdminVendorsRoute,
 } as any)
+const ApiAuthSendSmsRoute = ApiAuthSendSmsRouteImport.update({
+  id: '/api/auth/send-sms',
+  path: '/api/auth/send-sms',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiPaymentsBankAlertRoute = ApiPaymentsBankAlertRouteImport.update({
   id: '/api/payments/bank-alert',
   path: '/api/payments/bank-alert',
@@ -572,6 +578,7 @@ export interface FileRoutesByFullPath {
   '/admin/orders/$id': typeof AdminOrdersIdRoute
   '/admin/products/$id': typeof AdminProductsIdRoute
   '/admin/vendors/$id': typeof AdminVendorsIdRoute
+  '/api/auth/send-sms': typeof ApiAuthSendSmsRoute
   '/api/payments/bank-alert': typeof ApiPaymentsBankAlertRoute
   '/api/zoho/callback': typeof ApiZohoCallbackRoute
   '/api/zoho/sync': typeof ApiZohoSyncRoute
@@ -654,6 +661,7 @@ export interface FileRoutesByTo {
   '/admin/orders/$id': typeof AdminOrdersIdRoute
   '/admin/products/$id': typeof AdminProductsIdRoute
   '/admin/vendors/$id': typeof AdminVendorsIdRoute
+  '/api/auth/send-sms': typeof ApiAuthSendSmsRoute
   '/api/payments/bank-alert': typeof ApiPaymentsBankAlertRoute
   '/api/zoho/callback': typeof ApiZohoCallbackRoute
   '/api/zoho/sync': typeof ApiZohoSyncRoute
@@ -738,6 +746,7 @@ export interface FileRoutesById {
   '/admin/orders/$id': typeof AdminOrdersIdRoute
   '/admin/products/$id': typeof AdminProductsIdRoute
   '/admin/vendors/$id': typeof AdminVendorsIdRoute
+  '/api/auth/send-sms': typeof ApiAuthSendSmsRoute
   '/api/payments/bank-alert': typeof ApiPaymentsBankAlertRoute
   '/api/zoho/callback': typeof ApiZohoCallbackRoute
   '/api/zoho/sync': typeof ApiZohoSyncRoute
@@ -823,6 +832,7 @@ export interface FileRouteTypes {
     | '/admin/orders/$id'
     | '/admin/products/$id'
     | '/admin/vendors/$id'
+    | '/api/auth/send-sms'
     | '/api/payments/bank-alert'
     | '/api/zoho/callback'
     | '/api/zoho/sync'
@@ -905,6 +915,7 @@ export interface FileRouteTypes {
     | '/admin/orders/$id'
     | '/admin/products/$id'
     | '/admin/vendors/$id'
+    | '/api/auth/send-sms'
     | '/api/payments/bank-alert'
     | '/api/zoho/callback'
     | '/api/zoho/sync'
@@ -988,6 +999,7 @@ export interface FileRouteTypes {
     | '/admin/orders/$id'
     | '/admin/products/$id'
     | '/admin/vendors/$id'
+    | '/api/auth/send-sms'
     | '/api/payments/bank-alert'
     | '/api/zoho/callback'
     | '/api/zoho/sync'
@@ -1056,6 +1068,7 @@ export interface RootRouteChildren {
   AdminIndexRoute: typeof AdminIndexRoute
   PartnerIndexRoute: typeof PartnerIndexRoute
   VendorIndexRoute: typeof VendorIndexRoute
+  ApiAuthSendSmsRoute: typeof ApiAuthSendSmsRoute
   ApiPaymentsBankAlertRoute: typeof ApiPaymentsBankAlertRoute
   ApiZohoCallbackRoute: typeof ApiZohoCallbackRoute
   ApiZohoSyncRoute: typeof ApiZohoSyncRoute
@@ -1582,6 +1595,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminVendorsIdRouteImport
       parentRoute: typeof AdminVendorsRoute
     }
+    '/api/auth/send-sms': {
+      id: '/api/auth/send-sms'
+      path: '/api/auth/send-sms'
+      fullPath: '/api/auth/send-sms'
+      preLoaderRoute: typeof ApiAuthSendSmsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/payments/bank-alert': {
       id: '/api/payments/bank-alert'
       path: '/api/payments/bank-alert'
@@ -1840,6 +1860,7 @@ const rootRouteChildren: RootRouteChildren = {
   AdminIndexRoute: AdminIndexRoute,
   PartnerIndexRoute: PartnerIndexRoute,
   VendorIndexRoute: VendorIndexRoute,
+  ApiAuthSendSmsRoute: ApiAuthSendSmsRoute,
   ApiPaymentsBankAlertRoute: ApiPaymentsBankAlertRoute,
   ApiZohoCallbackRoute: ApiZohoCallbackRoute,
   ApiZohoSyncRoute: ApiZohoSyncRoute,
