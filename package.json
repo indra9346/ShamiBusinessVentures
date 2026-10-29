@@ -12,7 +12,7 @@
     "preview": "vite preview",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "test:zoho": "node --experimental-strip-types --test tests/zoho-sync-core.test.ts tests/zoho-parity.test.ts tests/zoho-godown.test.ts tests/pricing.test.ts tests/godown-rules.test.ts tests/column-widths.test.ts tests/zoho-invoice.test.ts tests/zoho-fulfilment.test.ts tests/zoho-invoice-tracking.test.ts tests/order-number.test.ts tests/partners.test.ts tests/storefront-visibility.test.ts tests/godown-report.test.ts tests/zoho-call-log.test.ts tests/xlsx.test.ts tests/partner-report.test.ts tests/upi-pay.test.ts tests/seo.test.ts tests/i18n.test.ts tests/bank-alert.test.ts tests/payment-hold.test.ts tests/server-clock.test.ts tests/b2b-gstin.test.ts"
+    "test:zoho": "node --experimental-strip-types --test tests/zoho-sync-core.test.ts tests/zoho-parity.test.ts tests/zoho-godown.test.ts tests/pricing.test.ts tests/godown-rules.test.ts tests/column-widths.test.ts tests/zoho-invoice.test.ts tests/zoho-fulfilment.test.ts tests/zoho-invoice-tracking.test.ts tests/order-number.test.ts tests/partners.test.ts tests/storefront-visibility.test.ts tests/godown-report.test.ts tests/zoho-call-log.test.ts tests/xlsx.test.ts tests/partner-report.test.ts tests/upi-pay.test.ts tests/seo.test.ts tests/i18n.test.ts tests/bank-alert.test.ts tests/payment-hold.test.ts tests/server-clock.test.ts tests/b2b-gstin.test.ts tests/sms-hook.test.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
