@@ -1,5 +1,6 @@
 import { Link } from "@tanstack/react-router";
-import grainbazarLogo from "@/assets/grainbazar-logo.png";
+// A 176 px copy (4 KB) for the header and footer; invoices and SEO use the full-size PNG.
+import grainbazarLogo from "@/assets/grainbazar-logo-176.webp";
 import { cn } from "@/lib/utils";
 
 export function Logo({
@@ -20,8 +21,8 @@ export function Logo({
       <img
         src={grainbazarLogo}
         alt="Grain Bazar"
-        width={512}
-        height={512}
+        width={176}
+        height={176}
         className="h-9 w-9 rounded-lg bg-white object-contain p-1 shadow-sm sm:h-11 sm:w-11"
       />
       <span
@@ -41,8 +42,8 @@ export function LogoMark({ className }: { className?: string }) {
     <img
       src={grainbazarLogo}
       alt="Grain Bazar"
-      width={512}
-      height={512}
+      width={176}
+      height={176}
       className={cn("h-10 w-auto rounded-lg bg-white object-contain p-1 shadow-sm", className)}
     />
   );

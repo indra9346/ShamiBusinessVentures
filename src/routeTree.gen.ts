@@ -32,6 +32,7 @@ import { Route as AccountReviewsRouteImport } from './routes/account.reviews'
 import { Route as AccountSettingsRouteImport } from './routes/account.settings'
 import { Route as AccountTrackRouteImport } from './routes/account.track'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
+import { Route as AdminAdsRouteImport } from './routes/admin.ads'
 import { Route as AdminBranchesRouteImport } from './routes/admin.branches'
 import { Route as AdminCategoriesRouteImport } from './routes/admin.categories'
 import { Route as AdminCommissionsRouteImport } from './routes/admin.commissions'
@@ -205,6 +206,11 @@ const AccountTrackRoute = AccountTrackRouteImport.update({
 const AdminIndexRoute = AdminIndexRouteImport.update({
   id: '/admin/',
   path: '/admin/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminAdsRoute = AdminAdsRouteImport.update({
+  id: '/admin/ads',
+  path: '/admin/ads',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AdminBranchesRoute = AdminBranchesRouteImport.update({
@@ -526,6 +532,7 @@ export interface FileRoutesByFullPath {
   '/account/reviews': typeof AccountReviewsRoute
   '/account/settings': typeof AccountSettingsRoute
   '/account/track': typeof AccountTrackRoute
+  '/admin/ads': typeof AdminAdsRoute
   '/admin/branches': typeof AdminBranchesRoute
   '/admin/categories': typeof AdminCategoriesRoute
   '/admin/commissions': typeof AdminCommissionsRoute
@@ -609,6 +616,7 @@ export interface FileRoutesByTo {
   '/account/reviews': typeof AccountReviewsRoute
   '/account/settings': typeof AccountSettingsRoute
   '/account/track': typeof AccountTrackRoute
+  '/admin/ads': typeof AdminAdsRoute
   '/admin/branches': typeof AdminBranchesRoute
   '/admin/categories': typeof AdminCategoriesRoute
   '/admin/commissions': typeof AdminCommissionsRoute
@@ -694,6 +702,7 @@ export interface FileRoutesById {
   '/account/reviews': typeof AccountReviewsRoute
   '/account/settings': typeof AccountSettingsRoute
   '/account/track': typeof AccountTrackRoute
+  '/admin/ads': typeof AdminAdsRoute
   '/admin/branches': typeof AdminBranchesRoute
   '/admin/categories': typeof AdminCategoriesRoute
   '/admin/commissions': typeof AdminCommissionsRoute
@@ -780,6 +789,7 @@ export interface FileRouteTypes {
     | '/account/reviews'
     | '/account/settings'
     | '/account/track'
+    | '/admin/ads'
     | '/admin/branches'
     | '/admin/categories'
     | '/admin/commissions'
@@ -863,6 +873,7 @@ export interface FileRouteTypes {
     | '/account/reviews'
     | '/account/settings'
     | '/account/track'
+    | '/admin/ads'
     | '/admin/branches'
     | '/admin/categories'
     | '/admin/commissions'
@@ -947,6 +958,7 @@ export interface FileRouteTypes {
     | '/account/reviews'
     | '/account/settings'
     | '/account/track'
+    | '/admin/ads'
     | '/admin/branches'
     | '/admin/categories'
     | '/admin/commissions'
@@ -1024,6 +1036,7 @@ export interface RootRouteChildren {
   ShopRoute: typeof ShopRoute
   SitemapDotxmlRoute: typeof SitemapDotxmlRoute
   WishlistRoute: typeof WishlistRoute
+  AdminAdsRoute: typeof AdminAdsRoute
   AdminBranchesRoute: typeof AdminBranchesRoute
   AdminCategoriesRoute: typeof AdminCategoriesRoute
   AdminCommissionsRoute: typeof AdminCommissionsRoute
@@ -1236,6 +1249,13 @@ declare module '@tanstack/react-router' {
       path: '/admin'
       fullPath: '/admin/'
       preLoaderRoute: typeof AdminIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/ads': {
+      id: '/admin/ads'
+      path: '/admin/ads'
+      fullPath: '/admin/ads'
+      preLoaderRoute: typeof AdminAdsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/admin/branches': {
@@ -1816,6 +1836,7 @@ const rootRouteChildren: RootRouteChildren = {
   ShopRoute: ShopRoute,
   SitemapDotxmlRoute: SitemapDotxmlRoute,
   WishlistRoute: WishlistRoute,
+  AdminAdsRoute: AdminAdsRoute,
   AdminBranchesRoute: AdminBranchesRoute,
   AdminCategoriesRoute: AdminCategoriesRoute,
   AdminCommissionsRoute: AdminCommissionsRoute,

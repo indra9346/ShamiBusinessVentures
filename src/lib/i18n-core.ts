@@ -1,6 +1,43 @@
-import { kn, replacements } from "./i18n-kn.ts";
-
 export type Language = "en" | "kn";
+
+/*
+ * The Kannada dictionary (~480 KB) is loaded only when a shopper chooses Kannada, so English
+ * visitors never download or process it. Until it arrives, text stays in English.
+ */
+let kn: Record<string, string> = {};
+let replacements: ReadonlyArray<readonly [string, string]> = [];
+let kannadaReady = false;
+let kannadaLoading: Promise<void> | null = null;
+
+export function isKannadaLoaded() {
+  return kannadaReady;
+}
+
+/** Loads the Kannada dictionary once (later calls share the same download). */
+export function loadKannada(): Promise<void> {
+  if (!kannadaLoading) {
+    kannadaLoading = import("./i18n-kn.ts")
+      .then((module) => installKannada(module.kn, module.replacements))
+      .catch((cause) => {
+        kannadaLoading = null; // try again on the next request
+        throw cause;
+      });
+  }
+  return kannadaLoading;
+}
+
+function installKannada(dictionary: Record<string, string>, wordReplacements: ReadonlyArray<readonly [string, string]>) {
+  kn = dictionary;
+  replacements = wordReplacements;
+  templates = compileTemplates(kn);
+  anyCase.clear();
+  for (const [english, translation] of Object.entries(kn)) {
+    const lower = english.toLowerCase();
+    if (!anyCase.has(lower)) anyCase.set(lower, translation);
+  }
+  cache.clear();
+  kannadaReady = true;
+}
 
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const collapse = (value: string) => value.replace(/\s+/g, " ");
@@ -30,14 +67,10 @@ function compileTemplates(dictionary: Record<string, string>): Template[] {
   return templates.sort((a, b) => b.weight - a.weight);
 }
 
-const templates = compileTemplates(kn);
+let templates: Template[] = [];
 
 // Status values arrive lower-case or snake_case from the database ("approved", "out_for_delivery").
 const anyCase = new Map<string, string>();
-for (const [english, translation] of Object.entries(kn)) {
-  const lower = english.toLowerCase();
-  if (!anyCase.has(lower)) anyCase.set(lower, translation);
-}
 
 function replaceEnglish(value: string) {
   let output = value;
@@ -87,7 +120,7 @@ function translateCore(core: string, depth: number): string {
 const cache = new Map<string, string>();
 
 export function translateText(value: string, language: Language) {
-  if (language === "en" || !value.trim()) return value;
+  if (language === "en" || !kannadaReady || !value.trim()) return value;
   const cached = cache.get(value);
   if (cached !== undefined) return cached;
   const leading = value.match(/^\s*/)?.[0] ?? "";

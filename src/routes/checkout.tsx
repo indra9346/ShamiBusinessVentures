@@ -877,7 +877,8 @@ function Checkout() {
             )}
 
             {step < 4 && (
-              <div className="mt-8 flex justify-between">
+              // On phones the buttons stay pinned at the bottom of the screen, under the thumb.
+              <div className="sticky bottom-0 z-20 -mx-4 -mb-4 mt-6 flex items-center gap-3 rounded-b-lg border-t border-border bg-card/95 px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur sm:static sm:mx-0 sm:mb-0 sm:mt-8 sm:justify-between sm:border-0 sm:bg-transparent sm:p-0 sm:backdrop-blur-none">
                 <button
                   disabled={placingOrder}
                   onClick={() => {
@@ -891,22 +892,24 @@ function Checkout() {
                     if (productId) void navigate({ to: "/product/$id", params: { id: productId } });
                     else void navigate({ to: "/cart" });
                   }}
-                  className="rounded-md border border-navy px-5 py-2.5 text-sm font-semibold text-navy transition-colors hover:bg-navy hover:text-white"
+                  className="h-12 shrink-0 rounded-md border border-navy px-5 text-sm font-semibold text-navy transition-colors hover:bg-navy hover:text-white sm:h-auto sm:py-2.5"
                 >
                   Back
                 </button>
                 <button
                   disabled={placingOrder}
                   onClick={goNext}
-                  className="rounded-md bg-gold px-6 py-2.5 text-sm font-bold text-midnight transition-colors hover:bg-gold-light disabled:cursor-wait disabled:opacity-60"
+                  className="flex h-12 flex-1 items-center justify-center gap-2 rounded-md bg-gold px-6 text-sm font-bold text-midnight shadow-sm transition-colors hover:bg-gold-light active:scale-[0.99] disabled:cursor-wait disabled:opacity-60 sm:h-auto sm:flex-none sm:py-2.5"
                 >
-                  {placingOrder ? "Holding your order…" : step === 3 ? "Continue to pay" : "Continue"}
+                  <span>{placingOrder ? "Holding your order…" : step === 3 ? "Continue to pay" : "Continue"}</span>
+                  {!placingOrder && <span className="font-semibold opacity-80 sm:hidden">· {inrPrecise(summary.total)}</span>}
                 </button>
               </div>
             )}
           </div>
 
-          <aside className="h-max rounded-lg border border-border bg-card p-6 shadow-card">
+          {/* From payment on, phones show the summary first and the pay actions under it. */}
+          <aside className={cn("h-max rounded-lg border border-border bg-card p-4 shadow-card sm:p-6", step >= 2 && "order-first lg:order-none")}>
             <h2 className="text-sm font-bold tracking-wide text-navy uppercase">Summary</h2>
             <div className="mt-4 space-y-2.5 text-sm">
               {[

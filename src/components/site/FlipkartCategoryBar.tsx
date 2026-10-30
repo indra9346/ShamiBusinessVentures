@@ -178,7 +178,7 @@ function BadgeBody({
             width={80}
             height={80}
             onError={() => setBroken(true)}
-            className="transition-transform duration-300 group-hover:scale-110"
+            className=""
           />
         ) : (
           <Icon

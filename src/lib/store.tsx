@@ -3,6 +3,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useState,
   type ReactNode,
@@ -252,6 +253,34 @@ type AppState = {
 const AppContext = createContext<AppState | null>(null);
 const KEY = "sbv-state-v2";
 
+/*
+ * The last catalog this device loaded (products + categories). Shown at once on the next visit
+ * while the live catalog refreshes in the background, so a returning shopper never sees empty
+ * rows or the built-in placeholder pictures. Prices are re-checked by the database at checkout.
+ */
+const CATALOG_CACHE_KEY = "gb-catalog-v1";
+const CATALOG_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+type CatalogCache = { savedAt: number; products: Product[]; categories: StoreCategory[] };
+function readCatalogCache(): CatalogCache | null {
+  try {
+    const cached = JSON.parse(window.localStorage.getItem(CATALOG_CACHE_KEY) ?? "null") as CatalogCache | null;
+    if (!cached || !Array.isArray(cached.products) || !Array.isArray(cached.categories)) return null;
+    if (Date.now() - Number(cached.savedAt) > CATALOG_CACHE_MAX_AGE_MS) return null;
+    return cached;
+  } catch {
+    return null;
+  }
+}
+function writeCatalogCache(products: Product[], categories: StoreCategory[]) {
+  try {
+    window.localStorage.setItem(CATALOG_CACHE_KEY, JSON.stringify({ savedAt: Date.now(), products, categories }));
+  } catch {
+    // Storage full or blocked: the next visit simply loads from the network.
+  }
+}
+// Runs before the first paint in the browser (and is a no-op on the server).
+const useIsomorphicLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
+
 export function AppProvider({ children }: { children: ReactNode }) {
   // Godown branches: an administrator working in one branch sees that branch's orders and stock.
   const branchState = useBranches();
@@ -287,6 +316,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [productCatalogStatus, setProductCatalogStatus] = useState<"loading" | "ready" | "unavailable">("loading");
   const [categoryCatalogStatus, setCategoryCatalogStatus] = useState<"loading" | "ready" | "unavailable">("loading");
 
+  // A returning visitor sees the catalog from their last visit before the first paint.
+  useIsomorphicLayoutEffect(() => {
+    if (STATIC_DATA_MODE) return;
+    const cached = readCatalogCache();
+    if (!cached) return;
+    if (cached.products.length) {
+      setProducts((current) => current.length ? current : cached.products);
+      setProductCatalogStatus((status) => status === "loading" ? "ready" : status);
+    }
+    if (cached.categories.length) {
+      setCategories((current) => current.length ? current : cached.categories);
+      setCategoryCatalogStatus((status) => status === "loading" ? "ready" : status);
+    }
+  }, []);
+
   // The public catalog and dashboard catalog are read from Supabase. Demo fixtures
   // stay available to local development only and are never treated as production data.
   useEffect(() => {
@@ -301,21 +345,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
     let hasConnectedOnce = false;
     const reloadCatalog = async () => {
       const revision = ++loadRevision;
-      setProductCatalogStatus("loading");
-      setCategoryCatalogStatus("loading");
+      setProductCatalogStatus((status) => status === "ready" ? status : "loading");
+      setCategoryCatalogStatus((status) => status === "ready" ? status : "loading");
       const [productResult, categoryResult] = await Promise.all([
         supabase.from("catalog_products").select("payload"),
         supabase.from("store_categories").select("payload").order("sort_order"),
       ]);
       if (!active || revision !== loadRevision) return;
+      let loadedProducts: Product[] | null = null;
       if (productResult.error) {
         console.error("Could not load the Supabase product catalog:", productResult.error.message);
         setProductCatalogStatus("unavailable");
         setProducts([]);
       } else {
         setProductCatalogStatus("ready");
-        setProducts(
-          productResult.data.map((row) => {
+        loadedProducts = productResult.data.map((row) => {
             const p = row.payload as unknown as Product;
             const category = p.category ?? "";
             const generatedCategoryImage = `/products/${category.toLowerCase()}.jpg`;
@@ -328,8 +372,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
                 ? getProductImageFallback(category, p.name)
                 : image,
             };
-          }),
-        );
+          });
+        setProducts(loadedProducts);
       }
       if (categoryResult.error) {
         console.error("Could not load Supabase store categories:", categoryResult.error.message);
@@ -349,6 +393,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         });
         // In live mode an empty table is a real empty catalog, not demo content.
         setCategories(persistedCategories);
+        if (loadedProducts) writeCatalogCache(loadedProducts, persistedCategories);
       }
       if (user?.role) {
         const [

@@ -385,6 +385,12 @@ export type Database = {
         Update: { id?: string; branch_id?: string; product_id?: string | null; kind?: string; value?: number; updated_by?: string | null; updated_at?: string }
         Relationships: []
       }
+      ad_banners: {
+        Row: { id: string; title: string; subtitle: string; media_kind: string; media_url: string; mobile_media_url: string | null; fit: string; background: string; link_url: string | null; cta_label: string; placement: string; sort_order: number; active: boolean; starts_at: string | null; ends_at: string | null; created_at: string; updated_at: string }
+        Insert: { id?: string; title?: string; subtitle?: string; media_kind?: string; media_url: string; mobile_media_url?: string | null; fit?: string; background?: string; link_url?: string | null; cta_label?: string; placement?: string; sort_order?: number; active?: boolean; starts_at?: string | null; ends_at?: string | null }
+        Update: { title?: string; subtitle?: string; media_kind?: string; media_url?: string; mobile_media_url?: string | null; fit?: string; background?: string; link_url?: string | null; cta_label?: string; placement?: string; sort_order?: number; active?: boolean; starts_at?: string | null; ends_at?: string | null }
+        Relationships: []
+      }
       bank_credits: {
         Row: { id: string; received_at: string; source: string; sender: string | null; raw: string | null; amount: number; utr: string; payer: string | null; status: string; order_id: string | null; order_no: string | null; note: string | null }
         Insert: never

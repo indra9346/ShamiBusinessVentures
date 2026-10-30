@@ -5,12 +5,13 @@ import { pageHead, jsonLdScript, organizationJsonLd, websiteJsonLd, DEFAULT_DESC
 import { ArrowRight } from "lucide-react";
 import { SiteLayout } from "@/components/site/SiteLayout";
 import { Button } from "@/components/ui/button";
-import { isStorefrontProduct, storeCategorySeed } from "@/lib/data";
+import { isStorefrontProduct } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { useLanguage } from "@/lib/i18n";
 import { SearchAutosuggest } from "@/components/site/SearchAutosuggest";
 import { ProductCard } from "@/components/site/ProductCard";
 import { FlipkartCategoryBar } from "@/components/site/FlipkartCategoryBar";
+import { AdShowcase } from "@/components/site/AdShowcase";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -25,15 +26,17 @@ export const Route = createFileRoute("/")({
 });
 
 function Index() {
-  const { products, categories } = useApp();
+  const { products, categories, productCatalogStatus, categoryCatalogStatus } = useApp();
   const { t } = useLanguage();
   const [query, setQuery] = useState("");
   const navigate = useNavigate();
 
   const popularProducts = products.filter(isStorefrontProduct).slice(0, 8);
-  const displayCategories = categories.length > 0
-    ? categories.filter((c) => c.enabled).slice(0, 3)
-    : storeCategorySeed.filter((c) => c.enabled).slice(0, 3);
+  // Only the live categories are shown; until they arrive, grey placeholders hold their place
+  // (never the built-in pictures, which would flash and then change).
+  const displayCategories = categories.filter((c) => c.enabled).slice(0, 3);
+  const categoriesLoading = categoryCatalogStatus === "loading" && displayCategories.length === 0;
+  const productsLoading = productCatalogStatus === "loading" && popularProducts.length === 0;
 
   const searchProducts = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -46,8 +49,10 @@ function Index() {
 
   return (
     <SiteLayout>
-      {/* Flipkart-style compact category strip */}
-      <FlipkartCategoryBar />
+      {/* Offers band (Admin > Ad Banners) with the Flipkart-style category strip in front of it */}
+      <AdShowcase>
+        <FlipkartCategoryBar />
+      </AdShowcase>
 
       {/* Search Bar with Real-Time Autosuggestions */}
       <section className="mx-auto max-w-7xl px-4 pt-4 sm:px-6 sm:pt-6">
@@ -77,6 +82,13 @@ function Index() {
           </Link>
         </div>
         <div className="grid grid-cols-3 gap-3 sm:gap-6">
+          {categoriesLoading && [0, 1, 2].map((i) => (
+            <div key={i} aria-hidden className="flex flex-col items-center overflow-hidden rounded-lg border border-border bg-card pb-4 sm:pb-6">
+              <span className="block aspect-square w-full animate-pulse bg-stone-200/70" />
+              <span className="mt-3 h-4 w-16 animate-pulse rounded bg-stone-200/70 sm:h-5" />
+              <span className="mt-2 h-3 w-10 animate-pulse rounded bg-stone-200/50" />
+            </div>
+          ))}
           {displayCategories.map((category) => {
             const slug = category.name.toLowerCase();
             return (
@@ -84,7 +96,7 @@ function Index() {
                 key={category.id}
                 to="/categories/$slug"
                 params={{ slug }}
-                className="group flex min-w-0 flex-col items-center overflow-hidden rounded-lg border border-border bg-card pb-4 text-center shadow-card transition-all hover:-translate-y-1 hover:border-gold hover:shadow-elevated sm:pb-6"
+                className="group flex min-w-0 flex-col items-center overflow-hidden rounded-lg border border-border bg-card pb-4 text-center shadow-card transition-[border-color,box-shadow] hover:border-gold hover:shadow-elevated sm:pb-6"
               >
                 <span className="block aspect-square w-full overflow-hidden bg-ivory">
                   <CategoryImage
@@ -102,7 +114,6 @@ function Index() {
                           ? "/categories/oil.jpg"
                           : "/categories/rice.jpg";
                     }}
-                    className="transition-transform duration-500 group-hover:scale-105"
                   />
                 </span>
                 <span className="mt-3 text-base font-bold text-navy sm:text-xl">{category.name}</span>
@@ -131,6 +142,17 @@ function Index() {
             </Link>
           </div>
           <div className="grid grid-cols-2 gap-2.5 sm:gap-4 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+            {productsLoading && Array.from({ length: 4 }, (_, i) => (
+              <div key={i} aria-hidden className="flex flex-col overflow-hidden rounded-xl border border-stone-200 bg-card">
+                <span className="block aspect-[4/3] w-full animate-pulse bg-stone-200/70" />
+                <div className="space-y-2 p-2.5 sm:p-3">
+                  <span className="block h-3.5 w-11/12 animate-pulse rounded bg-stone-200/70" />
+                  <span className="block h-3.5 w-2/3 animate-pulse rounded bg-stone-200/60" />
+                  <span className="block h-5 w-1/3 animate-pulse rounded bg-stone-200/70" />
+                  <span className="block h-9 w-full animate-pulse rounded-md bg-stone-200/60" />
+                </div>
+              </div>
+            ))}
             {popularProducts.map((product) => (
               <ProductCard key={product.id} product={product} />
             ))}

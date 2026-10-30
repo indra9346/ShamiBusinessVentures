@@ -461,6 +461,80 @@
   }
 }
 
+/* Home page advertising band (AdShowcase) */
+@utility animate-ad-kenburns {
+  animation: ad-kenburns 9s ease-out both;
+}
+@keyframes ad-kenburns {
+  from {
+    transform: scale(1.06) translate3d(1%, 0, 0);
+  }
+  to {
+    transform: scale(1) translate3d(0, 0, 0);
+  }
+}
+
+@utility animate-ad-progress {
+  animation: ad-progress linear both;
+}
+@keyframes ad-progress {
+  from {
+    width: 0%;
+  }
+  to {
+    width: 100%;
+  }
+}
+
+@utility animate-ad-fade-in {
+  animation: ad-fade-in 0.6s ease-out both;
+}
+@keyframes ad-fade-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 6px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* The strip holds the tiles twice; moving it by half loops seamlessly. */
+@utility animate-ad-marquee {
+  animation: ad-marquee 28s linear infinite;
+}
+@keyframes ad-marquee {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(calc(-50% - 0.375rem), 0, 0);
+  }
+}
+
+@utility animate-ad-backdrop {
+  animation: ad-backdrop 18s ease-in-out infinite alternate;
+}
+@keyframes ad-backdrop {
+  from {
+    background-position: 0% 50%;
+  }
+  to {
+    background-position: 100% 50%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-ad-kenburns,
+  .animate-ad-progress,
+  .animate-ad-fade-in,
+  .animate-ad-marquee,
+  .animate-ad-backdrop {
+    animation: none;
+  }
+}
+
 /*
  * Gold text: the bright brand gold is too faint for small text on the light linen
  * surfaces, so text-gold reads as bronze there and switches back to bright gold on
