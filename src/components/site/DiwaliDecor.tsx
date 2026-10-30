@@ -29,9 +29,9 @@ export function DiwaliBackdrop() {
     <div aria-hidden className="gb-festive pointer-events-none absolute inset-0 -z-10 overflow-hidden">
       <div className="absolute inset-0 bg-gradient-to-br from-[#fff4e2] via-[#ffe8cf] to-[#fde6ea]" />
       <div className="gb-rangoli-pattern absolute inset-0 opacity-[0.07]" />
-      <div className="absolute -left-24 -top-28 h-80 w-80 rounded-full bg-[#ffb347]/35 blur-3xl" />
-      <div className="absolute -bottom-28 -right-16 h-80 w-80 rounded-full bg-[#e8457a]/15 blur-3xl" />
-      <div className="absolute left-1/3 top-1/2 h-64 w-64 rounded-full bg-[#ffd27a]/25 blur-3xl" />
+      <div className="absolute -left-40 -top-44 h-[28rem] w-[28rem] bg-[radial-gradient(closest-side,rgba(255,179,71,0.35),rgba(255,179,71,0))]" />
+      <div className="absolute -bottom-44 -right-32 h-[28rem] w-[28rem] bg-[radial-gradient(closest-side,rgba(232,69,122,0.15),rgba(232,69,122,0))]" />
+      <div className="absolute left-1/4 top-1/4 h-[24rem] w-[24rem] bg-[radial-gradient(closest-side,rgba(255,210,122,0.25),rgba(255,210,122,0))]" />
       {LIGHTS.map(([left, size, rise, offset, drift], i) => (
         <span
           key={i}
@@ -103,9 +103,9 @@ export function SideGarlands() {
 
 /**
  * Crackers over Karnataka's lit heritage (Mysuru Palace, Hampi gopurams, the temple) behind the header:
- * a short looping video on black, blended with `screen` so only the lights show. It starts after the
- * page is idle (the first paint never waits for it), pauses in background tabs, and stays a still
- * picture for reduced motion or data saver. The parent must be `relative isolate`.
+ * a short looping video already painted on the header's green, so the browser only plays it (no live
+ * blending). It starts after the page is idle (the first paint never waits for it), pauses in
+ * background tabs, and stays a still picture for reduced motion or data saver.
  */
 export function HeaderCrackers() {
   const [src, setSrc] = useState<string | null>(null);
@@ -131,8 +131,7 @@ export function HeaderCrackers() {
     return () => document.removeEventListener("visibilitychange", onVisibility);
   }, [src]);
   return (
-    // the layer itself is screen-blended onto the header (it is its own stacking context)
-    <div aria-hidden className="gb-festive pointer-events-none absolute inset-0 -z-10 overflow-hidden opacity-90 mix-blend-screen">
+    <div aria-hidden className="gb-festive pointer-events-none absolute inset-0 -z-10 overflow-hidden bg-navy">
       <img src={`${ART}/header-crackers.webp`} alt="" decoding="async" draggable={false} className={cn("gb-crackers", playing && "opacity-0")} />
       {src && <video ref={video} src={src} autoPlay muted loop playsInline preload="auto" onPlaying={() => setPlaying(true)} className="gb-crackers" />}
     </div>

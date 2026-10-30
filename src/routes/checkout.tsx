@@ -483,6 +483,30 @@ function Checkout() {
     );
   }
 
+  // The order summary: beside the steps on computers, inside the card above the buttons on phones.
+  const summaryRows = (
+    <div className="mt-4 space-y-2.5 text-sm">
+      {[
+        ["Subtotal", inrPrecise(summary.subtotal)],
+        [fulfil === "Delivery" ? "Delivery" : "Pickup", summary.shipCost === 0 ? "Free" : inrPrecise(summary.shipCost)],
+        ["GST", inrPrecise(summary.tax)],
+        ...(summary.discount > 0
+          ? [["Coupon discount", `- ${inrPrecise(summary.discount)}`]]
+          : []),
+      ].map(([k, v]) => (
+        <div key={k} className="flex justify-between">
+          <span className="text-slate">{k}</span>
+          <span className="font-semibold text-navy">{v}</span>
+        </div>
+      ))}
+      <div className="hairline-gold my-2" />
+      <div className="flex justify-between text-base font-bold text-navy">
+        <span>Total</span>
+        <span>{inrPrecise(summary.total)}</span>
+      </div>
+    </div>
+  );
+
   return (
     <SiteLayout>
       <div className="border-b border-border bg-ivory">
@@ -876,6 +900,12 @@ function Checkout() {
               </div>
             )}
 
+            {/* Phones: the summary after the step's details (the items on Review), the buttons last. */}
+            <div className="mt-6 rounded-lg border border-border bg-ivory/40 p-4 lg:hidden">
+              <h2 className="text-sm font-bold tracking-wide text-navy uppercase">Summary</h2>
+              {summaryRows}
+            </div>
+
             {step < 4 && (
               // On phones the buttons stay pinned at the bottom of the screen, under the thumb.
               <div className="sticky bottom-0 z-20 -mx-4 -mb-4 mt-6 flex items-center gap-3 rounded-b-lg border-t border-border bg-card/95 px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur sm:static sm:mx-0 sm:mb-0 sm:mt-8 sm:justify-between sm:border-0 sm:bg-transparent sm:p-0 sm:backdrop-blur-none">
@@ -899,38 +929,19 @@ function Checkout() {
                 <button
                   disabled={placingOrder}
                   onClick={goNext}
-                  className="flex h-12 flex-1 items-center justify-center gap-2 rounded-md bg-gold px-6 text-sm font-bold text-midnight shadow-sm transition-colors hover:bg-gold-light active:scale-[0.99] disabled:cursor-wait disabled:opacity-60 sm:h-auto sm:flex-none sm:py-2.5"
+                  className="flex h-12 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-md bg-gold px-4 text-sm font-bold text-midnight shadow-sm transition-colors hover:bg-gold-light active:scale-[0.99] disabled:cursor-wait disabled:opacity-60 sm:h-auto sm:flex-none sm:py-2.5"
                 >
-                  <span>{placingOrder ? "Holding your order…" : step === 3 ? "Continue to pay" : "Continue"}</span>
-                  {!placingOrder && <span className="font-semibold opacity-80 sm:hidden">· {inrPrecise(summary.total)}</span>}
+                  <span className="whitespace-nowrap">{placingOrder ? "Holding your order…" : step === 3 ? "Continue to pay" : "Continue"}</span>
+                  {!placingOrder && <span className="whitespace-nowrap text-[13px] font-semibold opacity-80 sm:hidden">· {inrPrecise(summary.total)}</span>}
                 </button>
               </div>
             )}
           </div>
 
-          {/* From payment on, phones show the summary first and the pay actions under it. */}
-          <aside className={cn("h-max rounded-lg border border-border bg-card p-4 shadow-card sm:p-6", step >= 2 && "order-first lg:order-none")}>
+          {/* Computers: the summary beside the steps. Phones show it inside the card, above the buttons. */}
+          <aside className="hidden h-max rounded-lg border border-border bg-card p-6 shadow-card lg:block">
             <h2 className="text-sm font-bold tracking-wide text-navy uppercase">Summary</h2>
-            <div className="mt-4 space-y-2.5 text-sm">
-              {[
-                ["Subtotal", inrPrecise(summary.subtotal)],
-                [fulfil === "Delivery" ? "Delivery" : "Pickup", summary.shipCost === 0 ? "Free" : inrPrecise(summary.shipCost)],
-                ["GST", inrPrecise(summary.tax)],
-                ...(summary.discount > 0
-                  ? [["Coupon discount", `- ${inrPrecise(summary.discount)}`]]
-                  : []),
-              ].map(([k, v]) => (
-                <div key={k} className="flex justify-between">
-                  <span className="text-slate">{k}</span>
-                  <span className="font-semibold text-navy">{v}</span>
-                </div>
-              ))}
-              <div className="hairline-gold my-2" />
-              <div className="flex justify-between text-base font-bold text-navy">
-                <span>Total</span>
-                <span>{inrPrecise(summary.total)}</span>
-              </div>
-            </div>
+            {summaryRows}
           </aside>
         </div>
       </div>
