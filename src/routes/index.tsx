@@ -12,6 +12,8 @@ import { SearchAutosuggest } from "@/components/site/SearchAutosuggest";
 import { ProductCard } from "@/components/site/ProductCard";
 import { FlipkartCategoryBar } from "@/components/site/FlipkartCategoryBar";
 import { AdShowcase } from "@/components/site/AdShowcase";
+import { DiyaLedge, RangoliCorners } from "@/components/site/DiwaliDecor";
+import { useFestiveTheme } from "@/lib/festive";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -30,6 +32,7 @@ function Index() {
   const { t } = useLanguage();
   const [query, setQuery] = useState("");
   const navigate = useNavigate();
+  const festive = useFestiveTheme();
 
   const popularProducts = products.filter(isStorefrontProduct).slice(0, 8);
   // Only the live categories are shown; until they arrive, grey placeholders hold their place
@@ -127,7 +130,9 @@ function Index() {
       </section>
 
       {/* Popular Products - Responsive Horizontal on Mobile, Grid on Desktop */}
-      <section className="bg-ivory/60">
+      <section className="relative isolate bg-ivory/60">
+        {/* Festival dates: lit diyas and the greeting on the line between the two sections, rangoli in the corners */}
+        {festive.on && <><DiyaLedge /><RangoliCorners /></>}
         <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 sm:py-12">
           <div className="mb-6 flex items-end justify-between gap-4">
             <div>

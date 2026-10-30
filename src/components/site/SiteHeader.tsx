@@ -1,4 +1,4 @@
-import { Link, useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { Heart, Menu, Search, ShoppingCart, User, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Logo } from "@/components/brand/Logo";
@@ -8,6 +8,8 @@ import { inr, isStorefrontProduct } from "@/lib/data";
 import { LanguageSwitcher } from "@/components/site/LanguageSwitcher";
 
 import { SearchAutosuggest } from "@/components/site/SearchAutosuggest";
+import { HeaderCrackers, HeaderZari } from "@/components/site/DiwaliDecor";
+import { useFestiveTheme } from "@/lib/festive";
 
 const nav = [
   { label: "Home", to: "/" },
@@ -22,10 +24,16 @@ export function SiteHeader() {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
   const navigate = useNavigate();
+  const festive = useFestiveTheme();
+  // The festival decorations are for the home page only.
+  const onHome = useRouterState({ select: (state) => state.location.pathname === "/" });
+  const festiveHere = festive.on && onHome;
 
   return (
     <header className="sticky top-0 z-50 w-full">
-      <div className="border-b border-white/10 bg-navy/95 backdrop-blur-md">
+      {/* With the festival crackers playing the header is solid (no live blur under a moving video). */}
+      <div className={`relative isolate border-b border-white/10 ${festiveHere ? "bg-navy" : "bg-navy/95 backdrop-blur-md"}`}>
+        {festiveHere && <><HeaderCrackers /><HeaderZari /></>}
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-3.5 py-2.5 sm:px-6 sm:py-3">
           <Logo />
 

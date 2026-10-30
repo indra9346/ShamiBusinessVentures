@@ -20,6 +20,7 @@ import {
   sortBanners, uploadAdMedia, type AdBanner,
 } from "@/lib/ad-banners";
 import { cn } from "@/lib/utils";
+import { festiveStatus, saveFestiveSetting, useFestiveTheme } from "@/lib/festive";
 
 export const Route = createFileRoute("/admin/ads")({
   head: () => ({
@@ -66,6 +67,39 @@ function MediaPreview({ banner, className }: { banner: Pick<AdBanner, "mediaKind
   );
 }
 
+/** On/off switch for the festival decorations on the home page (they also end by themselves after the dates). */
+function FestiveThemePanel() {
+  const { setting, ready, window: dates } = useFestiveTheme();
+  const [saving, setSaving] = useState(false);
+  const fmt = (iso: string) => new Date(iso).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Kolkata" });
+  const set = async (enabled: boolean) => {
+    setSaving(true);
+    try {
+      await saveFestiveSetting({ enabled });
+      toast.success(enabled ? "Festival decorations are ON" : "Festival decorations are OFF");
+    } catch (cause) {
+      toast.error("Could not change the festival decorations", { description: cause instanceof Error ? cause.message : String(cause) });
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <Panel title="Festival decorations (Deepavali)" className="mt-6">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="max-w-3xl space-y-1 text-sm text-slate">
+          <p>Diyas, marigold toran, rangoli and festive lights on the home page, from {fmt(dates.from)} to {fmt(new Date(Date.parse(dates.until) - 1).toISOString())}. They switch off by themselves after that.</p>
+          <p>Turn this off to remove them from the store at once. Festival banners are separate: manage them below.</p>
+          <p className="font-semibold text-navy">{ready ? festiveStatus(setting) : "Checking…"}</p>
+        </div>
+        <label className="flex items-center gap-2 text-sm font-semibold text-navy">
+          <Switch checked={setting.enabled} disabled={!ready || saving} onCheckedChange={(on) => void set(on)} aria-label="Festival decorations" />
+          {setting.enabled ? "ON" : "OFF"}
+        </label>
+      </div>
+    </Panel>
+  );
+}
+
 function AdminAds() {
   const [banners, setBanners] = useState<AdBanner[]>([]);
   const [loading, setLoading] = useState(true);
@@ -100,9 +134,11 @@ function AdminAds() {
     try {
       const url = await uploadAdMedia(file);
       setDraft((current) => current && (which === "main"
-        ? { ...current, mediaUrl: url, mediaKind: AD_VIDEO_TYPES.includes(file.type) ? "video" : "image" }
+        // a new main file of the other kind drops the old phone version (a picture can't stand in for a video)
+        ? { ...current, mediaUrl: url, mediaKind: AD_VIDEO_TYPES.includes(file.type) ? "video" : "image",
+            mobileMediaUrl: (AD_VIDEO_TYPES.includes(file.type) ? "video" : "image") === current.mediaKind ? current.mobileMediaUrl : null }
         : { ...current, mobileMediaUrl: url }));
-      toast.success(which === "main" ? "Uploaded" : "Phone picture uploaded");
+      toast.success(which === "main" ? "Uploaded" : "Phone version uploaded");
     } catch (cause) {
       toast.error("Upload failed", { description: cause instanceof Error ? cause.message : String(cause) });
     } finally {
@@ -234,6 +270,7 @@ function AdminAds() {
         <StatCard label="Scheduled" value={String(stats.scheduled)} icon={Megaphone} />
         <StatCard label="Videos" value={String(stats.videos)} icon={Film} />
       </div>
+      <FestiveThemePanel />
       {loading && <p className="mt-6 inline-flex items-center gap-2 text-sm text-slate"><Loader2 className="h-4 w-4 animate-spin" /> Loading banners…</p>}
       <div className="mt-6 grid gap-6">
         {section("main", "Big sliding banner", "Slides one after another at the top of the home page (videos play to the end). Best size 2100 × 900 (21:9); any size works: choose Fill or Whole picture.")}
@@ -259,20 +296,20 @@ function AdminAds() {
                 <p className="text-[11px] text-slate">JPG, PNG, WebP, GIF, AVIF, or an MP4 / WebM video (plays muted), up to 50 MB.</p>
               </div>
 
-              {draft.mediaKind === "image" && (
+              {draft.mediaUrl && (
                 <div className="grid gap-2">
-                  <Label>Phone picture (optional)</Label>
+                  <Label>{draft.mediaKind === "video" ? "Phone video (optional)" : "Phone picture (optional)"}</Label>
                   <div className="flex flex-wrap items-center gap-3">
                     {draft.mobileMediaUrl && <MediaPreview banner={{ ...draft, mediaUrl: draft.mobileMediaUrl }} className="aspect-[16/9] w-40" />}
                     <label className="inline-flex cursor-pointer items-center gap-2 rounded-md border border-border bg-white px-3 py-2 text-sm font-semibold text-navy hover:border-gold">
                       {uploading === "mobile" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
                       {draft.mobileMediaUrl ? "Replace" : "Upload"}
-                      <input type="file" className="sr-only" accept={AD_IMAGE_TYPES.join(",")}
+                      <input type="file" className="sr-only" accept={(draft.mediaKind === "video" ? AD_VIDEO_TYPES : AD_IMAGE_TYPES).join(",")}
                         disabled={!!uploading} onChange={(e) => { void upload(e.target.files?.[0], "mobile"); e.target.value = ""; }} />
                     </label>
                     {draft.mobileMediaUrl && <Button variant="ghost" size="sm" onClick={() => setDraft({ ...draft, mobileMediaUrl: null })}>Remove</Button>}
                   </div>
-                  <p className="text-[11px] text-slate">A separate crop for phones (16:9). Without it phones show the main picture.</p>
+                  <p className="text-[11px] text-slate">A separate 16:9 version for phones. Without it phones show the main {draft.mediaKind === "video" ? "video" : "picture"}, cropped at the sides.</p>
                 </div>
               )}
 
