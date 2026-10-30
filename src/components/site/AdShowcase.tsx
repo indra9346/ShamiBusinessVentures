@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { useNavigate } from "@tanstack/react-router";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useLiveAdBanners, type AdBanner } from "@/lib/ad-banners";
+import { useFestiveTheme } from "@/lib/festive";
+import { DiwaliBackdrop, DiwaliToran, SideGarlands } from "@/components/site/DiwaliDecor";
 import { cn } from "@/lib/utils";
 
 /*
@@ -52,10 +54,19 @@ function BannerLink({ banner, className, children, tabIndex }: { banner: AdBanne
   );
 }
 
+/** A phone version of a video banner, when the admin uploaded one (a video, not a picture). */
+function phoneVideoOf(banner: AdBanner) {
+  const url = banner.mobileMediaUrl;
+  if (banner.mediaKind !== "video" || !url) return null;
+  return /^data:image\//.test(url) || /\.(jpe?g|png|webp|gif|avif)([?#]|$)/i.test(url) ? null : url;
+}
+
 function BannerMedia({ banner, active, eager, onVideoEnd, kenBurns }: {
   banner: AdBanner; active: boolean; eager: boolean; onVideoEnd?: (() => void) | undefined; kenBurns: boolean;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  // Banners render in the browser only (from the cached or live list), so the screen size is known here.
+  const [phone] = useState(() => typeof window !== "undefined" && !!window.matchMedia?.("(max-width: 639px)").matches);
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
@@ -71,7 +82,7 @@ function BannerMedia({ banner, active, eager, onVideoEnd, kenBurns }: {
     return (
       <video
         ref={videoRef}
-        src={banner.mediaUrl}
+        src={(phone && phoneVideoOf(banner)) || banner.mediaUrl}
         muted
         playsInline
         loop={!onVideoEnd}
@@ -291,6 +302,7 @@ function SideMarquee({ banners }: { banners: AdBanner[] }) {
 
 export function AdShowcase({ children }: { children?: ReactNode }) {
   const { main, side } = useLiveAdBanners();
+  const festive = useFestiveTheme();
   const hasAds = main.length > 0 || side.length > 0;
   if (!hasAds) return <>{children}</>;
   const hero = main.length > 0 ? main : side;
@@ -301,9 +313,12 @@ export function AdShowcase({ children }: { children?: ReactNode }) {
       <div aria-hidden className="absolute inset-0 -z-10 animate-ad-backdrop bg-[length:200%_200%] bg-gradient-to-br from-[#e9f2ec] via-[#fbf5e6] to-[#eef4ef] motion-reduce:animate-none" />
       <div aria-hidden className="absolute -left-24 -top-24 -z-10 h-72 w-72 rounded-full bg-gold/20 blur-3xl" />
       <div aria-hidden className="absolute -bottom-24 -right-16 -z-10 h-72 w-72 rounded-full bg-emerald-700/10 blur-3xl" />
+      {/* Festival dates: warm Deepavali light and a marigold toran hanging in the band's top padding. */}
+      {festive.on && <><DiwaliBackdrop /><DiwaliToran /></>}
 
       <div className="mx-auto max-w-7xl px-4 pt-3 sm:px-6 sm:pt-5">
-        <div className={cn("grid gap-3", tiles.length > 0 && "lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]")}>
+        <div className={cn("relative grid gap-3", tiles.length > 0 && "lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]")}>
+          {festive.on && <SideGarlands />}
           <div className="aspect-[16/9] sm:aspect-[21/9] lg:aspect-auto lg:h-[min(23rem,32vw)]">
             <MainCarousel banners={hero} />
           </div>

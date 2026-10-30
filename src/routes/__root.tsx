@@ -18,6 +18,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { CartFloatingNotifier } from "@/components/site/CartFloatingNotification";
 import { AuthNoticeHost } from "@/components/site/AuthNotice";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
+import { FESTIVE_HEAD_SCRIPT } from "@/lib/festive";
 
 function NotFoundComponent() {
   return (
@@ -121,9 +122,11 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
 
 function RootShell({ children }: { children: ReactNode }) {
   return (
-    <html lang="en">
+    // data-festive is set by the script below before the first paint (admin switch for the festival theme)
+    <html lang="en" suppressHydrationWarning>
       <head>
         <HeadContent />
+        <script dangerouslySetInnerHTML={{ __html: FESTIVE_HEAD_SCRIPT }} />
       </head>
       <body>
         {children}
