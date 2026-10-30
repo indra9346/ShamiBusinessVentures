@@ -220,7 +220,7 @@ function CategoryLevel() {
                           loading="lazy"
                           width={80}
                           height={80}
-                          className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-110"
+                          className="h-full w-full object-cover"
                         />
                       ) : (
                         <span className="text-lg font-bold text-navy">

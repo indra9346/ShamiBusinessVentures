@@ -2,14 +2,15 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { renderSVG } from "uqr";
 import { toast } from "sonner";
-import { CheckCircle2, Clock, Copy, Loader2, ShieldCheck, ShoppingCart, Smartphone, XCircle } from "lucide-react";
+import { CheckCircle2, Clock, Copy, Loader2, ShieldCheck, ShoppingCart, XCircle } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { inrPrecise } from "@/lib/data";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { AWAITING_PAYMENT, clockText, holdSecondsLeft, holdView, type PaymentHold } from "@/lib/payment-hold";
 import { serverNow, useServerNow } from "@/lib/server-clock";
 import { useApp } from "@/lib/store";
-import { normaliseUtr, upiAppLinks, upiPaymentUri, utrProblem, type UpiSettings } from "@/lib/upi-pay";
+import { normaliseUtr, upiPaymentUri, utrProblem, type UpiSettings } from "@/lib/upi-pay";
+import { UpiAppButtons } from "@/components/site/UpiAppButtons";
 import { submitUpiPayment, useUpiPayments } from "@/lib/upi-store";
 import { cn } from "@/lib/utils";
 
@@ -152,13 +153,7 @@ export function HeldCheckoutPay({ settings, orderNo, amount, holdUntil, customer
                 <li>Pay exactly <span className="font-semibold">{inrPrecise(amount)}</span> to <span className="font-semibold">{settings.payeeName}</span>.</li>
                 <li>Stay on this page: your order is confirmed automatically, usually within a minute.</li>
               </ol>
-              <div className="flex flex-wrap gap-2">
-                {upiAppLinks(uri).map((link) => (
-                  <a key={link.app} href={link.href} className="inline-flex items-center gap-1.5 rounded-md border border-border bg-white px-3 py-2 text-xs font-semibold text-navy hover:border-gold">
-                    <Smartphone className="h-3.5 w-3.5" /> {link.app}
-                  </a>
-                ))}
-              </div>
+              <UpiAppButtons uri={uri} />
               <button type="button" onClick={() => { void navigator.clipboard?.writeText(settings.vpa); toast.success("UPI ID copied"); }}
                 className="inline-flex items-center gap-1 text-xs font-semibold text-gold hover:underline">
                 <Copy className="h-3.5 w-3.5" /> UPI ID: {settings.vpa}

@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { translateText, type Language } from "./i18n-core.ts";
+import { loadKannada, translateText, type Language } from "./i18n-core.ts";
 
 export { translateText, type Language };
 
@@ -28,6 +28,8 @@ const translatedAttributes = ["placeholder", "aria-label", "title", "alt"] as co
 
 export function LanguageProvider({ children }: { children: ReactNode }) {
   const [language, setLanguageState] = useState<Language>("en");
+  // Bumped when the Kannada dictionary arrives, so t() re-renders translated.
+  const [dictionaryVersion, setDictionaryVersion] = useState(0);
   const languageRef = useRef<Language>("en");
   const textSources = useRef(new WeakMap<Text, string>());
   const attributeSources = useRef(new WeakMap<Element, Map<string, string>>());
@@ -72,6 +74,12 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
     setLanguageState(initial);
     document.documentElement.lang = initial === "kn" ? "kn" : "en";
     applyLanguage(document.body, initial);
+    if (initial === "kn") {
+      void loadKannada().then(() => {
+        setDictionaryVersion((v) => v + 1);
+        if (languageRef.current === "kn") applyLanguage(document.body, "kn");
+      }).catch(() => undefined);
+    }
 
     const observer = new MutationObserver((mutations) => {
       observer.disconnect();
@@ -106,13 +114,20 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
     localStorage.setItem(STORAGE_KEY, nextLanguage);
     document.documentElement.lang = nextLanguage === "kn" ? "kn" : "en";
     applyLanguage(document.body, nextLanguage);
+    if (nextLanguage === "kn") {
+      void loadKannada().then(() => {
+        setDictionaryVersion((v) => v + 1);
+        if (languageRef.current === "kn") applyLanguage(document.body, "kn");
+      }).catch(() => undefined);
+    }
   }, [applyLanguage]);
 
   const value = useMemo<LanguageContextValue>(() => ({
     language,
     setLanguage,
     t: (text) => translateText(text, language),
-  }), [language, setLanguage]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- dictionaryVersion re-creates t once Kannada loads
+  }), [language, setLanguage, dictionaryVersion]);
 
   return <LanguageContext.Provider value={value}>{children}</LanguageContext.Provider>;
 }

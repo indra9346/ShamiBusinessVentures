@@ -124,12 +124,21 @@ export function AddToCartPicker({
       }}
       className={
         compact
-          ? "flex h-9 w-full items-center justify-center gap-1.5 rounded-md bg-navy px-2 text-[11px] sm:text-xs font-semibold text-white transition-colors hover:bg-midnight active:scale-[0.98] disabled:opacity-40"
+          ? "flex h-9 w-full items-center justify-center gap-1.5 whitespace-nowrap rounded-md bg-navy px-2 text-[11px] sm:text-xs font-semibold text-white transition-colors hover:bg-midnight active:scale-[0.98] disabled:opacity-40"
           : "flex w-full items-center justify-center gap-1.5 rounded-md bg-navy px-3 py-2.5 text-xs font-semibold text-white transition-colors hover:bg-midnight disabled:opacity-40"
       }
+      aria-label={compact && inCart > 0 ? `Add · ${inCart} in cart` : undefined}
     >
-      <ShoppingCart className="h-3.5 w-3.5 shrink-0" />{" "}
-      {compact ? (inCart > 0 ? `Add · ${inCart} in cart` : "Add") : "Add to Cart"}
+      {/* Compact cards keep one line: the bags already in the cart show as a badge on the cart icon. */}
+      <span className="relative shrink-0">
+        <ShoppingCart className="h-3.5 w-3.5" />
+        {compact && inCart > 0 && (
+          <span className="absolute -top-2 -right-2.5 grid h-4 min-w-4 place-items-center rounded-full bg-gold px-1 text-[9px] font-bold leading-none text-midnight ring-1 ring-navy">
+            {inCart > 99 ? "99+" : inCart}
+          </span>
+        )}
+      </span>
+      <span className={compact && inCart > 0 ? "ml-1.5" : undefined}>{compact ? "Add" : "Add to Cart"}</span>
     </button>
   );
 

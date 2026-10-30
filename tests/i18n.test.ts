@@ -1,7 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { translateText } from "../src/lib/i18n-core.ts";
+import { loadKannada, translateText } from "../src/lib/i18n-core.ts";
 import { kn } from "../src/lib/i18n-kn.ts";
+
+await loadKannada();
 
 test("English mode never changes text", () => {
   assert.equal(translateText("Godown Report", "en"), "Godown Report");

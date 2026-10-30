@@ -118,7 +118,8 @@ export function ProductCard({
         const next = fallbackImage(product.category);
         if (!el.src.endsWith(next)) el.src = next;
       }}
-      className="h-full w-full object-contain p-2.5 transition-transform duration-300 ease-in-out group-hover:scale-105"
+      decoding="async"
+      className="h-full w-full object-contain p-2.5"
     />
   );
 
@@ -193,7 +194,7 @@ export function ProductCard({
 
   if (layout === "list") {
     return (
-      <article className="group relative flex flex-row overflow-hidden rounded-xl border border-stone-200 bg-card shadow-xs transition-all duration-200 ease-out hover:-translate-y-0.5 hover:border-gold/60 hover:shadow-md">
+      <article className="group relative flex flex-row overflow-hidden rounded-xl border border-stone-200 bg-card shadow-xs transition-[border-color,box-shadow] duration-200 hover:border-gold/60 hover:shadow-md">
         <div className="relative w-28 shrink-0 overflow-hidden bg-stone-50/80 sm:w-44">
           <Link to="/product/$id" params={{ id: product.id }} className="block h-full min-h-32 w-full">
             {image}
@@ -237,7 +238,7 @@ export function ProductCard({
   }
 
   return (
-    <article className="group relative flex h-full min-w-0 flex-col overflow-hidden rounded-xl border border-stone-200 bg-card shadow-xs transition-all duration-200 ease-out hover:-translate-y-1 hover:border-gold/60 hover:shadow-md">
+    <article className="group relative flex h-full min-w-0 flex-col overflow-hidden rounded-xl border border-stone-200 bg-card shadow-xs transition-[border-color,box-shadow] duration-200 hover:border-gold/60 hover:shadow-md">
       <div className="relative overflow-hidden bg-stone-50/80">
         <Link to="/product/$id" params={{ id: product.id }} className="block aspect-[4/3] w-full">
           {image}

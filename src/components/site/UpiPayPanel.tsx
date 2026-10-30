@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { renderSVG } from "uqr";
 import { toast } from "sonner";
-import { CheckCircle2, Clock, Copy, ShieldCheck, Smartphone, XCircle } from "lucide-react";
+import { CheckCircle2, Clock, Copy, ShieldCheck, XCircle } from "lucide-react";
 import { inrPrecise } from "@/lib/data";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
-import { normaliseUtr, settingsProblem, upiAppLinks, upiPaymentUri, utrProblem, type UpiSettings } from "@/lib/upi-pay";
+import { normaliseUtr, settingsProblem, upiPaymentUri, utrProblem, type UpiSettings } from "@/lib/upi-pay";
+import { UpiAppButtons } from "@/components/site/UpiAppButtons";
 import { submitUpiPayment, useUpiPayments } from "@/lib/upi-store";
 import { cn } from "@/lib/utils";
 
@@ -96,13 +97,7 @@ export function UpiPayPanel({ settings, orderNo, amount, customer }: { settings:
               <li>Check the amount <span className="font-semibold">{inrPrecise(amount)}</span> and pay to <span className="font-semibold">{settings.payeeName}</span>.</li>
               <li>Copy the 12-digit <span className="font-semibold">UTR / UPI Ref. No.</span> from the payment receipt and enter it here.</li>
             </ol>
-            <div className="flex flex-wrap gap-2">
-              {upiAppLinks(uri).map((link) => (
-                <a key={link.app} href={link.href} className="inline-flex items-center gap-1.5 rounded-md border border-border bg-white px-3 py-2 text-xs font-semibold text-navy hover:border-gold">
-                  <Smartphone className="h-3.5 w-3.5" /> {link.app}
-                </a>
-              ))}
-            </div>
+            <UpiAppButtons uri={uri} />
             <button type="button" onClick={() => { void navigator.clipboard?.writeText(settings.vpa); toast.success("UPI ID copied"); }}
               className="inline-flex items-center gap-1 text-xs font-semibold text-gold hover:underline">
               <Copy className="h-3.5 w-3.5" /> UPI ID: {settings.vpa}
