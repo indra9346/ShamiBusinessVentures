@@ -53,6 +53,7 @@ import {
 import { cn } from "@/lib/utils";
 import { InvoicePreviewButton } from "@/components/site/InvoicePreviewDialog";
 import { ResizableTable } from "@/hooks/use-column-resize";
+import { ItemBatchCodes, useOrderItemBatches } from "@/components/batches/OrderItemBatches";
 
 export const Route = createFileRoute("/admin/orders/$id")({
   head: ({ params }) => ({
@@ -98,6 +99,7 @@ function AdminOrderDetail() {
     updateOrderDelivery,
   } = useApp();
   const order = orders.find((o) => o.id === id);
+  const itemBatches = useOrderItemBatches(order?.dbOrderId, order?.items.map((item) => `${item.dbItemId}:${item.qty}:${order.status}`).join(",") ?? "");
   // Hooks stay above the early return: orders load after the first render.
   const [pushedZohoId, setPushedZohoId] = useState<string | null>(null);
   const [syncingZoho, setSyncingZoho] = useState(false);
@@ -697,6 +699,7 @@ function AdminOrderDetail() {
                           <div>
                             <p className="font-semibold text-navy">{it.product.name}</p>
                             <span className="text-xs text-slate">{it.product.category}</span>
+                            <ItemBatchCodes admin batches={it.dbItemId ? itemBatches.get(it.dbItemId) : undefined} />
                             <Input
                               aria-label={`${it.product.name} bag capacity`}
                               defaultValue={it.capacity ?? it.product.weight}

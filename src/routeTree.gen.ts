@@ -34,6 +34,7 @@ import { Route as AccountTrackRouteImport } from './routes/account.track'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
 import { Route as AdminAdsRouteImport } from './routes/admin.ads'
 import { Route as AdminAttendanceRouteImport } from './routes/admin.attendance'
+import { Route as AdminBatchesRouteImport } from './routes/admin.batches'
 import { Route as AdminBranchesRouteImport } from './routes/admin.branches'
 import { Route as AdminCategoriesRouteImport } from './routes/admin.categories'
 import { Route as AdminCommissionsRouteImport } from './routes/admin.commissions'
@@ -69,6 +70,7 @@ import { Route as PartnerAttendanceRouteImport } from './routes/partner.attendan
 import { Route as PartnerLoginRouteImport } from './routes/partner.login'
 import { Route as ProductIdRouteImport } from './routes/product.$id'
 import { Route as StaffIndexRouteImport } from './routes/staff.index'
+import { Route as StaffDeviceRouteImport } from './routes/staff.device'
 import { Route as StaffLoginRouteImport } from './routes/staff.login'
 import { Route as VendorIndexRouteImport } from './routes/vendor.index'
 import { Route as VendorDashboardRouteImport } from './routes/vendor.dashboard'
@@ -221,6 +223,11 @@ const AdminAdsRoute = AdminAdsRouteImport.update({
 const AdminAttendanceRoute = AdminAttendanceRouteImport.update({
   id: '/admin/attendance',
   path: '/admin/attendance',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminBatchesRoute = AdminBatchesRouteImport.update({
+  id: '/admin/batches',
+  path: '/admin/batches',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AdminBranchesRoute = AdminBranchesRouteImport.update({
@@ -398,6 +405,11 @@ const StaffIndexRoute = StaffIndexRouteImport.update({
   path: '/staff/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const StaffDeviceRoute = StaffDeviceRouteImport.update({
+  id: '/staff/device',
+  path: '/staff/device',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const StaffLoginRoute = StaffLoginRouteImport.update({
   id: '/staff/login',
   path: '/staff/login',
@@ -564,6 +576,7 @@ export interface FileRoutesByFullPath {
   '/account/track': typeof AccountTrackRoute
   '/admin/ads': typeof AdminAdsRoute
   '/admin/attendance': typeof AdminAttendanceRoute
+  '/admin/batches': typeof AdminBatchesRoute
   '/admin/branches': typeof AdminBranchesRoute
   '/admin/categories': typeof AdminCategoriesRoute
   '/admin/commissions': typeof AdminCommissionsRoute
@@ -596,6 +609,7 @@ export interface FileRoutesByFullPath {
   '/partner/attendance': typeof PartnerAttendanceRoute
   '/partner/login': typeof PartnerLoginRoute
   '/product/$id': typeof ProductIdRoute
+  '/staff/device': typeof StaffDeviceRoute
   '/staff/login': typeof StaffLoginRoute
   '/vendor/dashboard': typeof VendorDashboardRoute
   '/vendor/earnings': typeof VendorEarningsRoute
@@ -653,6 +667,7 @@ export interface FileRoutesByTo {
   '/account/track': typeof AccountTrackRoute
   '/admin/ads': typeof AdminAdsRoute
   '/admin/attendance': typeof AdminAttendanceRoute
+  '/admin/batches': typeof AdminBatchesRoute
   '/admin/branches': typeof AdminBranchesRoute
   '/admin/categories': typeof AdminCategoriesRoute
   '/admin/commissions': typeof AdminCommissionsRoute
@@ -685,6 +700,7 @@ export interface FileRoutesByTo {
   '/partner/attendance': typeof PartnerAttendanceRoute
   '/partner/login': typeof PartnerLoginRoute
   '/product/$id': typeof ProductIdRoute
+  '/staff/device': typeof StaffDeviceRoute
   '/staff/login': typeof StaffLoginRoute
   '/vendor/dashboard': typeof VendorDashboardRoute
   '/vendor/earnings': typeof VendorEarningsRoute
@@ -744,6 +760,7 @@ export interface FileRoutesById {
   '/account/track': typeof AccountTrackRoute
   '/admin/ads': typeof AdminAdsRoute
   '/admin/attendance': typeof AdminAttendanceRoute
+  '/admin/batches': typeof AdminBatchesRoute
   '/admin/branches': typeof AdminBranchesRoute
   '/admin/categories': typeof AdminCategoriesRoute
   '/admin/commissions': typeof AdminCommissionsRoute
@@ -776,6 +793,7 @@ export interface FileRoutesById {
   '/partner/attendance': typeof PartnerAttendanceRoute
   '/partner/login': typeof PartnerLoginRoute
   '/product/$id': typeof ProductIdRoute
+  '/staff/device': typeof StaffDeviceRoute
   '/staff/login': typeof StaffLoginRoute
   '/vendor/dashboard': typeof VendorDashboardRoute
   '/vendor/earnings': typeof VendorEarningsRoute
@@ -836,6 +854,7 @@ export interface FileRouteTypes {
     | '/account/track'
     | '/admin/ads'
     | '/admin/attendance'
+    | '/admin/batches'
     | '/admin/branches'
     | '/admin/categories'
     | '/admin/commissions'
@@ -868,6 +887,7 @@ export interface FileRouteTypes {
     | '/partner/attendance'
     | '/partner/login'
     | '/product/$id'
+    | '/staff/device'
     | '/staff/login'
     | '/vendor/dashboard'
     | '/vendor/earnings'
@@ -925,6 +945,7 @@ export interface FileRouteTypes {
     | '/account/track'
     | '/admin/ads'
     | '/admin/attendance'
+    | '/admin/batches'
     | '/admin/branches'
     | '/admin/categories'
     | '/admin/commissions'
@@ -957,6 +978,7 @@ export interface FileRouteTypes {
     | '/partner/attendance'
     | '/partner/login'
     | '/product/$id'
+    | '/staff/device'
     | '/staff/login'
     | '/vendor/dashboard'
     | '/vendor/earnings'
@@ -1015,6 +1037,7 @@ export interface FileRouteTypes {
     | '/account/track'
     | '/admin/ads'
     | '/admin/attendance'
+    | '/admin/batches'
     | '/admin/branches'
     | '/admin/categories'
     | '/admin/commissions'
@@ -1047,6 +1070,7 @@ export interface FileRouteTypes {
     | '/partner/attendance'
     | '/partner/login'
     | '/product/$id'
+    | '/staff/device'
     | '/staff/login'
     | '/vendor/dashboard'
     | '/vendor/earnings'
@@ -1098,6 +1122,7 @@ export interface RootRouteChildren {
   WishlistRoute: typeof WishlistRoute
   AdminAdsRoute: typeof AdminAdsRoute
   AdminAttendanceRoute: typeof AdminAttendanceRoute
+  AdminBatchesRoute: typeof AdminBatchesRoute
   AdminBranchesRoute: typeof AdminBranchesRoute
   AdminCategoriesRoute: typeof AdminCategoriesRoute
   AdminCommissionsRoute: typeof AdminCommissionsRoute
@@ -1129,6 +1154,7 @@ export interface RootRouteChildren {
   PartnerAttendanceRoute: typeof PartnerAttendanceRoute
   PartnerLoginRoute: typeof PartnerLoginRoute
   ProductIdRoute: typeof ProductIdRoute
+  StaffDeviceRoute: typeof StaffDeviceRoute
   StaffLoginRoute: typeof StaffLoginRoute
   VendorDashboardRoute: typeof VendorDashboardRoute
   VendorEarningsRoute: typeof VendorEarningsRoute
@@ -1328,6 +1354,13 @@ declare module '@tanstack/react-router' {
       path: '/admin/attendance'
       fullPath: '/admin/attendance'
       preLoaderRoute: typeof AdminAttendanceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/batches': {
+      id: '/admin/batches'
+      path: '/admin/batches'
+      fullPath: '/admin/batches'
+      preLoaderRoute: typeof AdminBatchesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/admin/branches': {
@@ -1573,6 +1606,13 @@ declare module '@tanstack/react-router' {
       path: '/staff'
       fullPath: '/staff/'
       preLoaderRoute: typeof StaffIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/staff/device': {
+      id: '/staff/device'
+      path: '/staff/device'
+      fullPath: '/staff/device'
+      preLoaderRoute: typeof StaffDeviceRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/staff/login': {
@@ -1938,6 +1978,7 @@ const rootRouteChildren: RootRouteChildren = {
   WishlistRoute: WishlistRoute,
   AdminAdsRoute: AdminAdsRoute,
   AdminAttendanceRoute: AdminAttendanceRoute,
+  AdminBatchesRoute: AdminBatchesRoute,
   AdminBranchesRoute: AdminBranchesRoute,
   AdminCategoriesRoute: AdminCategoriesRoute,
   AdminCommissionsRoute: AdminCommissionsRoute,
@@ -1969,6 +2010,7 @@ const rootRouteChildren: RootRouteChildren = {
   PartnerAttendanceRoute: PartnerAttendanceRoute,
   PartnerLoginRoute: PartnerLoginRoute,
   ProductIdRoute: ProductIdRoute,
+  StaffDeviceRoute: StaffDeviceRoute,
   StaffLoginRoute: StaffLoginRoute,
   VendorDashboardRoute: VendorDashboardRoute,
   VendorEarningsRoute: VendorEarningsRoute,

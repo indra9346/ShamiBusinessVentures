@@ -1,5 +1,5 @@
 import { CheckCircle2, Clock, XCircle } from "lucide-react";
-import { FLAG_LABELS, type AttendanceFlag } from "@/lib/attendance";
+import { FLAG_LABELS, lateText, type AttendanceFlag } from "@/lib/attendance";
 import { cn } from "@/lib/utils";
 
 /* Small pieces shared by the staff app, the admin Attendance page and the partner panel. */
@@ -43,7 +43,7 @@ export function FlagChips({ flags, lateMinutes }: { flags: string[]; lateMinutes
     <span className="inline-flex flex-wrap gap-1">
       {flags.map((flag) => (
         <span key={flag} className="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-semibold text-amber-900">
-          {flag === "late" ? `Late by ${lateMinutes} min` : FLAG_LABELS[flag as AttendanceFlag] ?? flag}
+          {flag === "late" ? lateText(lateMinutes) : FLAG_LABELS[flag as AttendanceFlag] ?? flag}
         </span>
       ))}
     </span>

@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { Inbox } from "lucide-react";
+import { Inbox, Phone } from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { Panel, StatusBadge } from "@/components/panel/widgets";
 import { adminNav } from "@/lib/panel-nav";
@@ -110,12 +110,23 @@ function AdminEnquiries() {
                     </td>
                     <td className="p-3">
                       <p className="font-medium text-navy">{row.name}</p>
-                      <a
-                        className="text-xs text-slate hover:text-gold"
-                        href={`mailto:${row.email}`}
-                      >
-                        {row.email}
-                      </a>
+                      <p className="flex flex-wrap items-center gap-x-2 text-xs text-slate">
+                        <a className="hover:text-gold" href={`mailto:${row.email}`}>
+                          {row.email}
+                        </a>
+                        <span aria-hidden="true">·</span>
+                        {row.phone?.trim() ? (
+                          <a
+                            className="inline-flex items-center gap-1 font-semibold text-navy tabular-nums hover:text-gold"
+                            href={`tel:${row.phone.replace(/[^\d+]/g, "")}`}
+                          >
+                            <Phone className="h-3 w-3" />
+                            {row.phone}
+                          </a>
+                        ) : (
+                          <span>No mobile given</span>
+                        )}
+                      </p>
                     </td>
                     <td className="p-3 text-slate">
                       {new Date(row.created_at).toLocaleString("en-IN")}
