@@ -1,14 +1,18 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { fast2smsOtpRequest, fast2smsOutcome, smsFromHookPayload, verifyHookSignature } from "@/lib/sms-hook";
+import {
+  SMS_FAILED_MESSAGE, fast2smsOtpRequest, fast2smsOutcome, hookErrorBody, smsFailureForCustomer, smsFromHookPayload, verifyHookSignature,
+} from "@/lib/sms-hook";
 
 /**
  * Supabase Auth "Send SMS" hook: Supabase makes each phone OTP and POSTs it here, signed with the
  * hook secret (SEND_SMS_HOOK_SECRET, "v1,whsec_…" from the Supabase dashboard). The code is sent
- * through the Fast2SMS OTP route with FAST2SMS_API_KEY. A failure goes back to Supabase, so the
- * customer sees "could not send" instead of waiting for an SMS that never comes.
+ * through the Fast2SMS OTP route with FAST2SMS_API_KEY. A failure goes back to Supabase with a
+ * message the customer sees (e.g. "too many codes, wait"), instead of waiting for an SMS that never comes.
  */
-const hookError = (httpCode: number, message: string) =>
-  Response.json({ error: { http_code: httpCode, message } }, { status: httpCode });
+const hookError = (httpCode: number, message: string) => {
+  const { status, body } = hookErrorBody(httpCode, message);
+  return Response.json(body, { status });
+};
 
 export const Route = createFileRoute("/api/auth/send-sms")({
   server: {
@@ -48,13 +52,14 @@ export const Route = createFileRoute("/api/auth/send-sms")({
           reply = await response.json().catch(() => null);
         } catch (cause) {
           console.error("send-sms hook: Fast2SMS unreachable:", cause instanceof Error ? cause.message : String(cause));
-          return hookError(502, "Could not send the SMS right now. Please try again or sign in with email.");
+          return hookError(502, SMS_FAILED_MESSAGE);
         }
         const outcome = fast2smsOutcome(status, reply);
         // Never log the code; the last 4 digits of the number are enough to trace a delivery.
         if (!outcome.ok) {
           console.error(`send-sms hook: ******${sms.mobile.slice(-4)}:`, outcome.message);
-          return hookError(502, "Could not send the SMS right now. Please try again or sign in with email.");
+          const failure = smsFailureForCustomer(outcome.code);
+          return hookError(failure.httpCode, failure.message);
         }
         console.info(`send-sms hook: sent to ******${sms.mobile.slice(-4)} (Fast2SMS ${outcome.requestId})`);
         return Response.json({});

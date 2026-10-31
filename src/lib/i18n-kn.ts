@@ -4136,6 +4136,7 @@ export const kn: Record<string, string> = {
   "The purchase date is in the future": "ಖರೀದಿ ದಿನಾಂಕ ಭವಿಷ್ಯದಲ್ಲಿದೆ",
   "Choose an active godown": "ಸಕ್ರಿಯ ಗೋದಾಮು ಆಯ್ಕೆಮಾಡಿ",
   "Batch number {0} is already used. Each purchase needs its own number.": "ಬ್ಯಾಚ್ ಸಂಖ್ಯೆ {0} ಈಗಾಗಲೇ ಬಳಕೆಯಲ್ಲಿದೆ. ಪ್ರತಿ ಖರೀದಿಗೆ ತನ್ನದೇ ಸಂಖ್ಯೆ ಬೇಕು.",
+  "Too many codes were sent to this number. Please wait 10 minutes and try again.": "ಈ ಸಂಖ್ಯೆಗೆ ಹಲವು ಕೋಡ್‌ಗಳನ್ನು ಕಳುಹಿಸಲಾಗಿದೆ. ದಯವಿಟ್ಟು 10 ನಿಮಿಷ ಕಾಯಿರಿ, ನಂತರ ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ.",
 };
 
 /** Word-level fallbacks for text that isn't in the dictionary (product names, specs from the database). */
