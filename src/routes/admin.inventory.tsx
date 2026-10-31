@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -288,12 +288,11 @@ function AdminInventory() {
         title="Product Stock & FIFO Costing"
         action={
           <div className="flex flex-wrap items-center gap-2">
-            <Button
-              size="sm"
-              className="bg-navy text-white hover:bg-navy/90"
-              onClick={() => setAddBatchOpen(true)}
-            >
-              <PackagePlus className="mr-1.5 h-4 w-4" /> Add Purchase Batch
+            {/* Purchases are received per godown in Admin > Batches (stock number, Zoho, reports). */}
+            <Button size="sm" className="bg-navy text-white hover:bg-navy/90" asChild>
+              <Link to="/admin/batches">
+                <PackagePlus className="mr-1.5 h-4 w-4" /> Receive purchase batch
+              </Link>
             </Button>
             <Button
               variant="outline"

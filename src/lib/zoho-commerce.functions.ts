@@ -7,6 +7,10 @@ import { PICKUP_SETTINGS_KEY, parsePickupSettings, pickupPointForPin } from "@/l
 import { isMeasureUnit, toBaseQuantity } from "@/lib/data";
 import { MAX_COUNT, isBigChange, planStockCount, stockCountDescription, zohoLocationStock } from "@/lib/stock-counts";
 import {
+  isBatchCode, normalizeBatchCode, packageLinesWithBatches, planBatchGain, planBatchLoss, planZohoBatchIn, planZohoBatchOut,
+  zohoBatchesAtLocation, zohoTracksBatches, type BatchShare, type StockBatch, type ZohoBatch,
+} from "@/lib/batches";
+import {
   cleanEmailList, godownPricesFromPricebook, godownStockFromZohoItem, mergeGodownPrices, newOrderEmail, parseZohoItemSyncVendorIds, pendingOrderQty, sameGodownPrices,
   zohoPricebookItemsFor, reconcileCatalog, reconcileCustomers, reconcileOrders, shouldRetryZohoCall,
   zohoItemSyncAllows, zohoLogLine,
@@ -2180,7 +2184,7 @@ async function syncLinkedZohoOrder(
   // Packed / Dispatched / Out for Delivery / Delivered on the website: package, shipment and
   // delivery in Zoho, at the sales order's godown location.
   if (!["draft", ...ZOHO_CLOSED_ORDER_STATES].includes(zohoStatus())) {
-    zoho = await pushZohoFulfilment(region, organizationId, token, order, zoho, load);
+    zoho = await pushZohoFulfilment(db, region, organizationId, token, order, zoho, load);
   }
   await saveZohoZohoState(db, order.id, zoho);
   await refreshSalesOrderSnapshotSafe(db, organizationId, zoho);
@@ -2443,6 +2447,7 @@ function zohoFulfillmentStatus(zoho: Record<string, unknown>) {
  * auto-numbering off, PKG-/SHP- plus the website order number are used instead.
  */
 async function pushZohoFulfilment(
+  db: Awaited<ReturnType<typeof dbAdmin>>,
   region: Region,
   organizationId: string,
   token: string,
@@ -2472,9 +2477,17 @@ async function pushZohoFulfilment(
     const next = nextZohoFulfilmentStep(order.order_status, zohoPackagesOf(zoho));
     if (!next) return zoho;
     if (next.step === "package") {
-      const lines = (Array.isArray(zoho["line_items"]) ? zoho["line_items"] : []).map(plainObject)
-        .filter((line) => str(line["line_item_id"]) && Number(line["quantity"]) > 0)
-        .map((line) => ({ so_line_item_id: str(line["line_item_id"]), quantity: Number(line["quantity"]) }));
+      const soLines = (Array.isArray(zoho["line_items"]) ? zoho["line_items"] : []).map(plainObject)
+        .filter((line) => str(line["line_item_id"]) && Number(line["quantity"]) > 0);
+      let lines: Record<string, unknown>[] = soLines.map((line) => ({ so_line_item_id: str(line["line_item_id"]), quantity: Number(line["quantity"]) }));
+      if (soLines.some((line) => line["track_batch_number"] === true)) {
+        // Items with Zoho "Track batches": the package names the batches the order took (FIFO).
+        const inputs = await packageBatchInputs(db, region, organizationId, token, order.id, soLines, str(zoho["location_id"]));
+        const planned = packageLinesWithBatches(soLines, inputs.reserved, inputs.zohoBatchesByItem);
+        if (planned.problems.length)
+          throw new NeedsReviewError(`Zoho needs batches to pack ${number}: ${planned.problems.join("; ")}. Receive the stock as a batch (Admin > Batches), then retry.`);
+        lines = planned.lines;
+      }
       if (!lines.length) throw new NeedsReviewError(`Zoho sales order ${number} has no items to pack.`);
       try {
         await createNumbered("packages", { salesorder_id: salesOrderId },
@@ -4899,13 +4912,16 @@ async function syncZohoGodownPrices(db: Awaited<ReturnType<typeof dbAdmin>>, reg
  * the godown takes Zoho's available stock there, less website orders Zoho does not hold yet.
  */
 async function syncZohoGodownStock(db: Awaited<ReturnType<typeof dbAdmin>>, region: Region, organizationId: string, token: string) {
-  const summary = { enabled: false, items: 0, pulled: 0, sentToZoho: 0, failed: 0, errors: [] as string[] };
+  const summary = {
+    enabled: false, items: 0, pulled: 0, sentToZoho: 0, failed: 0, errors: [] as string[],
+    batches: { items: 0, linked: 0, added: 0, failed: 0, errors: [] as string[] },
+  };
   if (!(await isZohoStockMaster(db))) return summary;
   summary.enabled = true;
   const readAt = new Date().toISOString();
   const [{ data: branches }, { data: links }, { data: products }, { data: stockRows }] = await Promise.all([
     db.from("branches").select("id,zoho_location_id").eq("active", true).is("vendor_id", null).neq("zoho_location_id", ""),
-    db.from("zoho_item_links").select("product_id,zoho_item_id"),
+    db.from("zoho_item_links").select("product_id,zoho_item_id,track_batches"),
     db.from("catalog_products").select("id,vendor_id,payload"),
     db.from("branch_stock").select("branch_id,product_id,stock,zoho_pending"),
   ]);
@@ -4924,6 +4940,7 @@ async function syncZohoGodownStock(db: Awaited<ReturnType<typeof dbAdmin>>, regi
     zoho_order_status: order.zoho_order_status, created_at: order.created_at,
     items: ((order as { order_items?: { product_id: string | null; qty: number }[] }).order_items ?? []),
   })), since, defaultBranch?.id ?? "");
+  const trackedItems: { productId: string; zohoItemId: string; purchaseRate: number }[] = [];
   await runPool(links.filter((link) => siteProducts.has(link.product_id)), 3, async (link) => {
     try {
       const response = await inventoryRequest<{ item?: Record<string, unknown> }>(
@@ -4932,6 +4949,11 @@ async function syncZohoGodownStock(db: Awaited<ReturnType<typeof dbAdmin>>, regi
       const item = response.item ?? {};
       summary.items += 1;
       if (str(item["item_type"]) && str(item["item_type"]) !== "inventory") return;
+      // Zoho "Track batches": remembered for the admin pages; its batches are read below.
+      const tracked = zohoTracksBatches(item);
+      if (tracked !== link.track_batches)
+        await db.from("zoho_item_links").update({ track_batches: tracked }).eq("product_id", link.product_id);
+      if (tracked) trackedItems.push({ productId: link.product_id, zohoItemId: link.zoho_item_id, purchaseRate: Math.max(0, Number(item["purchase_rate"]) || 0) });
       for (const branch of branches) {
         const ordersWaiting = pending.get(branch.id)?.get(link.product_id) ?? 0;
         const zohoStock = godownStockFromZohoItem(item, branch.zoho_location_id, ordersWaiting);
@@ -4943,13 +4965,23 @@ async function syncZohoGodownStock(db: Awaited<ReturnType<typeof dbAdmin>>, regi
           const zohoAvailable = godownStockFromZohoItem(item, branch.zoho_location_id, 0) ?? 0;
           const delta = Math.round((Number(row.stock) + ordersWaiting - zohoAvailable) * 1000) / 1000;
           if (delta !== 0) {
-            await inventoryRequest(region, organizationId, token, "inventoryadjustments", "POST", {
+            // A website receipt or edit: a batch-tracked item names its batches; a website cut
+            // also shows as a correction on the batch it came out of.
+            const batchLine = await batchAwareAdjustment(db, region, organizationId, token, {
+              itemId: link.zoho_item_id, tracked, locationId: branch.zoho_location_id,
+              branchId: branch.id, productId: link.product_id, delta, gainShares: false,
+            });
+            const adjustment = await inventoryRequest<{ inventory_adjustment?: Record<string, unknown> }>(region, organizationId, token, "inventoryadjustments", "POST", {
               date: todayInIndia(),
               reason: "Grain Bazar godown stock",
               adjustment_type: "quantity",
               description: `Set ${siteProducts.get(link.product_id)} stock at this godown to ${row.stock} to match Grain Bazar`,
               location_id: branch.zoho_location_id,
-              line_items: [{ item_id: link.zoho_item_id, quantity_adjusted: delta, location_id: branch.zoho_location_id }],
+              line_items: [batchLine.line],
+            });
+            await recordBatchShares(db, batchLine.shares, {
+              reason: "correction", note: "Website stock edit", zohoAdjustmentId: str(adjustment.inventory_adjustment?.["inventory_adjustment_id"]),
+              by: null, byName: "Website",
             });
             summary.sentToZoho += 1;
           }
@@ -4969,6 +5001,10 @@ async function syncZohoGodownStock(db: Awaited<ReturnType<typeof dbAdmin>>, regi
     }
   });
   summary.errors = summary.errors.slice(0, 10);
+  if (trackedItems.length) {
+    summary.batches = await syncZohoBatches(db, region, organizationId, token, trackedItems, branches);
+    summary.batches.errors = summary.batches.errors.slice(0, 10);
+  }
   return summary;
 }
 
@@ -5027,7 +5063,14 @@ export const submitStockCount = createServerFn({ method: "POST" })
     const productName = str((product.payload as Record<string, unknown> | null)?.["name"]) || product.id;
 
     let adjustmentId = "";
+    let shares: BatchShare[] = [];
     if (plan.delta !== 0) {
+      // Batch-tracked in Zoho: the adjustment names the batches (the oldest lose first).
+      const batchLine = await batchAwareAdjustment(db, region, organizationId, token, {
+        itemId: link.zoho_item_id, tracked: zohoTracksBatches(response.item), locationId: branch.zoho_location_id,
+        branchId: branch.id, productId: product.id, delta: plan.delta, gainShares: true,
+      });
+      shares = batchLine.shares;
       const adjustment = await inventoryRequest<{ inventory_adjustment?: Record<string, unknown> }>(
         region, organizationId, token, "inventoryadjustments", "POST", {
           date: todayInIndia(),
@@ -5035,13 +5078,13 @@ export const submitStockCount = createServerFn({ method: "POST" })
           adjustment_type: "quantity",
           description: stockCountDescription({ godown: branch.name, employee: employee.name, counted: data.counted, physical: zoho.physical, reason: data.reason, note: data.note }),
           location_id: branch.zoho_location_id,
-          line_items: [{ item_id: link.zoho_item_id, quantity_adjusted: plan.delta, location_id: branch.zoho_location_id }],
+          line_items: [batchLine.line],
         },
       );
       adjustmentId = str(adjustment.inventory_adjustment?.["inventory_adjustment_id"]);
     }
     const flagged = isBigChange(zoho.physical, data.counted);
-    const { error } = await db.rpc("record_stock_count", {
+    const { data: countId, error } = await db.rpc("record_stock_count", {
       _branch_id: branch.id, _product_id: product.id, _counted: data.counted, _zoho_physical_before: zoho.physical,
       _zoho_delta: plan.delta, _site_after: plan.siteAfter, _reason: data.reason, _note: data.note, _flagged: flagged,
       _zoho_adjustment_id: adjustmentId, _counted_by: context.userId, _counted_by_name: employee.name, _employee_id: employee.id,
@@ -5051,6 +5094,11 @@ export const submitStockCount = createServerFn({ method: "POST" })
         ? "Zoho has the new count, but the website could not save it. The website catches up at the next Zoho sync (within 15 minutes)."
         : "The count could not be saved. Try again.");
     }
+    // The same loss / gain per batch, for the batch reports.
+    await recordBatchShares(db, shares, {
+      reason: data.reason === "damaged" ? "damaged" : "stock_count", note: data.note, stockCountId: countId ?? null,
+      zohoAdjustmentId: adjustmentId, by: context.userId, byName: employee.name,
+    });
     return { productName, counted: data.counted, zohoBefore: zoho.physical, delta: plan.delta, siteAfter: plan.siteAfter, flagged, adjustmentId };
   }));
 
@@ -5086,3 +5134,264 @@ export const syncZohoGodownsNow = createServerFn({ method: "POST" })
     const stock = await syncZohoGodownStock(db, region, organizationId, token);
     return { prices, stock };
   });
+
+// ---------------------------------------------------------------- batches (rules in src/lib/batches.ts)
+// Zoho refuses packages and adjustments of an item with "Track batches" ticked unless they name
+// the batches, so every such call here says which Zoho batches the units come from or go to.
+
+/** Batches of one Zoho item, all locations (GET /items/batches, scope items.READ). */
+async function zohoItemBatches(region: Region, organizationId: string, token: string, itemId: string) {
+  const response = await inventoryRequest<{ batches?: unknown[] }>(region, organizationId, token, "items/batches", "GET", undefined,
+    { item_id: itemId, per_page: "200" });
+  return Array.isArray(response.batches) ? response.batches : [];
+}
+
+/** The website's batches of a product at a godown. */
+async function websiteBatchesAt(db: Awaited<ReturnType<typeof dbAdmin>>, branchId: string, productId: string): Promise<StockBatch[]> {
+  const { data } = await db.from("batches").select("id,batch_code,purchase_date,created_at,remaining_quantity,zoho_batch_id")
+    .eq("branch_id", branchId).eq("product_id", productId);
+  return (data ?? []).map((b) => ({
+    id: b.id, batchCode: b.batch_code, purchaseDate: b.purchase_date, createdAt: b.created_at,
+    remaining: Number(b.remaining_quantity), zohoBatchId: b.zoho_batch_id,
+  }));
+}
+
+/**
+ * The Zoho adjustment line for a stock change of `delta` units at a godown, plus the same change
+ * per website batch (for the batch reports). Item with Zoho "Track batches": a loss comes out of
+ * Zoho's oldest batches at that location; a gain goes to a website batch Zoho does not have yet
+ * (by its number), else Zoho's newest batch there, else a new batch number. Other items: the
+ * oldest website batch loses first, the newest takes a gain.
+ */
+async function batchAwareAdjustment(
+  db: Awaited<ReturnType<typeof dbAdmin>>, region: Region, organizationId: string, token: string,
+  input: { itemId: string; tracked: boolean; locationId: string; branchId: string; productId: string; delta: number; gainShares: boolean },
+) {
+  const line: Record<string, unknown> = { item_id: input.itemId, quantity_adjusted: input.delta, location_id: input.locationId };
+  const website = await websiteBatchesAt(db, input.branchId, input.productId);
+  let shares: BatchShare[] = [];
+  if (!input.tracked) {
+    shares = input.delta < 0 ? planBatchLoss(website, -input.delta).shares : input.gainShares ? planBatchGain(website, input.delta).shares : [];
+    return { line, shares };
+  }
+  const zoho = zohoBatchesAtLocation(await zohoItemBatches(region, organizationId, token, input.itemId), input.locationId);
+  const byZohoId = new Map(website.filter((b) => b.zohoBatchId).map((b) => [b.zohoBatchId!, b]));
+  if (input.delta < 0) {
+    const plan = planZohoBatchOut(zoho, -input.delta);
+    if (plan.short > 0)
+      throw new Error(`Zoho has only ${-input.delta - plan.short} of this item in batches at this godown. Receive the rest as a batch (Admin > Batches) first.`);
+    line["batches"] = plan.lines;
+    shares = plan.lines.flatMap((l) => {
+      const batch = byZohoId.get(l.batch_id);
+      return batch ? [{ batchId: batch.id, qty: -l.out_quantity }] : [];
+    });
+  } else if (input.delta > 0) {
+    const unlinked = website.filter((b) => !b.zohoBatchId).sort((a, b) => a.createdAt.localeCompare(b.createdAt)).at(-1);
+    if (unlinked) {
+      line["batches"] = [{ batch_number: unlinked.batchCode, in_quantity: input.delta }];
+      if (input.gainShares) shares = [{ batchId: unlinked.id, qty: input.delta }];
+    } else {
+      let fresh = "";
+      if (!zoho.length) {
+        const { data: next } = await db.rpc("next_batch_code", { _branch_id: input.branchId, _purchase_date: todayInIndia() });
+        fresh = next ?? `${input.branchId}-${todayInIndia()}`;
+      }
+      line["batches"] = planZohoBatchIn(zoho, input.delta, fresh);
+      const newest = zoho.at(-1);
+      const target = newest ? byZohoId.get(newest.batchId) : undefined;
+      if (input.gainShares && target) shares = [{ batchId: target.id, qty: input.delta }];
+    }
+  }
+  return { line, shares };
+}
+
+/** Records the per-batch part of a stock change; a failure is logged, never undoes the change. */
+async function recordBatchShares(
+  db: Awaited<ReturnType<typeof dbAdmin>>, shares: BatchShare[],
+  meta: { reason: string; note: string; stockCountId?: string | null; zohoAdjustmentId: string; by: string | null; byName: string },
+) {
+  if (!shares.length) return;
+  const { error } = await db.rpc("record_batch_adjustments", {
+    _rows: shares.map((share) => ({
+      batch_id: share.batchId, qty: share.qty, reason: meta.reason, note: meta.note,
+      stock_count_id: meta.stockCountId ?? "", zoho_adjustment_id: meta.zohoAdjustmentId,
+    })) as Json,
+    _created_by: meta.by, _created_by_name: meta.byName,
+  });
+  if (error) console.error(zohoLogLine("batch_adjustment_failed", { reason: meta.reason, message: error.message.slice(0, 200) }));
+}
+
+/**
+ * Zoho -> website for batch-tracked items: Zoho batches at each godown's location are linked to the
+ * website batch with the same number (Zoho's balance is kept for the reconciliation), and batches
+ * made in Zoho (a purchase receive, a transfer to another godown) are added to the website.
+ */
+async function syncZohoBatches(
+  db: Awaited<ReturnType<typeof dbAdmin>>, region: Region, organizationId: string, token: string,
+  items: { productId: string; zohoItemId: string; purchaseRate: number }[],
+  branches: { id: string; zoho_location_id: string }[],
+) {
+  const summary = { items: 0, linked: 0, added: 0, failed: 0, errors: [] as string[] };
+  for (const item of items) {
+    try {
+      const list = await zohoItemBatches(region, organizationId, token, item.zohoItemId);
+      const rows = branches.flatMap((branch) => zohoBatchesAtLocation(list, branch.zoho_location_id).map((batch) => ({
+        zoho_batch_id: batch.batchId, batch_number: batch.batchNumber, product_id: item.productId, branch_id: branch.id,
+        zoho_item_id: item.zohoItemId, in_quantity: batch.inQuantity, balance: batch.balance,
+        mfg_date: batch.manufacturedDate.slice(0, 10), expiry_date: batch.expiryDate.slice(0, 10),
+        unit_cost: item.purchaseRate, seen_on: todayInIndia(),
+      })));
+      summary.items += 1;
+      if (!rows.length) continue;
+      const { data, error } = await db.rpc("apply_zoho_batches", { _rows: rows as Json });
+      if (error) throw new Error(error.message);
+      const result = (data ?? {}) as { linked?: number; added?: number };
+      summary.linked += result.linked ?? 0;
+      summary.added += result.added ?? 0;
+    } catch (cause) {
+      summary.failed += 1;
+      const message = cause instanceof Error ? cause.message : String(cause);
+      summary.errors.push(`${item.productId}: ${message}${zohoPermissionHint(message)}`.slice(0, 300));
+    }
+  }
+  return summary;
+}
+
+/** For a package: the Zoho batches the website order took, per Zoho item, and Zoho's batches at the order's location. */
+async function packageBatchInputs(
+  db: Awaited<ReturnType<typeof dbAdmin>>, region: Region, organizationId: string, token: string,
+  orderId: string, soLines: Record<string, unknown>[], fallbackLocation: string,
+) {
+  const reserved = new Map<string, { zohoBatchId: string; qty: number }[]>();
+  const zohoBatchesByItem = new Map<string, ZohoBatch[]>();
+  const { data: items } = await db.from("order_items").select("id,product_id").eq("order_id", orderId);
+  const itemIds = (items ?? []).map((item) => item.id);
+  const productOf = new Map((items ?? []).map((item) => [item.id, item.product_id ?? ""]));
+  const { data: allocations } = itemIds.length
+    ? await db.from("order_item_batch_allocations").select("order_item_id,batch_id,reserved_quantity,released_quantity").in("order_item_id", itemIds)
+    : { data: [] as { order_item_id: string; batch_id: string; reserved_quantity: number; released_quantity: number }[] };
+  const { data: links } = await db.from("zoho_item_links").select("product_id,zoho_item_id");
+  const zohoItemOf = new Map((links ?? []).map((link) => [link.product_id, link.zoho_item_id]));
+  const batchIds = [...new Set((allocations ?? []).map((a) => a.batch_id))];
+  const { data: batches } = batchIds.length
+    ? await db.from("batches").select("id,zoho_batch_id").in("id", batchIds)
+    : { data: [] as { id: string; zoho_batch_id: string }[] };
+  const zohoBatchOf = new Map((batches ?? []).map((b) => [b.id, b.zoho_batch_id]));
+  for (const allocation of allocations ?? []) {
+    const left = Number(allocation.reserved_quantity) - Number(allocation.released_quantity);
+    const zohoItem = zohoItemOf.get(productOf.get(allocation.order_item_id) ?? "");
+    const zohoBatch = zohoBatchOf.get(allocation.batch_id);
+    if (left <= 0 || !zohoItem || !zohoBatch) continue;
+    reserved.set(zohoItem, [...(reserved.get(zohoItem) ?? []), { zohoBatchId: zohoBatch, qty: left }]);
+  }
+  for (const line of soLines.filter((l) => l["track_batch_number"] === true)) {
+    const itemId = str(line["item_id"]);
+    if (!itemId || zohoBatchesByItem.has(itemId)) continue;
+    const location = str(line["location_id"]) || fallbackLocation;
+    zohoBatchesByItem.set(itemId, zohoBatchesAtLocation(await zohoItemBatches(region, organizationId, token, itemId), location));
+  }
+  return { reserved, zohoBatchesByItem };
+}
+
+/**
+ * Admin > Batches > Receive purchase. A purchase at a godown becomes one batch (number given, or
+ * the next CLK-DDMMYY-NN). With Zoho as the stock master and the product linked, Zoho gets the
+ * stock first: an inventory adjustment at the godown's location (a named batch for an item with
+ * "Track batches"). Only when Zoho accepted it is the batch saved and the godown's website stock
+ * raised, so the two never disagree. Without a Zoho link the batch is website-only and the stock
+ * goes to Zoho with the next sync.
+ */
+export const receiveBatchPurchase = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator(z.object({
+    branchId: z.string().trim().min(1).max(40),
+    productId: z.string().trim().min(1).max(100),
+    quantity: z.number().positive().max(1_000_000),
+    unitCost: z.number().min(0).max(100_000_000),
+    purchaseDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    batchCode: z.string().trim().max(40).default(""),
+    supplier: z.string().trim().max(120).default(""),
+    purchaseRef: z.string().trim().max(80).default(""),
+    notes: z.string().trim().max(300).default(""),
+    mfgDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().default(null),
+    expiryDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().default(null),
+  }))
+  .handler(async ({ data, context }) => withZohoPurpose("Batch purchase receipt", async () => {
+    await ensureAdmin(context.supabase, context.userId);
+    const db = await dbAdmin();
+    if (data.purchaseDate > todayInIndia()) throw new Error("The purchase date is in the future");
+    const [{ data: branch }, { data: product }, { data: link }, { data: profile }] = await Promise.all([
+      db.from("branches").select("id,name,code,zoho_location_id,active,vendor_id").eq("id", data.branchId).maybeSingle(),
+      db.from("catalog_products").select("id,vendor_id,payload").eq("id", data.productId).maybeSingle(),
+      db.from("zoho_item_links").select("zoho_item_id").eq("product_id", data.productId).maybeSingle(),
+      db.from("profiles").select("full_name").eq("id", context.userId).maybeSingle(),
+    ]);
+    if (!branch?.active || branch.vendor_id) throw new Error("Choose an active godown");
+    if (!product || str(product.vendor_id).startsWith("zoho:")) throw new Error("Product not found");
+    let code = normalizeBatchCode(data.batchCode);
+    if (code && !isBatchCode(code)) throw new Error("Batch number: 2-40 letters, digits, - / _ .");
+    if (!code) {
+      const { data: next, error } = await db.rpc("next_batch_code", { _branch_id: branch.id, _purchase_date: data.purchaseDate });
+      if (error || !next) throw new Error("Could not number the batch. Try again.");
+      code = next;
+    }
+    const { count } = await db.from("batches").select("id", { count: "exact", head: true }).ilike("batch_code", code);
+    if (count) throw new Error(`Batch number ${code} is already used. Each purchase needs its own number.`);
+
+    const productName = str((product.payload as Record<string, unknown> | null)?.["name"]) || product.id;
+    const zohoItemId = link?.zoho_item_id ?? "";
+    const zohoReady = Boolean(zohoItemId && str(branch.zoho_location_id) && (await isZohoStockMaster(db)));
+    let tracked = false, adjustmentId = "", zohoBatchId = "";
+    if (zohoReady) {
+      const { region, organizationId, token } = await zohoOrderContext(db);
+      const item = (await inventoryRequest<{ item?: Record<string, unknown> }>(
+        region, organizationId, token, `items/${encodeURIComponent(zohoItemId)}`, "GET",
+      )).item ?? {};
+      tracked = zohoTracksBatches(item);
+      const batch = {
+        batch_number: code, in_quantity: data.quantity,
+        ...(data.mfgDate ? { manufacturer_date: data.mfgDate } : {}),
+        ...(data.expiryDate ? { expiry_date: data.expiryDate } : {}),
+      };
+      const from = data.supplier ? ` from ${data.supplier}` : "";
+      const ref = data.purchaseRef ? ` (bill/PO ${data.purchaseRef})` : "";
+      const adjustment = await inventoryRequest<{ inventory_adjustment?: Record<string, unknown> }>(
+        region, organizationId, token, "inventoryadjustments", "POST", {
+          date: data.purchaseDate,
+          reason: "Grain Bazar purchase batch",
+          adjustment_type: "quantity",
+          reference_number: code.slice(0, 50),
+          description: `Purchase batch ${code}: ${data.quantity} x ${productName} received at ${branch.name}${from}${ref}`.slice(0, 480),
+          location_id: branch.zoho_location_id,
+          line_items: [{
+            item_id: zohoItemId, quantity_adjusted: data.quantity, location_id: branch.zoho_location_id,
+            ...(tracked ? { batches: [batch] } : {}),
+          }],
+        },
+      );
+      adjustmentId = str(adjustment.inventory_adjustment?.["inventory_adjustment_id"]);
+      const lines = Array.isArray(adjustment.inventory_adjustment?.["line_items"])
+        ? adjustment.inventory_adjustment!["line_items"] as Record<string, unknown>[] : [];
+      const made = Array.isArray(lines[0]?.["batches"]) ? lines[0]["batches"] as Record<string, unknown>[] : [];
+      zohoBatchId = str((made.find((b) => normalizeBatchCode(str(b["batch_number"])) === code) ?? made[0])?.["batch_id"]);
+      if (tracked && !zohoBatchId) {
+        const found = zohoBatchesAtLocation(await zohoItemBatches(region, organizationId, token, zohoItemId), branch.zoho_location_id)
+          .find((b) => normalizeBatchCode(b.batchNumber) === code);
+        zohoBatchId = found?.batchId ?? "";
+      }
+    }
+    const { data: batchId, error } = await db.rpc("record_batch_receipt", {
+      _batch_code: code, _branch_id: branch.id, _product_id: product.id, _quantity: data.quantity, _unit_cost: data.unitCost,
+      _purchase_date: data.purchaseDate, _mfg_date: data.mfgDate, _expiry_date: data.expiryDate, _supplier: data.supplier,
+      _purchase_ref: data.purchaseRef, _notes: data.notes, _zoho_item_id: zohoItemId, _zoho_batch_id: zohoBatchId,
+      _zoho_adjustment_id: adjustmentId, _zoho_done: zohoReady, _received_by: context.userId, _received_by_name: str(profile?.full_name),
+    });
+    if (error || !batchId) {
+      const message = error?.message ?? "unknown error";
+      if (!zohoReady) throw new Error(message);
+      throw new Error(tracked
+        ? `Zoho has batch ${code} at ${branch.name}, but the website could not save it (${message}). It appears here with the next Zoho sync (within 15 minutes); do not enter it again.`
+        : `Zoho has the stock at ${branch.name}, but the website could not save the batch (${message}). Do not enter it again; tell head office.`);
+    }
+    return { batchId, batchCode: code, zoho: zohoReady ? (tracked ? "batch" as const : "stock" as const) : "website" as const, adjustmentId };
+  }));

@@ -34,6 +34,7 @@ import { Route as AccountTrackRouteImport } from './routes/account.track'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
 import { Route as AdminAdsRouteImport } from './routes/admin.ads'
 import { Route as AdminAttendanceRouteImport } from './routes/admin.attendance'
+import { Route as AdminBatchesRouteImport } from './routes/admin.batches'
 import { Route as AdminBranchesRouteImport } from './routes/admin.branches'
 import { Route as AdminCategoriesRouteImport } from './routes/admin.categories'
 import { Route as AdminCommissionsRouteImport } from './routes/admin.commissions'
@@ -221,6 +222,11 @@ const AdminAdsRoute = AdminAdsRouteImport.update({
 const AdminAttendanceRoute = AdminAttendanceRouteImport.update({
   id: '/admin/attendance',
   path: '/admin/attendance',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminBatchesRoute = AdminBatchesRouteImport.update({
+  id: '/admin/batches',
+  path: '/admin/batches',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AdminBranchesRoute = AdminBranchesRouteImport.update({
@@ -564,6 +570,7 @@ export interface FileRoutesByFullPath {
   '/account/track': typeof AccountTrackRoute
   '/admin/ads': typeof AdminAdsRoute
   '/admin/attendance': typeof AdminAttendanceRoute
+  '/admin/batches': typeof AdminBatchesRoute
   '/admin/branches': typeof AdminBranchesRoute
   '/admin/categories': typeof AdminCategoriesRoute
   '/admin/commissions': typeof AdminCommissionsRoute
@@ -653,6 +660,7 @@ export interface FileRoutesByTo {
   '/account/track': typeof AccountTrackRoute
   '/admin/ads': typeof AdminAdsRoute
   '/admin/attendance': typeof AdminAttendanceRoute
+  '/admin/batches': typeof AdminBatchesRoute
   '/admin/branches': typeof AdminBranchesRoute
   '/admin/categories': typeof AdminCategoriesRoute
   '/admin/commissions': typeof AdminCommissionsRoute
@@ -744,6 +752,7 @@ export interface FileRoutesById {
   '/account/track': typeof AccountTrackRoute
   '/admin/ads': typeof AdminAdsRoute
   '/admin/attendance': typeof AdminAttendanceRoute
+  '/admin/batches': typeof AdminBatchesRoute
   '/admin/branches': typeof AdminBranchesRoute
   '/admin/categories': typeof AdminCategoriesRoute
   '/admin/commissions': typeof AdminCommissionsRoute
@@ -836,6 +845,7 @@ export interface FileRouteTypes {
     | '/account/track'
     | '/admin/ads'
     | '/admin/attendance'
+    | '/admin/batches'
     | '/admin/branches'
     | '/admin/categories'
     | '/admin/commissions'
@@ -925,6 +935,7 @@ export interface FileRouteTypes {
     | '/account/track'
     | '/admin/ads'
     | '/admin/attendance'
+    | '/admin/batches'
     | '/admin/branches'
     | '/admin/categories'
     | '/admin/commissions'
@@ -1015,6 +1026,7 @@ export interface FileRouteTypes {
     | '/account/track'
     | '/admin/ads'
     | '/admin/attendance'
+    | '/admin/batches'
     | '/admin/branches'
     | '/admin/categories'
     | '/admin/commissions'
@@ -1098,6 +1110,7 @@ export interface RootRouteChildren {
   WishlistRoute: typeof WishlistRoute
   AdminAdsRoute: typeof AdminAdsRoute
   AdminAttendanceRoute: typeof AdminAttendanceRoute
+  AdminBatchesRoute: typeof AdminBatchesRoute
   AdminBranchesRoute: typeof AdminBranchesRoute
   AdminCategoriesRoute: typeof AdminCategoriesRoute
   AdminCommissionsRoute: typeof AdminCommissionsRoute
@@ -1328,6 +1341,13 @@ declare module '@tanstack/react-router' {
       path: '/admin/attendance'
       fullPath: '/admin/attendance'
       preLoaderRoute: typeof AdminAttendanceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/batches': {
+      id: '/admin/batches'
+      path: '/admin/batches'
+      fullPath: '/admin/batches'
+      preLoaderRoute: typeof AdminBatchesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/admin/branches': {
@@ -1938,6 +1958,7 @@ const rootRouteChildren: RootRouteChildren = {
   WishlistRoute: WishlistRoute,
   AdminAdsRoute: AdminAdsRoute,
   AdminAttendanceRoute: AdminAttendanceRoute,
+  AdminBatchesRoute: AdminBatchesRoute,
   AdminBranchesRoute: AdminBranchesRoute,
   AdminCategoriesRoute: AdminCategoriesRoute,
   AdminCommissionsRoute: AdminCommissionsRoute,

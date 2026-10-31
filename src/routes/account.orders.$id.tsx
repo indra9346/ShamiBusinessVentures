@@ -32,6 +32,7 @@ import { OrderUpiPay } from "@/components/site/UpiPayPanel";
 import { HeldCheckoutPay } from "@/components/site/HeldCheckoutPay";
 import { useUpiPayments } from "@/lib/upi-store";
 import { resizedImage } from "@/lib/image-url";
+import { ItemBatchCodes, useOrderItemBatches } from "@/components/batches/OrderItemBatches";
 
 export const Route = createFileRoute("/account/orders/$id")({
   head: ({ params }) => ({
@@ -73,6 +74,7 @@ function AccountOrderDetail() {
   const order = orders.find(
     (candidate) => candidate.id === id && orderBelongsToUser(candidate, user),
   );
+  const itemBatches = useOrderItemBatches(order?.dbOrderId);
 
   // A checkout waiting for payment is not an order yet: show its payment screen.
   const hold = order ? undefined : paymentHolds.find((candidate) => candidate.orderNo === id);
@@ -300,6 +302,7 @@ function AccountOrderDetail() {
                         <div>
                           <p className="font-medium text-navy">{it.product.name}</p>
                           <p className="text-xs text-slate">Qty {it.qty}</p>
+                          <ItemBatchCodes batches={it.dbItemId ? itemBatches.get(it.dbItemId) : undefined} />
                         </div>
                       </div>
                     </td>

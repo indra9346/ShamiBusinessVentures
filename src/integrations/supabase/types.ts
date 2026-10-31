@@ -51,9 +51,9 @@ export type Database = {
         Relationships: []
       }
       zoho_item_links: {
-        Row: { product_id: string; zoho_item_id: string; updated_at: string; last_polled_at: string | null; last_zoho_modified_at: string | null; app_fingerprint: string | null }
-        Insert: { product_id: string; zoho_item_id: string; updated_at?: string; last_polled_at?: string | null; last_zoho_modified_at?: string | null; app_fingerprint?: string | null }
-        Update: { product_id?: string; zoho_item_id?: string; updated_at?: string; last_polled_at?: string | null; last_zoho_modified_at?: string | null; app_fingerprint?: string | null }
+        Row: { product_id: string; zoho_item_id: string; track_batches: boolean; updated_at: string; last_polled_at: string | null; last_zoho_modified_at: string | null; app_fingerprint: string | null }
+        Insert: { product_id: string; zoho_item_id: string; track_batches?: boolean; updated_at?: string; last_polled_at?: string | null; last_zoho_modified_at?: string | null; app_fingerprint?: string | null }
+        Update: { product_id?: string; zoho_item_id?: string; track_batches?: boolean; updated_at?: string; last_polled_at?: string | null; last_zoho_modified_at?: string | null; app_fingerprint?: string | null }
         Relationships: []
       }
       zoho_catalog_tombstones: {
@@ -184,6 +184,19 @@ export type Database = {
       }
       batches: {
         Row: {
+          branch_id: string | null
+          source: string
+          supplier: string
+          purchase_ref: string
+          notes: string
+          received_by: string | null
+          received_by_name: string
+          zoho_item_id: string
+          zoho_batch_id: string
+          zoho_adjustment_id: string
+          zoho_balance: number | null
+          zoho_checked_at: string | null
+          depleted_at: string | null
           batch_code: string
           created_at: string
           expiry_date: string | null
@@ -203,6 +216,19 @@ export type Database = {
           warehouse: string | null
         }
         Insert: {
+          branch_id?: string | null
+          source?: string
+          supplier?: string
+          purchase_ref?: string
+          notes?: string
+          received_by?: string | null
+          received_by_name?: string
+          zoho_item_id?: string
+          zoho_batch_id?: string
+          zoho_adjustment_id?: string
+          zoho_balance?: number | null
+          zoho_checked_at?: string | null
+          depleted_at?: string | null
           batch_code: string
           created_at?: string
           expiry_date?: string | null
@@ -222,6 +248,19 @@ export type Database = {
           warehouse?: string | null
         }
         Update: {
+          branch_id?: string | null
+          source?: string
+          supplier?: string
+          purchase_ref?: string
+          notes?: string
+          received_by?: string | null
+          received_by_name?: string
+          zoho_item_id?: string
+          zoho_batch_id?: string
+          zoho_adjustment_id?: string
+          zoho_balance?: number | null
+          zoho_checked_at?: string | null
+          depleted_at?: string | null
           batch_code?: string
           created_at?: string
           expiry_date?: string | null
@@ -240,6 +279,18 @@ export type Database = {
           vendor_id?: string | null
           warehouse?: string | null
         }
+        Relationships: []
+      }
+      batch_adjustments: {
+        Row: { id: string; batch_id: string; qty: number; reason: string; note: string; unit_cost: number; stock_count_id: string | null; zoho_adjustment_id: string; created_by: string | null; created_by_name: string; created_at: string }
+        Insert: { id?: string; batch_id: string; qty: number; reason: string; note?: string; unit_cost?: number; stock_count_id?: string | null; zoho_adjustment_id?: string; created_by?: string | null; created_by_name?: string; created_at?: string }
+        Update: { id?: string; batch_id?: string; qty?: number; reason?: string; note?: string; unit_cost?: number; stock_count_id?: string | null; zoho_adjustment_id?: string; created_by?: string | null; created_by_name?: string; created_at?: string }
+        Relationships: []
+      }
+      order_item_batch_allocations: {
+        Row: { id: string; order_item_id: string; batch_id: string; reserved_quantity: number; released_quantity: number; unit_cost: number; created_at: string }
+        Insert: { id?: string; order_item_id: string; batch_id: string; reserved_quantity: number; released_quantity?: number; unit_cost?: number; created_at?: string }
+        Update: { id?: string; order_item_id?: string; batch_id?: string; reserved_quantity?: number; released_quantity?: number; unit_cost?: number; created_at?: string }
         Relationships: []
       }
       catalog_products: {
@@ -1081,6 +1132,16 @@ export type Database = {
         Args: { _branch_id: string; _product_id: string; _counted: number; _zoho_physical_before: number; _zoho_delta: number; _site_after: number; _reason: string; _note: string; _flagged: boolean; _zoho_adjustment_id: string; _counted_by: string; _counted_by_name: string; _employee_id: string | null }
         Returns: string
       }
+      next_batch_code: { Args: { _branch_id: string; _purchase_date: string | null }; Returns: string }
+      record_batch_receipt: {
+        Args: { _batch_code: string; _branch_id: string; _product_id: string; _quantity: number; _unit_cost: number; _purchase_date: string | null; _mfg_date: string | null; _expiry_date: string | null; _supplier: string; _purchase_ref: string; _notes: string; _zoho_item_id: string; _zoho_batch_id: string; _zoho_adjustment_id: string; _zoho_done: boolean; _received_by: string | null; _received_by_name: string }
+        Returns: string
+      }
+      record_batch_adjustments: { Args: { _rows: Json; _created_by: string | null; _created_by_name: string }; Returns: number }
+      apply_zoho_batches: { Args: { _rows: Json }; Returns: Json }
+      link_zoho_batch: { Args: { _batch_id: string; _zoho_batch_id: string; _zoho_adjustment_id: string }; Returns: undefined }
+      admin_update_batch: { Args: { _batch_id: string; _unit_cost: number; _supplier: string; _purchase_ref: string; _notes: string; _mfg_date: string | null; _expiry_date: string | null }; Returns: undefined }
+      order_item_batches: { Args: { _order_id: string }; Returns: { order_item_id: string; batch_code: string; qty: number }[] }
       attendance_decide: { Args: { _kind: string; _id: string; _decision: string; _note?: string }; Returns: string }
       request_leave: { Args: { _from: string; _to: string; _type: string; _reason: string }; Returns: string }
       cancel_leave: { Args: { _id: string }; Returns: undefined }
