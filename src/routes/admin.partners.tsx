@@ -1,10 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Copy, Handshake, IndianRupee, KeyRound, Target, Timer, Trash2, UserPlus } from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { Panel, StatCard } from "@/components/panel/widgets";
 import { CommissionLinesTable, PartnerLeaderboard, commissionTotals, usePartnerData } from "@/components/partners/PartnerWidgets";
+import { PartnerHistoryPanel } from "@/components/partners/PartnerHistory";
 import { adminNav } from "@/lib/panel-nav";
 import { useApp } from "@/lib/store";
 import { useBranches } from "@/lib/branches";
@@ -33,6 +34,9 @@ function AdminPartners() {
   const [rules, setRules] = useState<Rule[]>([]);
   const [month, setMonth] = useState(monthStart());
   const { leaders, lines } = usePartnerData(month);
+  // Bumped after a partner is added, suspended or reactivated, so the history reloads.
+  const [historyKey, setHistoryKey] = useState(0);
+  const firstLoad = useRef(true);
 
   const load = useCallback(async () => {
     const [p, r] = await Promise.all([
@@ -41,6 +45,8 @@ function AdminPartners() {
     ]);
     setPartners((p.data as Partner[] | null) ?? []);
     setRules((r.data as Rule[] | null) ?? []);
+    if (!firstLoad.current) setHistoryKey((key) => key + 1);
+    firstLoad.current = false;
   }, []);
   useEffect(() => { void load(); }, [load]);
 
@@ -70,6 +76,8 @@ function AdminPartners() {
             rules={rules.filter((rule) => rule.branch_id === godown.id)} month={month} onChange={load} />
         ))}
       </div>
+
+      <div className="mt-6"><PartnerHistoryPanel refreshKey={historyKey} /></div>
 
       <div className="mt-6 grid gap-6 lg:grid-cols-[360px_minmax(0,1fr)]">
         <Panel title={`Leaderboard · ${monthLabel(month)}`}><PartnerLeaderboard leaders={leaders} /></Panel>

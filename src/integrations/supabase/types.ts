@@ -473,9 +473,15 @@ export type Database = {
         Relationships: []
       }
       channel_partners: {
-        Row: { id: string; user_id: string; branch_id: string; name: string; email: string; phone: string; status: string; created_by: string | null; created_at: string; updated_at: string }
-        Insert: { user_id: string; branch_id: string; name: string; email: string; id?: string; phone?: string; status?: string; created_by?: string | null; created_at?: string; updated_at?: string }
-        Update: { id?: string; user_id?: string; branch_id?: string; name?: string; email?: string; phone?: string; status?: string; created_by?: string | null; created_at?: string; updated_at?: string }
+        Row: { id: string; user_id: string; branch_id: string; name: string; email: string; phone: string; status: string; created_by: string | null; created_at: string; updated_at: string; status_changed_by: string | null; status_changed_at: string | null }
+        Insert: { user_id: string; branch_id: string; name: string; email: string; id?: string; phone?: string; status?: string; created_by?: string | null; created_at?: string; updated_at?: string; status_changed_by?: string | null; status_changed_at?: string | null }
+        Update: { id?: string; user_id?: string; branch_id?: string; name?: string; email?: string; phone?: string; status?: string; created_by?: string | null; created_at?: string; updated_at?: string; status_changed_by?: string | null; status_changed_at?: string | null }
+        Relationships: []
+      }
+      channel_partner_events: {
+        Row: { id: string; partner_id: string; branch_id: string; event: string; at: string; by_user: string | null; by_name: string; backfilled: boolean }
+        Insert: { id?: string; partner_id: string; branch_id: string; event: string; at?: string; by_user?: string | null; by_name?: string; backfilled?: boolean }
+        Update: { id?: string; partner_id?: string; branch_id?: string; event?: string; at?: string; by_user?: string | null; by_name?: string; backfilled?: boolean }
         Relationships: []
       }
       partner_commission_rules: {
