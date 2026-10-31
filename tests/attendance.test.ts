@@ -1,8 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  attendanceStatus, attendanceWorkbook, checkInFlags, cleanMobile, distanceMeters, indiaDate, lateMinutes, leaveDays, leaveProblem,
-  locationVerdict, monthDays, parseCoordinates, registerMark, reviewStatus, selfiePath, summariseMonth,
+  attendanceWorkbook, cleanMobile, distanceMeters, earlyLeaveMinutes, earlyText, formatDuration, geofenceRefusal, indiaDate, indiaInstant,
+  lateMinutes, lateText, leaveDays, leaveProblem, locationVerdict, monthDays, parseCoordinates, periodDays, presenceSchedule, registerMark,
+  reviewStatus, selfiePath, staffLoginEmail, staffPasswordProblem, summariseMonth, summarisePeriod, summaryRow, workedMinutes, SUMMARY_HEADER,
 } from "../src/lib/attendance.ts";
 import { buildXlsx } from "../src/lib/xlsx.ts";
 
@@ -40,14 +41,55 @@ test("late: minutes after the shift start, only once the grace has passed (India
   assert.equal(indiaDate(new Date("2026-10-31T19:00:00Z")), "2026-11-01"); // 00:30 IST
 });
 
-test("a check-in needs approval when outside, imprecise, late or the godown has no location", () => {
-  assert.deepEqual(checkInFlags("inside", 0), []);
-  assert.deepEqual(checkInFlags("inside", 20), ["late"]);
-  assert.deepEqual(checkInFlags("outside", 20), ["outside", "late"]);
-  assert.deepEqual(checkInFlags("no_godown_location", 0), ["no_godown_location"]);
+test("check-in and check-out only inside the godown: clear reasons otherwise", () => {
+  assert.equal(geofenceRefusal("inside", 40, 150), null);
+  assert.equal(geofenceRefusal("outside", 412, 150), "You are 412 m from the godown. Move inside the godown (within 150 m) to mark attendance.");
+  assert.match(geofenceRefusal("imprecise", 50, 150)!, /^GPS is not precise enough/);
+  assert.match(geofenceRefusal("no_godown_location", null, 150)!, /^Head office has not set this godown's location/);
 });
 
-test("approval: head office AND channel partner; either rejects; head office alone without a partner", () => {
+test("late, early and worked time shown as hours and minutes", () => {
+  assert.equal(formatDuration(436), "7 hr 16 min");
+  assert.equal(formatDuration(45), "45 min");
+  assert.equal(formatDuration(120), "2 hr");
+  assert.equal(formatDuration(0), "0 min");
+  assert.equal(formatDuration(-5), "0 min");
+  assert.equal(formatDuration(59.6), "1 hr");
+  assert.equal(lateText(436), "Late by 7 hr 16 min");
+  assert.equal(earlyText(65), "Left early by 1 hr 5 min");
+  const at = (hhmm: string) => new Date(`2026-10-31T${hhmm}:00+05:30`);
+  assert.equal(earlyLeaveMinutes(at("17:25"), "18:30"), 65);
+  assert.equal(earlyLeaveMinutes(at("18:30"), "18:30:00"), 0);
+  assert.equal(earlyLeaveMinutes(at("19:10"), "18:30"), 0);
+  assert.equal(workedMinutes("2026-10-31T03:55:00Z", "2026-10-31T12:25:00Z"), 510);
+  assert.equal(workedMinutes("2026-10-31T03:55:00Z", null), 0);
+  assert.equal(indiaInstant("2026-10-31", "18:30"), Date.parse("2026-10-31T18:30:00+05:30"));
+  assert.equal(indiaInstant("2026-11-01", "00:15"), Date.parse("2026-11-01T00:15:00+05:30"));
+});
+
+test("presence photo every 2 hours while checked in", () => {
+  const t = (hhmm: string) => Date.parse(`2026-10-31T${hhmm}:00+05:30`);
+  const base = { checkInAt: t("09:30"), checkOutAt: null, shiftEndAt: t("18:30"), intervalMin: 120 };
+  // Due 11:30, 13:30, 15:30, 17:30 (19:30 is after the shift end).
+  const morning = presenceSchedule({ ...base, photos: [t("11:20")], now: t("13:40") });
+  assert.deepEqual(morning.slots.map((slot) => slot.status), ["done", "due", "upcoming", "upcoming"]);
+  assert.equal(morning.required, 4);
+  // 13:30 photo at 14:05 is 35 min after: late. 15:30 had none by 16:10: missed. One photo counts once.
+  const later = presenceSchedule({ ...base, photos: [t("11:20"), t("14:05"), t("14:06")], now: t("16:10") });
+  assert.deepEqual(later.slots.map((slot) => slot.status), ["done", "late", "missed", "upcoming"]);
+  assert.deepEqual([later.done, later.late, later.missed], [1, 1, 1]);
+  // Checked out at 14:00: only the slots before check-out count, and the 13:30 one (no photo) is missed.
+  const out = presenceSchedule({ ...base, checkOutAt: t("14:00"), photos: [t("11:31")], now: t("17:00") });
+  assert.deepEqual(out.slots.map((slot) => slot.status), ["done", "missed"]);
+  // Checked out at 13:40, inside the 13:30 window, before sending it: missed, not "due".
+  assert.deepEqual(presenceSchedule({ ...base, checkOutAt: t("13:40"), photos: [t("11:31")], now: t("13:45") }).slots.map((slot) => slot.status), ["done", "missed"]);
+  // Switched off: nothing due.
+  assert.equal(presenceSchedule({ ...base, intervalMin: 0, photos: [], now: t("17:00") }).required, 0);
+  // A check-in after the shift end gets no slots before check-out.
+  assert.equal(presenceSchedule({ ...base, checkInAt: t("19:00"), photos: [], now: t("20:00") }).required, 0);
+});
+
+test("leave approval: head office AND channel partner; either rejects; head office alone without a partner", () => {
   assert.equal(reviewStatus(null, null, true), "pending");
   assert.equal(reviewStatus("approved", null, true), "pending");
   assert.equal(reviewStatus(null, "approved", true), "pending");
@@ -56,11 +98,6 @@ test("approval: head office AND channel partner; either rejects; head office alo
   assert.equal(reviewStatus("rejected", "approved", true), "rejected");
   assert.equal(reviewStatus("approved", null, false), "approved");
   assert.equal(reviewStatus(null, "approved", false), "pending");
-  // Attendance days: one Present at once stays Present unless rejected.
-  assert.equal(attendanceStatus(false, null, null, true), "present");
-  assert.equal(attendanceStatus(false, null, "rejected", true), "rejected");
-  assert.equal(attendanceStatus(true, "approved", null, true), "pending");
-  assert.equal(attendanceStatus(true, "approved", "approved", true), "present");
 });
 
 test("leave: days and limits match the database", () => {
@@ -83,8 +120,8 @@ test("monthly register marks and summary", () => {
   assert.equal(monthDays("2026-02-01").length, 28);
   assert.equal(monthDays("2026-10-01").at(-1), "2026-10-31");
   const records = [
-    { work_date: "2026-10-01", status: "present", late_minutes: 0, check_in_at: "2026-10-01T03:55:00Z", check_out_at: "2026-10-01T12:25:00Z" }, // 8.5 h
-    { work_date: "2026-10-02", status: "present", late_minutes: 25, check_in_at: "2026-10-02T04:25:00Z", check_out_at: null },
+    { work_date: "2026-10-01", status: "present", late_minutes: 0, check_in_at: "2026-10-01T03:55:00Z", check_out_at: "2026-10-01T12:25:00Z", early_leave_minutes: 35 }, // 8.5 h
+    { work_date: "2026-10-02", status: "present", late_minutes: 436, check_in_at: "2026-10-02T04:25:00Z", check_out_at: null },
     { work_date: "2026-10-03", status: "pending", late_minutes: 0, check_in_at: "2026-10-03T04:00:00Z", check_out_at: null },
     { work_date: "2026-10-04", status: "rejected", late_minutes: 0, check_in_at: "2026-10-04T04:00:00Z", check_out_at: "2026-10-04T12:00:00Z" },
   ];
@@ -103,37 +140,81 @@ test("monthly register marks and summary", () => {
   assert.equal(registerMark("2026-10-04", records[0], [], "2026-10-10", { weeklyOff: 0 }), "P");
   const { marks, summary } = summariseMonth("2026-10-01", records, leaves, "2026-10-10");
   assert.deepEqual(marks.slice(0, 11), ["P", "L", "?", "X", "LV", "LV", "A", "A", "A", "", ""]);
-  assert.deepEqual(summary, { present: 2, late: 1, leave: 2, weeklyOff: 0, pending: 1, rejected: 1, absent: 3, hours: 8.5 });
+  assert.deepEqual(summary, {
+    present: 2, late: 1, lateMinutes: 436, earlyDays: 1, earlyMinutes: 35, leave: 2, weeklyOff: 0, pending: 1, rejected: 1, absent: 3, workedMinutes: 510, hours: 8.5,
+  });
   const sundaysOff = summariseMonth("2026-10-01", [], [], "2026-10-31", { weeklyOff: 0 });
   assert.equal(sundaysOff.summary.weeklyOff, 4); // 4, 11, 18, 25 Oct
   assert.equal(sundaysOff.summary.absent, 26);
+  // Any period, across months: 30 Oct to 2 Nov.
+  assert.deepEqual(periodDays("2026-10-30", "2026-11-02"), ["2026-10-30", "2026-10-31", "2026-11-01", "2026-11-02"]);
+  assert.deepEqual(periodDays("2026-11-02", "2026-11-01"), []);
+  const span = summarisePeriod(periodDays("2026-09-30", "2026-10-02"), records, [], "2026-10-10");
+  assert.deepEqual(span.marks, ["A", "P", "L"]);
+  assert.equal(span.summary.lateMinutes, 436);
 });
 
-test("Excel workbook for payroll: summary, register per godown, check-ins, leave", () => {
+test("Excel workbook for any period: dashboard, staff, daily, presence photos, registers, leave history, rules", () => {
+  const t = (date: string, hhmm: string) => new Date(`${date}T${hhmm}:00+05:30`).toISOString();
+  const godown = { shift_start: "09:30", shift_end: "18:30", late_grace_min: 10, attendance_radius_m: 150 };
   const sheets = attendanceWorkbook({
-    month: "2026-10-01", monthName: "October 2026", today: "2026-10-03",
-    godowns: [{ id: "BR-CLK", name: "Challakere", weekly_off: 0 }, { id: "BR-HBL", name: "Hubli", weekly_off: null }],
+    from: "2026-10-01", to: "2026-10-03", today: "2026-10-03", now: Date.parse(t("2026-10-03", "20:00")),
+    godowns: [{ id: "BR-CLK", name: "Challakere", weekly_off: 0, presence_interval_min: 120, ...godown }, { id: "BR-HBL", name: "Hubli", weekly_off: null, presence_interval_min: 0, ...godown }],
     employees: [
-      { id: "e1", name: "Manju", phone: "9876500001", designation: "Loader", branch_id: "BR-CLK", joined_on: "2026-10-01" },
-      { id: "e2", name: "Basava", phone: "9876500002", designation: "", branch_id: "BR-HBL", joined_on: "2026-10-01" },
+      { id: "e1", name: "Manju", phone: "9876500001", designation: "Loader", branch_id: "BR-CLK", joined_on: "2026-10-01", status: "active" },
+      { id: "e2", name: "Basava", phone: "9876500002", designation: "", branch_id: "BR-HBL", joined_on: "2026-10-01", status: "inactive" },
     ],
     days: [{
-      employee_id: "e1", work_date: "2026-10-01", status: "present", late_minutes: 0, check_in_at: "2026-10-01T03:55:00Z", check_out_at: "2026-10-01T12:25:00Z",
-      in_distance_m: 35, in_accuracy_m: 12, flags: [], employee_note: "", head_office_decision: null, partner_decision: null,
+      id: "d1", employee_id: "e1", work_date: "2026-10-01", status: "present", late_minutes: 0, check_in_at: t("2026-10-01", "09:25"), check_out_at: t("2026-10-01", "17:55"),
+      early_leave_minutes: 35, in_distance_m: 35, in_accuracy_m: 12, flags: [], employee_note: "",
     }, {
-      employee_id: "e2", work_date: "2026-10-02", status: "pending", late_minutes: 20, check_in_at: "2026-10-02T04:20:00Z", check_out_at: null,
-      in_distance_m: 400, in_accuracy_m: 15, flags: ["outside", "late"], employee_note: "Bus late", head_office_decision: "approved", partner_decision: null,
+      id: "d2", employee_id: "e2", work_date: "2026-10-02", status: "present", late_minutes: 436, check_in_at: t("2026-10-02", "16:46"), check_out_at: null,
+      in_distance_m: 40, in_accuracy_m: 15, flags: ["late"], employee_note: "Bus late",
     }],
-    leaves: [{ employee_id: "e1", from_date: "2026-10-02", to_date: "2026-10-02", status: "approved", leave_type: "sick", reason: "Fever" }],
+    // Manju's photos: due 11:25 (on time), 13:25 (none: missed), 15:25 (sent 16:00: late), 17:25 (on time).
+    presence: [
+      { attendance_day_id: "d1", taken_at: t("2026-10-01", "11:20"), distance_m: 20, inside: true },
+      { attendance_day_id: "d1", taken_at: t("2026-10-01", "16:00"), distance_m: 300, inside: false },
+      { attendance_day_id: "d1", taken_at: t("2026-10-01", "17:30"), distance_m: 25, inside: true },
+    ],
+    leaves: [{ employee_id: "e1", from_date: "2026-10-02", to_date: "2026-10-02", status: "approved", leave_type: "sick", reason: "Fever", head_office_decision: "approved", partner_decision: "approved", created_at: "2026-10-01T10:00:00Z" }],
   });
-  assert.deepEqual(sheets.map((sheet) => sheet.name), ["Summary", "Register Challakere", "Register Hubli", "Check-ins", "Leave"]);
-  assert.deepEqual(sheets[0]!.rows[2], ["Godown", "Employee", "Mobile", "Designation", "Present days", "Late days", "Leave days", "Weekly off", "Waiting for approval", "Rejected", "Absent", "Hours worked"]);
-  assert.deepEqual(sheets[0]!.rows[3], ["Challakere", "Manju", "9876500001", "Loader", 1, 0, 1, 0, 0, 0, 0, 8.5]);
-  assert.deepEqual(sheets[0]!.rows[4], ["Hubli", "Basava", "9876500002", "", 0, 0, 0, 0, 1, 0, 1, 0]);
-  assert.deepEqual(sheets[1]!.rows[3]!.slice(0, 4), ["Manju", "P", "LV", ""]);
-  assert.deepEqual(sheets[3]!.rows[2]!.slice(7, 13), ["Waiting for approval", 20, "Outside the godown, Late", "Bus late", "Approved", ""]);
-  assert.deepEqual(sheets[4]!.rows[1], ["Manju", "Challakere", "2026-10-02", "2026-10-02", 1, "Sick leave", "Fever", "Approved"]);
+  assert.deepEqual(sheets.map((sheet) => sheet.name), ["Dashboard", "Staff", "Daily attendance", "Presence photos", "Register Challakere", "Register Hubli", "Leave history", "Rules"]);
+  const dashboard = sheets[0]!.rows;
+  assert.deepEqual(dashboard[1], ["Period: 2026-10-01 to 2026-10-03"]);
+  assert.deepEqual(dashboard.slice(4, 13), [
+    ["Employees", 2], ["Present days", 2], ["Late days", 1], ["Total late time", "7 hr 16 min"], ["Absent days", 1], ["Leave days", 1],
+    ["Worked time", "8 hr 30 min"], ["Presence photos due", 4], ["Presence photos missed", 1],
+  ]);
+  assert.deepEqual(dashboard[15], ["Challakere", 1, 1, 0, "0 min", "", 0, 1, "8 hr 30 min", 4, 1]);
+  assert.deepEqual(dashboard[16], ["Hubli", 1, 1, 1, "7 hr 16 min", "7 hr 16 min", 1, 0, "0 min", 0, 0]);
+  assert.deepEqual(dashboard[19], ["Basava", "Hubli", 1, "7 hr 16 min"]);
+  assert.deepEqual(sheets[0]!.boldRows, [0, 14, 18]);
+  const staff = sheets[1]!.rows;
+  assert.deepEqual(staff[2], SUMMARY_HEADER);
+  // Sorted by godown then name: Challakere first. 3 Oct is today and not marked: not absent yet.
+  assert.deepEqual(staff[3], ["Challakere", "Manju", "9876500001", "Loader", "2026-10-01", "Active", 1, 0, "0 min", 0, 1, "35 min", "8 hr 30 min", 8.5, 1, 0, 0, 4, 2, 1, 1]);
+  assert.deepEqual(staff[4], ["Hubli", "Basava", "9876500002", "", "2026-10-01", "Inactive", 1, 1, "7 hr 16 min", 436, 0, "0 min", "0 min", 0, 0, 0, 1, 0, 0, 0, 0]);
+  const daily = sheets[2]!.rows;
+  assert.deepEqual(daily[1]!.slice(0, 12), ["2026-10-01", "Thursday", "Challakere", "Manju", "9876500001", "9:25 am", "5:55 pm", "", 0, "35 min", 35, "8 hr 30 min"]);
+  assert.deepEqual(daily[1]!.slice(14), ["3 of 4", "Present", ""]);
+  assert.deepEqual(daily[2]!.slice(5, 12), ["4:46 pm", "Not checked out", "7 hr 16 min", 436, "", 0, ""]);
+  const photos = sheets[3]!.rows;
+  assert.deepEqual(photos.slice(1).map((row) => [row[3], row[4], row[5], row[7]]), [
+    ["11:25 am", "11:20 am", "On time", "Yes"], ["1:25 pm", "", "Missed", ""], ["3:25 pm", "4:00 pm", "Late", "No"], ["5:25 pm", "5:30 pm", "On time", "Yes"],
+  ]);
+  assert.deepEqual(sheets[4]!.rows[2], ["Employee", "1/10", "2/10", "3/10", "P", "L", "LV", "WO", "A", "Total late"]);
+  assert.deepEqual(sheets[4]!.rows[3], ["Manju", "P", "LV", "", 1, 0, 1, 0, 0, "0 min"]);
+  assert.deepEqual(sheets[5]!.rows[3], ["Basava", "A", "L", "", 1, 1, 0, 0, 1, "7 hr 16 min"]);
+  assert.deepEqual(sheets[6]!.rows[1], ["Manju", "Challakere", "2026-10-02", "2026-10-02", 1, "Sick leave", "Fever", "Approved", "Approved", "Approved", "2026-10-01"]);
+  assert.deepEqual(sheets[7]!.rows[1], ["Challakere", "09:30", "18:30", 10, 150, "Sunday", "2 hr"]);
+  assert.deepEqual(sheets[7]!.rows[2], ["Hubli", "09:30", "18:30", 10, 150, "None", "Off"]);
   assert.ok(buildXlsx(sheets).length > 1000);
+  // Over two months: no per-day register sheets (too wide); everything else stays.
+  const year = attendanceWorkbook({ from: "2026-01-01", to: "2026-10-03", today: "2026-10-03", now: 0, godowns: [], employees: [], days: [], presence: [], leaves: [] });
+  assert.deepEqual(year.map((sheet) => sheet.name), ["Dashboard", "Staff", "Daily attendance", "Presence photos", "Leave history", "Rules"]);
+  const blank = summarisePeriod([], [], [], "2026-01-01").summary;
+  assert.equal(summaryRow("X", { id: "e", name: "N", phone: "1", designation: "", branch_id: "X", joined_on: "2026-01-01" }, blank, { required: 0, done: 0, late: 0, missed: 0 }).length, SUMMARY_HEADER.length);
 });
 
 test("pasted coordinates and Google Maps links", () => {
@@ -151,4 +232,14 @@ test("mobile numbers and selfie paths", () => {
   assert.equal(cleanMobile("12345"), null);
   assert.equal(cleanMobile("5876543210"), null);
   assert.equal(selfiePath("BR-CLK", "2026-10-31", "e1", "in", 1761884400000), "BR-CLK/2026-10-31/e1-in-1761884400000.jpg");
+  assert.equal(selfiePath("BR-CLK", "2026-10-31", "e1", "presence", 1761884400000), "BR-CLK/2026-10-31/e1-presence-1761884400000.jpg");
+});
+
+test("staff sign in with mobile number and password", () => {
+  assert.equal(staffLoginEmail("9876543210"), "9876543210@staff.grainbazar.com");
+  assert.equal(staffPasswordProblem("Godown2026"), null);
+  assert.equal(staffPasswordProblem("Gb12345"), "Use at least 8 characters");
+  assert.equal(staffPasswordProblem("godownstaff"), "Use letters and at least one number");
+  assert.equal(staffPasswordProblem("12345678"), "Use letters and at least one number");
+  assert.equal(staffPasswordProblem(`a1${"x".repeat(71)}`), "Use at most 72 characters");
 });

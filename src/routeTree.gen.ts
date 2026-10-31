@@ -70,6 +70,7 @@ import { Route as PartnerAttendanceRouteImport } from './routes/partner.attendan
 import { Route as PartnerLoginRouteImport } from './routes/partner.login'
 import { Route as ProductIdRouteImport } from './routes/product.$id'
 import { Route as StaffIndexRouteImport } from './routes/staff.index'
+import { Route as StaffDeviceRouteImport } from './routes/staff.device'
 import { Route as StaffLoginRouteImport } from './routes/staff.login'
 import { Route as VendorIndexRouteImport } from './routes/vendor.index'
 import { Route as VendorDashboardRouteImport } from './routes/vendor.dashboard'
@@ -404,6 +405,11 @@ const StaffIndexRoute = StaffIndexRouteImport.update({
   path: '/staff/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const StaffDeviceRoute = StaffDeviceRouteImport.update({
+  id: '/staff/device',
+  path: '/staff/device',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const StaffLoginRoute = StaffLoginRouteImport.update({
   id: '/staff/login',
   path: '/staff/login',
@@ -603,6 +609,7 @@ export interface FileRoutesByFullPath {
   '/partner/attendance': typeof PartnerAttendanceRoute
   '/partner/login': typeof PartnerLoginRoute
   '/product/$id': typeof ProductIdRoute
+  '/staff/device': typeof StaffDeviceRoute
   '/staff/login': typeof StaffLoginRoute
   '/vendor/dashboard': typeof VendorDashboardRoute
   '/vendor/earnings': typeof VendorEarningsRoute
@@ -693,6 +700,7 @@ export interface FileRoutesByTo {
   '/partner/attendance': typeof PartnerAttendanceRoute
   '/partner/login': typeof PartnerLoginRoute
   '/product/$id': typeof ProductIdRoute
+  '/staff/device': typeof StaffDeviceRoute
   '/staff/login': typeof StaffLoginRoute
   '/vendor/dashboard': typeof VendorDashboardRoute
   '/vendor/earnings': typeof VendorEarningsRoute
@@ -785,6 +793,7 @@ export interface FileRoutesById {
   '/partner/attendance': typeof PartnerAttendanceRoute
   '/partner/login': typeof PartnerLoginRoute
   '/product/$id': typeof ProductIdRoute
+  '/staff/device': typeof StaffDeviceRoute
   '/staff/login': typeof StaffLoginRoute
   '/vendor/dashboard': typeof VendorDashboardRoute
   '/vendor/earnings': typeof VendorEarningsRoute
@@ -878,6 +887,7 @@ export interface FileRouteTypes {
     | '/partner/attendance'
     | '/partner/login'
     | '/product/$id'
+    | '/staff/device'
     | '/staff/login'
     | '/vendor/dashboard'
     | '/vendor/earnings'
@@ -968,6 +978,7 @@ export interface FileRouteTypes {
     | '/partner/attendance'
     | '/partner/login'
     | '/product/$id'
+    | '/staff/device'
     | '/staff/login'
     | '/vendor/dashboard'
     | '/vendor/earnings'
@@ -1059,6 +1070,7 @@ export interface FileRouteTypes {
     | '/partner/attendance'
     | '/partner/login'
     | '/product/$id'
+    | '/staff/device'
     | '/staff/login'
     | '/vendor/dashboard'
     | '/vendor/earnings'
@@ -1142,6 +1154,7 @@ export interface RootRouteChildren {
   PartnerAttendanceRoute: typeof PartnerAttendanceRoute
   PartnerLoginRoute: typeof PartnerLoginRoute
   ProductIdRoute: typeof ProductIdRoute
+  StaffDeviceRoute: typeof StaffDeviceRoute
   StaffLoginRoute: typeof StaffLoginRoute
   VendorDashboardRoute: typeof VendorDashboardRoute
   VendorEarningsRoute: typeof VendorEarningsRoute
@@ -1595,6 +1608,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof StaffIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/staff/device': {
+      id: '/staff/device'
+      path: '/staff/device'
+      fullPath: '/staff/device'
+      preLoaderRoute: typeof StaffDeviceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/staff/login': {
       id: '/staff/login'
       path: '/staff/login'
@@ -1990,6 +2010,7 @@ const rootRouteChildren: RootRouteChildren = {
   PartnerAttendanceRoute: PartnerAttendanceRoute,
   PartnerLoginRoute: PartnerLoginRoute,
   ProductIdRoute: ProductIdRoute,
+  StaffDeviceRoute: StaffDeviceRoute,
   StaffLoginRoute: StaffLoginRoute,
   VendorDashboardRoute: VendorDashboardRoute,
   VendorEarningsRoute: VendorEarningsRoute,
