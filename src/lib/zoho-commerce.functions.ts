@@ -7,7 +7,7 @@ import { PICKUP_SETTINGS_KEY, parsePickupSettings, pickupPointForPin } from "@/l
 import { isMeasureUnit, toBaseQuantity } from "@/lib/data";
 import { MAX_COUNT, isBigChange, planStockCount, stockCountDescription, zohoLocationStock } from "@/lib/stock-counts";
 import {
-  isBatchCode, normalizeBatchCode, packageLinesWithBatches, planBatchGain, planBatchLoss, planZohoBatchIn, planZohoBatchOut,
+  batchLineText, isBatchCode, normalizeBatchCode, packageLinesWithBatches, planBatchGain, planBatchLoss, planZohoBatchIn, planZohoBatchOut,
   zohoBatchesAtLocation, zohoTracksBatches, type BatchShare, type StockBatch, type ZohoBatch,
 } from "@/lib/batches";
 import {
@@ -2041,7 +2041,31 @@ async function pushCommerceProductValues(
   }
 }
 
-type GrainBazarOrderItem = { product_id: string | null; product_name: string; sku: string | null; qty: number; unit_price: number; gst_rate: number };
+type GrainBazarOrderItem = { id?: string; product_id: string | null; product_name: string; sku: string | null; qty: number; unit_price: number; gst_rate: number };
+
+/** Batch numbers each order line took (FIFO at the order's godown), by order item id. */
+async function orderItemBatchCodes(db: Awaited<ReturnType<typeof dbAdmin>>, itemIds: string[]) {
+  const byItem = new Map<string, { code: string; qty: number }[]>();
+  if (!itemIds.length) return byItem;
+  const { data: allocations } = await db.from("order_item_batch_allocations")
+    .select("order_item_id,batch_id,reserved_quantity,released_quantity,created_at").in("order_item_id", itemIds).order("created_at");
+  const batchIds = [...new Set((allocations ?? []).map((a) => a.batch_id))];
+  const { data: batches } = batchIds.length
+    ? await db.from("batches").select("id,batch_code").in("id", batchIds)
+    : { data: [] as { id: string; batch_code: string }[] };
+  const codeOf = new Map((batches ?? []).map((b) => [b.id, b.batch_code]));
+  for (const a of allocations ?? []) {
+    const left = Number(a.reserved_quantity) - Number(a.released_quantity);
+    const code = codeOf.get(a.batch_id);
+    if (left <= 0 || !code) continue;
+    const list = byItem.get(a.order_item_id) ?? [];
+    const same = list.find((b) => b.code === code);
+    if (same) same.qty += left;
+    else list.push({ code, qty: left });
+    byItem.set(a.order_item_id, list);
+  }
+  return byItem;
+}
 
 /** Zoho line items for Grain Bazar order lines, matched to Zoho items by SKU. */
 async function zohoLineItemsForOrder(
@@ -2065,6 +2089,8 @@ async function zohoLineItemsForOrder(
     const { data: rows } = await db.from("catalog_products").select("id,payload").in("id", productIds);
     for (const row of rows ?? []) appHsn.set(row.id, validHsn(plainObject(row.payload)["hsn"]));
   }
+  // The batch / stock number of each line, as text on the Zoho line (and so on the invoice).
+  const batchCodes = await orderItemBatchCodes(db, items.map((item) => item.id).filter((id): id is string => Boolean(id)));
   for (const item of items) {
     if (!item.sku) throw new NeedsReviewError(`Product ${item.product_name} has no SKU for Zoho item matching`);
     const result = await inventoryRequest<{ items?: Record<string, unknown>[] }>(region, organizationId, token, "items", "GET", undefined, { search_text: item.sku, per_page: "200" });
@@ -2089,9 +2115,11 @@ async function zohoLineItemsForOrder(
         // No HSN available: the line is sent without one (Zoho then asks for it on edit).
       }
     }
+    const batchText = item.id ? batchLineText(batchCodes.get(item.id) ?? [], item.qty) : "";
     lineItems.push({
       item_id: zohoItemId, name: item.product_name, quantity: item.qty, rate: item.unit_price, tax_percentage: item.gst_rate,
       ...(hsn ? { hsn_or_sac: hsn } : {}),
+      ...(batchText ? { description: batchText } : {}),
     });
   }
   return lineItems;
@@ -2489,9 +2517,16 @@ async function pushZohoFulfilment(
         lines = planned.lines;
       }
       if (!lines.length) throw new NeedsReviewError(`Zoho sales order ${number} has no items to pack.`);
+      // The batch / stock numbers packed, as text on the package.
+      const { data: orderLines } = await db.from("order_items").select("id,product_name,qty").eq("order_id", order.id);
+      const codes = await orderItemBatchCodes(db, (orderLines ?? []).map((line) => line.id));
+      const packedBatches = (orderLines ?? []).map((line) => {
+        const text = batchLineText(codes.get(line.id) ?? [], Number(line.qty));
+        return text ? `${line.product_name}: ${text}` : "";
+      }).filter(Boolean).join("; ");
       try {
         await createNumbered("packages", { salesorder_id: salesOrderId },
-          { date: today, line_items: lines, notes: `Packed for Grain Bazar order ${order.order_no}` },
+          { date: today, line_items: lines, notes: `Packed for Grain Bazar order ${order.order_no}${packedBatches ? `. ${packedBatches}` : ""}`.slice(0, 1000) },
           "package_number", `PKG-${order.order_no}`.slice(0, 50));
       } catch (cause) {
         fail("package", cause);
@@ -3051,7 +3086,7 @@ async function syncZohoOrder(db: Awaited<ReturnType<typeof dbAdmin>>, region: Re
   const orderId = job.entity_id;
   const [{ data: order, error: orderError }, { data: items, error: itemsError }] = await Promise.all([
     db.from("orders").select("*").eq("id", orderId).maybeSingle(),
-    db.from("order_items").select("product_id,product_name,sku,qty,unit_price,gst_rate,line_total").eq("order_id", orderId),
+    db.from("order_items").select("id,product_id,product_name,sku,qty,unit_price,gst_rate,line_total").eq("order_id", orderId),
   ]);
   if (orderError || itemsError) throw new Error("Could not read the order and items from Grain Bazar");
   if (!order) return;

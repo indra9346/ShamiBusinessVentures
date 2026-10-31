@@ -621,7 +621,7 @@ function ReceiveDialog({ open, onOpenChange, data, defaultGodown, onSaved }: {
     ? "Website only: this product or godown is not linked to Zoho stock, so the stock goes to Zoho with the next sync."
     : product.zohoTracksBatches
       ? `Zoho tracks batches for this item: Zoho gets batch ${normalizeBatchCode(form.batchCode) || autoCode} at ${godown.name}.`
-      : `Zoho gets the stock at ${godown.name} (tick "Track batches" on the Zoho item to see batch numbers in Zoho too).`;
+      : `Zoho gets the stock at ${godown.name}, with the batch number on the Zoho stock adjustment and on the sales orders, invoices and packages of orders from this batch.`;
   const set = (key: keyof typeof form) => (e: { target: { value: string } }) => setForm((f) => ({ ...f, [key]: e.target.value }));
   const submit = async (): Promise<void> => {
     const quantity = Number(form.quantity), unitCost = Number(form.unitCost);

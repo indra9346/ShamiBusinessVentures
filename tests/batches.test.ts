@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  addressLine, batchAdjustmentSheet, batchReportSheets, buildBatchReport, daysBetween, formatBatchCode, godownCodeOf, isBatchCode,
+  addressLine, batchAdjustmentSheet, batchLineText, batchReportSheets, buildBatchReport, daysBetween, formatBatchCode, godownCodeOf, isBatchCode,
   normalizeBatchCode, packageLinesWithBatches, planBatchGain, planBatchLoss, planZohoBatchIn, planZohoBatchOut, searchBatchReport,
   zohoBatchesAtLocation, zohoTracksBatches, type BatchOrder, type BatchRecord,
 } from "../src/lib/batches.ts";
@@ -199,4 +199,13 @@ test("batch report: sold, delivered, held, cancelled, lost, sales, profit, days 
 test("address line from a saved address", () => {
   assert.equal(addressLine({ line1: "12, 2nd Cross", landmark: "Near temple", city: "Hubli", state: "Karnataka", pin: "580020" }), "12, 2nd Cross, Near temple, Hubli, Karnataka, 580020");
   assert.equal(addressLine(null), "");
+});
+
+test("batch number as text on Zoho lines and packages", () => {
+  assert.equal(batchLineText([{ code: "CLK-311026-01", qty: 2 }], 2), "Batch CLK-311026-01");
+  assert.equal(batchLineText([{ code: "CLK-301026-01", qty: 2 }, { code: "CLK-311026-01", qty: 1 }], 3), "Batches CLK-301026-01 x2, CLK-311026-01 x1");
+  // part of the line came from stock without a batch
+  assert.equal(batchLineText([{ code: "CLK-311026-01", qty: 1 }], 3), "Batch CLK-311026-01 x1");
+  assert.equal(batchLineText([], 3), "");
+  assert.equal(batchLineText([{ code: "CLK-311026-01", qty: 0 }], 3), "");
 });

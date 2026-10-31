@@ -4116,7 +4116,7 @@ export const kn: Record<string, string> = {
   "Purchase value: {0}": "ಖರೀದಿ ಮೌಲ್ಯ: {0}",
   "Website only: this product or godown is not linked to Zoho stock, so the stock goes to Zoho with the next sync.": "ವೆಬ್‌ಸೈಟ್ ಮಾತ್ರ: ಈ ಉತ್ಪನ್ನ ಅಥವಾ ಗೋದಾಮು Zoho ದಾಸ್ತಾನಿಗೆ ಜೋಡಣೆಯಾಗಿಲ್ಲ, ಆದ್ದರಿಂದ ದಾಸ್ತಾನು ಮುಂದಿನ ಸಿಂಕ್‌ನಲ್ಲಿ Zoho ಗೆ ಹೋಗುತ್ತದೆ.",
   "Zoho tracks batches for this item: Zoho gets batch {0} at {1}.": "ಈ ವಸ್ತುವಿಗೆ Zoho ಬ್ಯಾಚ್ ಟ್ರ್ಯಾಕ್ ಮಾಡುತ್ತದೆ: {1} ನಲ್ಲಿ Zoho ಗೆ ಬ್ಯಾಚ್ {0} ಸಿಗುತ್ತದೆ.",
-  "Zoho gets the stock at {0} (tick \"Track batches\" on the Zoho item to see batch numbers in Zoho too).": "{0} ನಲ್ಲಿ Zoho ಗೆ ದಾಸ್ತಾನು ಸಿಗುತ್ತದೆ (Zoho ದಲ್ಲೂ ಬ್ಯಾಚ್ ಸಂಖ್ಯೆ ನೋಡಲು Zoho ವಸ್ತುವಿನಲ್ಲಿ \"Track batches\" ಟಿಕ್ ಮಾಡಿ).",
+  "Zoho gets the stock at {0}, with the batch number on the Zoho stock adjustment and on the sales orders, invoices and packages of orders from this batch.": "{0} ನಲ್ಲಿ Zoho ಗೆ ದಾಸ್ತಾನು ಸಿಗುತ್ತದೆ; ಬ್ಯಾಚ್ ಸಂಖ್ಯೆ Zoho ದಾಸ್ತಾನು ಹೊಂದಾಣಿಕೆಯಲ್ಲಿ ಮತ್ತು ಈ ಬ್ಯಾಚ್‌ನ ಆರ್ಡರ್‌ಗಳ ಮಾರಾಟ ಆರ್ಡರ್, ಇನ್‌ವಾಯ್ಸ್ ಮತ್ತು ಪ್ಯಾಕೇಜ್‌ಗಳಲ್ಲಿ ಇರುತ್ತದೆ.",
   "Batch {0} received": "ಬ್ಯಾಚ್ {0} ಸ್ವೀಕರಿಸಲಾಗಿದೆ",
   "Zoho has the batch at this godown.": "ಈ ಗೋದಾಮಿನಲ್ಲಿ ಬ್ಯಾಚ್ Zoho ದಲ್ಲಿದೆ.",
   "Zoho has the stock at this godown.": "ಈ ಗೋದಾಮಿನಲ್ಲಿ ದಾಸ್ತಾನು Zoho ದಲ್ಲಿದೆ.",

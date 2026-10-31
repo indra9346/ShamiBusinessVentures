@@ -140,6 +140,17 @@ export function planZohoBatchIn(zohoBatches: ZohoBatch[], amount: number, newBat
     : [{ batch_number: newBatchNumber, in_quantity: qty(amount) }];
 }
 
+/**
+ * The batch number(s) as text on a Zoho order line (copied to the invoice) or package, for items
+ * Zoho does not batch-track: "Batch CLK-311026-01", or "Batches CLK-301026-01 x2, CLK-311026-01 x1".
+ */
+export function batchLineText(batches: { code: string; qty: number }[], lineQty: number) {
+  const list = batches.filter((b) => b.code && b.qty > 0);
+  if (!list.length) return "";
+  if (list.length === 1 && list[0]!.qty >= lineQty) return `Batch ${list[0]!.code}`;
+  return `${list.length === 1 ? "Batch" : "Batches"} ${list.map((b) => `${b.code} x${qty(b.qty)}`).join(", ")}`;
+}
+
 /** Zoho's item flag for "Track batches". */
 export const zohoTracksBatches = (item: Record<string, unknown> | undefined | null) => item?.["track_batch_number"] === true;
 
