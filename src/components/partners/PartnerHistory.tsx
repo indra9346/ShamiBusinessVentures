@@ -92,11 +92,12 @@ function PeriodRow({ period: p }: { period: HistoryPeriod }) {
           </span>
         </div>
         <p className="mt-0.5 text-xs text-slate">
-          {`${when(p.from)} → ${p.to ? when(p.to) : "now"} · ${p.days} day${p.days === 1 ? "" : "s"}`}
+          {/* separate text nodes, so the Kannada view translates "now" and the days on their own */}
+          {when(p.from)}{" → "}{p.to ? when(p.to) : "now"}{" · "}{p.days === 1 ? "1 day" : `${p.days} days`}
           {p.approximate && <span className="italic">{" (time from older records, approximate)"}</span>}
         </p>
         {!gap && <p className="text-xs text-slate">{[p.partner!.email, p.partner!.phone].filter(Boolean).join(" · ")}</p>}
-        {(p.startedBy || p.endedBy) && (
+        {!gap && (p.startedBy || p.endedBy) && (
           <p className="text-xs text-slate">{[p.startedBy && `Added by ${p.startedBy}`, p.endedBy && `Ended by ${p.endedBy}`].filter(Boolean).join(" · ")}</p>
         )}
         <dl className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs">
@@ -144,6 +145,11 @@ function demoHistory(): PartnerHistoryData {
       { partner_id: "p2", order_id: "o3", line_total: 2700, amount: 2.5, status: "pending", placed_at: "2026-10-31T16:00:00Z" },
       { partner_id: "p3", order_id: "o4", line_total: 5400, amount: 20, status: "earned", placed_at: "2026-10-29T06:00:00Z" },
     ],
-    orders: [],
+    orders: [
+      { id: "o1", branch_id: "BR-CLK", created_at: "2026-10-28T05:00:00Z", order_status: "Delivered", subtotal: 24000, discount: 0 },
+      { id: "o2", branch_id: "BR-CLK", created_at: "2026-10-31T04:00:00Z", order_status: "Packed", subtotal: 4000, discount: 0 },
+      { id: "o3", branch_id: "BR-CLK", created_at: "2026-10-31T16:00:00Z", order_status: "Placed", subtotal: 2700, discount: 0 },
+      { id: "o4", branch_id: "BR-HBL", created_at: "2026-10-29T06:00:00Z", order_status: "Delivered", subtotal: 5400, discount: 0 },
+    ],
   };
 }

@@ -43,7 +43,8 @@ BEGIN
   IF TG_OP = 'INSERT' THEN
     actor := COALESCE(NEW.created_by, auth.uid());
   ELSE
-    actor := COALESCE(NEW.status_changed_by, auth.uid());
+    -- status_changed_by stays on the row: trust it only when this same update stamped it.
+    actor := COALESCE(CASE WHEN NEW.status_changed_at IS DISTINCT FROM OLD.status_changed_at THEN NEW.status_changed_by END, auth.uid());
   END IF;
   SELECT COALESCE(full_name, '') INTO actor_name FROM public.profiles WHERE id = actor;
   IF TG_OP = 'INSERT' THEN
@@ -85,5 +86,25 @@ SELECT p.id, p.branch_id, 'suspended', GREATEST(p.updated_at, p.created_at), tru
 FROM public.channel_partners p
 WHERE p.status = 'suspended'
   AND NOT EXISTS (SELECT 1 FROM public.channel_partner_events e WHERE e.partner_id = p.id AND e.event = 'suspended');
+
+-- An active partner updated after creation was suspended and reactivated (only the status change ever
+-- updated the row): reactivated at its last update, suspended when the next partner of that godown
+-- was added (else at the reactivation). Both times are approximate.
+INSERT INTO public.channel_partner_events (partner_id, branch_id, event, at, backfilled)
+SELECT p.id, p.branch_id, 'suspended',
+  COALESCE((SELECT min(o.created_at) FROM public.channel_partners o
+            WHERE o.branch_id = p.branch_id AND o.id <> p.id AND o.created_at > p.created_at AND o.created_at < p.updated_at),
+           p.updated_at),
+  true
+FROM public.channel_partners p
+WHERE p.status = 'active' AND p.updated_at > p.created_at + interval '1 second'
+  AND NOT EXISTS (SELECT 1 FROM public.channel_partner_events e WHERE e.partner_id = p.id AND e.event IN ('suspended', 'reactivated'));
+
+INSERT INTO public.channel_partner_events (partner_id, branch_id, event, at, backfilled)
+SELECT p.id, p.branch_id, 'reactivated', p.updated_at, true
+FROM public.channel_partners p
+WHERE p.status = 'active' AND p.updated_at > p.created_at + interval '1 second'
+  AND EXISTS (SELECT 1 FROM public.channel_partner_events e WHERE e.partner_id = p.id AND e.event = 'suspended' AND e.backfilled)
+  AND NOT EXISTS (SELECT 1 FROM public.channel_partner_events e WHERE e.partner_id = p.id AND e.event = 'reactivated');
 
 NOTIFY pgrst, 'reload schema';

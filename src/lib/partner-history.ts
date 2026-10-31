@@ -1,9 +1,10 @@
 /*
  * Channel partner history: who ran each godown from when to when, and what they sold and earned
  * in that time. Built from the partner change log (channel_partner_events: added, suspended,
- * reactivated, moved) and the commission lines, which always keep the partner who was active when
- * the order was placed. Gaps (a godown with no active partner) are shown with the sales made then,
- * which carry no commission. Pure, so the node tests load it.
+ * reactivated, moved), the commission lines (which always keep the partner who was active when the
+ * order was placed) and the godown's orders: a period's orders and sales are every order of the
+ * godown in it, before GST, like the Godown Report. Gaps (a godown with no active partner) show the
+ * sales made then, which carry no commission. Pure, so the node tests load it.
  */
 import type { XlsxSheet } from "./xlsx.ts";
 
@@ -45,8 +46,10 @@ const ms = (iso: string) => Date.parse(iso);
 const DAY = 86_400_000;
 /** A godown without a partner for longer than this is shown as a gap. */
 export const GAP_SHOWN_AFTER_MS = 10 * 60_000;
-/** Orders not counted as sales: cancelled ones and unpaid checkout holds. */
-const NOT_SALES = ["Cancelled", "Payment Expired", "Awaiting Payment"];
+/** Unpaid checkout requests (pay first): not orders yet, or never. */
+const HELD = ["Awaiting Payment", "Payment Expired"];
+/** Orders not counted as sales: cancelled ones and unpaid checkout requests. */
+const NOT_SALES = ["Cancelled", ...HELD];
 
 type Open = { godownId: string; from: string; startedBy: string; approximate: boolean };
 
@@ -115,25 +118,41 @@ export function buildPartnerHistory(input: {
     }
   }
 
-  // Commission lines: the partner's period that contains the order time (else their nearest earlier one).
-  const ordersSeen = new Map<HistoryPeriod, Set<string>>();
+  /** The period of a list that contains a moment, else the nearest earlier one, else the first. */
+  const periodAt = (list: HistoryPeriod[], at: number) =>
+    list.find((p) => at >= ms(p.from) && (p.to === null || at < ms(p.to)))
+      ?? [...list].filter((p) => ms(p.from) <= at).sort((a, b) => ms(b.from) - ms(a.from))[0]
+      ?? list[0];
+  const statusOf = new Map(input.orders.map((o) => [o.id, o.order_status]));
+
+  // Commission: from the lines, in the period of the partner who carries them (an unpaid checkout
+  // request is not an order, so its line is left out).
+  const commissionPartner = new Map<string, string>();
   for (const line of input.commissions) {
-    const own = byPartner.get(line.partner_id) ?? [];
-    if (!own.length) continue;
-    const at = ms(line.placed_at);
-    const target = own.find((p) => at >= ms(p.from) && (p.to === null || at < ms(p.to)))
-      ?? [...own].filter((p) => ms(p.from) <= at).sort((a, b) => ms(b.from) - ms(a.from))[0]
-      ?? own[0]!;
+    if (HELD.includes(statusOf.get(line.order_id) ?? "")) continue;
+    commissionPartner.set(line.order_id, line.partner_id);
+    const target = periodAt(byPartner.get(line.partner_id) ?? [], ms(line.placed_at));
+    if (!target) continue;
     const amount = Number(line.amount) || 0;
-    if (line.status === "cancelled") { target.cancelled = rupees(target.cancelled + amount); continue; }
-    if (line.status === "earned") target.earned = rupees(target.earned + amount);
+    if (line.status === "cancelled") target.cancelled = rupees(target.cancelled + amount);
+    else if (line.status === "earned") target.earned = rupees(target.earned + amount);
     else target.pending = rupees(target.pending + amount);
-    target.sales = rupees(target.sales + (Number(line.line_total) || 0));
-    const set = ordersSeen.get(target) ?? new Set<string>();
-    set.add(line.order_id);
-    ordersSeen.set(target, set);
   }
-  for (const [period, set] of ordersSeen) period.orders = set.size;
+
+  // Orders and sales: every order of the godown in the period, like the Godown Report (sales before
+  // GST; cancelled orders and unpaid checkout requests left out), whether or not it carries a rate.
+  const counted = new Set<string>();
+  for (const order of input.orders) {
+    if (!order.branch_id || NOT_SALES.includes(order.order_status)) continue;
+    const at = ms(order.created_at);
+    const viaCommission = commissionPartner.get(order.id);
+    const target = (viaCommission ? periodAt(byPartner.get(viaCommission) ?? [], at) : undefined)
+      ?? periods.find((p) => p.kind === "partner" && p.godownId === order.branch_id && at >= ms(p.from) && (p.to === null || at < ms(p.to)));
+    if (!target) continue;  // no partner then: counted in the gap below
+    target.orders += 1;
+    target.sales = rupees(target.sales + (Number(order.subtotal) || 0));
+    counted.add(order.id);
+  }
 
   // Gaps: times a godown that once had a partner had none (orders then carry no commission).
   for (const g of input.godowns) {
@@ -144,7 +163,7 @@ export function buildPartnerHistory(input: {
     const gap = (from: number, to: number | null, startedFrom: HistoryPeriod | null, approximate: boolean): HistoryPeriod => ({
       kind: "gap", godownId: g.id, godown: g.name, partner: null, from: new Date(from).toISOString(), to: to === null ? null : new Date(to).toISOString(),
       days: Math.max(0, Math.ceil(((to ?? nowMs) - from) / DAY)), current: to === null, approximate,
-      startedBy: startedFrom?.endedBy ?? "", endedBy: "", orders: 0, sales: 0, earned: 0, pending: 0, cancelled: 0,
+      startedBy: "", endedBy: "", orders: 0, sales: 0, earned: 0, pending: 0, cancelled: 0,
     });
     for (const run of runs) {
       const start = ms(run.from);
@@ -156,9 +175,10 @@ export function buildPartnerHistory(input: {
       gaps.push(gap(reachedUntil, null, lastEnd, Boolean(lastEnd?.approximate)));
     for (const row of gaps) {
       const from = ms(row.from), to = row.to === null ? nowMs + 1 : ms(row.to);
-      const sold = input.orders.filter((o) => o.branch_id === g.id && !NOT_SALES.includes(o.order_status) && ms(o.created_at) >= from && ms(o.created_at) < to);
+      const sold = input.orders.filter((o) => o.branch_id === g.id && !counted.has(o.id) && !NOT_SALES.includes(o.order_status)
+        && ms(o.created_at) >= from && ms(o.created_at) < to);
       row.orders = sold.length;
-      row.sales = rupees(sold.reduce((s, o) => s + (Number(o.subtotal) || 0) - (Number(o.discount) || 0), 0));
+      row.sales = rupees(sold.reduce((s, o) => s + (Number(o.subtotal) || 0), 0));
     }
     // A handover of a few minutes is not a gap worth showing, unless an order came in meanwhile.
     periods.push(...gaps.filter((row) => row.orders > 0 || row.current || (ms(row.to!) - ms(row.from)) > GAP_SHOWN_AFTER_MS));

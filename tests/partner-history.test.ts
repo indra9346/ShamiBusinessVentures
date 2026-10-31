@@ -49,10 +49,19 @@ test("history: commissions stay with the partner of the order time; gaps show sa
       { partner_id: "p1", order_id: "o2", line_total: 1000, amount: 50, status: "pending", placed_at: "2026-10-31T04:00:00Z" },
       { partner_id: "p1", order_id: "o3", line_total: 999, amount: 9, status: "cancelled", placed_at: "2026-10-31T05:00:00Z" },
       { partner_id: "p2", order_id: "o4", line_total: 2700, amount: 2.5, status: "pending", placed_at: "2026-10-31T16:00:00Z" },
+      // an unpaid checkout request (pay first) is not an order: its line counts nowhere
+      { partner_id: "p1", order_id: "o8", line_total: 800, amount: 7, status: "pending", placed_at: "2026-10-31T06:00:00Z" },
     ],
     orders: [
+      { id: "o1", branch_id: "BR-CLK", created_at: "2026-10-30T05:00:00Z", order_status: "Delivered", subtotal: 3000, discount: 100 },
+      { id: "o2", branch_id: "BR-CLK", created_at: "2026-10-31T04:00:00Z", order_status: "Placed", subtotal: 1000, discount: 0 },
+      { id: "o3", branch_id: "BR-CLK", created_at: "2026-10-31T05:00:00Z", order_status: "Cancelled", subtotal: 999, discount: 0 },
+      { id: "o4", branch_id: "BR-CLK", created_at: "2026-10-31T16:00:00Z", order_status: "Placed", subtotal: 2700, discount: 0 },
       { id: "o5", branch_id: "BR-CLK", created_at: "2026-10-31T15:23:30Z", order_status: "Placed", subtotal: 949, discount: 0 },
       { id: "o6", branch_id: "BR-CLK", created_at: "2026-10-31T15:23:40Z", order_status: "Cancelled", subtotal: 500, discount: 0 },
+      // a product without a commission rate: still an order and a sale of the partner's time
+      { id: "o7", branch_id: "BR-CLK", created_at: "2026-10-30T06:00:00Z", order_status: "Packed", subtotal: 500, discount: 0 },
+      { id: "o8", branch_id: "BR-CLK", created_at: "2026-10-31T06:00:00Z", order_status: "Awaiting Payment", subtotal: 800, discount: 0 },
     ],
     now: "2026-10-31T17:00:00Z",
   });
@@ -62,9 +71,11 @@ test("history: commissions stay with the partner of the order time; gaps show sa
     ["partner", "Vamshi", true], ["gap", "-", false], ["partner", "Testing Channel Partner", false],
   ]);
   const [current, gap, past] = clk;
-  assert.deepEqual([past!.orders, past!.sales, past!.earned, past!.pending, past!.cancelled, past!.days, past!.approximate], [2, 4000, 32.5, 50, 9, 6, true]);
+  // sales before GST like the Godown Report: o1 + o2 + o7 (o3 cancelled, o8 unpaid)
+  assert.deepEqual([past!.orders, past!.sales, past!.earned, past!.pending, past!.cancelled, past!.days, past!.approximate], [3, 4500, 32.5, 50, 9, 6, true]);
   assert.deepEqual([current!.orders, current!.sales, current!.pending, current!.days], [1, 2700, 2.5, 1]);
-  assert.deepEqual([gap!.from, gap!.to, gap!.orders, gap!.sales], ["2026-10-31T15:23:00.000Z", "2026-10-31T15:24:00.000Z", 1, 949]);
+  assert.deepEqual([gap!.from, gap!.to, gap!.orders, gap!.sales, gap!.startedBy, gap!.endedBy],
+    ["2026-10-31T15:23:00.000Z", "2026-10-31T15:24:00.000Z", 1, 949, "", ""]);
   assert.equal(history.periods.filter((p) => p.godownId === "BR-HBL").length, 1);
   assert.deepEqual(history.godowns.map((g) => [g.godown, g.current?.name ?? null, g.partnersSoFar]), [["Challakere", "Vamshi", 2], ["Hubli", "Test Mallikarjun", 1]]);
 
