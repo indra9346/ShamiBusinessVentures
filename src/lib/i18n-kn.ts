@@ -4289,6 +4289,27 @@ export const kn: Record<string, string> = {
   "None due": "ಬೇಕಿಲ್ಲ",
   "No photo": "ಫೋಟೋ ಇಲ್ಲ",
   "Photos could not be loaded. Close and open again.": "ಫೋಟೋಗಳನ್ನು ಲೋಡ್ ಮಾಡಲಾಗಲಿಲ್ಲ. ಮುಚ್ಚಿ ಮತ್ತೆ ತೆರೆಯಿರಿ.",
+  // Channel partner history, 1 Nov 2026
+  "Partner history": "ಪಾಲುದಾರರ ಇತಿಹಾಸ",
+  "Changing a partner never moves past data: each order's commission stays with the partner who was active when it was placed (even if it is delivered or paid later), a suspended partner's login stops at once, and the new partner earns only on orders placed after they were added.": "ಪಾಲುದಾರರನ್ನು ಬದಲಾಯಿಸಿದರೂ ಹಳೆಯ ಮಾಹಿತಿ ಬದಲಾಗುವುದಿಲ್ಲ: ಪ್ರತಿ ಆರ್ಡರ್‌ನ ಕಮಿಷನ್ ಆರ್ಡರ್ ಮಾಡಿದಾಗ ಸಕ್ರಿಯರಾಗಿದ್ದ ಪಾಲುದಾರರಿಗೇ ಸೇರುತ್ತದೆ (ನಂತರ ತಲುಪಿಸಿದರೂ ಅಥವಾ ಪಾವತಿಸಿದರೂ), ಅಮಾನತುಗೊಂಡ ಪಾಲುದಾರರ ಲಾಗಿನ್ ತಕ್ಷಣ ನಿಲ್ಲುತ್ತದೆ, ಮತ್ತು ಹೊಸ ಪಾಲುದಾರರು ಸೇರಿದ ನಂತರದ ಆರ್ಡರ್‌ಗಳಿಗೆ ಮಾತ್ರ ಕಮಿಷನ್ ಪಡೆಯುತ್ತಾರೆ.",
+  "Loading partner history…": "ಪಾಲುದಾರರ ಇತಿಹಾಸ ಲೋಡ್ ಆಗುತ್ತಿದೆ…",
+  "Could not load the partner history": "ಪಾಲುದಾರರ ಇತಿಹಾಸ ಲೋಡ್ ಮಾಡಲಾಗಲಿಲ್ಲ",
+  "Current partner: {0}": "ಈಗಿನ ಪಾಲುದಾರರು: {0}",
+  "No partner now": "ಈಗ ಪಾಲುದಾರರಿಲ್ಲ",
+  "{0} partner{1} so far": "ಇಲ್ಲಿಯವರೆಗೆ {0} ಪಾಲುದಾರರು{1}",
+  "No channel partner has run this godown yet.": "ಇನ್ನೂ ಯಾವುದೇ ಚಾನೆಲ್ ಪಾಲುದಾರರು ಈ ಗೋದಾಮನ್ನು ನಡೆಸಿಲ್ಲ.",
+  "No partner": "ಪಾಲುದಾರರಿಲ್ಲ",
+  "Current partner": "ಈಗಿನ ಪಾಲುದಾರರು",
+  "Past partner": "ಹಿಂದಿನ ಪಾಲುದಾರರು",
+  "{0} → {1} · {2} day{3}": "{0} → {1} · {2} ದಿನ{3}",
+  "now": "ಈಗ",
+  "(time from older records, approximate)": "(ಹಳೆಯ ದಾಖಲೆಗಳಿಂದ ಸಮಯ, ಅಂದಾಜು)",
+  "Added by {0}": "ಸೇರಿಸಿದವರು {0}",
+  "Ended by {0}": "ಕೊನೆಗೊಳಿಸಿದವರು {0}",
+  "Added by {0} · Ended by {1}": "ಸೇರಿಸಿದವರು {0} · ಕೊನೆಗೊಳಿಸಿದವರು {1}",
+  "Sales (no commission)": "ಮಾರಾಟ (ಕಮಿಷನ್ ಇಲ್ಲ)",
+  "Sales excl. GST": "ಮಾರಾಟ (GST ಹೊರತು)",
+  "Partner history downloaded": "ಪಾಲುದಾರರ ಇತಿಹಾಸ ಡೌನ್‌ಲೋಡ್ ಆಗಿದೆ",
 };
 
 /** Word-level fallbacks for text that isn't in the dictionary (product names, specs from the database). */

@@ -98,7 +98,10 @@ export const setChannelPartnerStatus = createServerFn({ method: "POST" })
         .eq("status", "active").neq("id", data.partnerId).maybeSingle();
       if (other) throw new Error(`This godown already has an active partner (${other.name}). Suspend them first.`);
     }
-    const { error } = await db.from("channel_partners").update({ status: data.status, updated_at: new Date().toISOString() }).eq("id", data.partnerId);
+    // status_changed_by: the partner history log records which admin made the change.
+    const now = new Date().toISOString();
+    const { error } = await db.from("channel_partners")
+      .update({ status: data.status, updated_at: now, status_changed_by: context.userId, status_changed_at: now }).eq("id", data.partnerId);
     if (error) throw new Error("The partner status could not be changed");
     return { ok: true };
   });
