@@ -56,7 +56,7 @@ test("short templates don't hijack ordinary English phrases", () => {
 });
 
 test("menu labels from the admin sidebar are all Kannada", () => {
-  for (const label of ["Branches", "Enquiries", "Pricing", "Channel Partners", "Partner Report", "Payments & Matching", "UPI Payments", "Godown Report", "Attendance"]) {
+  for (const label of ["Branches", "Enquiries", "Pricing", "Channel Partners", "Partner Report", "Payments & Matching", "UPI Payments", "Godown Report", "Attendance", "Stock Counts"]) {
     const out = translateText(label, "kn");
     assert.ok(!/[A-Za-z]/.test(out.replace(/UPI|Zoho/g, "")), `${label} → ${out}`);
   }

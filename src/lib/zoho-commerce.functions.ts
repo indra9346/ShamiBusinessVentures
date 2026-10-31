@@ -5,6 +5,7 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import type { Database, Json } from "@/integrations/supabase/types";
 import { PICKUP_SETTINGS_KEY, parsePickupSettings, pickupPointForPin } from "@/lib/pickup-points";
 import { isMeasureUnit, toBaseQuantity } from "@/lib/data";
+import { MAX_COUNT, isBigChange, planStockCount, stockCountDescription, zohoLocationStock } from "@/lib/stock-counts";
 import {
   cleanEmailList, godownPricesFromPricebook, godownStockFromZohoItem, mergeGodownPrices, newOrderEmail, parseZohoItemSyncVendorIds, pendingOrderQty, sameGodownPrices,
   zohoPricebookItemsFor, reconcileCatalog, reconcileCustomers, reconcileOrders, shouldRetryZohoCall,
@@ -4970,6 +4971,88 @@ async function syncZohoGodownStock(db: Awaited<ReturnType<typeof dbAdmin>>, regi
   summary.errors = summary.errors.slice(0, 10);
   return summary;
 }
+
+/** Website orders Zoho does not hold yet for one product at one godown (same rule as the stock sync). */
+async function pendingWebsiteOrderQty(db: Awaited<ReturnType<typeof dbAdmin>>, branchId: string, productId: string) {
+  const { since } = await zohoStockMasterSetting(db);
+  const [{ data: recentOrders }, { data: defaultBranch }] = await Promise.all([
+    db.from("orders").select("id,branch_id,order_status,zoho_salesorder_id,zoho_order_status,created_at,order_items(product_id,qty)").gte("created_at", since),
+    db.from("branches").select("id").eq("is_default", true).maybeSingle(),
+  ]);
+  const pending = pendingOrderQty((recentOrders ?? []).map((order) => ({
+    branch_id: order.branch_id, order_status: order.order_status, zoho_salesorder_id: order.zoho_salesorder_id,
+    zoho_order_status: order.zoho_order_status, created_at: order.created_at,
+    items: ((order as { order_items?: { product_id: string | null; qty: number }[] }).order_items ?? []),
+  })), since, defaultBranch?.id ?? "");
+  return pending.get(branchId)?.get(productId) ?? 0;
+}
+
+/**
+ * Godown staff stock count (staff app, rules in src/lib/stock-counts.ts). The employee enters the
+ * packs counted on the floor of their own godown. Zoho's physical stock at the godown's location is
+ * brought to the count with one inventory adjustment; only when Zoho accepted it are the count and
+ * the godown's website stock saved (record_stock_count). If Zoho can't be reached nothing changes,
+ * so the website and Zoho never disagree.
+ */
+export const submitStockCount = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator(z.object({
+    productId: z.string().trim().min(1).max(100),
+    counted: z.number().int().min(0).max(MAX_COUNT),
+    reason: z.enum(["daily_count", "received", "damaged", "correction"]),
+    note: z.string().trim().max(200).default(""),
+  }))
+  .handler(async ({ data, context }) => withZohoPurpose("Godown stock count (staff app)", async () => {
+    const db = await dbAdmin();
+    const { data: employee } = await db.from("staff_employees").select("id,name,branch_id,status").eq("user_id", context.userId).maybeSingle();
+    if (!employee || employee.status !== "active") throw new Error("Only active godown employees can update stock");
+    if (!(await isZohoStockMaster(db))) throw new Error("Stock updates need Zoho as the stock master. Ask head office.");
+    const [{ data: branch }, { data: link }, { data: product }] = await Promise.all([
+      db.from("branches").select("id,name,zoho_location_id,active").eq("id", employee.branch_id).maybeSingle(),
+      db.from("zoho_item_links").select("zoho_item_id").eq("product_id", data.productId).maybeSingle(),
+      db.from("catalog_products").select("id,vendor_id,payload").eq("id", data.productId).maybeSingle(),
+    ]);
+    if (!branch?.active || !str(branch.zoho_location_id)) throw new Error("Your godown is not linked to a Zoho location. Ask head office.");
+    if (!product || str(product.vendor_id).startsWith("zoho:")) throw new Error("Product not found");
+    if (!link?.zoho_item_id) throw new Error("This product is not linked to Zoho yet. Ask head office.");
+
+    const { region, organizationId, token } = await zohoOrderContext(db);
+    const response = await inventoryRequest<{ item?: Record<string, unknown> }>(
+      region, organizationId, token, `items/${encodeURIComponent(link.zoho_item_id)}`, "GET",
+    );
+    const zoho = zohoLocationStock(response.item ?? {}, branch.zoho_location_id);
+    if (!zoho) throw new Error("Zoho has no stock record for this item at your godown. Ask head office.");
+    const pendingOrders = await pendingWebsiteOrderQty(db, branch.id, product.id);
+    const plan = planStockCount({ counted: data.counted, physical: zoho.physical, accounting: zoho.accounting, pendingOrders });
+    const productName = str((product.payload as Record<string, unknown> | null)?.["name"]) || product.id;
+
+    let adjustmentId = "";
+    if (plan.delta !== 0) {
+      const adjustment = await inventoryRequest<{ inventory_adjustment?: Record<string, unknown> }>(
+        region, organizationId, token, "inventoryadjustments", "POST", {
+          date: todayInIndia(),
+          reason: "Grain Bazar godown stock",
+          adjustment_type: "quantity",
+          description: stockCountDescription({ godown: branch.name, employee: employee.name, counted: data.counted, physical: zoho.physical, reason: data.reason, note: data.note }),
+          location_id: branch.zoho_location_id,
+          line_items: [{ item_id: link.zoho_item_id, quantity_adjusted: plan.delta, location_id: branch.zoho_location_id }],
+        },
+      );
+      adjustmentId = str(adjustment.inventory_adjustment?.["inventory_adjustment_id"]);
+    }
+    const flagged = isBigChange(zoho.physical, data.counted);
+    const { error } = await db.rpc("record_stock_count", {
+      _branch_id: branch.id, _product_id: product.id, _counted: data.counted, _zoho_physical_before: zoho.physical,
+      _zoho_delta: plan.delta, _site_after: plan.siteAfter, _reason: data.reason, _note: data.note, _flagged: flagged,
+      _zoho_adjustment_id: adjustmentId, _counted_by: context.userId, _counted_by_name: employee.name, _employee_id: employee.id,
+    });
+    if (error) {
+      throw new Error(plan.delta !== 0
+        ? "Zoho has the new count, but the website could not save it. The website catches up at the next Zoho sync (within 15 minutes)."
+        : "The count could not be saved. Try again.");
+    }
+    return { productName, counted: data.counted, zohoBefore: zoho.physical, delta: plan.delta, siteAfter: plan.siteAfter, flagged, adjustmentId };
+  }));
 
 /** Admin → Godowns: Zoho sales price lists to link a godown to. */
 export const listZohoPriceLists = createServerFn({ method: "GET" })

@@ -6,6 +6,7 @@ import { LogoMark } from "@/components/brand/Logo";
 import { LanguageSwitcher } from "@/components/site/LanguageSwitcher";
 import { AttendanceStatusBadge, DecisionChips, FlagChips } from "@/components/attendance/AttendanceBits";
 import { SelfieCamera } from "@/components/attendance/SelfieCamera";
+import { StaffStockCount } from "@/components/attendance/StaffStockCount";
 import { getBestFix } from "@/components/attendance/geolocation";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -123,6 +124,8 @@ function StaffHome() {
         )}
 
         <LeaveCard leaves={leaves} today={today} onChange={() => load(me)} />
+
+        <StaffStockCount branchId={me.branch_id} />
 
         <section className="rounded-2xl border border-border bg-card p-4 shadow-sm">
           <h2 className="mb-3 flex items-center gap-2 text-sm font-bold text-navy"><CalendarDays className="h-4 w-4" /> This month</h2>

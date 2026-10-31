@@ -77,7 +77,7 @@ function PartnerDashboard() {
               onChange={(event) => event.target.value && setMonth(`${event.target.value}-01`)}
               className="h-9 rounded-md border border-input bg-white px-2 text-sm" aria-label="Month" />
             <Link to="/partner/attendance" className="inline-flex h-9 items-center gap-1.5 rounded-md bg-navy px-3 text-sm font-semibold text-white hover:bg-midnight">
-              <CalendarCheck className="h-4 w-4" /> Attendance
+              <CalendarCheck className="h-4 w-4" /> Attendance & stock
             </Link>
             <button type="button" onClick={async () => { await supabase.auth.signOut(); navigate({ to: "/partner/login" }); }}
               className="inline-flex h-9 items-center gap-1.5 rounded-md border border-border px-3 text-sm text-navy hover:border-gold hover:text-gold">

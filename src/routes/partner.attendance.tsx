@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { ArrowLeft, LogOut, RefreshCw } from "lucide-react";
 import { LogoMark } from "@/components/brand/Logo";
 import { AttendanceManager } from "@/components/attendance/AttendanceManager";
+import { StockCountLog } from "@/components/stock/StockCountLog";
 import { supabase } from "@/integrations/supabase/client";
 
 export const Route = createFileRoute("/partner/attendance")({
@@ -41,7 +42,7 @@ function PartnerAttendance() {
           <div className="flex items-center gap-3">
             <LogoMark className="h-9 w-9 rounded-lg bg-card p-1 object-contain shadow-sm" />
             <div>
-              <p className="text-sm font-extrabold tracking-wide text-navy">Godown Attendance</p>
+              <p className="text-sm font-extrabold tracking-wide text-navy">Godown Attendance & Stock</p>
               <p className="text-xs text-slate">{me.name} · {me.godown}</p>
             </div>
           </div>
@@ -56,8 +57,9 @@ function PartnerAttendance() {
           </div>
         </div>
       </header>
-      <main className="mx-auto max-w-6xl px-4 py-6">
+      <main className="mx-auto max-w-6xl space-y-10 px-4 py-6">
         <AttendanceManager viewer="partner" partnerBranchId={me.branchId} />
+        <StockCountLog godowns={[{ id: me.branchId, name: me.godown }]} />
       </main>
     </div>
   );

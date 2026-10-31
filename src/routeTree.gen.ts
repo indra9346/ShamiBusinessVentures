@@ -56,6 +56,7 @@ import { Route as AdminReportsRouteImport } from './routes/admin.reports'
 import { Route as AdminReturnsRouteImport } from './routes/admin.returns'
 import { Route as AdminReviewsRouteImport } from './routes/admin.reviews'
 import { Route as AdminSettingsRouteImport } from './routes/admin.settings'
+import { Route as AdminStockCountsRouteImport } from './routes/admin.stock-counts'
 import { Route as AdminUpiPaymentsRouteImport } from './routes/admin.upi-payments'
 import { Route as AdminVendorsRouteImport } from './routes/admin.vendors'
 import { Route as AdminZohoRouteImport } from './routes/admin.zoho'
@@ -332,6 +333,11 @@ const AdminSettingsRoute = AdminSettingsRouteImport.update({
   path: '/admin/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdminStockCountsRoute = AdminStockCountsRouteImport.update({
+  id: '/admin/stock-counts',
+  path: '/admin/stock-counts',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AdminUpiPaymentsRoute = AdminUpiPaymentsRouteImport.update({
   id: '/admin/upi-payments',
   path: '/admin/upi-payments',
@@ -580,6 +586,7 @@ export interface FileRoutesByFullPath {
   '/admin/returns': typeof AdminReturnsRoute
   '/admin/reviews': typeof AdminReviewsRoute
   '/admin/settings': typeof AdminSettingsRoute
+  '/admin/stock-counts': typeof AdminStockCountsRoute
   '/admin/upi-payments': typeof AdminUpiPaymentsRoute
   '/admin/vendors': typeof AdminVendorsRouteWithChildren
   '/admin/zoho': typeof AdminZohoRoute
@@ -668,6 +675,7 @@ export interface FileRoutesByTo {
   '/admin/returns': typeof AdminReturnsRoute
   '/admin/reviews': typeof AdminReviewsRoute
   '/admin/settings': typeof AdminSettingsRoute
+  '/admin/stock-counts': typeof AdminStockCountsRoute
   '/admin/upi-payments': typeof AdminUpiPaymentsRoute
   '/admin/vendors': typeof AdminVendorsRouteWithChildren
   '/admin/zoho': typeof AdminZohoRoute
@@ -758,6 +766,7 @@ export interface FileRoutesById {
   '/admin/returns': typeof AdminReturnsRoute
   '/admin/reviews': typeof AdminReviewsRoute
   '/admin/settings': typeof AdminSettingsRoute
+  '/admin/stock-counts': typeof AdminStockCountsRoute
   '/admin/upi-payments': typeof AdminUpiPaymentsRoute
   '/admin/vendors': typeof AdminVendorsRouteWithChildren
   '/admin/zoho': typeof AdminZohoRoute
@@ -849,6 +858,7 @@ export interface FileRouteTypes {
     | '/admin/returns'
     | '/admin/reviews'
     | '/admin/settings'
+    | '/admin/stock-counts'
     | '/admin/upi-payments'
     | '/admin/vendors'
     | '/admin/zoho'
@@ -937,6 +947,7 @@ export interface FileRouteTypes {
     | '/admin/returns'
     | '/admin/reviews'
     | '/admin/settings'
+    | '/admin/stock-counts'
     | '/admin/upi-payments'
     | '/admin/vendors'
     | '/admin/zoho'
@@ -1026,6 +1037,7 @@ export interface FileRouteTypes {
     | '/admin/returns'
     | '/admin/reviews'
     | '/admin/settings'
+    | '/admin/stock-counts'
     | '/admin/upi-payments'
     | '/admin/vendors'
     | '/admin/zoho'
@@ -1108,6 +1120,7 @@ export interface RootRouteChildren {
   AdminReturnsRoute: typeof AdminReturnsRoute
   AdminReviewsRoute: typeof AdminReviewsRoute
   AdminSettingsRoute: typeof AdminSettingsRoute
+  AdminStockCountsRoute: typeof AdminStockCountsRoute
   AdminUpiPaymentsRoute: typeof AdminUpiPaymentsRoute
   AdminVendorsRoute: typeof AdminVendorsRouteWithChildren
   AdminZohoRoute: typeof AdminZohoRoute
@@ -1469,6 +1482,13 @@ declare module '@tanstack/react-router' {
       path: '/admin/settings'
       fullPath: '/admin/settings'
       preLoaderRoute: typeof AdminSettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/stock-counts': {
+      id: '/admin/stock-counts'
+      path: '/admin/stock-counts'
+      fullPath: '/admin/stock-counts'
+      preLoaderRoute: typeof AdminStockCountsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/admin/upi-payments': {
@@ -1940,6 +1960,7 @@ const rootRouteChildren: RootRouteChildren = {
   AdminReturnsRoute: AdminReturnsRoute,
   AdminReviewsRoute: AdminReviewsRoute,
   AdminSettingsRoute: AdminSettingsRoute,
+  AdminStockCountsRoute: AdminStockCountsRoute,
   AdminUpiPaymentsRoute: AdminUpiPaymentsRoute,
   AdminVendorsRoute: AdminVendorsRouteWithChildren,
   AdminZohoRoute: AdminZohoRoute,
