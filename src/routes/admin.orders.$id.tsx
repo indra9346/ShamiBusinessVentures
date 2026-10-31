@@ -99,7 +99,7 @@ function AdminOrderDetail() {
     updateOrderDelivery,
   } = useApp();
   const order = orders.find((o) => o.id === id);
-  const itemBatches = useOrderItemBatches(order?.dbOrderId);
+  const itemBatches = useOrderItemBatches(order?.dbOrderId, order?.items.map((item) => `${item.dbItemId}:${item.qty}:${order.status}`).join(",") ?? "");
   // Hooks stay above the early return: orders load after the first render.
   const [pushedZohoId, setPushedZohoId] = useState<string | null>(null);
   const [syncingZoho, setSyncingZoho] = useState(false);

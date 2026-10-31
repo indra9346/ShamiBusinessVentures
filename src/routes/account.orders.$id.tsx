@@ -74,7 +74,7 @@ function AccountOrderDetail() {
   const order = orders.find(
     (candidate) => candidate.id === id && orderBelongsToUser(candidate, user),
   );
-  const itemBatches = useOrderItemBatches(order?.dbOrderId);
+  const itemBatches = useOrderItemBatches(order?.dbOrderId, order?.items.map((item) => `${item.dbItemId}:${item.qty}:${order.status}`).join(",") ?? "");
 
   // A checkout waiting for payment is not an order yet: show its payment screen.
   const hold = order ? undefined : paymentHolds.find((candidate) => candidate.orderNo === id);

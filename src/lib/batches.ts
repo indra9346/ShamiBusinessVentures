@@ -233,7 +233,7 @@ const HELD_STATUSES = ["Awaiting Payment"];
 const UNPACKED_STATUSES = ["Awaiting Payment", "Placed", "Payment Confirmed", "Accepted"];
 
 export type BatchSale = {
-  batchId: string; batchCode: string; orderId: string; orderNo: string; orderDate: string; orderStatus: string; held: boolean;
+  batchId: string; batchCode: string; orderItemId: string; orderId: string; orderNo: string; orderDate: string; orderStatus: string; held: boolean;
   customerKey: string; customerName: string; customerPhone: string; customerEmail: string; customerAddress: string;
   productName: string; qty: number; rate: number; value: number; cost: number; profit: number;
 };
@@ -272,8 +272,18 @@ const emptyTotals = (): BatchTotals => ({
 export function addressLine(address: unknown) {
   if (!address || typeof address !== "object") return "";
   const a = address as Record<string, unknown>;
-  return [a["line1"] ?? a["address"] ?? a["street"], a["line2"], a["landmark"], a["city"], a["district"], a["state"], a["pin"] ?? a["pincode"]]
+  // Saved addresses and orders.shipping_address use "line"; older shapes "line1" / "address".
+  return [a["line"] ?? a["line1"] ?? a["address"] ?? a["street"], a["line2"], a["landmark"], a["city"], a["district"], a["state"], a["pin"] ?? a["pincode"]]
     .map(text).map((part) => part.trim()).filter(Boolean).join(", ");
+}
+
+/** Totals of a set of batch rows (a godown, a filter, everything). */
+export function sumTotals(list: BatchReportRow[]) {
+  const total = emptyTotals();
+  for (const row of list)
+    for (const key of Object.keys(total) as (keyof BatchTotals)[])
+      total[key] = key.endsWith("Value") || ["sales", "costOfSold", "profit"].includes(key) ? paise(total[key] + row[key]) : qty(total[key] + row[key]);
+  return total;
 }
 
 export const customerKeyOf = (order: BatchOrder) =>
@@ -305,7 +315,16 @@ export function buildBatchReport(input: {
     const customers = new Set<string>();
     let firstSale: string | null = null, lastSale: string | null = null;
 
-    for (const allocation of input.allocations.filter((a) => a.batch_id === batch.id)) {
+    // One sale per order line and batch: an order line that took the same batch twice (its
+    // quantity was raised later) is added up into one row.
+    const perLine = new Map<string, BatchAllocation>();
+    for (const a of input.allocations.filter((x) => x.batch_id === batch.id)) {
+      const seen = perLine.get(a.order_item_id);
+      perLine.set(a.order_item_id, seen
+        ? { ...seen, reserved_quantity: num(seen.reserved_quantity) + num(a.reserved_quantity), released_quantity: num(seen.released_quantity) + num(a.released_quantity) }
+        : a);
+    }
+    for (const allocation of perLine.values()) {
       const net = qty(num(allocation.reserved_quantity) - num(allocation.released_quantity));
       if (net <= 0) continue;
       const item = itemById.get(allocation.order_item_id);
@@ -318,7 +337,7 @@ export function buildBatchReport(input: {
       const cost = paise(net * num(allocation.unit_cost));
       const key = customerKeyOf(order);
       sales.push({
-        batchId: batch.id, batchCode: batch.batch_code, orderId: order.id, orderNo: order.order_no, orderDate: order.created_at,
+        batchId: batch.id, batchCode: batch.batch_code, orderItemId: item.id, orderId: order.id, orderNo: order.order_no, orderDate: order.created_at,
         orderStatus: order.order_status, held, customerKey: key, customerName: order.customer_name ?? "",
         customerPhone: order.customer_phone ?? "", customerEmail: order.customer_email ?? "", customerAddress: addressLine(order.shipping_address),
         productName: item.product_name || batch.product_name, qty: net, rate: paise(num(item.unit_price) * share), value, cost,
@@ -367,13 +386,6 @@ export function buildBatchReport(input: {
   rows.sort((a, b) => (b.batch.purchase_date ?? "").localeCompare(a.batch.purchase_date ?? "") || b.batch.batch_code.localeCompare(a.batch.batch_code));
   sales.sort((a, b) => b.orderDate.localeCompare(a.orderDate));
 
-  const sumTotals = (list: BatchReportRow[]) => {
-    const total = emptyTotals();
-    for (const row of list)
-      for (const key of Object.keys(total) as (keyof BatchTotals)[])
-        total[key] = key.endsWith("Value") || ["sales", "costOfSold", "profit"].includes(key) ? paise(total[key] + row[key]) : qty(total[key] + row[key]);
-    return total;
-  };
   const godowns = input.godowns.map((g) => {
     const list = rows.filter((row) => row.batch.branch_id === g.id);
     const soldOut = list.filter((row) => row.daysToSellOut !== null);

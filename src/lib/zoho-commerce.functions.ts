@@ -4949,7 +4949,7 @@ async function syncZohoGodownPrices(db: Awaited<ReturnType<typeof dbAdmin>>, reg
 async function syncZohoGodownStock(db: Awaited<ReturnType<typeof dbAdmin>>, region: Region, organizationId: string, token: string) {
   const summary = {
     enabled: false, items: 0, pulled: 0, sentToZoho: 0, failed: 0, errors: [] as string[],
-    batches: { items: 0, linked: 0, added: 0, failed: 0, errors: [] as string[] },
+    batches: { items: 0, linked: 0, added: 0, skipped: 0, failed: 0, errors: [] as string[] },
   };
   if (!(await isZohoStockMaster(db))) return summary;
   summary.enabled = true;
@@ -5000,23 +5000,19 @@ async function syncZohoGodownStock(db: Awaited<ReturnType<typeof dbAdmin>>, regi
           const zohoAvailable = godownStockFromZohoItem(item, branch.zoho_location_id, 0) ?? 0;
           const delta = Math.round((Number(row.stock) + ordersWaiting - zohoAvailable) * 1000) / 1000;
           if (delta !== 0) {
-            // A website receipt or edit: a batch-tracked item names its batches; a website cut
-            // also shows as a correction on the batch it came out of.
+            // A website receipt or edit: a batch-tracked item names its batches. (The website's
+            // own batches already took the change when it was made: admin_set_branch_stock.)
             const batchLine = await batchAwareAdjustment(db, region, organizationId, token, {
               itemId: link.zoho_item_id, tracked, locationId: branch.zoho_location_id,
               branchId: branch.id, productId: link.product_id, delta, gainShares: false,
             });
-            const adjustment = await inventoryRequest<{ inventory_adjustment?: Record<string, unknown> }>(region, organizationId, token, "inventoryadjustments", "POST", {
+            await inventoryRequest(region, organizationId, token, "inventoryadjustments", "POST", {
               date: todayInIndia(),
               reason: "Grain Bazar godown stock",
               adjustment_type: "quantity",
               description: `Set ${siteProducts.get(link.product_id)} stock at this godown to ${row.stock} to match Grain Bazar`,
               location_id: branch.zoho_location_id,
               line_items: [batchLine.line],
-            });
-            await recordBatchShares(db, batchLine.shares, {
-              reason: "correction", note: "Website stock edit", zohoAdjustmentId: str(adjustment.inventory_adjustment?.["inventory_adjustment_id"]),
-              by: null, byName: "Website",
             });
             summary.sentToZoho += 1;
           }
@@ -5266,7 +5262,7 @@ async function syncZohoBatches(
   items: { productId: string; zohoItemId: string; purchaseRate: number }[],
   branches: { id: string; zoho_location_id: string }[],
 ) {
-  const summary = { items: 0, linked: 0, added: 0, failed: 0, errors: [] as string[] };
+  const summary = { items: 0, linked: 0, added: 0, skipped: 0, failed: 0, errors: [] as string[] };
   for (const item of items) {
     try {
       const list = await zohoItemBatches(region, organizationId, token, item.zohoItemId);
@@ -5280,9 +5276,10 @@ async function syncZohoBatches(
       if (!rows.length) continue;
       const { data, error } = await db.rpc("apply_zoho_batches", { _rows: rows as Json });
       if (error) throw new Error(error.message);
-      const result = (data ?? {}) as { linked?: number; added?: number };
+      const result = (data ?? {}) as { linked?: number; added?: number; skipped?: number };
       summary.linked += result.linked ?? 0;
       summary.added += result.added ?? 0;
+      summary.skipped += result.skipped ?? 0;
     } catch (cause) {
       summary.failed += 1;
       const message = cause instanceof Error ? cause.message : String(cause);
@@ -5370,7 +5367,8 @@ export const receiveBatchPurchase = createServerFn({ method: "POST" })
       if (error || !next) throw new Error("Could not number the batch. Try again.");
       code = next;
     }
-    const { count } = await db.from("batches").select("id", { count: "exact", head: true }).ilike("batch_code", code);
+    // Numbers are stored upper-case (record_batch_receipt), so an exact match finds a clash.
+    const { count } = await db.from("batches").select("id", { count: "exact", head: true }).eq("batch_code", code);
     if (count) throw new Error(`Batch number ${code} is already used. Each purchase needs its own number.`);
 
     const productName = str((product.payload as Record<string, unknown> | null)?.["name"]) || product.id;
@@ -5410,9 +5408,15 @@ export const receiveBatchPurchase = createServerFn({ method: "POST" })
       const made = Array.isArray(lines[0]?.["batches"]) ? lines[0]["batches"] as Record<string, unknown>[] : [];
       zohoBatchId = str((made.find((b) => normalizeBatchCode(str(b["batch_number"])) === code) ?? made[0])?.["batch_id"]);
       if (tracked && !zohoBatchId) {
-        const found = zohoBatchesAtLocation(await zohoItemBatches(region, organizationId, token, zohoItemId), branch.zoho_location_id)
-          .find((b) => normalizeBatchCode(b.batchNumber) === code);
-        zohoBatchId = found?.batchId ?? "";
+        // Zoho has the stock now: a failed lookup must not stop the website from saving the batch
+        // (the 15-minute sync links it by number).
+        try {
+          const found = zohoBatchesAtLocation(await zohoItemBatches(region, organizationId, token, zohoItemId), branch.zoho_location_id)
+            .find((b) => normalizeBatchCode(b.batchNumber) === code);
+          zohoBatchId = found?.batchId ?? "";
+        } catch (cause) {
+          console.warn(zohoLogLine("batch_link_deferred", { message: (cause instanceof Error ? cause.message : String(cause)).slice(0, 200) }));
+        }
       }
     }
     const { data: batchId, error } = await db.rpc("record_batch_receipt", {

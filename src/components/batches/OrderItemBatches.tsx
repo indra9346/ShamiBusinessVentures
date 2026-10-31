@@ -5,8 +5,11 @@ import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 
 type ItemBatch = { code: string; qty: number };
 
-/** Batch / stock numbers of each line of an order (customer: own orders; admin: any). */
-export function useOrderItemBatches(dbOrderId: string | undefined) {
+/**
+ * Batch / stock numbers of each line of an order (customer: own orders; admin: any). Pass
+ * `linesKey` (the lines and quantities) so an edited quantity is read again.
+ */
+export function useOrderItemBatches(dbOrderId: string | undefined, linesKey = "") {
   const [byItem, setByItem] = useState<Map<string, ItemBatch[]>>(new Map());
   useEffect(() => {
     if (!dbOrderId || STATIC_DATA_MODE) return;
@@ -18,7 +21,7 @@ export function useOrderItemBatches(dbOrderId: string | undefined) {
       setByItem(map);
     });
     return () => { live = false; };
-  }, [dbOrderId]);
+  }, [dbOrderId, linesKey]);
   return byItem;
 }
 

@@ -14,7 +14,7 @@ import { downloadXlsx } from "@/lib/xlsx";
 import { supabase } from "@/integrations/supabase/client";
 import {
   adjustmentReasonLabel, batchAdjustmentSheet, batchReportSheets, buildBatchReport, formatBatchCode, godownCodeOf, isBatchCode, istDate,
-  normalizeBatchCode, searchBatchReport, type BatchAdjustment, type BatchReport, type BatchReportRow, type BatchSale,
+  normalizeBatchCode, searchBatchReport, sumTotals, type BatchAdjustment, type BatchReport, type BatchReportRow, type BatchSale,
 } from "@/lib/batches";
 import type { BatchData } from "@/lib/batches.functions";
 import { Button } from "@/components/ui/button";
@@ -102,7 +102,7 @@ function AdminBatches() {
     const scope = search.godown ? report.rows.filter((r) => r.batch.branch_id === search.godown) : report.rows;
     const ids = new Set(scope.map((r) => r.batch.id));
     const scoped: BatchReport = {
-      ...report, rows: scope, sales: report.sales.filter((s) => ids.has(s.batchId)),
+      ...report, rows: scope, all: sumTotals(scope), sales: report.sales.filter((s) => ids.has(s.batchId)),
       godowns: report.godowns.filter((g) => !search.godown || g.godownId === search.godown),
     };
     const codes = new Map(report.rows.map((r) => [r.batch.id, { code: r.batch.batch_code, product: r.batch.product_name, godown: r.godown }]));
@@ -421,7 +421,7 @@ function BatchDetail({ row, report, adjustments, orderId, go, onEdit }: {
               </thead>
               <tbody>
                 {sales.map((s) => (
-                  <tr key={`${s.orderId}-${s.qty}-${s.rate}`} onClick={() => go({ order: s.orderId })}
+                  <tr key={`${s.orderItemId}-${s.batchId}`} onClick={() => go({ order: s.orderId })}
                     className={cn("cursor-pointer border-t border-border hover:bg-ivory/60", s.orderId === orderId && "bg-gold/10")}>
                     <td className="px-3 py-2 font-mono text-xs font-semibold text-navy">{s.orderNo}</td>
                     <td className="whitespace-nowrap px-3 py-2 text-slate">{when(s.orderDate)}</td>
@@ -488,7 +488,7 @@ function OrderCustomer({ sale, report, go }: { sale: BatchSale; report: BatchRep
           <p className="text-slate">{when(sale.orderDate)} · <span className="font-semibold text-charcoal">{sale.held ? "Awaiting Payment" : sale.orderStatus}</span></p>
           <ul className="divide-y divide-border rounded-md border border-border">
             {lines.map((l) => (
-              <li key={`${l.batchId}-${l.qty}`} className="flex items-center justify-between gap-2 px-3 py-2">
+              <li key={`${l.orderItemId}-${l.batchId}`} className="flex items-center justify-between gap-2 px-3 py-2">
                 <span><span className="block">{l.productName}</span><button type="button" onClick={() => go({ batch: l.batchId })} className="font-mono text-xs font-semibold text-navy hover:underline">{l.batchCode}</button></span>
                 <span className="text-right">{units(l.qty)} × {money(l.rate)}<span className="block text-xs text-slate">{money(l.value)}</span></span>
               </li>
@@ -577,7 +577,7 @@ function TraceView({ report, search, go }: { report: BatchReport; search: Search
                   </div>
                   <ul className="mt-2 grid gap-1.5">
                     {sales.filter((s) => s.orderId === o.orderId).map((s) => (
-                      <li key={`${s.batchId}-${s.qty}`} className="flex items-center justify-between gap-2 rounded-md bg-ivory/60 px-3 py-1.5 text-sm">
+                      <li key={`${s.orderItemId}-${s.batchId}`} className="flex items-center justify-between gap-2 rounded-md bg-ivory/60 px-3 py-1.5 text-sm">
                         <span className="min-w-0 truncate">{s.productName}</span>
                         <button type="button" onClick={() => go({ tab: undefined, batch: s.batchId, order: s.orderId, customer: undefined })}
                           className="flex shrink-0 items-center gap-1 font-mono text-xs font-semibold text-navy hover:underline">{s.batchCode} · {units(s.qty)}<ChevronRight className="h-3.5 w-3.5" /></button>
@@ -606,8 +606,12 @@ function ReceiveDialog({ open, onOpenChange, data, defaultGodown, onSaved }: {
   const godowns = data.godowns.filter((g) => g.active);
   const [form, setForm] = useState({ branchId: "", productId: "", quantity: "", unitCost: "", purchaseDate: todayIst(), batchCode: "", supplier: "", purchaseRef: "", mfgDate: "", expiryDate: "", notes: "" });
   const [busy, setBusy] = useState(false);
+  // A cost the admin typed is kept when the product changes; otherwise the product's purchase rate fills it.
+  const [costTyped, setCostTyped] = useState(false);
   useEffect(() => {
-    if (open) setForm((f) => ({ ...f, branchId: f.branchId || defaultGodown || godowns.find((g) => g.zohoLinked)?.id || godowns[0]?.id || "" }));
+    // Only an active godown (the select lists only those).
+    const usable = (id?: string) => (id && godowns.some((g) => g.id === id) ? id : "");
+    if (open) setForm((f) => ({ ...f, branchId: usable(f.branchId) || usable(defaultGodown) || godowns.find((g) => g.zohoLinked)?.id || godowns[0]?.id || "" }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
   const product = data.products.find((p) => p.id === form.productId);
@@ -641,6 +645,7 @@ function ReceiveDialog({ open, onOpenChange, data, defaultGodown, onSaved }: {
         description: saved.zoho === "batch" ? "Zoho has the batch at this godown." : saved.zoho === "stock" ? "Zoho has the stock at this godown." : "Website only; Zoho gets the stock at the next sync.",
       });
       onOpenChange(false);
+      setCostTyped(false);
       setForm((f) => ({ ...f, productId: "", quantity: "", unitCost: "", batchCode: "", supplier: "", purchaseRef: "", mfgDate: "", expiryDate: "", notes: "" }));
       await onSaved(saved.batchId);
     } catch (cause) {
@@ -660,14 +665,14 @@ function ReceiveDialog({ open, onOpenChange, data, defaultGodown, onSaved }: {
           <Field label="Godown"><select value={form.branchId} onChange={set("branchId")} className="h-10 w-full rounded-md border border-input bg-white px-2 text-sm">{godowns.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}</select></Field>
           <Field label="Purchase date"><Input type="date" value={form.purchaseDate} max={todayIst()} onChange={set("purchaseDate")} /></Field>
           <Field label="Product" wide>
-            <select value={form.productId} onChange={(e) => { const p = data.products.find((x) => x.id === e.target.value); setForm((f) => ({ ...f, productId: e.target.value, unitCost: f.unitCost || (p?.purchasePrice ? String(p.purchasePrice) : "") })); }} className="h-10 w-full rounded-md border border-input bg-white px-2 text-sm">
+            <select value={form.productId} onChange={(e) => { const p = data.products.find((x) => x.id === e.target.value); setForm((f) => ({ ...f, productId: e.target.value, unitCost: costTyped ? f.unitCost : (p?.purchasePrice ? String(p.purchasePrice) : "") })); }} className="h-10 w-full rounded-md border border-input bg-white px-2 text-sm">
               <option value="">Choose a product…</option>
               {data.products.map((p) => <option key={p.id} value={p.id}>{p.name}{p.sku ? ` (${p.sku})` : ""}</option>)}
             </select>
             {product && godown && <span className="mt-1 block text-xs text-slate">{`Now at ${godown.name}: ${units(product.stock[godown.id] ?? 0)}`}</span>}
           </Field>
           <Field label="Quantity received"><Input type="number" min="0" step="any" value={form.quantity} onChange={set("quantity")} placeholder="e.g. 50" /></Field>
-          <Field label="Purchase cost per unit (₹)"><Input type="number" min="0" step="0.01" value={form.unitCost} onChange={set("unitCost")} placeholder="landing cost" /></Field>
+          <Field label="Purchase cost per unit (₹)"><Input type="number" min="0" step="0.01" value={form.unitCost} onChange={(e) => { setCostTyped(e.target.value !== ""); set("unitCost")(e); }} placeholder="landing cost" /></Field>
           <Field label="Batch / stock no." wide>
             <Input value={form.batchCode} onChange={set("batchCode")} placeholder={autoCode ? `${autoCode} (automatic)` : "automatic"} className="font-mono uppercase placeholder:normal-case" />
           </Field>

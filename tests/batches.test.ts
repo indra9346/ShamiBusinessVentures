@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   addressLine, batchAdjustmentSheet, batchLineText, batchReportSheets, buildBatchReport, daysBetween, formatBatchCode, godownCodeOf, isBatchCode,
-  normalizeBatchCode, packageLinesWithBatches, planBatchGain, planBatchLoss, planZohoBatchIn, planZohoBatchOut, searchBatchReport,
+  normalizeBatchCode, packageLinesWithBatches, planBatchGain, planBatchLoss, planZohoBatchIn, planZohoBatchOut, searchBatchReport, sumTotals,
   zohoBatchesAtLocation, zohoTracksBatches, type BatchOrder, type BatchRecord,
 } from "../src/lib/batches.ts";
 import { buildXlsx } from "../src/lib/xlsx.ts";
@@ -208,4 +208,31 @@ test("batch number as text on Zoho lines and packages", () => {
   assert.equal(batchLineText([{ code: "CLK-311026-01", qty: 1 }], 3), "Batch CLK-311026-01 x1");
   assert.equal(batchLineText([], 3), "");
   assert.equal(batchLineText([{ code: "CLK-311026-01", qty: 0 }], 3), "");
+});
+
+test("review fixes: saved-address 'line', one sale per order line and batch, totals of a filter", () => {
+  assert.equal(addressLine({ line: "Market Road", city: "Challakere", state: "Karnataka", pin: "577522" }), "Market Road, Challakere, Karnataka, 577522");
+  const report = buildBatchReport({
+    batches: [
+      batch({ remaining_quantity: 45, status: "Active", depleted_at: null }),
+      batch({ id: "b9", batch_code: "HBL-311026-01", branch_id: "BR-HBL", quantity: 5, remaining_quantity: 5, status: "Active", depleted_at: null }),
+    ],
+    allocations: [
+      // the admin raised the line from 3 to 5: a second allocation on the same batch
+      { id: "a1", order_item_id: "i1", batch_id: "b1", reserved_quantity: 3, released_quantity: 0, unit_cost: 800, created_at: "" },
+      { id: "a2", order_item_id: "i1", batch_id: "b1", reserved_quantity: 2, released_quantity: 0, unit_cost: 800, created_at: "" },
+    ],
+    items: [{ id: "i1", order_id: "o1", product_id: "P023", product_name: "Groundnut Oil 5L Can", qty: 5, unit_price: 949, gst_rate: 5 }],
+    orders: [order("o1", "Delivered", { shipping_address: { line: "Market Road", city: "Challakere", pin: "577522" } })],
+    adjustments: [],
+    godowns: [{ id: "BR-CLK", name: "Challakere" }, { id: "BR-HBL", name: "Hubli" }],
+    today: "2026-11-01",
+  });
+  assert.equal(report.sales.length, 1);
+  assert.deepEqual([report.sales[0]!.qty, report.sales[0]!.orderItemId, report.sales[0]!.customerAddress], [5, "i1", "Market Road, Challakere, 577522"]);
+  assert.equal(report.rows.find((r) => r.batch.id === "b1")!.sold, 5);
+  // One godown's totals, not the company's
+  const hubli = sumTotals(report.rows.filter((r) => r.batch.branch_id === "BR-HBL"));
+  assert.deepEqual([hubli.purchased, hubli.sold, hubli.available], [5, 0, 5]);
+  assert.deepEqual([report.all.purchased, report.all.sold], [55, 5]);
 });
