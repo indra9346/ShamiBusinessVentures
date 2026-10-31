@@ -373,6 +373,12 @@ export type Database = {
         Update: { order_id?: string; order_no?: string; zoho_invoice_id?: string | null; invoice_number?: string | null; status?: string; total?: number | null; balance?: number | null; auto_attempts?: number; admin_approved?: boolean; approved_by?: string | null; approved_at?: string | null; last_event?: string; updated_at?: string }
         Relationships: []
       }
+      stock_counts: {
+        Row: { id: string; branch_id: string; product_id: string; product_name: string; counted: number; zoho_physical_before: number; zoho_delta: number; site_before: number; site_after: number; reason: string; note: string; flagged: boolean; zoho_adjustment_id: string; counted_by: string | null; counted_by_name: string; employee_id: string | null; created_at: string }
+        Insert: { branch_id: string; product_id: string; counted: number; zoho_physical_before: number; zoho_delta: number; site_after: number; reason: string; id?: string; product_name?: string; site_before?: number; note?: string; flagged?: boolean; zoho_adjustment_id?: string; counted_by?: string | null; counted_by_name?: string; employee_id?: string | null; created_at?: string }
+        Update: { id?: string; branch_id?: string; product_id?: string; product_name?: string; counted?: number; zoho_physical_before?: number; zoho_delta?: number; site_before?: number; site_after?: number; reason?: string; note?: string; flagged?: boolean; zoho_adjustment_id?: string; counted_by?: string | null; counted_by_name?: string; employee_id?: string | null; created_at?: string }
+        Relationships: []
+      }
       staff_employees: {
         Row: { id: string; user_id: string; branch_id: string; name: string; phone: string; designation: string; status: string; joined_on: string; created_by: string | null; created_at: string; updated_at: string }
         Insert: { user_id: string; branch_id: string; name: string; phone: string; id?: string; designation?: string; status?: string; joined_on?: string; created_by?: string | null; created_at?: string; updated_at?: string }
@@ -1071,6 +1077,10 @@ export type Database = {
       settle_bank_credit: { Args: { _credit_id: string; _note: string }; Returns: { id: string; status: string; note: string | null } }
       submit_upi_utr: { Args: { _order_no: string; _utr: string }; Returns: { id: string; order_id: string; order_no: string; user_id: string | null; customer_name: string; amount: number; utr: string; status: string; note: string | null; submitted_at: string; reviewed_at: string | null; reviewed_by: string | null } }
       review_upi_utr: { Args: { _order_no: string; _decision: string; _note?: string | null }; Returns: { id: string; order_id: string; order_no: string; user_id: string | null; customer_name: string; amount: number; utr: string; status: string; note: string | null; submitted_at: string; reviewed_at: string | null; reviewed_by: string | null } }
+      record_stock_count: {
+        Args: { _branch_id: string; _product_id: string; _counted: number; _zoho_physical_before: number; _zoho_delta: number; _site_after: number; _reason: string; _note: string; _flagged: boolean; _zoho_adjustment_id: string; _counted_by: string; _counted_by_name: string; _employee_id: string | null }
+        Returns: string
+      }
       attendance_decide: { Args: { _kind: string; _id: string; _decision: string; _note?: string }; Returns: string }
       request_leave: { Args: { _from: string; _to: string; _type: string; _reason: string }; Returns: string }
       cancel_leave: { Args: { _id: string }; Returns: undefined }
