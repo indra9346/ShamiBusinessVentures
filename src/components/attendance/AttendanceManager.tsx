@@ -104,13 +104,16 @@ export function AttendanceManager({ viewer, partnerBranchId }: { viewer: Viewer;
   const pendingLeaves = desk.leaves.filter((leave) => leave.status === "pending");
   const waitingOnMe = [...desk.pendingDays, ...pendingLeaves].filter((item) => (viewer === "admin" ? item.head_office_decision : item.partner_decision) === null).length;
   const active = desk.employees.filter((employee) => employee.status === "active");
-  const onLeaveToday = new Set(desk.leaves.filter((leave) => leave.status === "approved" && leave.from_date <= desk.today && desk.today <= leave.to_date).map((leave) => leave.employee_id));
+  // Today's counts cover active employees only: a deactivated employee's day stays in the register, not here.
+  const activeIds = new Set(active.map((employee) => employee.id));
+  const presentToday = desk.todayDays.filter((day) => day.status === "present" && activeIds.has(day.employee_id)).length;
+  const onLeaveToday = new Set(desk.leaves.filter((leave) => leave.status === "approved" && leave.from_date <= desk.today && desk.today <= leave.to_date && activeIds.has(leave.employee_id)).map((leave) => leave.employee_id));
 
   return (
     <div className="space-y-6">
       {desk.error && <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{desk.error}</p>}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard label="Present today" value={`${desk.todayDays.filter((day) => day.status === "present").length} of ${active.length}`} icon={UserCheck} />
+        <StatCard label="Present today" value={`${presentToday} of ${active.length}`} icon={UserCheck} />
         <StatCard label="Waiting for approval" value={String(desk.pendingDays.length + pendingLeaves.length)} icon={Clock} description={`${waitingOnMe} need your decision`} />
         <StatCard label="On leave today" value={String(onLeaveToday.size)} icon={CalendarCheck} />
         <StatCard label="Employees" value={String(active.length)} icon={Users} {...(viewer === "admin" ? { description: `${desk.godowns.length} godowns` } : {})} />
@@ -170,7 +173,7 @@ function TodayBoard({ godown, employees, desk, onLeaveToday, onOpen, viewer }: {
   godown: Godown; employees: Employee[]; desk: Desk; onLeaveToday: Set<string>; onOpen: (day: Day) => void; viewer: Viewer;
 }) {
   const dayOf = new Map(desk.todayDays.filter((day) => day.branch_id === godown.id).map((day) => [day.employee_id, day]));
-  const present = [...dayOf.values()].filter((day) => day.status === "present").length;
+  const present = employees.filter((employee) => dayOf.get(employee.id)?.status === "present").length;
   return (
     <Panel title={`${godown.name} · ${present} of ${employees.length} present`}
       action={<span className="text-xs text-slate">{`Shift ${indiaTime(`2000-01-01T${godown.shift_start.slice(0, 5)}:00+05:30`)} · grace ${godown.late_grace_min} min · radius ${godown.attendance_radius_m} m`}</span>}>
