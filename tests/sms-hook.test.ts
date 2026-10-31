@@ -1,7 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
-import { fast2smsOtpRequest, fast2smsOutcome, smsFromHookPayload, verifyHookSignature } from "../src/lib/sms-hook.ts";
+import {
+  SMS_FAILED_MESSAGE, SMS_TOO_MANY_MESSAGE, fast2smsOtpRequest, fast2smsOutcome, hookErrorBody, smsFailureForCustomer, smsFromHookPayload,
+  verifyHookSignature,
+} from "../src/lib/sms-hook.ts";
 
 const rawKey = Buffer.from("grain-bazar-test-hook-secret-32b");
 const secret = `v1,whsec_${rawKey.toString("base64")}`;
@@ -49,4 +52,17 @@ test("Fast2SMS: OTP route request and its answers", () => {
   assert.match((refused as { message: string }).message, /996.*website verification/);
   assert.equal(fast2smsOutcome(401, { return: false, message: "Invalid Authentication" }).ok, false);
   assert.equal(fast2smsOutcome(500, null).ok, false);
+});
+
+test("Fast2SMS refusals: the customer sees why, and Supabase passes the message on", () => {
+  // Live answer on 31 Oct 2026 after several codes to one number in a few minutes.
+  const spam = fast2smsOutcome(200, { return: false, status_code: 995, message: "Spamming detected (sending multiple sms to same number is not allowed)" });
+  assert.equal(spam.ok, false);
+  assert.equal((spam as { code: number | null }).code, 995);
+  assert.deepEqual(smsFailureForCustomer(995), { httpCode: 429, message: SMS_TOO_MANY_MESSAGE });
+  assert.deepEqual(smsFailureForCustomer(996), { httpCode: 502, message: SMS_FAILED_MESSAGE });
+  assert.deepEqual(smsFailureForCustomer(null), { httpCode: 502, message: SMS_FAILED_MESSAGE });
+  assert.equal((fast2smsOutcome(500, null) as { code: number | null }).code, null);
+  // Any other HTTP status shows as "Unexpected status code returned from hook" in the app.
+  assert.deepEqual(hookErrorBody(429, SMS_TOO_MANY_MESSAGE), { status: 200, body: { error: { http_code: 429, message: SMS_TOO_MANY_MESSAGE } } });
 });

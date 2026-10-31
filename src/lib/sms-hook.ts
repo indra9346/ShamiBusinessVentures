@@ -84,9 +84,29 @@ export function fast2smsOtpRequest(apiKey: string, mobile: string, otp: string):
 }
 
 /** Fast2SMS answers { return: true, request_id } when the SMS is accepted; anything else is a failure. */
-export function fast2smsOutcome(status: number, body: unknown): { ok: true; requestId: string } | { ok: false; message: string } {
+export function fast2smsOutcome(status: number, body: unknown): { ok: true; requestId: string } | { ok: false; code: number | null; message: string } {
   const data = (body && typeof body === "object" ? body : {}) as { return?: unknown; request_id?: unknown; message?: unknown; status_code?: unknown };
   if (status >= 200 && status < 300 && data.return === true) return { ok: true, requestId: String(data.request_id ?? "") };
   const message = Array.isArray(data.message) ? data.message.join(" ") : String(data.message ?? `HTTP ${status}`);
-  return { ok: false, message: `Fast2SMS refused the SMS${data.status_code ? ` (${String(data.status_code)})` : ""}: ${message}`.slice(0, 300) };
+  const code = Number.isFinite(Number(data.status_code)) && data.status_code !== undefined && data.status_code !== null ? Number(data.status_code) : null;
+  return { ok: false, code, message: `Fast2SMS refused the SMS${code !== null ? ` (${code})` : ""}: ${message}`.slice(0, 300) };
+}
+
+/** Fast2SMS refuses more codes to a number that just got several ("Spamming detected"). */
+export const FAST2SMS_SPAM_CODE = 995;
+export const SMS_TOO_MANY_MESSAGE = "Too many codes were sent to this number. Please wait 10 minutes and try again.";
+export const SMS_FAILED_MESSAGE = "Could not send the SMS right now. Please try again or sign in with email.";
+
+/** What the customer is told when Fast2SMS refuses (HTTP code and message for Supabase). */
+export function smsFailureForCustomer(code: number | null) {
+  return code === FAST2SMS_SPAM_CODE ? { httpCode: 429, message: SMS_TOO_MANY_MESSAGE } : { httpCode: 502, message: SMS_FAILED_MESSAGE };
+}
+
+/**
+ * The hook's answer to Supabase for a failure. Supabase passes the message on to the app only when
+ * the hook answers HTTP 200 with { error: { http_code, message } }; any other HTTP status reaches the
+ * customer as "Unexpected status code returned from hook".
+ */
+export function hookErrorBody(httpCode: number, message: string) {
+  return { status: 200, body: { error: { http_code: httpCode, message } } };
 }

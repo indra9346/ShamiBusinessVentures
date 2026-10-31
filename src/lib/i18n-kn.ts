@@ -4016,6 +4016,7 @@ export const kn: Record<string, string> = {
   "Counted by": "ಎಣಿಸಿದವರು",
   "Godown Attendance & Stock": "ಗೋದಾಮು ಹಾಜರಾತಿ ಮತ್ತು ದಾಸ್ತಾನು",
   "Attendance & stock": "ಹಾಜರಾತಿ ಮತ್ತು ದಾಸ್ತಾನು",
+  "Too many codes were sent to this number. Please wait 10 minutes and try again.": "ಈ ಸಂಖ್ಯೆಗೆ ಹಲವು ಕೋಡ್‌ಗಳನ್ನು ಕಳುಹಿಸಲಾಗಿದೆ. ದಯವಿಟ್ಟು 10 ನಿಮಿಷ ಕಾಯಿರಿ, ನಂತರ ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ.",
 };
 
 /** Word-level fallbacks for text that isn't in the dictionary (product names, specs from the database). */
