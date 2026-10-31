@@ -119,7 +119,7 @@ function AdminEnquiryDetail() {
       items={adminNav}
       tone="admin"
       title={row?.name ?? "Customer Enquiry"}
-      subtitle={row?.email ?? "Review and respond to this request"}
+      subtitle={row ? [row.email, row.phone?.trim()].filter(Boolean).join(" · ") : "Review and respond to this request"}
     >
       <Link
         to="/admin/enquiries"
