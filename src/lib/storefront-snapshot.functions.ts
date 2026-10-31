@@ -65,6 +65,10 @@ async function readStorefront(): Promise<Data> {
     ),
     rest<StorefrontSnapshot["adBanners"]>("ad_banners?select=*&order=sort_order.asc,created_at.asc"),
   ]);
+  // Optional: without it, product pages simply carry no rating.
+  const publishedRatings = await rest<NonNullable<StorefrontSnapshot["publishedRatings"]>>(
+    "product_reviews?select=product_id,rating&status=eq.Published",
+  ).catch(() => []);
   const settings = Object.fromEntries(settingRows.map((row) => [row.key, row.value]));
   const features = settings["platform_features"];
   const marketplace = !!features && typeof features === "object" && !Array.isArray(features) && features["marketplace_vendors"] === true;
@@ -81,6 +85,7 @@ async function readStorefront(): Promise<Data> {
     vendorPoints,
     settings,
     adBanners,
+    publishedRatings,
   };
 }
 

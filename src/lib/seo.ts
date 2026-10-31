@@ -109,18 +109,55 @@ export type ProductForSeo = {
   stock?: number;
   rating?: number;
   reviews?: number;
+  /** Where the godowns deliver (Google's merchant listing "shippingDetails"). */
+  deliveryAreas?: DeliveryArea[];
 };
 
-/** Product rich result: name, image, SKU, brand and the INR offer with stock. */
+/** A godown that delivers: its fee, the order value above which delivery is free, and the PIN codes it serves. */
+export type DeliveryArea = { fee: number; freeAbove: number | null; postalCodes: string[] };
+
+/**
+ * Delivery areas from the godown rows (branches): active godowns with delivery switched on and the
+ * PIN codes they serve. Pickup-only godowns don't ship, so they are left out.
+ */
+export function deliveryAreasForSeo(branches: Record<string, unknown>[]): DeliveryArea[] {
+  return branches
+    .filter((b) => b["active"] === true && b["delivery_enabled"] === true && !b["vendor_id"] && Array.isArray(b["serves_pincodes"]))
+    .map((b) => ({
+      fee: Math.max(0, Number(b["delivery_fee"]) || 0),
+      freeAbove: b["free_delivery_above"] === null || b["free_delivery_above"] === undefined ? null : Number(b["free_delivery_above"]),
+      postalCodes: [...new Set((b["serves_pincodes"] as unknown[]).map(String).filter((pin) => /^\d{6}$/.test(pin)))].sort(),
+    }))
+    .filter((area) => area.postalCodes.length > 0);
+}
+
+/** Average (one decimal) and count of a product's published review ratings, or null when it has none. */
+export function ratingSummary(ratings: { product_id: string; rating: number }[], productId: string) {
+  const mine = ratings.filter((row) => row.product_id === productId && row.rating >= 1 && row.rating <= 5);
+  if (!mine.length) return null;
+  return { rating: Math.round((mine.reduce((sum, row) => sum + row.rating, 0) / mine.length) * 10) / 10, reviews: mine.length };
+}
+
+/** Product rich result: name, image, SKU, brand, real ratings and the INR offer with stock and delivery. */
 export function productJsonLd(p: ProductForSeo) {
+  const price = Math.round(p.price * 100) / 100;
   const offer = {
     "@type": "Offer",
     url: absoluteUrl(`/product/${encodeURIComponent(p.id)}`),
     priceCurrency: "INR",
-    price: (Math.round(p.price * 100) / 100).toFixed(2),
+    price: price.toFixed(2),
     availability: (p.stock ?? 1) > 0 ? "https://schema.org/InStock" : "https://schema.org/OutOfStock",
     itemCondition: "https://schema.org/NewCondition",
     seller: { "@type": "Organization", name: SITE_NAME },
+    ...(p.deliveryAreas?.length
+      ? {
+          shippingDetails: p.deliveryAreas.map((area) => ({
+            "@type": "OfferShippingDetails",
+            shippingRate: { "@type": "MonetaryAmount", value: area.freeAbove !== null && price >= area.freeAbove ? 0 : area.fee, currency: "INR" },
+            shippingDestination: { "@type": "DefinedRegion", addressCountry: "IN", postalCode: area.postalCodes },
+          })),
+        }
+      : {}),
   };
   return {
     "@context": "https://schema.org",

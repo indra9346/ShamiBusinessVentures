@@ -1,5 +1,5 @@
 import { createFileRoute, Link, notFound } from "@tanstack/react-router";
-import { pageHead, jsonLdScript, breadcrumbJsonLd, productJsonLd, SITE_NAME } from "@/lib/seo";
+import { pageHead, jsonLdScript, breadcrumbJsonLd, deliveryAreasForSeo, productJsonLd, ratingSummary, SITE_NAME } from "@/lib/seo";
 import { useState, useEffect } from "react";
 import { Heart, Minus, Plus, ShieldCheck, Star, Truck, Store, ShoppingCart } from "lucide-react";
 import { toast } from "sonner";
@@ -29,14 +29,19 @@ export const Route = createFileRoute("/product/$id")({
     // The storefront data that came with the page already holds the product: no database call before
     // the page opens (the page shows the store's live copy of it).
     const snapshot = (await parentMatchPromise).loaderData;
+    // Google's merchant listing: where the godowns deliver, and the rating from published reviews only.
+    const seo = {
+      deliveryAreas: deliveryAreasForSeo(snapshot?.branches ?? []),
+      rating: ratingSummary(snapshot?.publishedRatings ?? [], params.id),
+    };
     const known = snapshot?.products.find((payload) => (payload as { id?: unknown } | null)?.id === params.id) as unknown as
       import("@/lib/data").Product | undefined;
-    if (known && isStorefrontProduct(known)) return { product: known, catalogUnavailable: false };
+    if (known && isStorefrontProduct(known)) return { product: known, catalogUnavailable: false, seo };
     const { data, error } = await supabase.from("catalog_products").select("payload").eq("id", params.id).maybeSingle();
     const product = data?.payload as unknown as import("@/lib/data").Product | undefined;
     if (error) return { product: null, catalogUnavailable: true };
     if (!product || !isStorefrontProduct(product)) throw notFound();
-    return { product, catalogUnavailable: false };
+    return { product, catalogUnavailable: false, seo };
   },
   head: ({ loaderData }) => {
     if (!loaderData?.product) {
@@ -66,6 +71,8 @@ export const Route = createFileRoute("/product/$id")({
           ...(p.sku ? { sku: p.sku } : {}),
           ...(p.brand ? { brand: p.brand } : {}),
           ...(p.category ? { category: p.category } : {}),
+          ...(loaderData.seo?.rating ?? {}),
+          ...(loaderData.seo?.deliveryAreas.length ? { deliveryAreas: loaderData.seo.deliveryAreas } : {}),
         })),
         jsonLdScript(breadcrumbJsonLd([
           { name: "Home", path: "/" },

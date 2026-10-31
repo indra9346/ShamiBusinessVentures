@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { absoluteUrl, breadcrumbJsonLd, clip, jsonLdScript, pageHead, productJsonLd, sitemapXml } from "../src/lib/seo.ts";
+import { absoluteUrl, breadcrumbJsonLd, clip, deliveryAreasForSeo, jsonLdScript, pageHead, productJsonLd, ratingSummary, sitemapXml } from "../src/lib/seo.ts";
 
 test("one canonical address for every page", () => {
   assert.equal(absoluteUrl("/"), "https://grainbazar.com");
@@ -39,6 +39,40 @@ test("product structured data: INR offer, stock, real ratings only", () => {
   assert.equal(productJsonLd({ id: "x", name: "x", price: 1, stock: 0 }).offers.availability, "https://schema.org/OutOfStock");
   // Text can never break out of the script tag.
   assert.ok(!jsonLdScript({ name: "</script><b>" }).children.includes("</script>"));
+});
+
+test("merchant listing shipping: delivering godowns' PIN codes and fee; pickup-only godowns don't ship", () => {
+  const areas = deliveryAreasForSeo([
+    { id: "BR-HBL", active: true, delivery_enabled: true, vendor_id: null, delivery_fee: 0, free_delivery_above: null, serves_pincodes: ["580021", "580020", "580020", "bad"] },
+    { id: "BR-CLK", active: true, delivery_enabled: false, vendor_id: null, delivery_fee: 0, free_delivery_above: null, serves_pincodes: ["577522"] },
+    { id: "BR-X", active: true, delivery_enabled: true, vendor_id: null, delivery_fee: 150, free_delivery_above: 5000, serves_pincodes: ["560001"] },
+    { id: "BR-OFF", active: false, delivery_enabled: true, vendor_id: null, delivery_fee: 0, free_delivery_above: null, serves_pincodes: ["560002"] },
+    { id: "V-1", active: true, delivery_enabled: true, vendor_id: "VENDOR-001", delivery_fee: 0, free_delivery_above: null, serves_pincodes: ["560003"] },
+    { id: "BR-NOPIN", active: true, delivery_enabled: true, vendor_id: null, delivery_fee: 0, free_delivery_above: null, serves_pincodes: [] },
+  ]);
+  assert.deepEqual(areas, [
+    { fee: 0, freeAbove: null, postalCodes: ["580020", "580021"] },
+    { fee: 150, freeAbove: 5000, postalCodes: ["560001"] },
+  ]);
+  const cheap = productJsonLd({ id: "P1", name: "Oil", price: 2151.45, stock: 5, deliveryAreas: areas }).offers;
+  assert.deepEqual(cheap.shippingDetails, [
+    { "@type": "OfferShippingDetails", shippingRate: { "@type": "MonetaryAmount", value: 0, currency: "INR" },
+      shippingDestination: { "@type": "DefinedRegion", addressCountry: "IN", postalCode: ["580020", "580021"] } },
+    { "@type": "OfferShippingDetails", shippingRate: { "@type": "MonetaryAmount", value: 150, currency: "INR" },
+      shippingDestination: { "@type": "DefinedRegion", addressCountry: "IN", postalCode: ["560001"] } },
+  ]);
+  // At or above the free-delivery value the fee is 0.
+  const dear = productJsonLd({ id: "P2", name: "Sugar", price: 5000, deliveryAreas: areas }).offers;
+  assert.equal(dear.shippingDetails?.[1]?.shippingRate.value, 0);
+  assert.equal("shippingDetails" in productJsonLd({ id: "P3", name: "x", price: 1 }).offers, false);
+});
+
+test("Google rating comes only from published reviews", () => {
+  const ratings = [{ product_id: "P1", rating: 5 }, { product_id: "P1", rating: 4 }, { product_id: "P1", rating: 4 }, { product_id: "P2", rating: 3 }, { product_id: "P1", rating: 9 }];
+  assert.deepEqual(ratingSummary(ratings, "P1"), { rating: 4.3, reviews: 3 });
+  assert.equal(ratingSummary(ratings, "P9"), null);
+  const rated = productJsonLd({ id: "P1", name: "Rice", price: 100, ...ratingSummary(ratings, "P1")! });
+  assert.deepEqual(rated.aggregateRating, { "@type": "AggregateRating", ratingValue: 4.3, reviewCount: 3 });
 });
 
 test("breadcrumbs and sitemap", () => {

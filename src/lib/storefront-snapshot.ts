@@ -25,6 +25,8 @@ export type StorefrontSnapshot = {
   /** The public settings rows the storefront reads, by key. */
   settings: { [key: string]: Json };
   adBanners: AdBannerRow[];
+  /** Ratings of published product reviews, for the product pages' Google rating (empty if unreadable). */
+  publishedRatings?: { product_id: string; rating: number }[];
 };
 
 /** A copy older than this when the page was sent is read again in the browser after the page loads. */
