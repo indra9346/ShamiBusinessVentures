@@ -5000,19 +5000,25 @@ async function syncZohoGodownStock(db: Awaited<ReturnType<typeof dbAdmin>>, regi
           const zohoAvailable = godownStockFromZohoItem(item, branch.zoho_location_id, 0) ?? 0;
           const delta = Math.round((Number(row.stock) + ordersWaiting - zohoAvailable) * 1000) / 1000;
           if (delta !== 0) {
-            // A website receipt or edit: a batch-tracked item names its batches. (The website's
-            // own batches already took the change when it was made: admin_set_branch_stock.)
+            // A website receipt or edit: a batch-tracked item names its batches. Other items' batches
+            // already took the change when it was made (admin_set_branch_stock); a batch-tracked
+            // item's batches take what Zoho changed here (a gain only on a batch Zoho already has,
+            // since a website-only receipt is in its batch already).
             const batchLine = await batchAwareAdjustment(db, region, organizationId, token, {
               itemId: link.zoho_item_id, tracked, locationId: branch.zoho_location_id,
-              branchId: branch.id, productId: link.product_id, delta, gainShares: false,
+              branchId: branch.id, productId: link.product_id, delta, gainShares: tracked ? "linked" : false,
             });
-            await inventoryRequest(region, organizationId, token, "inventoryadjustments", "POST", {
+            const adjustment = await inventoryRequest<{ inventory_adjustment?: Record<string, unknown> }>(region, organizationId, token, "inventoryadjustments", "POST", {
               date: todayInIndia(),
               reason: "Grain Bazar godown stock",
               adjustment_type: "quantity",
               description: `Set ${siteProducts.get(link.product_id)} stock at this godown to ${row.stock} to match Grain Bazar`,
               location_id: branch.zoho_location_id,
               line_items: [batchLine.line],
+            });
+            if (tracked) await recordBatchShares(db, batchLine.shares, {
+              reason: "correction", note: "Godown stock set by head office", by: null, byName: "Website",
+              zohoAdjustmentId: str(adjustment.inventory_adjustment?.["inventory_adjustment_id"]),
             });
             summary.sentToZoho += 1;
           }
@@ -5095,13 +5101,18 @@ export const submitStockCount = createServerFn({ method: "POST" })
 
     let adjustmentId = "";
     let shares: BatchShare[] = [];
+    const tracked = zohoTracksBatches(response.item);
+    // The website stock before the count: a head-office edit still waiting for Zoho is already on
+    // the batches (admin_set_branch_stock), so batches take only the website's own change below.
+    const { data: siteRow } = await db.from("branch_stock").select("stock").eq("branch_id", branch.id).eq("product_id", product.id).maybeSingle();
+    const siteBefore = Number(siteRow?.stock ?? 0);
     if (plan.delta !== 0) {
       // Batch-tracked in Zoho: the adjustment names the batches (the oldest lose first).
       const batchLine = await batchAwareAdjustment(db, region, organizationId, token, {
-        itemId: link.zoho_item_id, tracked: zohoTracksBatches(response.item), locationId: branch.zoho_location_id,
+        itemId: link.zoho_item_id, tracked, locationId: branch.zoho_location_id,
         branchId: branch.id, productId: product.id, delta: plan.delta, gainShares: true,
       });
-      shares = batchLine.shares;
+      if (tracked) shares = batchLine.shares;
       const adjustment = await inventoryRequest<{ inventory_adjustment?: Record<string, unknown> }>(
         region, organizationId, token, "inventoryadjustments", "POST", {
           date: todayInIndia(),
@@ -5125,7 +5136,13 @@ export const submitStockCount = createServerFn({ method: "POST" })
         ? "Zoho has the new count, but the website could not save it. The website catches up at the next Zoho sync (within 15 minutes)."
         : "The count could not be saved. Try again.");
     }
-    // The same loss / gain per batch, for the batch reports.
+    // The same loss / gain per batch, for the batch reports: for a batch-tracked item the batches
+    // Zoho changed; otherwise the website's change (oldest batch loses first, newest takes a gain).
+    if (!tracked) {
+      const change = Math.round((plan.siteAfter - siteBefore) * 1000) / 1000;
+      const website = change === 0 ? [] : await websiteBatchesAt(db, branch.id, product.id);
+      shares = change < 0 ? planBatchLoss(website, -change).shares : change > 0 ? planBatchGain(website, change).shares : [];
+    }
     await recordBatchShares(db, shares, {
       reason: data.reason === "damaged" ? "damaged" : "stock_count", note: data.note, stockCountId: countId ?? null,
       zohoAdjustmentId: adjustmentId, by: context.userId, byName: employee.name,
@@ -5196,13 +5213,13 @@ async function websiteBatchesAt(db: Awaited<ReturnType<typeof dbAdmin>>, branchI
  */
 async function batchAwareAdjustment(
   db: Awaited<ReturnType<typeof dbAdmin>>, region: Region, organizationId: string, token: string,
-  input: { itemId: string; tracked: boolean; locationId: string; branchId: string; productId: string; delta: number; gainShares: boolean },
+  input: { itemId: string; tracked: boolean; locationId: string; branchId: string; productId: string; delta: number; gainShares: boolean | "linked" },
 ) {
   const line: Record<string, unknown> = { item_id: input.itemId, quantity_adjusted: input.delta, location_id: input.locationId };
   const website = await websiteBatchesAt(db, input.branchId, input.productId);
   let shares: BatchShare[] = [];
   if (!input.tracked) {
-    shares = input.delta < 0 ? planBatchLoss(website, -input.delta).shares : input.gainShares ? planBatchGain(website, input.delta).shares : [];
+    shares = input.delta < 0 ? planBatchLoss(website, -input.delta).shares : input.gainShares === true ? planBatchGain(website, input.delta).shares : [];
     return { line, shares };
   }
   const zoho = zohoBatchesAtLocation(await zohoItemBatches(region, organizationId, token, input.itemId), input.locationId);
@@ -5220,7 +5237,7 @@ async function batchAwareAdjustment(
     const unlinked = website.filter((b) => !b.zohoBatchId).sort((a, b) => a.createdAt.localeCompare(b.createdAt)).at(-1);
     if (unlinked) {
       line["batches"] = [{ batch_number: unlinked.batchCode, in_quantity: input.delta }];
-      if (input.gainShares) shares = [{ batchId: unlinked.id, qty: input.delta }];
+      if (input.gainShares === true) shares = [{ batchId: unlinked.id, qty: input.delta }];
     } else {
       let fresh = "";
       if (!zoho.length) {

@@ -618,7 +618,7 @@ function ReceiveDialog({ open, onOpenChange, data, defaultGodown, onSaved }: {
   const godown = data.godowns.find((g) => g.id === form.branchId);
   const autoCode = godown ? (() => {
     const prefix = formatBatchCode(godownCodeOf(godown), form.purchaseDate, 1).slice(0, -2);
-    const used = data.batches.map((b) => b.batch_code).filter((c) => c.startsWith(prefix)).map((c) => Number(c.slice(prefix.length))).filter(Number.isFinite);
+    const used = [...data.batches.map((b) => b.batch_code), ...data.reservedCodes].map((c) => c.toUpperCase()).filter((c) => c.startsWith(prefix)).map((c) => Number(c.slice(prefix.length))).filter(Number.isFinite);
     return `${prefix}${String((used.length ? Math.max(...used) : 0) + 1).padStart(2, "0")}`;
   })() : "";
   const zohoNote = !product || !godown ? "" : !data.zohoStockMaster || !product.zohoLinked || !godown.zohoLinked
@@ -776,5 +776,6 @@ function demoData(): BatchData {
       { id: "o3", order_no: "HBL-580020-281026-093000", created_at: "2026-10-28T04:00:00Z", order_status: "Delivered", payment_status: "Paid", branch_id: "BR-HBL", user_id: "u1", customer_name: "Ravi Traders", customer_email: "ravi@example.com", customer_phone: "9876500011", shipping_address: { line1: "Station Road", city: "Hubli", pin: "580020" }, subtotal: 14325, discount: 0 },
     ],
     adjustments: [{ id: "x1", batch_id: "b1", qty: -2, reason: "damaged", note: "2 cans leaked", unit_cost: 800, created_at: "2026-10-27T10:00:00Z", created_by_name: "Manju" }],
+    reservedCodes: [],
   } as BatchData;
 }

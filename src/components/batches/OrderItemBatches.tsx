@@ -14,13 +14,16 @@ export function useOrderItemBatches(dbOrderId: string | undefined, linesKey = ""
   useEffect(() => {
     if (!dbOrderId || STATIC_DATA_MODE) return;
     let live = true;
-    void supabase.rpc("order_item_batches", { _order_id: dbOrderId }).then(({ data }) => {
+    const load = () => void supabase.rpc("order_item_batches", { _order_id: dbOrderId }).then(({ data }) => {
       if (!live) return;
       const map = new Map<string, ItemBatch[]>();
       for (const row of data ?? []) map.set(row.order_item_id, [...(map.get(row.order_item_id) ?? []), { code: row.batch_code, qty: Number(row.qty) }]);
       setByItem(map);
     });
-    return () => { live = false; };
+    load();
+    // A cancel or quantity change shows on the page before the server has saved it: read again shortly after.
+    const again = window.setTimeout(load, 3000);
+    return () => { live = false; window.clearTimeout(again); };
   }, [dbOrderId, linesKey]);
   return byItem;
 }

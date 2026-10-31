@@ -51,7 +51,7 @@ export const getBatchData = createServerFn({ method: "GET" })
   .handler(async ({ context }) => {
     await ensureAdmin(context.supabase, context.userId);
     const db = serviceClient();
-    const [batchRows, adjustmentRows, branchesResult, productRows, linkRows, stockRows, masterResult] = await Promise.all([
+    const [batchRows, adjustmentRows, branchesResult, productRows, linkRows, stockRows, masterResult, reservedRows] = await Promise.all([
       allRows((from, to) => db.from("batches").select("*").order("created_at").order("id").range(from, to), "batches"),
       allRows((from, to) => db.from("batch_adjustments").select("id,batch_id,qty,reason,note,unit_cost,created_at,created_by_name")
         .order("created_at", { ascending: false }).order("id").range(from, to), "batch losses and gains"),
@@ -60,6 +60,8 @@ export const getBatchData = createServerFn({ method: "GET" })
       allRows((from, to) => db.from("zoho_item_links").select("product_id,zoho_item_id,track_batches").order("product_id").range(from, to), "Zoho item links"),
       allRows((from, to) => db.from("branch_stock").select("branch_id,product_id,stock").order("branch_id").order("product_id").range(from, to), "godown stock"),
       db.from("settings").select("value").eq("key", "zoho_stock_master").maybeSingle(),
+      // Numbers already handed out (a receipt or Zoho batch that may not be a website batch yet).
+      allRows((from, to) => db.from("batch_code_reservations").select("code").order("code").range(from, to), "batch numbers"),
     ]);
     if (branchesResult.error || masterResult.error) throw new Error("Could not read godowns and settings");
     const batches: BatchRecord[] = batchRows.map((b) => ({
@@ -116,7 +118,7 @@ export const getBatchData = createServerFn({ method: "GET" })
       generatedAt: new Date().toISOString(),
       zohoStockMaster: master["enabled"] === true,
       godowns: (branchesResult.data ?? []).filter((b) => !b.vendor_id).map((b) => ({ id: b.id, name: b.name, code: b.code, active: b.active, zohoLinked: Boolean(b.zoho_location_id) })),
-      products, batches, allocations, items, orders, adjustments,
+      products, batches, allocations, items, orders, adjustments, reservedCodes: reservedRows.map((row) => row.code),
     };
   });
 

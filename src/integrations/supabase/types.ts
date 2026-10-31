@@ -287,6 +287,12 @@ export type Database = {
         Update: { id?: string; batch_id?: string; qty?: number; reason?: string; note?: string; unit_cost?: number; stock_count_id?: string | null; zoho_adjustment_id?: string; created_by?: string | null; created_by_name?: string; created_at?: string }
         Relationships: []
       }
+      batch_code_reservations: {
+        Row: { code: string; branch_id: string | null; created_at: string }
+        Insert: { code: string; branch_id?: string | null; created_at?: string }
+        Update: { code?: string; branch_id?: string | null; created_at?: string }
+        Relationships: []
+      }
       order_item_batch_allocations: {
         Row: { id: string; order_item_id: string; batch_id: string; reserved_quantity: number; released_quantity: number; unit_cost: number; created_at: string }
         Insert: { id?: string; order_item_id: string; batch_id: string; reserved_quantity: number; released_quantity?: number; unit_cost?: number; created_at?: string }
