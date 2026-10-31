@@ -33,6 +33,7 @@ import { Route as AccountSettingsRouteImport } from './routes/account.settings'
 import { Route as AccountTrackRouteImport } from './routes/account.track'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
 import { Route as AdminAdsRouteImport } from './routes/admin.ads'
+import { Route as AdminAttendanceRouteImport } from './routes/admin.attendance'
 import { Route as AdminBranchesRouteImport } from './routes/admin.branches'
 import { Route as AdminCategoriesRouteImport } from './routes/admin.categories'
 import { Route as AdminCommissionsRouteImport } from './routes/admin.commissions'
@@ -63,8 +64,11 @@ import { Route as AdminZohoDiagnosticsRouteImport } from './routes/admin.zoho-di
 import { Route as CategoriesIndexRouteImport } from './routes/categories.index'
 import { Route as CategoriesSlugRouteImport } from './routes/categories.$slug'
 import { Route as PartnerIndexRouteImport } from './routes/partner.index'
+import { Route as PartnerAttendanceRouteImport } from './routes/partner.attendance'
 import { Route as PartnerLoginRouteImport } from './routes/partner.login'
 import { Route as ProductIdRouteImport } from './routes/product.$id'
+import { Route as StaffIndexRouteImport } from './routes/staff.index'
+import { Route as StaffLoginRouteImport } from './routes/staff.login'
 import { Route as VendorIndexRouteImport } from './routes/vendor.index'
 import { Route as VendorDashboardRouteImport } from './routes/vendor.dashboard'
 import { Route as VendorEarningsRouteImport } from './routes/vendor.earnings'
@@ -211,6 +215,11 @@ const AdminIndexRoute = AdminIndexRouteImport.update({
 const AdminAdsRoute = AdminAdsRouteImport.update({
   id: '/admin/ads',
   path: '/admin/ads',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminAttendanceRoute = AdminAttendanceRouteImport.update({
+  id: '/admin/attendance',
+  path: '/admin/attendance',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AdminBranchesRoute = AdminBranchesRouteImport.update({
@@ -363,6 +372,11 @@ const PartnerIndexRoute = PartnerIndexRouteImport.update({
   path: '/partner/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PartnerAttendanceRoute = PartnerAttendanceRouteImport.update({
+  id: '/partner/attendance',
+  path: '/partner/attendance',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PartnerLoginRoute = PartnerLoginRouteImport.update({
   id: '/partner/login',
   path: '/partner/login',
@@ -371,6 +385,16 @@ const PartnerLoginRoute = PartnerLoginRouteImport.update({
 const ProductIdRoute = ProductIdRouteImport.update({
   id: '/product/$id',
   path: '/product/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const StaffIndexRoute = StaffIndexRouteImport.update({
+  id: '/staff/',
+  path: '/staff/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const StaffLoginRoute = StaffLoginRouteImport.update({
+  id: '/staff/login',
+  path: '/staff/login',
   getParentRoute: () => rootRouteImport,
 } as any)
 const VendorIndexRoute = VendorIndexRouteImport.update({
@@ -533,6 +557,7 @@ export interface FileRoutesByFullPath {
   '/account/settings': typeof AccountSettingsRoute
   '/account/track': typeof AccountTrackRoute
   '/admin/ads': typeof AdminAdsRoute
+  '/admin/attendance': typeof AdminAttendanceRoute
   '/admin/branches': typeof AdminBranchesRoute
   '/admin/categories': typeof AdminCategoriesRoute
   '/admin/commissions': typeof AdminCommissionsRoute
@@ -561,8 +586,10 @@ export interface FileRoutesByFullPath {
   '/admin/zoho-api-calls': typeof AdminZohoApiCallsRoute
   '/admin/zoho-diagnostics': typeof AdminZohoDiagnosticsRoute
   '/categories/$slug': typeof CategoriesSlugRouteWithChildren
+  '/partner/attendance': typeof PartnerAttendanceRoute
   '/partner/login': typeof PartnerLoginRoute
   '/product/$id': typeof ProductIdRoute
+  '/staff/login': typeof StaffLoginRoute
   '/vendor/dashboard': typeof VendorDashboardRoute
   '/vendor/earnings': typeof VendorEarningsRoute
   '/vendor/inventory': typeof VendorInventoryRoute
@@ -578,6 +605,7 @@ export interface FileRoutesByFullPath {
   '/admin/': typeof AdminIndexRoute
   '/categories/': typeof CategoriesIndexRoute
   '/partner/': typeof PartnerIndexRoute
+  '/staff/': typeof StaffIndexRoute
   '/vendor/': typeof VendorIndexRoute
   '/account/orders/$id': typeof AccountOrdersIdRoute
   '/admin/customers/$id': typeof AdminCustomersIdRoute
@@ -617,6 +645,7 @@ export interface FileRoutesByTo {
   '/account/settings': typeof AccountSettingsRoute
   '/account/track': typeof AccountTrackRoute
   '/admin/ads': typeof AdminAdsRoute
+  '/admin/attendance': typeof AdminAttendanceRoute
   '/admin/branches': typeof AdminBranchesRoute
   '/admin/categories': typeof AdminCategoriesRoute
   '/admin/commissions': typeof AdminCommissionsRoute
@@ -645,8 +674,10 @@ export interface FileRoutesByTo {
   '/admin/zoho-api-calls': typeof AdminZohoApiCallsRoute
   '/admin/zoho-diagnostics': typeof AdminZohoDiagnosticsRoute
   '/categories/$slug': typeof CategoriesSlugRouteWithChildren
+  '/partner/attendance': typeof PartnerAttendanceRoute
   '/partner/login': typeof PartnerLoginRoute
   '/product/$id': typeof ProductIdRoute
+  '/staff/login': typeof StaffLoginRoute
   '/vendor/dashboard': typeof VendorDashboardRoute
   '/vendor/earnings': typeof VendorEarningsRoute
   '/vendor/inventory': typeof VendorInventoryRoute
@@ -662,6 +693,7 @@ export interface FileRoutesByTo {
   '/admin': typeof AdminIndexRoute
   '/categories': typeof CategoriesIndexRoute
   '/partner': typeof PartnerIndexRoute
+  '/staff': typeof StaffIndexRoute
   '/vendor': typeof VendorIndexRoute
   '/account/orders/$id': typeof AccountOrdersIdRoute
   '/admin/customers/$id': typeof AdminCustomersIdRoute
@@ -703,6 +735,7 @@ export interface FileRoutesById {
   '/account/settings': typeof AccountSettingsRoute
   '/account/track': typeof AccountTrackRoute
   '/admin/ads': typeof AdminAdsRoute
+  '/admin/attendance': typeof AdminAttendanceRoute
   '/admin/branches': typeof AdminBranchesRoute
   '/admin/categories': typeof AdminCategoriesRoute
   '/admin/commissions': typeof AdminCommissionsRoute
@@ -731,8 +764,10 @@ export interface FileRoutesById {
   '/admin/zoho-api-calls': typeof AdminZohoApiCallsRoute
   '/admin/zoho-diagnostics': typeof AdminZohoDiagnosticsRoute
   '/categories/$slug': typeof CategoriesSlugRouteWithChildren
+  '/partner/attendance': typeof PartnerAttendanceRoute
   '/partner/login': typeof PartnerLoginRoute
   '/product/$id': typeof ProductIdRoute
+  '/staff/login': typeof StaffLoginRoute
   '/vendor/dashboard': typeof VendorDashboardRoute
   '/vendor/earnings': typeof VendorEarningsRoute
   '/vendor/inventory': typeof VendorInventoryRoute
@@ -748,6 +783,7 @@ export interface FileRoutesById {
   '/admin/': typeof AdminIndexRoute
   '/categories/': typeof CategoriesIndexRoute
   '/partner/': typeof PartnerIndexRoute
+  '/staff/': typeof StaffIndexRoute
   '/vendor/': typeof VendorIndexRoute
   '/account/orders/$id': typeof AccountOrdersIdRoute
   '/admin/customers/$id': typeof AdminCustomersIdRoute
@@ -790,6 +826,7 @@ export interface FileRouteTypes {
     | '/account/settings'
     | '/account/track'
     | '/admin/ads'
+    | '/admin/attendance'
     | '/admin/branches'
     | '/admin/categories'
     | '/admin/commissions'
@@ -818,8 +855,10 @@ export interface FileRouteTypes {
     | '/admin/zoho-api-calls'
     | '/admin/zoho-diagnostics'
     | '/categories/$slug'
+    | '/partner/attendance'
     | '/partner/login'
     | '/product/$id'
+    | '/staff/login'
     | '/vendor/dashboard'
     | '/vendor/earnings'
     | '/vendor/inventory'
@@ -835,6 +874,7 @@ export interface FileRouteTypes {
     | '/admin/'
     | '/categories/'
     | '/partner/'
+    | '/staff/'
     | '/vendor/'
     | '/account/orders/$id'
     | '/admin/customers/$id'
@@ -874,6 +914,7 @@ export interface FileRouteTypes {
     | '/account/settings'
     | '/account/track'
     | '/admin/ads'
+    | '/admin/attendance'
     | '/admin/branches'
     | '/admin/categories'
     | '/admin/commissions'
@@ -902,8 +943,10 @@ export interface FileRouteTypes {
     | '/admin/zoho-api-calls'
     | '/admin/zoho-diagnostics'
     | '/categories/$slug'
+    | '/partner/attendance'
     | '/partner/login'
     | '/product/$id'
+    | '/staff/login'
     | '/vendor/dashboard'
     | '/vendor/earnings'
     | '/vendor/inventory'
@@ -919,6 +962,7 @@ export interface FileRouteTypes {
     | '/admin'
     | '/categories'
     | '/partner'
+    | '/staff'
     | '/vendor'
     | '/account/orders/$id'
     | '/admin/customers/$id'
@@ -959,6 +1003,7 @@ export interface FileRouteTypes {
     | '/account/settings'
     | '/account/track'
     | '/admin/ads'
+    | '/admin/attendance'
     | '/admin/branches'
     | '/admin/categories'
     | '/admin/commissions'
@@ -987,8 +1032,10 @@ export interface FileRouteTypes {
     | '/admin/zoho-api-calls'
     | '/admin/zoho-diagnostics'
     | '/categories/$slug'
+    | '/partner/attendance'
     | '/partner/login'
     | '/product/$id'
+    | '/staff/login'
     | '/vendor/dashboard'
     | '/vendor/earnings'
     | '/vendor/inventory'
@@ -1004,6 +1051,7 @@ export interface FileRouteTypes {
     | '/admin/'
     | '/categories/'
     | '/partner/'
+    | '/staff/'
     | '/vendor/'
     | '/account/orders/$id'
     | '/admin/customers/$id'
@@ -1037,6 +1085,7 @@ export interface RootRouteChildren {
   SitemapDotxmlRoute: typeof SitemapDotxmlRoute
   WishlistRoute: typeof WishlistRoute
   AdminAdsRoute: typeof AdminAdsRoute
+  AdminAttendanceRoute: typeof AdminAttendanceRoute
   AdminBranchesRoute: typeof AdminBranchesRoute
   AdminCategoriesRoute: typeof AdminCategoriesRoute
   AdminCommissionsRoute: typeof AdminCommissionsRoute
@@ -1064,8 +1113,10 @@ export interface RootRouteChildren {
   AdminZohoRoute: typeof AdminZohoRoute
   AdminZohoApiCallsRoute: typeof AdminZohoApiCallsRoute
   AdminZohoDiagnosticsRoute: typeof AdminZohoDiagnosticsRoute
+  PartnerAttendanceRoute: typeof PartnerAttendanceRoute
   PartnerLoginRoute: typeof PartnerLoginRoute
   ProductIdRoute: typeof ProductIdRoute
+  StaffLoginRoute: typeof StaffLoginRoute
   VendorDashboardRoute: typeof VendorDashboardRoute
   VendorEarningsRoute: typeof VendorEarningsRoute
   VendorInventoryRoute: typeof VendorInventoryRoute
@@ -1080,6 +1131,7 @@ export interface RootRouteChildren {
   VendorSettingsRoute: typeof VendorSettingsRoute
   AdminIndexRoute: typeof AdminIndexRoute
   PartnerIndexRoute: typeof PartnerIndexRoute
+  StaffIndexRoute: typeof StaffIndexRoute
   VendorIndexRoute: typeof VendorIndexRoute
   ApiAuthSendSmsRoute: typeof ApiAuthSendSmsRoute
   ApiPaymentsBankAlertRoute: typeof ApiPaymentsBankAlertRoute
@@ -1256,6 +1308,13 @@ declare module '@tanstack/react-router' {
       path: '/admin/ads'
       fullPath: '/admin/ads'
       preLoaderRoute: typeof AdminAdsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/attendance': {
+      id: '/admin/attendance'
+      path: '/admin/attendance'
+      fullPath: '/admin/attendance'
+      preLoaderRoute: typeof AdminAttendanceRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/admin/branches': {
@@ -1468,6 +1527,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PartnerIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/partner/attendance': {
+      id: '/partner/attendance'
+      path: '/partner/attendance'
+      fullPath: '/partner/attendance'
+      preLoaderRoute: typeof PartnerAttendanceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/partner/login': {
       id: '/partner/login'
       path: '/partner/login'
@@ -1480,6 +1546,20 @@ declare module '@tanstack/react-router' {
       path: '/product/$id'
       fullPath: '/product/$id'
       preLoaderRoute: typeof ProductIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/staff/': {
+      id: '/staff/'
+      path: '/staff'
+      fullPath: '/staff/'
+      preLoaderRoute: typeof StaffIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/staff/login': {
+      id: '/staff/login'
+      path: '/staff/login'
+      fullPath: '/staff/login'
+      preLoaderRoute: typeof StaffLoginRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/vendor/': {
@@ -1837,6 +1917,7 @@ const rootRouteChildren: RootRouteChildren = {
   SitemapDotxmlRoute: SitemapDotxmlRoute,
   WishlistRoute: WishlistRoute,
   AdminAdsRoute: AdminAdsRoute,
+  AdminAttendanceRoute: AdminAttendanceRoute,
   AdminBranchesRoute: AdminBranchesRoute,
   AdminCategoriesRoute: AdminCategoriesRoute,
   AdminCommissionsRoute: AdminCommissionsRoute,
@@ -1864,8 +1945,10 @@ const rootRouteChildren: RootRouteChildren = {
   AdminZohoRoute: AdminZohoRoute,
   AdminZohoApiCallsRoute: AdminZohoApiCallsRoute,
   AdminZohoDiagnosticsRoute: AdminZohoDiagnosticsRoute,
+  PartnerAttendanceRoute: PartnerAttendanceRoute,
   PartnerLoginRoute: PartnerLoginRoute,
   ProductIdRoute: ProductIdRoute,
+  StaffLoginRoute: StaffLoginRoute,
   VendorDashboardRoute: VendorDashboardRoute,
   VendorEarningsRoute: VendorEarningsRoute,
   VendorInventoryRoute: VendorInventoryRoute,
@@ -1880,6 +1963,7 @@ const rootRouteChildren: RootRouteChildren = {
   VendorSettingsRoute: VendorSettingsRoute,
   AdminIndexRoute: AdminIndexRoute,
   PartnerIndexRoute: PartnerIndexRoute,
+  StaffIndexRoute: StaffIndexRoute,
   VendorIndexRoute: VendorIndexRoute,
   ApiAuthSendSmsRoute: ApiAuthSendSmsRoute,
   ApiPaymentsBankAlertRoute: ApiPaymentsBankAlertRoute,
