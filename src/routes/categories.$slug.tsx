@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 import { isStorefrontProduct, type Product } from "@/lib/data";
 import { availableProductBrands, normalizeFacetValue, productMatchesBrand } from "@/lib/search";
 import { useApp } from "@/lib/store";
+import { resizedImage } from "@/lib/image-url";
 
 type CategorySearch = { subcategory?: string; brand?: string };
 
@@ -215,7 +216,7 @@ function CategoryLevel() {
                     >
                       {tile.image ? (
                         <img
-                          src={tile.image}
+                          src={resizedImage(tile.image, 160)}
                           alt=""
                           loading="lazy"
                           width={80}

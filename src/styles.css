@@ -463,7 +463,7 @@
 
 /* Home page advertising band (AdShowcase) */
 @utility animate-ad-kenburns {
-  animation: ad-kenburns 9s ease-out both;
+  animation: ad-kenburns 5s ease-out both;
 }
 @keyframes ad-kenburns {
   from {
@@ -502,7 +502,7 @@
 
 /* The strip holds the tiles twice; moving it by half loops seamlessly. */
 @utility animate-ad-marquee {
-  animation: ad-marquee 28s linear infinite;
+  animation: ad-marquee 18s linear infinite;
 }
 @keyframes ad-marquee {
   from {

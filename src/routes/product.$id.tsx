@@ -1,5 +1,5 @@
 import { createFileRoute, Link, notFound } from "@tanstack/react-router";
-import { pageHead, jsonLdScript, breadcrumbJsonLd, productJsonLd, SITE_NAME } from "@/lib/seo";
+import { pageHead, jsonLdScript, breadcrumbJsonLd, deliveryAreasForSeo, productJsonLd, ratingSummary, SITE_NAME } from "@/lib/seo";
 import { useState, useEffect } from "react";
 import { Heart, Minus, Plus, ShieldCheck, Star, Truck, Store, ShoppingCart } from "lucide-react";
 import { toast } from "sonner";
@@ -13,23 +13,35 @@ import { PickupPointCard } from "@/components/site/PickupPointCard";
 import { supabase } from "@/integrations/supabase/client";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
+import { resizedImage, responsiveImage, showOriginalImage } from "@/lib/image-url";
 import { showCustomerNotification } from "@/components/site/CartFloatingNotification";
 import { AddToCartPicker } from "@/components/site/AddToCartPicker";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { products as demoProducts } from "@/lib/data";
 
 export const Route = createFileRoute("/product/$id")({
-  loader: async ({ params }) => {
+  loader: async ({ params, parentMatchPromise }) => {
     if (STATIC_DATA_MODE) {
       const product = demoProducts.find((item) => item.id === params.id);
       if (!product || !isStorefrontProduct(product)) throw notFound();
       return { product, catalogUnavailable: false };
     }
+    // The storefront data that came with the page already holds the product: no database call before
+    // the page opens (the page shows the store's live copy of it).
+    const snapshot = (await parentMatchPromise).loaderData;
+    // Google's merchant listing: where the godowns deliver, and the rating from published reviews only.
+    const seo = {
+      deliveryAreas: deliveryAreasForSeo(snapshot?.branches ?? []),
+      rating: ratingSummary(snapshot?.publishedRatings ?? [], params.id),
+    };
+    const known = snapshot?.products.find((payload) => (payload as { id?: unknown } | null)?.id === params.id) as unknown as
+      import("@/lib/data").Product | undefined;
+    if (known && isStorefrontProduct(known)) return { product: known, catalogUnavailable: false, seo };
     const { data, error } = await supabase.from("catalog_products").select("payload").eq("id", params.id).maybeSingle();
     const product = data?.payload as unknown as import("@/lib/data").Product | undefined;
     if (error) return { product: null, catalogUnavailable: true };
     if (!product || !isStorefrontProduct(product)) throw notFound();
-    return { product, catalogUnavailable: false };
+    return { product, catalogUnavailable: false, seo };
   },
   head: ({ loaderData }) => {
     if (!loaderData?.product) {
@@ -59,6 +71,8 @@ export const Route = createFileRoute("/product/$id")({
           ...(p.sku ? { sku: p.sku } : {}),
           ...(p.brand ? { brand: p.brand } : {}),
           ...(p.category ? { category: p.category } : {}),
+          ...(loaderData.seo?.rating ?? {}),
+          ...(loaderData.seo?.deliveryAreas.length ? { deliveryAreas: loaderData.seo.deliveryAreas } : {}),
         })),
         jsonLdScript(breadcrumbJsonLd([
           { name: "Home", path: "/" },
@@ -165,11 +179,12 @@ function ProductDetail() {
         <div>
           <div className="overflow-hidden rounded-xl border border-border bg-ivory">
             <img
-              src={gallery[active] || productImg}
+              {...responsiveImage(gallery[active] || productImg, [480, 720, 1080], "(min-width: 1280px) 600px, (min-width: 1024px) 50vw, 100vw", 80)}
               alt={product.name}
               width={800}
               height={800}
               onError={(e) => {
+                if (showOriginalImage(e)) return;
                 const cat = product.category.toLowerCase();
                 (e.currentTarget as HTMLImageElement).src =
                   cat.includes("sugar")
@@ -191,7 +206,7 @@ function ProductDetail() {
                   active === i ? "border-gold" : "border-border",
                 )}
               >
-                <img src={g} alt="" loading="lazy" width={800} height={800} className="h-full w-full object-cover" />
+                <img src={resizedImage(g, 160)} alt="" loading="lazy" width={800} height={800} className="h-full w-full object-cover" />
               </button>
             ))}
           </div>

@@ -177,6 +177,9 @@ function BadgeBody({
             fit={fit}
             width={80}
             height={80}
+            sizes="80px"
+            // Small and at the top of the page: load with it.
+            loading="eager"
             onError={() => setBroken(true)}
             className=""
           />

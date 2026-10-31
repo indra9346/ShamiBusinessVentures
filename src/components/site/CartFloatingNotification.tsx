@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { AlertCircle, AlertTriangle, Check, Info, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { showAuthNotice } from "@/components/site/AuthNotice";
+import { resizedImage } from "@/lib/image-url";
 
 export type NotificationType = "add" | "remove" | "success" | "error" | "info" | "warning";
 
@@ -248,7 +249,7 @@ export function CartFloatingNotifier() {
               {/* Product Thumbnail (If provided) */}
               {toastItem.image && (
                 <img
-                  src={toastItem.image}
+                  src={resizedImage(toastItem.image, 128)}
                   alt={toastItem.description || toastItem.title}
                   className={`h-11 w-11 shrink-0 rounded-lg object-cover border shadow-xs ${
                     isRemove

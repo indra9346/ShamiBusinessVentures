@@ -4,6 +4,7 @@ import { ArrowRight, CheckCircle2, ChevronRight, Layers, Package, Search, Tag, X
 import { useApp } from "@/lib/store";
 import { getProductImageFallback, inr } from "@/lib/data";
 import { cn } from "@/lib/utils";
+import { resizedImage } from "@/lib/image-url";
 import { useStorefrontDisplay } from "@/lib/storefront-display";
 import { getSearchAutosuggestions, type SearchSuggestionItem } from "@/lib/search";
 import { categorySlug } from "@/lib/category-tree";
@@ -231,7 +232,7 @@ export function SearchAutosuggest({
                   >
                     <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-md border border-gold/40 bg-card">
                       <img
-                        src={product.image || `/products/${product.category.toLowerCase()}.jpg`}
+                        src={resizedImage(product.image || `/products/${product.category.toLowerCase()}.jpg`, 128)}
                         alt={product.name}
                         className="h-full w-full object-cover"
                         loading="lazy"
@@ -287,7 +288,7 @@ export function SearchAutosuggest({
                   >
                     <div className="relative h-11 w-11 shrink-0 overflow-hidden rounded-md border border-border bg-card">
                       <img
-                        src={product.image || `/products/${product.category.toLowerCase()}.jpg`}
+                        src={resizedImage(product.image || `/products/${product.category.toLowerCase()}.jpg`, 128)}
                         alt={product.name}
                         className="h-full w-full object-cover"
                         loading="lazy"

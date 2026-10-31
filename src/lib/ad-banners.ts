@@ -7,6 +7,7 @@
 import { useEffect, useLayoutEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
+import { afterPageLoad, snapshotIsFresh, useStorefrontSnapshot, type StorefrontSnapshot } from "@/lib/storefront-snapshot";
 
 import {
   AD_IMAGE_TYPES, AD_MEDIA_MAX_BYTES, AD_VIDEO_TYPES, adMediaProblem, bannerFromRow, bannerStatus, bannerToRow, bannersByPlacement, isBannerLive, normaliseBannerLink, sortBanners,
@@ -107,11 +108,27 @@ export async function uploadAdMedia(file: File): Promise<string> {
 
 const useIsomorphicLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
 
-/** The banners to show on the home page: last visit's at once, then the live set. */
+// The banners sent with the page, converted once per page (the server and the browser start from the same).
+const snapshotBanners = new WeakMap<StorefrontSnapshot, AdBanner[]>();
+function liveSnapshotBanners(snapshot: StorefrontSnapshot) {
+  let list = snapshotBanners.get(snapshot);
+  if (!list) {
+    list = snapshot.adBanners.map(bannerFromRow).filter((banner) => isBannerLive(banner, snapshot.servedAt));
+    snapshotBanners.set(snapshot, list);
+  }
+  return list;
+}
+
+/**
+ * The banners to show on the home page: the ones sent with the page (or last visit's), at once,
+ * then the live set.
+ */
 export function useLiveAdBanners() {
-  const [banners, setBanners] = useState<AdBanner[]>([]);
-  const [ready, setReady] = useState(false);
+  const snapshot = useStorefrontSnapshot();
+  const [banners, setBanners] = useState<AdBanner[]>(() => (snapshot ? liveSnapshotBanners(snapshot) : []));
+  const [ready, setReady] = useState(!!snapshot);
   useIsomorphicLayoutEffect(() => {
+    if (snapshot) return;
     const cached = readList(STATIC_DATA_MODE ? DEMO_KEY : CACHE_KEY);
     if (cached?.length) setBanners(cached);
   }, []);
@@ -128,9 +145,16 @@ export function useLiveAdBanners() {
         .catch((cause) => console.warn("Ad banners could not be loaded:", cause instanceof Error ? cause.message : cause))
         .finally(() => { if (active) setReady(true); });
     };
-    refresh();
+    let cancelDeferred: (() => void) | undefined;
+    if (snapshot) {
+      writeList(CACHE_KEY, liveSnapshotBanners(snapshot));
+      if (!snapshotIsFresh(snapshot)) cancelDeferred = afterPageLoad(refresh);
+    } else {
+      refresh();
+    }
     listeners.add(refresh);
-    return () => { active = false; listeners.delete(refresh); };
+    return () => { active = false; cancelDeferred?.(); listeners.delete(refresh); };
   }, []);
-  return { ...bannersByPlacement(banners), ready };
+  // Banners that came with the page are placed by the page's time, as the server did.
+  return { ...bannersByPlacement(banners, snapshot && banners === snapshotBanners.get(snapshot) ? snapshot.servedAt : Date.now()), ready };
 }

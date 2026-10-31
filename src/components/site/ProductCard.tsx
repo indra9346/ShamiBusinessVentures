@@ -3,6 +3,7 @@ import { Heart, Package, Star } from "lucide-react";
 import { formatRateBasis, getDisplayDiscountPercent, getPricingDisplayMode, inr, inrPrecise, type Product } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { cn } from "@/lib/utils";
+import { responsiveImage, showOriginalImage } from "@/lib/image-url";
 import { useStorefrontDisplay } from "@/lib/storefront-display";
 import { showCustomerNotification } from "@/components/site/CartFloatingNotification";
 import { AddToCartPicker } from "@/components/site/AddToCartPicker";
@@ -108,12 +109,17 @@ export function ProductCard({
 
   const image = (
     <img
-      src={product.image || `/products/${product.category.toLowerCase()}.jpg`}
+      {...responsiveImage(
+        product.image || `/products/${product.category.toLowerCase()}.jpg`,
+        [256, 400, 640],
+        layout === "list" ? "(min-width: 640px) 192px, 128px" : "(min-width: 1280px) 240px, (min-width: 1024px) 25vw, (min-width: 768px) 33vw, 50vw",
+      )}
       alt={product.name}
       loading="lazy"
       width={400}
       height={300}
       onError={(e) => {
+        if (showOriginalImage(e)) return;
         const el = e.currentTarget as HTMLImageElement;
         const next = fallbackImage(product.category);
         if (!el.src.endsWith(next)) el.src = next;

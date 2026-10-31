@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { SiteLayout, Breadcrumbs } from "@/components/site/SiteLayout";
 import { getAvailablePurchaseQuantity, getMaxPurchaseQuantity, inr, inrPrecise, type Product } from "@/lib/data";
 import { useApp } from "@/lib/store";
+import { resizedImage } from "@/lib/image-url";
 import { useStorefrontDisplay } from "@/lib/storefront-display";
 import { branchDeliveryFee, defaultBranchOf, useBranches } from "@/lib/branches";
 import { couponDiscount, lineGst } from "@/lib/pricing";
@@ -104,7 +105,7 @@ function Cart() {
             {cartItems.map(({ product, qty }) => (
               <div key={product.id} className="flex flex-col gap-4 rounded-lg border border-border bg-card p-4 shadow-card sm:flex-row">
                 <img
-                  src={product.image || `/products/${product.category.toLowerCase()}.jpg`}
+                  src={resizedImage(product.image || `/products/${product.category.toLowerCase()}.jpg`, 320)}
                   alt={product.name}
                   loading="lazy"
                   width={800}

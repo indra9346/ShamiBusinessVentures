@@ -5,6 +5,7 @@ import {
   useEffect,
   useLayoutEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -16,6 +17,7 @@ import type { Database } from "@/integrations/supabase/types";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { branchForPin, branchStockOf, defaultBranchOf, godownPriceOf, useAdminBranch, useBranches, useShopperPin } from "@/lib/branches";
 import { isOutsideServiceArea, OUT_OF_AREA_EVENT } from "@/lib/godown-rules";
+import { afterPageLoad, snapshotIsFresh, useStorefrontSnapshot, type StorefrontSnapshot } from "@/lib/storefront-snapshot";
 
 /** Sends a placed or changed order to Zoho in the background; the daily run is the backup. */
 function pushOrderToZohoInBackground(orderNo: string) {
@@ -278,6 +280,41 @@ function writeCatalogCache(products: Product[], categories: StoreCategory[]) {
     // Storage full or blocked: the next visit simply loads from the network.
   }
 }
+/** A catalogue row as the storefront shows it: a missing or unknown-category picture gets a fallback. */
+function productFromPayload(payload: unknown): Product {
+  const p = payload as Product;
+  const category = p.category ?? "";
+  const generatedCategoryImage = `/products/${category.toLowerCase()}.jpg`;
+  const image = typeof p.image === "string" ? p.image.trim() : "";
+  const generatedImageUsesUnknownCategory =
+    image === generatedCategoryImage && !["rice", "sugar", "oil", "dal"].includes(category.toLowerCase());
+  return {
+    ...p,
+    image: !image || generatedImageUsesUnknownCategory
+      ? getProductImageFallback(category, p.name)
+      : image,
+  };
+}
+function categoryFromPayload(payload: unknown): StoreCategory {
+  const category = payload as StoreCategory;
+  const seed = storeCategorySeed.find(
+    (s) => s.id === category.id || s.name.toLowerCase() === category.name.toLowerCase(),
+  );
+  return {
+    ...category,
+    image: category.image || seed?.image || `/categories/${category.name.toLowerCase()}.jpg`,
+  };
+}
+// The catalogue sent with the page, converted once per page (the server and the browser start from the same).
+const snapshotCatalogs = new WeakMap<StorefrontSnapshot, { products: Product[]; categories: StoreCategory[] }>();
+function snapshotCatalog(snapshot: StorefrontSnapshot) {
+  let catalog = snapshotCatalogs.get(snapshot);
+  if (!catalog) {
+    catalog = { products: snapshot.products.map(productFromPayload), categories: snapshot.categories.map(categoryFromPayload) };
+    snapshotCatalogs.set(snapshot, catalog);
+  }
+  return catalog;
+}
 // Runs before the first paint in the browser (and is a no-op on the server).
 const useIsomorphicLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
 
@@ -290,8 +327,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [wishlistsByUser, setWishlistsByUser] = useState<Record<string, string[]>>({});
   const wishlistOwnerKey = addressOwnerKey(user) || "guest";
   const wishlist = wishlistsByUser[wishlistOwnerKey] ?? [];
-  const [products, setProducts] = useState<Product[]>(STATIC_DATA_MODE ? seedProducts : []);
-  const [categories, setCategories] = useState<StoreCategory[]>(STATIC_DATA_MODE ? storeCategorySeed : []);
+  // Live mode starts from the catalogue that came with the page (server-rendered), when there is one.
+  const snapshot = useStorefrontSnapshot();
+  const pageSnapshot = useRef(STATIC_DATA_MODE ? null : snapshot);
+  const [products, setProducts] = useState<Product[]>(() =>
+    STATIC_DATA_MODE ? seedProducts : snapshot ? snapshotCatalog(snapshot).products : []);
+  const [categories, setCategories] = useState<StoreCategory[]>(() =>
+    STATIC_DATA_MODE ? storeCategorySeed : snapshot ? snapshotCatalog(snapshot).categories : []);
   const [batches, setBatches] = useState<PurchaseBatch[]>(STATIC_DATA_MODE ? seedBatches : []);
   const [orders, setOrders] = useState<Order[]>(STATIC_DATA_MODE ? seedOrders : []);
   const [paymentHolds, setPaymentHolds] = useState<PaymentHold[]>(readDemoHolds);
@@ -313,8 +355,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [addressesByUser, setAddressesByUser] = useState<Record<string, Address[]>>({});
   const [hydrated, setHydrated] = useState(false);
   const [authReady, setAuthReady] = useState(STATIC_DATA_MODE);
-  const [productCatalogStatus, setProductCatalogStatus] = useState<"loading" | "ready" | "unavailable">("loading");
-  const [categoryCatalogStatus, setCategoryCatalogStatus] = useState<"loading" | "ready" | "unavailable">("loading");
+  const [productCatalogStatus, setProductCatalogStatus] = useState<"loading" | "ready" | "unavailable">(snapshot ? "ready" : "loading");
+  const [categoryCatalogStatus, setCategoryCatalogStatus] = useState<"loading" | "ready" | "unavailable">(snapshot ? "ready" : "loading");
 
   // A returning visitor sees the catalog from their last visit before the first paint.
   useIsomorphicLayoutEffect(() => {
@@ -359,20 +401,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setProducts([]);
       } else {
         setProductCatalogStatus("ready");
-        loadedProducts = productResult.data.map((row) => {
-            const p = row.payload as unknown as Product;
-            const category = p.category ?? "";
-            const generatedCategoryImage = `/products/${category.toLowerCase()}.jpg`;
-            const image = typeof p.image === "string" ? p.image.trim() : "";
-            const generatedImageUsesUnknownCategory =
-              image === generatedCategoryImage && !["rice", "sugar", "oil", "dal"].includes(category.toLowerCase());
-            return {
-              ...p,
-              image: !image || generatedImageUsesUnknownCategory
-                ? getProductImageFallback(category, p.name)
-                : image,
-            };
-          });
+        loadedProducts = productResult.data.map((row) => productFromPayload(row.payload));
         setProducts(loadedProducts);
       }
       if (categoryResult.error) {
@@ -381,16 +410,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setCategories([]);
       } else {
         setCategoryCatalogStatus("ready");
-        const persistedCategories = categoryResult.data.map((row) => {
-          const payload = row.payload as unknown as StoreCategory;
-          const seed = storeCategorySeed.find(
-            (s) => s.id === payload.id || s.name.toLowerCase() === payload.name.toLowerCase(),
-          );
-          return {
-            ...payload,
-            image: payload.image || seed?.image || `/categories/${payload.name.toLowerCase()}.jpg`,
-          };
-        });
+        const persistedCategories = categoryResult.data.map((row) => categoryFromPayload(row.payload));
         // In live mode an empty table is a real empty catalog, not demo content.
         setCategories(persistedCategories);
         if (loadedProducts) writeCatalogCache(loadedProducts, persistedCategories);
@@ -674,7 +694,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (refreshTimer) clearTimeout(refreshTimer);
       refreshTimer = setTimeout(() => void reloadCatalog(), 100);
     };
-    void reloadCatalog();
+    // A signed-out visitor's first load already has the catalogue from the page: the realtime updates
+    // keep it live, and a copy that was not fresh is read again once the page has loaded.
+    const seed = user ? null : pageSnapshot.current;
+    pageSnapshot.current = null;
+    let cancelDeferredLoad: (() => void) | undefined;
+    if (seed) {
+      const catalog = snapshotCatalog(seed);
+      writeCatalogCache(catalog.products, catalog.categories);
+      if (!snapshotIsFresh(seed)) cancelDeferredLoad = afterPageLoad(() => void reloadCatalog());
+    } else {
+      void reloadCatalog();
+    }
     const channel = supabase.channel(`catalog-${user?.role ?? "public"}`)
       .on("postgres_changes", { event: "*", schema: "public", table: "catalog_products" }, scheduleReload)
       .on("postgres_changes", { event: "*", schema: "public", table: "store_categories" }, scheduleReload)
@@ -697,6 +728,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       active = false;
       loadRevision += 1;
       if (refreshTimer) clearTimeout(refreshTimer);
+      cancelDeferredLoad?.();
       void supabase.removeChannel(channel);
     };
   }, [user]);

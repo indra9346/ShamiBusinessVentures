@@ -31,6 +31,7 @@ import { ZohoInvoiceStatus } from "@/components/panel/ZohoInvoiceStatus";
 import { OrderUpiPay } from "@/components/site/UpiPayPanel";
 import { HeldCheckoutPay } from "@/components/site/HeldCheckoutPay";
 import { useUpiPayments } from "@/lib/upi-store";
+import { resizedImage } from "@/lib/image-url";
 
 export const Route = createFileRoute("/account/orders/$id")({
   head: ({ params }) => ({
@@ -292,7 +293,7 @@ function AccountOrderDetail() {
                     <td className="px-3 py-3">
                       <div className="flex items-center gap-3">
                         <img
-                          src={it.product.image}
+                          src={resizedImage(it.product.image, 128)}
                           alt={it.product.name}
                           className="h-12 w-12 rounded-md border border-border object-cover"
                         />

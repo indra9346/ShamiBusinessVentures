@@ -19,6 +19,17 @@ import { CartFloatingNotifier } from "@/components/site/CartFloatingNotification
 import { AuthNoticeHost } from "@/components/site/AuthNotice";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { FESTIVE_HEAD_SCRIPT } from "@/lib/festive";
+import { StorefrontSnapshotContext } from "@/lib/storefront-snapshot";
+import { getStorefrontSnapshot } from "@/lib/storefront-snapshot.functions";
+
+// Pictures and the storefront data come from Supabase: open the connections while the page loads.
+const SUPABASE_ORIGIN = (() => {
+  try {
+    return new URL(String(import.meta.env["VITE_SUPABASE_URL"] ?? "")).origin;
+  } catch {
+    return "";
+  }
+})();
 
 function NotFoundComponent() {
   return (
@@ -106,6 +117,12 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { rel: "icon", href: "/icon-192x192.png", type: "image/png", sizes: "192x192" },
       { rel: "apple-touch-icon", href: "/apple-touch-icon.png", sizes: "180x180" },
       { rel: "manifest", href: "/site.webmanifest" },
+      ...(SUPABASE_ORIGIN
+        ? [
+            { rel: "preconnect", href: SUPABASE_ORIGIN },
+            { rel: "preconnect", href: SUPABASE_ORIGIN, crossOrigin: "anonymous" as const },
+          ]
+        : []),
       { rel: "preconnect", href: "https://fonts.googleapis.com" },
       { rel: "preconnect", href: "https://fonts.gstatic.com", crossOrigin: "anonymous" },
       {
@@ -114,6 +131,11 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       },
     ],
   }),
+  // The public storefront data, read on the server and sent with the first page (see storefront-snapshot.ts).
+  // Once per visit: later pages keep it live in the browser.
+  loader: () => getStorefrontSnapshot().catch(() => null),
+  staleTime: Infinity,
+  shouldReload: false,
   shellComponent: RootShell,
   component: RootComponent,
   notFoundComponent: NotFoundComponent,
@@ -138,6 +160,7 @@ function RootShell({ children }: { children: ReactNode }) {
 
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
+  const snapshot = Route.useLoaderData() ?? null;
   // After a new deployment, an open tab may ask for page files that no longer exist; reload
   // once to pick up the new version instead of showing an error.
   useEffect(() => {
@@ -157,15 +180,17 @@ function RootComponent() {
   return (
     <QueryClientProvider client={queryClient}>
       {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
-      <LanguageProvider>
-        <AppProvider>
-          {STATIC_DATA_MODE && <div role="status" className="bg-amber-100 px-4 py-2 text-center text-xs font-semibold text-amber-950">Static preview mode: demo data only; no database, email, or payment is used. Customer demo OTPs: email 12345678, phone 123456. Admin/vendor sign-in is simulated in this preview only.</div>}
-          <Outlet />
-          <CartFloatingNotifier />
-          <Toaster position="top-right" richColors />
-          <AuthNoticeHost />
-        </AppProvider>
-      </LanguageProvider>
+      <StorefrontSnapshotContext.Provider value={snapshot}>
+        <LanguageProvider>
+          <AppProvider>
+            {STATIC_DATA_MODE && <div role="status" className="bg-amber-100 px-4 py-2 text-center text-xs font-semibold text-amber-950">Static preview mode: demo data only; no database, email, or payment is used. Customer demo OTPs: email 12345678, phone 123456. Admin/vendor sign-in is simulated in this preview only.</div>}
+            <Outlet />
+            <CartFloatingNotifier />
+            <Toaster position="top-right" richColors />
+            <AuthNoticeHost />
+          </AppProvider>
+        </LanguageProvider>
+      </StorefrontSnapshotContext.Provider>
     </QueryClientProvider>
   );
 }

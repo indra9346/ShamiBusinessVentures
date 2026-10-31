@@ -1,6 +1,6 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
-import { IndianRupee, LogOut, RefreshCw, Target, Timer, Trophy } from "lucide-react";
+import { CalendarCheck, IndianRupee, LogOut, RefreshCw, Target, Timer, Trophy } from "lucide-react";
 import { LogoMark } from "@/components/brand/Logo";
 import { Panel, StatCard } from "@/components/panel/widgets";
 import { CommissionLinesTable, PartnerLeaderboard, TargetBar, commissionTotals, usePartnerData } from "@/components/partners/PartnerWidgets";
@@ -76,6 +76,9 @@ function PartnerDashboard() {
             <input type="month" value={month.slice(0, 7)} max={monthStart().slice(0, 7)}
               onChange={(event) => event.target.value && setMonth(`${event.target.value}-01`)}
               className="h-9 rounded-md border border-input bg-white px-2 text-sm" aria-label="Month" />
+            <Link to="/partner/attendance" className="inline-flex h-9 items-center gap-1.5 rounded-md bg-navy px-3 text-sm font-semibold text-white hover:bg-midnight">
+              <CalendarCheck className="h-4 w-4" /> Attendance
+            </Link>
             <button type="button" onClick={async () => { await supabase.auth.signOut(); navigate({ to: "/partner/login" }); }}
               className="inline-flex h-9 items-center gap-1.5 rounded-md border border-border px-3 text-sm text-navy hover:border-gold hover:text-gold">
               <LogOut className="h-4 w-4" /> Sign out

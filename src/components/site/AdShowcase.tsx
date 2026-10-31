@@ -5,6 +5,8 @@ import { useLiveAdBanners, type AdBanner } from "@/lib/ad-banners";
 import { useFestiveTheme } from "@/lib/festive";
 import { DiwaliBackdrop, DiwaliToran, SideGarlands } from "@/components/site/DiwaliDecor";
 import { cn } from "@/lib/utils";
+import { responsiveImage, showOriginalImage } from "@/lib/image-url";
+import { afterPageLoad } from "@/lib/storefront-snapshot";
 
 /*
  * The home page's advertising band (offers, hot deals, new products, festival banners, promo
@@ -13,8 +15,8 @@ import { cn } from "@/lib/utils";
  * of the band. With no live banners only the category strip shows, as before.
  */
 
-const SLIDE_MS = 5500;
-const VIDEO_MAX_MS = 20000;
+const SLIDE_MS = 3500;
+const VIDEO_MAX_MS = 12000;
 
 function usePrefersReducedMotion() {
   const [reduced, setReduced] = useState(false);
@@ -61,28 +63,57 @@ function phoneVideoOf(banner: AdBanner) {
   return /^data:image\//.test(url) || /\.(jpe?g|png|webp|gif|avif)([?#]|$)/i.test(url) ? null : url;
 }
 
-function BannerMedia({ banner, active, eager, onVideoEnd, kenBurns }: {
-  banner: AdBanner; active: boolean; eager: boolean; onVideoEnd?: (() => void) | undefined; kenBurns: boolean;
+/** How wide a banner shows: the big slide, or a tile beside it (desktop) / in the strip (phones). */
+const MAIN_SIZES = "(min-width: 1280px) 840px, (min-width: 1024px) 66vw, 100vw";
+const TILE_SIZES = "(min-width: 1280px) 420px, (min-width: 1024px) 33vw, (min-width: 640px) 32vw, 46vw";
+const BANNER_WIDTHS = [480, 800, 1200, 1600];
+
+/** False until the page has loaded (its first pictures included), or at most 2.5 s, then true. */
+function usePageLoaded() {
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => {
+    const done = () => setLoaded(true);
+    const cancel = afterPageLoad(done);
+    // On a slow connection the page's "load" can take long; the banners should not wait for all of it.
+    const timer = window.setTimeout(done, 2500);
+    return () => { cancel(); window.clearTimeout(timer); };
+  }, []);
+  return loaded;
+}
+
+/**
+ * `later`: a slide not on screen yet, whose picture can wait until the page has loaded, so the
+ * first slide and the product pictures get the connection first. Videos always wait for that too
+ * (except a video first slide).
+ */
+function BannerMedia({ banner, active, eager, later = false, onVideoEnd, kenBurns, sizes }: {
+  banner: AdBanner; active: boolean; eager: boolean; later?: boolean; onVideoEnd?: (() => void) | undefined; kenBurns: boolean; sizes: string;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  // Banners render in the browser only (from the cached or live list), so the screen size is known here.
-  const [phone] = useState(() => typeof window !== "undefined" && !!window.matchMedia?.("(max-width: 639px)").matches);
+  const pageLoaded = usePageLoaded();
+  // The screen size is known in the browser only: a video gets its file once the page is running (the
+  // server-rendered page has none), so a phone never starts downloading the large desktop video.
+  const [phone, setPhone] = useState<boolean | null>(null);
+  useEffect(() => setPhone(!!window.matchMedia?.("(max-width: 639px)").matches), []);
+  const videoSrc = banner.mediaKind !== "video" || phone === null || !(eager || pageLoaded)
+    ? undefined
+    : (phone && phoneVideoOf(banner)) || banner.mediaUrl;
   useEffect(() => {
     const video = videoRef.current;
-    if (!video) return;
+    if (!video || !videoSrc) return;
     if (active) {
       video.currentTime = 0;
       void video.play().catch(() => undefined);
     } else {
       video.pause();
     }
-  }, [active]);
+  }, [active, videoSrc]);
   const fitClass = banner.fit === "contain" ? "object-contain" : "object-cover";
   if (banner.mediaKind === "video") {
     return (
       <video
         ref={videoRef}
-        src={(phone && phoneVideoOf(banner)) || banner.mediaUrl}
+        src={videoSrc}
         muted
         playsInline
         loop={!onVideoEnd}
@@ -92,23 +123,26 @@ function BannerMedia({ banner, active, eager, onVideoEnd, kenBurns }: {
       />
     );
   }
+  const waiting = later && !pageLoaded;
   const image = (
     <img
-      src={banner.mediaUrl}
+      {...(waiting ? {} : responsiveImage(banner.mediaUrl, BANNER_WIDTHS, sizes, 80))}
       alt={banner.title || "Offer"}
       // Slides and tiles sit off-screen sideways, where lazy loading never starts; the first
-      // slide comes first, the rest right after, so no slide is blank when it moves in.
+      // slide comes first, the rest once the page has loaded, well before they move in.
       loading="eager"
       fetchPriority={eager ? "high" : "low"}
       decoding="async"
       draggable={false}
+      onError={showOriginalImage}
       className={cn("h-full w-full select-none", fitClass, kenBurns && active && banner.fit === "cover" && "animate-ad-kenburns")}
     />
   );
-  if (!banner.mobileMediaUrl) return image;
+  if (!banner.mobileMediaUrl || waiting) return image;
+  const phoneImage = responsiveImage(banner.mobileMediaUrl, BANNER_WIDTHS, sizes, 80);
   return (
     <picture className="block h-full w-full">
-      <source media="(max-width: 639px)" srcSet={banner.mobileMediaUrl} />
+      <source media="(max-width: 639px)" srcSet={phoneImage.srcSet ?? phoneImage.src} sizes={phoneImage.sizes} />
       {image}
     </picture>
   );
@@ -176,7 +210,7 @@ function MainCarousel({ banners }: { banners: AdBanner[] }) {
       aria-label="Offers"
     >
       <div
-        className="flex h-full w-full transition-transform duration-700 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none"
+        className="flex h-full w-full transition-transform duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none"
         style={{ transform: `translateX(-${(index % count) * 100}%)` }}
       >
         {banners.map((banner, i) => (
@@ -193,7 +227,9 @@ function MainCarousel({ banners }: { banners: AdBanner[] }) {
                 banner={banner}
                 active={i === index}
                 eager={i === 0}
+                later={i !== 0 && i !== index}
                 kenBurns={!reducedMotion}
+                sizes={MAIN_SIZES}
                 onVideoEnd={count > 1 ? () => go(i + 1) : undefined}
               />
               <BannerCaption banner={banner} large />
@@ -254,7 +290,7 @@ function SideTile({ banner, className }: { banner: AdBanner; className?: string 
   return (
     <div className={cn("relative overflow-hidden rounded-xl shadow-card ring-1 ring-black/5", className)} style={{ backgroundColor: banner.background }}>
       <BannerLink banner={banner} className="block h-full w-full">
-        <BannerMedia banner={banner} active eager={false} kenBurns={false} />
+        <BannerMedia banner={banner} active eager={false} kenBurns={false} sizes={TILE_SIZES} />
         <BannerCaption banner={banner} />
       </BannerLink>
     </div>
@@ -267,7 +303,7 @@ function SideColumn({ banners }: { banners: AdBanner[] }) {
   const [offset, setOffset] = useState(0);
   useEffect(() => {
     if (banners.length <= 2 || reducedMotion) return;
-    const timer = window.setInterval(() => setOffset((o) => (o + 1) % banners.length), SLIDE_MS + 1500);
+    const timer = window.setInterval(() => setOffset((o) => (o + 1) % banners.length), SLIDE_MS + 1000);
     return () => window.clearInterval(timer);
   }, [banners.length, reducedMotion]);
   const shown = banners.length <= 2 ? banners : [banners[offset % banners.length]!, banners[(offset + 1) % banners.length]!];
@@ -290,7 +326,7 @@ function SideMarquee({ banners }: { banners: AdBanner[] }) {
     <div className="relative mt-3 overflow-hidden lg:hidden" aria-label="More offers">
       <div
         className={cn("flex w-max gap-3 hover:[animation-play-state:paused] active:[animation-play-state:paused]", loop && "animate-ad-marquee")}
-        style={loop ? { animationDuration: `${Math.max(18, banners.length * 7)}s` } : undefined}
+        style={loop ? { animationDuration: `${Math.max(12, banners.length * 4.5)}s` } : undefined}
       >
         {items.map((banner, i) => (
           <SideTile key={`${banner.id}-${i}`} banner={banner} className="aspect-[16/9] w-[46vw] max-w-[16rem] shrink-0 sm:w-[32vw]" />
