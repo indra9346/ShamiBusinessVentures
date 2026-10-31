@@ -1,6 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import { ArrowRight } from "lucide-react";
 import type { Tile } from "@/lib/category-tree";
+import { responsiveImage, showOriginalImage } from "@/lib/image-url";
 
 /** Category / variety / brand cards — same card treatment as the storefront category cards. */
 export function TileGrid({ tiles, basePath }: { tiles: Tile[]; basePath: string }) {
@@ -11,12 +12,13 @@ export function TileGrid({ tiles, basePath }: { tiles: Tile[]; basePath: string 
           <>
             <div className="relative overflow-hidden bg-ivory">
               <img
-                src={t.image}
+                {...responsiveImage(t.image, [320, 640, 960], "(min-width: 1280px) 300px, (min-width: 1024px) 25vw, 50vw")}
                 alt={t.label}
                 loading="lazy"
                 width={800}
                 height={800}
                 onError={(e) => {
+                  if (showOriginalImage(e)) return;
                   const cat = (basePath || t.label).toLowerCase();
                   (e.currentTarget as HTMLImageElement).src =
                     cat.includes("sugar")

@@ -3,6 +3,7 @@ import { Minus, Plus, Trash2, X } from "lucide-react";
 import { getAvailablePurchaseQuantity, inrPrecise, type Product } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { cn } from "@/lib/utils";
+import { resizedImage } from "@/lib/image-url";
 
 const KEYS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 0];
 
@@ -105,7 +106,7 @@ export function CartReviewSheet({ open, onClose }: { open: boolean; onClose: () 
                   )}
                 >
                   <div className="flex items-start gap-1.5">
-                    <img src={product.image} alt="" className="h-10 w-10 shrink-0 rounded object-contain bg-stone-50" loading="lazy" />
+                    <img src={resizedImage(product.image, 96)} alt="" className="h-10 w-10 shrink-0 rounded object-contain bg-stone-50" loading="lazy" />
                     <p className="line-clamp-2 text-[11px] font-semibold leading-snug text-navy">{product.name}</p>
                   </div>
                   <p className="text-[10px] text-stone-500">{product.weight} · {inrPrecise(product.price)} each</p>

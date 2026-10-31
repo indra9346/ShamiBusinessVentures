@@ -8,6 +8,7 @@
  */
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { afterPageLoad, snapshotIsFresh, useStorefrontSnapshot } from "@/lib/storefront-snapshot";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { DIWALI_2026, FESTIVE_SETTING_KEY, defaultFestiveSetting, festiveStatus, festiveThemeOn, isInFestiveWindow, parseFestiveSetting, type FestiveSetting } from "@/lib/festive-rules";
 
@@ -73,13 +74,24 @@ function refresh() {
  */
 export function useFestiveTheme() {
   const inWindow = isInFestiveWindow();
-  const [setting, setSetting] = useState<FestiveSetting>(defaultFestiveSetting);
-  const [ready, setReady] = useState(false);
+  // The page brings the admin switch, so the server already draws (or leaves out) the decorations.
+  const snapshot = useStorefrontSnapshot();
+  const [setting, setSetting] = useState<FestiveSetting>(() =>
+    !request && snapshot ? parseFestiveSetting(snapshot.settings[FESTIVE_SETTING_KEY]) : request ? current : defaultFestiveSetting);
+  const [ready, setReady] = useState(() => !!snapshot || !!request);
   useEffect(() => {
     let active = true;
-    const cached = readCache();
-    if (cached) { current = cached; setSetting(cached); }
     listeners.add(setSetting);
+    if (!request && snapshot) {
+      const value = parseFestiveSetting(snapshot.settings[FESTIVE_SETTING_KEY]);
+      setFestiveSetting(value);
+      request = Promise.resolve(value);
+      if (!snapshotIsFresh(snapshot)) afterPageLoad(() => { request = null; void refresh(); });
+      setReady(true);
+      return () => { active = false; listeners.delete(setSetting); };
+    }
+    const cached = readCache();
+    if (cached && !request) { current = cached; setSetting(cached); }
     void refresh().then(() => { if (active) { setSetting(current); setReady(true); } });
     return () => { active = false; listeners.delete(setSetting); };
   }, []);

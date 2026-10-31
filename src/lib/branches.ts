@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { defaultBranchOf } from "@/lib/godown-rules";
 import { products as seedProducts } from "@/lib/data";
+import { afterPageLoad, snapshotIsFresh, useStorefrontSnapshot, type StorefrontSnapshot } from "@/lib/storefront-snapshot";
 
 export { branchForPin, branchStockOf, defaultBranchOf, godownOfferOf, godownPriceOf, orderGodownFor, zohoLocationLabel } from "@/lib/godown-rules";
 
@@ -125,6 +126,32 @@ function publish(next: BranchState) {
   for (const listener of listeners) listener(cache);
 }
 
+type PriceRow = { branch_id: string; product_id: string; price: number | string; listed: boolean | null; pending: boolean | null };
+type StockRow = { branch_id: string; product_id: string; stock: number | string };
+
+const featuresFrom = (setting: unknown): PlatformFeatures => {
+  const value = setting && typeof setting === "object" && !Array.isArray(setting) ? setting as Row : {};
+  return { branchRouting: value["branch_routing"] === true, marketplaceVendors: value["marketplace_vendors"] === true };
+};
+
+function branchStateFrom(branchRows: Row[], stockRows: StockRow[], priceRows: PriceRow[], features: PlatformFeatures, points: { vendor_id: string; branch_id: string }[]): BranchState {
+  const prices = new Map<string, Map<string, GodownPrice>>();
+  for (const row of priceRows) {
+    const byBranch = prices.get(row.product_id) ?? new Map<string, GodownPrice>();
+    byBranch.set(row.branch_id, { price: Number(row.price) || 0, listed: row.listed !== false, pending: row.pending === true });
+    prices.set(row.product_id, byBranch);
+  }
+  const stock = new Map<string, Map<string, number>>();
+  for (const row of stockRows) {
+    const byBranch = stock.get(row.product_id) ?? new Map<string, number>();
+    byBranch.set(row.branch_id, Number(row.stock) || 0);
+    stock.set(row.product_id, byBranch);
+  }
+  const vendorPoints = new Map<string, string>();
+  if (features.marketplaceVendors) for (const point of points) vendorPoints.set(point.vendor_id, point.branch_id);
+  return { ready: true, branches: branchRows.map((row) => branchFromRow(row)), stock, prices, features, vendorPoints };
+}
+
 export async function reloadBranches() {
   if (STATIC_DATA_MODE) return;
   const [branchResult, stockResult, featureResult, priceResult] = await Promise.all([
@@ -133,35 +160,39 @@ export async function reloadBranches() {
     supabase.from("settings").select("value").eq("key", PLATFORM_FEATURES_KEY).eq("is_public", true).maybeSingle(),
     supabase.from("branch_prices").select("branch_id,product_id,price,listed,pending"),
   ]);
-  const prices = new Map<string, Map<string, GodownPrice>>();
-  // Before the godown migration is applied the table does not exist yet: no godown prices.
-  for (const row of priceResult.error ? [] : priceResult.data ?? []) {
-    const byBranch = prices.get(row.product_id) ?? new Map<string, GodownPrice>();
-    byBranch.set(row.branch_id, { price: Number(row.price) || 0, listed: row.listed !== false, pending: row.pending === true });
-    prices.set(row.product_id, byBranch);
-  }
-  const stock = new Map<string, Map<string, number>>();
-  for (const row of stockResult.data ?? []) {
-    const byBranch = stock.get(row.product_id) ?? new Map<string, number>();
-    byBranch.set(row.branch_id, Number(row.stock) || 0);
-    stock.set(row.product_id, byBranch);
-  }
-  const value = featureResult.data?.value && typeof featureResult.data.value === "object" && !Array.isArray(featureResult.data.value)
-    ? featureResult.data.value as Row : {};
-  const features = { branchRouting: value["branch_routing"] === true, marketplaceVendors: value["marketplace_vendors"] === true };
-  const vendorPoints = new Map<string, string>();
-  if (features.marketplaceVendors) {
-    const { data: points } = await supabase.rpc("vendor_fulfilment_points");
-    for (const point of points ?? []) vendorPoints.set(point.vendor_id, point.branch_id);
-  }
-  publish({
-    ready: true,
-    branches: (branchResult.data ?? []).map((row) => branchFromRow(row as Row)),
-    stock,
-    prices,
+  const features = featuresFrom(featureResult.data?.value);
+  const points = features.marketplaceVendors ? (await supabase.rpc("vendor_fulfilment_points")).data ?? [] : [];
+  publish(branchStateFrom(
+    (branchResult.data ?? []) as Row[],
+    stockResult.data ?? [],
+    // Before the godown migration is applied the table does not exist yet: no godown prices.
+    priceResult.error ? [] : priceResult.data ?? [],
     features,
-    vendorPoints,
-  });
+    points,
+  ));
+}
+
+// The godowns sent with the page, converted once per page (the server and the browser start from the same).
+const snapshotStates = new WeakMap<StorefrontSnapshot, BranchState>();
+function snapshotBranchState(snapshot: StorefrontSnapshot): BranchState {
+  let state = snapshotStates.get(snapshot);
+  if (!state) {
+    state = branchStateFrom(snapshot.branches, snapshot.branchStock, snapshot.branchPrices,
+      featuresFrom(snapshot.settings[PLATFORM_FEATURES_KEY]), snapshot.vendorPoints);
+    snapshotStates.set(snapshot, state);
+  }
+  return state;
+}
+
+/** Starts from the page's copy: no database call now, and one after the page loads if it was not fresh. */
+function seedFromSnapshot(snapshot: StorefrontSnapshot) {
+  if (STATIC_DATA_MODE || cache.ready || loading) return;
+  publish(snapshotBranchState(snapshot));
+  loading = snapshotIsFresh(snapshot)
+    ? Promise.resolve()
+    : new Promise<void>((resolve) => {
+        afterPageLoad(() => void reloadBranches().catch((error: unknown) => console.warn("Could not load branches", error)).finally(resolve));
+      });
 }
 
 function ensureLoaded() {
@@ -182,9 +213,11 @@ function ensureLoaded() {
 
 /** Branches, stock per branch and platform switches, kept live. */
 export function useBranches(): BranchState {
-  const [state, setState] = useState(cache);
+  const snapshot = useStorefrontSnapshot();
+  const [state, setState] = useState(() => (!cache.ready && snapshot ? snapshotBranchState(snapshot) : cache));
   useEffect(() => {
     listeners.add(setState);
+    if (snapshot) seedFromSnapshot(snapshot);
     setState(cache);
     ensureLoaded();
     return () => { listeners.delete(setState); };
@@ -200,7 +233,7 @@ export const branchDeliveryFee = (branch: Branch | null, subtotal: number) =>
 /* The shopper's delivery PIN ("Delivering to …"), kept on this device.       */
 /* ------------------------------------------------------------------------- */
 const SHOPPER_PIN_KEY = "gb-shopper-pin";
-const pinListeners = new Set<(pin: string) => void>();
+const pinListeners = new Set<() => void>();
 let shopperPin = "";
 try {
   if (typeof window !== "undefined") shopperPin = localStorage.getItem(SHOPPER_PIN_KEY) || "";
@@ -216,17 +249,20 @@ export function setShopperPin(pin: string) {
     if (shopperPin) localStorage.setItem(SHOPPER_PIN_KEY, shopperPin);
     else localStorage.removeItem(SHOPPER_PIN_KEY);
   } catch { /* storage blocked */ }
-  for (const listener of pinListeners) listener(shopperPin);
+  for (const listener of pinListeners) listener();
 }
 
-/** The PIN the shopper chose ("" when none yet). */
+const subscribeShopperPin = (listener: () => void) => {
+  pinListeners.add(listener);
+  return () => { pinListeners.delete(listener); };
+};
+
+/**
+ * The PIN the shopper chose ("" when none yet). The server-rendered page has none, so the browser's
+ * first render matches it and the saved PIN applies right after.
+ */
 export function useShopperPin(): [string, (pin: string) => void] {
-  const [value, setValue] = useState(shopperPin);
-  useEffect(() => {
-    pinListeners.add(setValue);
-    setValue(shopperPin);
-    return () => { pinListeners.delete(setValue); };
-  }, []);
+  const value = useSyncExternalStore(subscribeShopperPin, () => shopperPin, () => "");
   return [value, setShopperPin];
 }
 

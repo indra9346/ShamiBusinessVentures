@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { afterPageLoad, snapshotIsFresh, useStorefrontSnapshot } from "@/lib/storefront-snapshot";
 
 /**
  * What the storefront product cards show, controlled from Admin → Settings → Storefront.
@@ -55,11 +56,18 @@ export function setStorefrontDisplay(value: StorefrontDisplay) {
   for (const listener of listeners) listener(value);
 }
 
-/** Current storefront display options; one shared fetch per page load. */
+/** Current storefront display options; one shared fetch per page load (none when the page brought them). */
 export function useStorefrontDisplay(): StorefrontDisplay {
-  const [value, setValue] = useState(cached);
+  const snapshot = useStorefrontSnapshot();
+  const [value, setValue] = useState(() =>
+    !request && snapshot ? parseStorefrontDisplay(snapshot.settings[STOREFRONT_DISPLAY_KEY]) : cached);
   useEffect(() => {
     listeners.add(setValue);
+    if (!request && snapshot) {
+      setStorefrontDisplay(parseStorefrontDisplay(snapshot.settings[STOREFRONT_DISPLAY_KEY]));
+      request = Promise.resolve(cached);
+      if (!snapshotIsFresh(snapshot)) afterPageLoad(() => { request = null; void load(); });
+    }
     setValue(cached);
     void load();
     return () => {

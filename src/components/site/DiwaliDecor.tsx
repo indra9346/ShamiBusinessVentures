@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { cn } from "@/lib/utils";
+import { afterPageLoad } from "@/lib/storefront-snapshot";
 
 /*
  * Deepavali decorations for the storefront (shown by useFestiveTheme, switched off in Admin > Ad Banners).
@@ -104,7 +105,7 @@ export function SideGarlands() {
 /**
  * Crackers over Karnataka's lit heritage (Mysuru Palace, Hampi gopurams, the temple) behind the header:
  * a short looping video already painted on the header's green, so the browser only plays it (no live
- * blending). It starts after the page is idle (the first paint never waits for it), pauses in
+ * blending). It starts after the page has loaded (the first paint never waits for it), pauses in
  * background tabs, and stays a still picture for reduced motion or data saver.
  */
 export function HeaderCrackers() {
@@ -114,14 +115,8 @@ export function HeaderCrackers() {
   useEffect(() => {
     if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
     if ((navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData) return;
-    const start = () => setSrc(`${ART}/header-crackers.mp4`);
-    const idle = window as Window & { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number; cancelIdleCallback?: (id: number) => void };
-    if (idle.requestIdleCallback) {
-      const id = idle.requestIdleCallback(start, { timeout: 2500 });
-      return () => idle.cancelIdleCallback?.(id);
-    }
-    const id = window.setTimeout(start, 1200);
-    return () => window.clearTimeout(id);
+    // After the page (with its banners and product pictures) has loaded, so it never competes with them.
+    return afterPageLoad(() => setSrc(`${ART}/header-crackers.mp4`));
   }, []);
   useEffect(() => {
     const v = video.current;

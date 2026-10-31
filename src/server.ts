@@ -2,6 +2,10 @@ import "./lib/error-capture";
 
 import { consumeLastCapturedError } from "./lib/error-capture";
 import { renderErrorPage } from "./lib/error-page";
+import { startStorefrontBackgroundWork } from "./lib/storefront-snapshot.functions";
+
+// Read the storefront data as soon as the server starts, so the first visitor does not wait for it.
+startStorefrontBackgroundWork();
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;

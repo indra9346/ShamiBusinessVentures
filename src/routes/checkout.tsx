@@ -12,6 +12,7 @@ import { PickupPointCard } from "@/components/site/PickupPointCard";
 import { usePickupSettings } from "@/lib/pickup-points";
 import { branchDeliveryFee, branchForPin, defaultBranchOf, useBranches, useShopperPin } from "@/lib/branches";
 import { cn } from "@/lib/utils";
+import { resizedImage } from "@/lib/image-url";
 import { supabase } from "@/integrations/supabase/client";
 import { UseMyLocationButton, type CapturedLocation } from "@/components/site/UseMyLocationButton";
 import { PickContactButton } from "@/components/site/PickContactButton";
@@ -817,7 +818,7 @@ function Checkout() {
                       className="flex items-center gap-3 border-b border-border pb-3 last:border-0"
                     >
                       <img
-                        src={product.image || `/products/${product.category.toLowerCase()}.jpg`}
+                        src={resizedImage(product.image || `/products/${product.category.toLowerCase()}.jpg`, 160)}
                         alt={product.name}
                         loading="lazy"
                         width={800}

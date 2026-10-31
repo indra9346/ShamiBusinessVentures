@@ -16,6 +16,7 @@ import { DataTable, Panel, StatCard, StatusBadge } from "@/components/panel/widg
 import { accountNav } from "@/lib/account-nav";
 import { inr, isStorefrontProduct, orderStages } from "@/lib/data";
 import { useApp } from "@/lib/store";
+import { resizedImage } from "@/lib/image-url";
 import { orderBelongsToUser } from "@/lib/account-identity";
 import { notificationBelongsToUser } from "@/lib/account-identity";
 
@@ -267,7 +268,7 @@ function Account() {
                   params={{ id: p.id }}
                   className="flex items-center gap-3"
                 >
-                  <img src={p.image} alt={p.name} className="h-10 w-10 rounded-md object-cover" />
+                  <img src={resizedImage(p.image, 96)} alt={p.name} className="h-10 w-10 rounded-md object-cover" />
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium text-navy">{p.name}</p>
                     <p className="text-xs text-slate">{inr(p.price)}</p>
@@ -350,7 +351,7 @@ function Account() {
                   className="rounded-lg border border-border p-2 text-center hover:border-gold"
                 >
                   <img
-                    src={p.image}
+                    src={resizedImage(p.image, 128)}
                     alt={p.name}
                     className="mx-auto h-14 w-14 rounded-md object-cover"
                   />
