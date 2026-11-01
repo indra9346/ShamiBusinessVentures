@@ -147,7 +147,7 @@ export function AddToCartPicker({
   const panel = (
     <div
       className={
-        compact ? "w-full" : "w-full rounded-xl border border-border bg-card p-3 shadow-card"
+        compact ? "w-full min-w-0" : "w-full min-w-0 rounded-xl border border-border bg-card p-3 shadow-card"
       }
       aria-label={`Choose quantity for ${product.name}`}
     >
@@ -207,7 +207,8 @@ export function AddToCartPicker({
             }
           }}
           title={`Enter a positive whole number. ${availableStock} units are available.`}
-          className="h-10 min-w-0 flex-1 rounded-md border border-border bg-background text-center font-bold text-navy focus:border-gold focus:outline-none"
+          size={1}
+          className="h-10 w-0 min-w-0 flex-1 rounded-md border border-border bg-background text-center font-bold text-navy focus:border-gold focus:outline-none"
         />
         <button
           type="button"
@@ -279,8 +280,8 @@ export function AddToCartPicker({
       {trigger}
       <Dialog open={open} onOpenChange={setOpen}>
         {/* On phones the keypad sits low, like a phone keypad, just above the live cart bar. */}
-        <DialogContent className="max-w-[calc(100vw-2rem)] gap-3 rounded-xl p-4 max-sm:top-auto max-sm:translate-y-0 max-sm:bottom-[calc(5.25rem+env(safe-area-inset-bottom))] sm:max-w-xs sm:p-5">
-          <DialogHeader className="space-y-0.5 text-left">
+        <DialogContent className="max-w-[calc(100vw-2rem)] grid-cols-[minmax(0,1fr)] gap-3 rounded-xl p-4 max-sm:top-auto max-sm:translate-y-0 max-sm:bottom-[calc(5.25rem+env(safe-area-inset-bottom))] sm:max-w-sm sm:p-5">
+          <DialogHeader className="min-w-0 space-y-0.5 pr-7 text-left">
             <DialogTitle className="line-clamp-2 text-sm font-bold leading-snug text-navy">
               {product.name}
             </DialogTitle>
