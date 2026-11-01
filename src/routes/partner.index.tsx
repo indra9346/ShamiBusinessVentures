@@ -72,7 +72,7 @@ function PartnerDashboard() {
               <p className="text-xs text-slate">{me.name} · {me.godown}</p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <input type="month" value={month.slice(0, 7)} max={monthStart().slice(0, 7)}
               onChange={(event) => event.target.value && setMonth(`${event.target.value}-01`)}
               className="h-9 rounded-md border border-input bg-white px-2 text-sm" aria-label="Month" />
@@ -80,7 +80,7 @@ function PartnerDashboard() {
               <CalendarCheck className="h-4 w-4" /> Attendance & stock
             </Link>
             <button type="button" onClick={async () => { await supabase.auth.signOut(); navigate({ to: "/partner/login" }); }}
-              className="inline-flex h-9 items-center gap-1.5 rounded-md border border-border px-3 text-sm text-navy hover:border-gold hover:text-gold">
+              className="inline-flex h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-border px-3 text-sm text-navy hover:border-gold hover:text-gold">
               <LogOut className="h-4 w-4" /> Sign out
             </button>
           </div>

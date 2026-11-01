@@ -481,7 +481,7 @@ function AdminDashboard() {
         />
       </div>
 
-      <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">
+      <div className="mt-6 grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">
         <Panel title={`Payments Received (${dateRange.label})`}>
           <div className="h-72">
             <ResponsiveContainer width="100%" height="100%">
@@ -541,7 +541,7 @@ function AdminDashboard() {
         </Panel>
       </div>
 
-      <div className="mt-6 grid gap-6 xl:grid-cols-2">
+      <div className="mt-6 grid grid-cols-1 gap-6 xl:grid-cols-2">
         <Panel title={`Customers with Orders (${dateRange.label})`}>
           <div className="h-60">
             <ResponsiveContainer width="100%" height="100%">
