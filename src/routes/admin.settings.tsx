@@ -212,7 +212,7 @@ function AdminSettings() {
               <div className="flex items-center justify-between gap-4 rounded-md border border-border bg-ivory/40 p-4 sm:col-span-2">
                 <div>
                   <p className="text-sm font-bold text-navy">Cash on Delivery (Disabled)</p>
-                  <p className="text-xs text-slate">Cash on delivery is permanently disabled across the platform. All commodity and marketplace orders require online payment (UPI, Cards, Net Banking).</p>
+                  <p className="text-xs text-slate">Cash on delivery is permanently disabled across the platform. All commodity and marketplace orders require online payment (UPI, NEFT or RTGS, by order value).</p>
                 </div>
                 <Switch checked={false} disabled aria-label="Cash on delivery is permanently disabled" />
               </div>

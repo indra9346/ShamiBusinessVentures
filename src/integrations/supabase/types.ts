@@ -508,6 +508,12 @@ export type Database = {
         Update: never
         Relationships: []
       }
+      bank_settings_audit: {
+        Row: { id: number; changed_at: string; changed_by: string | null; old_value: Json | null; new_value: Json | null }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
       upi_settings_audit: {
         Row: { id: number; changed_at: string; changed_by: string | null; old_vpa: string | null; new_vpa: string | null; old_enabled: boolean | null; new_enabled: boolean | null; payee_name: string | null }
         Insert: never
@@ -1153,11 +1159,14 @@ export type Database = {
       }
       godown_contact_phones: { Args: Record<PropertyKey, never>; Returns: { branch_id: string; phone: string | null }[] }
       expire_payment_holds: { Args: Record<PropertyKey, never>; Returns: number }
+      bank_transfer_details: { Args: Record<PropertyKey, never>; Returns: Json }
       cancel_payment_hold: { Args: { _order_no: string }; Returns: boolean }
       record_bank_credit: { Args: { _utr: string; _amount: number; _payer?: string; _raw?: string; _source?: string; _sender?: string }; Returns: Json }
       settle_bank_credit: { Args: { _credit_id: string; _note: string }; Returns: { id: string; status: string; note: string | null } }
       submit_upi_utr: { Args: { _order_no: string; _utr: string }; Returns: { id: string; order_id: string; order_no: string; user_id: string | null; customer_name: string; amount: number; utr: string; status: string; note: string | null; submitted_at: string; reviewed_at: string | null; reviewed_by: string | null } }
-      review_upi_utr: { Args: { _order_no: string; _decision: string; _note?: string | null }; Returns: { id: string; order_id: string; order_no: string; user_id: string | null; customer_name: string; amount: number; utr: string; status: string; note: string | null; submitted_at: string; reviewed_at: string | null; reviewed_by: string | null } }
+      admin_end_payment_hold: { Args: { _order_no: string }; Returns: boolean }
+      mark_utr_refunded: { Args: { _order_no: string }; Returns: boolean }
+      review_upi_utr: { Args: { _order_no: string; _decision: string; _note?: string | null; _expected_utr?: string | null }; Returns: { id: string; order_id: string; order_no: string; user_id: string | null; customer_name: string; amount: number; utr: string; status: string; note: string | null; submitted_at: string; reviewed_at: string | null; reviewed_by: string | null } }
       record_stock_count: {
         Args: { _branch_id: string; _product_id: string; _counted: number; _zoho_physical_before: number; _zoho_delta: number; _site_after: number; _reason: string; _note: string; _flagged: boolean; _zoho_adjustment_id: string; _counted_by: string; _counted_by_name: string; _employee_id: string | null }
         Returns: string

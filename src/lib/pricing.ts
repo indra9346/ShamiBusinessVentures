@@ -1,7 +1,7 @@
 import type { Coupon } from "./store";
 
 /** Rounds to paise, as the database's numeric(14,2) columns and round(x, 2) do. */
-export const toPaise = (amount: number) => Math.round(amount * 100) / 100;
+export const toPaise = (amount: number) => Math.round(Number((amount * 100).toPrecision(12))) / 100;
 
 /** GST on one cart line, rounded per line to paise (same as place_marketplace_order). */
 export const lineGst = (price: number, qty: number, gstPercent: number) => toPaise((price * qty * gstPercent) / 100);

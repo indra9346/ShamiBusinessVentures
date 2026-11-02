@@ -606,10 +606,6 @@ function AdminOrderDetail() {
               <dt className="text-slate">Payment Date</dt>
               <dd className="font-medium text-navy">{order.date}</dd>
             </div>
-            <div className="flex justify-between">
-              <dt className="text-slate">Gateway</dt>
-              <dd className="text-xs text-slate">Razorpay / Net Banking</dd>
-            </div>
           </dl>
         </Panel>
 
