@@ -4445,6 +4445,9 @@ export const kn: Record<string, string> = {
   "Could not record the refund": "ಹಣ ಹಿಂತಿರುಗಿಸಿದ್ದನ್ನು ದಾಖಲಿಸಲಾಗಲಿಲ್ಲ",
   "Placed again as {0}": "{0} ಆಗಿ ಮತ್ತೆ ಆರ್ಡರ್ ಮಾಡಲಾಗಿದೆ",
   "Only a UTR that was not checked in time can be marked refunded": "ಸಮಯಕ್ಕೆ ಪರಿಶೀಲಿಸದ UTR ಅನ್ನು ಮಾತ್ರ ಹಿಂತಿರುಗಿಸಲಾಗಿದೆ ಎಂದು ಗುರುತಿಸಬಹುದು",
+  "Confirmed payments": "ದೃಢಪಟ್ಟ ಪಾವತಿಗಳು",
+  "Rejected payments": "ತಿರಸ್ಕೃತ ಪಾವತಿಗಳು",
+  "None yet.": "ಇನ್ನೂ ಯಾವುದೂ ಇಲ್ಲ.",
   // Dashboard cards that open their data, 2 Nov 2026
   "All pending": "ಎಲ್ಲಾ ಬಾಕಿ",
   "Low or Out of Stock": "ಕಡಿಮೆ ಅಥವಾ ದಾಸ್ತಾನು ಇಲ್ಲ",

@@ -27,6 +27,7 @@ export const Route = createFileRoute("/admin/upi-payments")({
   component: AdminUpiPayments,
 });
 
+const scrollToSection = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
 const istTime = (iso: string) => new Date(iso).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
 
 /**
@@ -52,6 +53,13 @@ function AdminUpiPayments() {
   // Not checked in time: the money may be in the bank, so these stay open until someone closes them.
   const lapsed = submissions.filter((s) => s.status === "rejected" && s.note === UNCHECKED_UTR_NOTE);
   const done = submissions.filter((s) => s.status !== "submitted" && s.note !== UNCHECKED_UTR_NOTE);
+  // The Confirmed and Rejected cards open the list below, showing just those.
+  const [doneFilter, setDoneFilter] = useState<"all" | "confirmed" | "rejected">("all");
+  const doneShown = doneFilter === "all" ? done : done.filter((s) => s.status === doneFilter);
+  const openDone = (status: "confirmed" | "rejected") => {
+    setDoneFilter(status);
+    window.requestAnimationFrame(() => scrollToSection("checked-payments"));
+  };
   const markRefunded = async (orderNo: string, utr: string) => {
     if (!window.confirm(`Record that UTR ${utr} for ${orderNo} was refunded?\n\nThat UTR can then pay for nothing, and the customer is told.`)) return;
     setBusy(orderNo);
@@ -126,9 +134,9 @@ function AdminUpiPayments() {
       )}
 
       <div className="mb-6 grid gap-4 sm:grid-cols-3">
-        <StatCard label="Waiting for your check" value={String(waiting.length)} icon={QrCode} highlight={waiting.length > 0} description={waiting.length ? `${inrPrecise(waiting.reduce((s, w) => s + w.amount, 0))} to match in the bank` : "Nothing to check"} />
-        <StatCard label="Confirmed" value={String(done.filter((s) => s.status === "confirmed").length)} icon={CheckCircle2} description="Marked paid" />
-        <StatCard label="Rejected" value={String(done.filter((s) => s.status === "rejected").length)} icon={XCircle} description="Customer asked to correct" />
+        <StatCard onClick={() => scrollToSection("payments-to-check")} label="Waiting for your check" value={String(waiting.length)} icon={QrCode} highlight={waiting.length > 0} description={waiting.length ? `${inrPrecise(waiting.reduce((s, w) => s + w.amount, 0))} to match in the bank` : "Nothing to check"} />
+        <StatCard onClick={() => openDone("confirmed")} label="Confirmed" value={String(done.filter((s) => s.status === "confirmed").length)} icon={CheckCircle2} description="Marked paid" />
+        <StatCard onClick={() => openDone("rejected")} label="Rejected" value={String(done.filter((s) => s.status === "rejected").length)} icon={XCircle} description="Customer asked to correct" />
       </div>
 
       {lapsed.length > 0 && (
@@ -152,6 +160,7 @@ function AdminUpiPayments() {
         </Panel>
       )}
 
+      <div id="payments-to-check" className="scroll-mt-36">
       <Panel title="Payments to check" className="mb-6">
         <p className="mb-3 text-xs text-slate">Open the bank account (or its UPI app), find a credit with this <b>UTR</b> and <b>amount</b>, then confirm. Confirming marks the order paid, like a manual payment.</p>
         {!waiting.length ? <p className="text-sm text-slate">No payments waiting.</p> : (
@@ -191,6 +200,7 @@ function AdminUpiPayments() {
           </div>
         )}
       </Panel>
+      </div>
 
       <Panel title="Waiting for payment (not orders yet)" className="mb-6">
         <p className="mb-3 text-xs text-slate">Checkouts whose customer has not paid yet. Their stock is held; they become orders when the bank alert (UPI) or your confirmation matches the payment, and end on their own when the time is up. NEFT and RTGS always wait for your confirmation: an amount alone never confirms them.</p>
@@ -256,15 +266,20 @@ function AdminUpiPayments() {
         </Panel>
       )}
 
-      {done.length > 0 && (
-        <Panel title="Checked payments" className="mt-6">
+      {(done.length > 0 || doneFilter !== "all") && (
+        <div id="checked-payments" className="mt-6 scroll-mt-36">
+        <Panel
+          title={doneFilter === "confirmed" ? "Confirmed payments" : doneFilter === "rejected" ? "Rejected payments" : "Checked payments"}
+          action={doneFilter === "all" ? undefined : <button type="button" className="text-xs font-semibold text-gold hover:underline" onClick={() => setDoneFilter("all")}>Show all</button>}
+        >
+          {doneShown.length === 0 ? <p className="text-sm text-slate">None yet.</p> : (
           <div className="overflow-x-auto">
             <ResizableTable tableId="upi-done" className="w-full min-w-[700px] text-left text-sm">
               <thead><tr className="border-b border-border text-[11px] font-bold uppercase tracking-wider text-slate">
                 <th className="px-2 py-2">Checked</th><th className="px-2 py-2">Order</th><th className="px-2 py-2 text-right">Amount</th><th className="px-2 py-2">UTR</th><th className="px-2 py-2">Result</th>
               </tr></thead>
               <tbody>
-                {done.map((s) => {
+                {doneShown.map((s) => {
                   const hold = paymentHolds.find((item) => item.orderNo === s.orderNo);
                   return (
                   <tr key={s.orderNo} className="border-b border-border/60">
@@ -287,7 +302,9 @@ function AdminUpiPayments() {
               </tbody>
             </ResizableTable>
           </div>
+          )}
         </Panel>
+        </div>
       )}
     </PanelLayout>
   );
