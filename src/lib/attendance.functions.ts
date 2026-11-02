@@ -4,15 +4,16 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import type { Database } from "@/integrations/supabase/types";
 import {
-  cleanMobile, earlyLeaveMinutes, geofenceRefusal, indiaDate, indiaTime, lateMinutes, locationVerdict, selfiePath, staffLoginEmail,
-  staffPasswordProblem,
+  cleanMobile, geofenceRefusal, indiaDate, indiaTime, locationVerdict, selfiePath, staffLoginEmail, staffPasswordProblem,
 } from "@/lib/attendance";
 
 /*
  * Godown employee attendance (rules in src/lib/attendance.ts, tables in migrations
- * 20261031120000_staff_attendance and 20261101090000_attendance_v2). The server, not the phone,
- * decides the time, the distance from the godown and late / early minutes; it alone touches the
- * private selfie bucket and checks that the photo comes from the godown's registered device.
+ * 20261031120000_staff_attendance, 20261101090000_attendance_v2 and
+ * 20261102120000_godown_attendance_rules). The server, not the phone, decides the time and the
+ * distance from the godown; it alone touches the private selfie bucket and checks that the photo
+ * comes from the godown's registered device. The database works out late and early minutes from the
+ * godown's rules when the day is written (attendance_days_apply_rules).
  */
 
 const BUCKET = "attendance-selfies";
@@ -231,33 +232,42 @@ async function uploadSelfie(db: Db, path: string, dataUrl: string) {
   if (upload.error) throw new Error("The selfie could not be saved. Check your internet and try again.");
 }
 
-/** The signed-in active employee and their godown's rules. */
+/** The signed-in active employee, their godown's location and the godown's rules in force today. */
 async function employeeAndGodown(db: Db, userId: string) {
   const { data: employee } = await db.from("staff_employees").select("id,branch_id,status").eq("user_id", userId).maybeSingle();
   if (!employee || employee.status !== "active") throw new Error("Only active godown employees can mark attendance");
-  const { data: branch } = await db.from("branches")
-    .select("latitude,longitude,attendance_radius_m,shift_start,shift_end,late_grace_min,presence_interval_min").eq("id", employee.branch_id).maybeSingle();
+  const { data: branch } = await db.from("branches").select("latitude,longitude").eq("id", employee.branch_id).maybeSingle();
   if (!branch) throw new Error("Your godown was not found. Contact the office.");
-  return { employee, branch };
+  const { data: rules } = await db.from("godown_rule_versions")
+    .select("radius_m,gps_accuracy_limit_m,require_device").eq("branch_id", employee.branch_id).lte("effective_from", indiaDate()).is("cancelled_at", null)
+    .order("effective_from", { ascending: false }).order("created_at", { ascending: false }).limit(1).maybeSingle();
+  if (!rules) throw new Error("Your godown has no attendance rules. Contact the office.");
+  return { employee, branch, rules };
+}
+
+/** The device behind this mark: the godown's registered one, unless the godown's rules allow any phone. */
+async function deviceForMark(db: Db, token: string, branchId: string, required: boolean) {
+  if (required) return godownDevice(db, token, branchId);
+  return token ? godownDevice(db, token, branchId).catch(() => null) : null;
 }
 
 /**
  * Check-in or check-out with a live selfie from the godown's registered device. Refused outside the
- * godown's radius (or with GPS too rough to tell); no approval step. Late and early-leave minutes
- * are worked out from the godown's shift.
+ * godown's radius (or with GPS too rough to tell); no approval step. The database works out late and
+ * early-leave minutes from the godown's shift; a day keeps the rules it was checked in under.
  */
 export const markAttendance = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator(z.object({ kind: z.enum(["in", "out"]), note: z.string().max(300).default(""), ...positionSchema }))
   .handler(async ({ data, context }) => {
     const db = serviceClient();
-    const { employee, branch } = await employeeAndGodown(db, context.userId);
-    const deviceId = await godownDevice(db, data.deviceToken, employee.branch_id);
+    const { employee, branch, rules } = await employeeAndGodown(db, context.userId);
+    const deviceId = await deviceForMark(db, data.deviceToken, employee.branch_id, rules.require_device);
     const { verdict, distanceM } = locationVerdict(
-      { latitude: branch.latitude, longitude: branch.longitude, radiusM: branch.attendance_radius_m },
+      { latitude: branch.latitude, longitude: branch.longitude, radiusM: rules.radius_m, accuracyLimitM: rules.gps_accuracy_limit_m },
       { lat: data.lat, lng: data.lng, accuracyM: data.accuracy },
     );
-    const refusal = geofenceRefusal(verdict, distanceM, branch.attendance_radius_m);
+    const refusal = geofenceRefusal(verdict, distanceM, rules.radius_m);
     if (refusal) throw new Error(refusal);
 
     const now = Date.now();
@@ -268,65 +278,64 @@ export const markAttendance = createServerFn({ method: "POST" })
 
     if (data.kind === "in") {
       if (day) throw new Error("Attendance is already marked for today");
-      const late = lateMinutes(now, branch.shift_start, branch.late_grace_min);
       const path = selfiePath(employee.branch_id, workDate, employee.id, "in", now);
       await uploadSelfie(db, path, data.selfie);
-      const { error } = await db.from("attendance_days").insert({
+      const { data: saved, error } = await db.from("attendance_days").insert({
         employee_id: employee.id, branch_id: employee.branch_id, work_date: workDate, check_in_at: new Date(now).toISOString(),
         in_lat: data.lat, in_lng: data.lng, in_accuracy_m: Math.round(data.accuracy * 10) / 10, in_distance_m: distanceM,
-        in_selfie: path, late_minutes: late, flags: late > 0 ? ["late"] : [], employee_note: note, status: "present", in_device_id: deviceId,
-      });
-      if (error) {
+        in_selfie: path, employee_note: note, status: "present", in_device_id: deviceId,
+      }).select("late_minutes").single();
+      if (error || !saved) {
         await db.storage.from(BUCKET).remove([path]);
-        throw new Error(/duplicate|unique/i.test(error.message) ? "Attendance is already marked for today" : "Attendance could not be saved. Try again.");
+        throw new Error(/duplicate|unique/i.test(error?.message ?? "") ? "Attendance is already marked for today" : "Attendance could not be saved. Try again.");
       }
-      return { kind: "in" as const, at: new Date(now).toISOString(), lateMinutes: late, earlyMinutes: 0, distanceM };
+      return { kind: "in" as const, at: new Date(now).toISOString(), lateMinutes: saved.late_minutes, earlyMinutes: 0, distanceM };
     }
 
     if (!day) throw new Error("Mark your check-in first");
     if (day.check_out_at) throw new Error("You have already checked out today");
-    const early = earlyLeaveMinutes(now, branch.shift_end);
     const path = selfiePath(employee.branch_id, workDate, employee.id, "out", now);
     await uploadSelfie(db, path, data.selfie);
     const { data: updated, error } = await db.from("attendance_days").update({
       check_out_at: new Date(now).toISOString(), out_lat: data.lat, out_lng: data.lng,
       out_accuracy_m: Math.round(data.accuracy * 10) / 10, out_distance_m: distanceM, out_inside: true, out_selfie: path,
-      early_leave_minutes: early, out_device_id: deviceId,
+      out_device_id: deviceId,
       ...(note ? { employee_note: `${day.employee_note ? `${day.employee_note} · ` : ""}Check-out: ${note}` } : {}),
       updated_at: new Date(now).toISOString(),
-    }).eq("id", day.id).is("check_out_at", null).select("id");
+    }).eq("id", day.id).is("check_out_at", null).select("early_leave_minutes");
     if (error || !updated?.length) {
       await db.storage.from(BUCKET).remove([path]);
       throw new Error("Check-out could not be saved. Try again.");
     }
-    return { kind: "out" as const, at: new Date(now).toISOString(), lateMinutes: 0, earlyMinutes: early, distanceM };
+    return { kind: "out" as const, at: new Date(now).toISOString(), lateMinutes: 0, earlyMinutes: updated[0]!.early_leave_minutes, distanceM };
   });
 
 /**
  * A presence photo while checked in: live selfie + GPS from the godown's device, due every N minutes
- * (the godown's presence interval). Recorded with the distance from the godown and whether it was
- * inside, so head office sees where each one was taken.
+ * (the presence interval of the rules the day was checked in under). Recorded with the distance from
+ * the godown and whether it was inside, so head office sees where each one was taken.
  */
 export const markPresence = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator(z.object(positionSchema))
   .handler(async ({ data, context }) => {
     const db = serviceClient();
-    const { employee, branch } = await employeeAndGodown(db, context.userId);
-    if (!branch.presence_interval_min) throw new Error("Presence photos are switched off for your godown");
-    const deviceId = await godownDevice(db, data.deviceToken, employee.branch_id);
+    const { employee, branch, rules } = await employeeAndGodown(db, context.userId);
+    const deviceId = await deviceForMark(db, data.deviceToken, employee.branch_id, rules.require_device);
     const now = Date.now();
-    const { data: day } = await db.from("attendance_days").select("id,check_out_at")
+    const { data: day } = await db.from("attendance_days").select("id,check_out_at,rule_version_id")
       .eq("employee_id", employee.id).eq("work_date", indiaDate(now)).maybeSingle();
     if (!day) throw new Error("Mark your check-in first");
     if (day.check_out_at) throw new Error("You have already checked out today");
+    const { data: dayRules } = await db.from("godown_rule_versions").select("presence_interval_min").eq("id", day.rule_version_id).maybeSingle();
+    if (!dayRules?.presence_interval_min) throw new Error("Presence photos are switched off for your godown");
     const { data: last } = await db.from("attendance_presence").select("taken_at").eq("attendance_day_id", day.id)
       .order("taken_at", { ascending: false }).limit(1).maybeSingle();
     if (last && now - Date.parse(last.taken_at) < PRESENCE_MIN_GAP_MIN * 60_000) {
       throw new Error(`A presence photo was sent at ${indiaTime(last.taken_at)}. Send the next one when it is due.`);
     }
     const { verdict, distanceM } = locationVerdict(
-      { latitude: branch.latitude, longitude: branch.longitude, radiusM: branch.attendance_radius_m },
+      { latitude: branch.latitude, longitude: branch.longitude, radiusM: rules.radius_m, accuracyLimitM: rules.gps_accuracy_limit_m },
       { lat: data.lat, lng: data.lng, accuracyM: data.accuracy },
     );
     const path = selfiePath(employee.branch_id, indiaDate(now), employee.id, "presence", now);

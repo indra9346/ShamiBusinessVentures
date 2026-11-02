@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { loadKannada, translateText } from "../src/lib/i18n-core.ts";
 import { kn } from "../src/lib/i18n-kn.ts";
 import { productDescription } from "../src/lib/seo.ts";
+import { DEFAULT_RULES, MARK_WORDS, REGISTER_LEGEND, leaveProblem, ruleLines, rulesProblem } from "../src/lib/attendance.ts";
 
 await loadKannada();
 
@@ -54,6 +55,34 @@ test("short templates don't hijack ordinary English phrases", () => {
   assert.equal(translateText("₹4,000 of ₹10,000", "kn"), kn["{0} of {1}"].replace("{0}", "₹4,000").replace("{1}", "₹10,000"));
   assert.ok(!translateText("Bag of Steam Rice", "kn").includes("{"));
   assert.equal(translateText("Country of Origin", "kn"), kn["Country of Origin"] ?? "ಮೂಲ ದೇಶ");
+});
+
+test("a godown's attendance rules read in Kannada", () => {
+  const latin = /[A-Za-z]{3,}/;
+  const variants = [DEFAULT_RULES, { ...DEFAULT_RULES, late_counted_from: "grace_end" as const, half_day_below_min: 270, absent_below_min: 60, missed_checkout: "half_day" as const, weekly_off: null, require_device: false, presence_interval_min: 0, leave_partner_required: false, shift_end: "17:45" },
+    { ...DEFAULT_RULES, missed_checkout: "absent" as const }];
+  for (const rules of variants) {
+    for (const line of ruleLines(rules)) {
+      for (const text of [line.label, ...line.value]) {
+        assert.ok(!latin.test(translateText(text, "kn").replace(/\b[ap]m\b/g, "")), `no Kannada for "${text}"`);
+      }
+    }
+  }
+  assert.ok(!latin.test(translateText(REGISTER_LEGEND, "kn").replace(/\b(HD|LV|WO)\b/g, "")));
+  for (const word of Object.values(MARK_WORDS)) assert.ok(!latin.test(translateText(word, "kn")), `no Kannada for "${word}"`);
+  const problems = [
+    leaveProblem("2026-11-01", "2026-11-09", "Fever", "2026-10-31", { leave_max_days: 2, leave_back_days: 0, leave_ahead_days: 30 }),
+    leaveProblem("2026-10-01", "2026-10-01", "Fever", "2026-10-31", { leave_max_days: 2, leave_back_days: 0, leave_ahead_days: 30 }),
+    leaveProblem("2026-10-01", "2026-10-01", "Fever", "2026-10-31", { leave_max_days: 2, leave_back_days: 5, leave_ahead_days: 30 }),
+    leaveProblem("2026-12-31", "2026-12-31", "Fever", "2026-10-31", { leave_max_days: 2, leave_back_days: 0, leave_ahead_days: 30 }),
+    rulesProblem({ ...DEFAULT_RULES, early_grace_min: 999 }), rulesProblem({ ...DEFAULT_RULES, half_day_below_min: 2000 }), rulesProblem({ ...DEFAULT_RULES, half_day_below_min: 60, absent_below_min: 60 }),
+    rulesProblem({ ...DEFAULT_RULES, gps_accuracy_limit_m: 1 }), rulesProblem({ ...DEFAULT_RULES, presence_interval_min: 20 }), rulesProblem({ ...DEFAULT_RULES, presence_early_min: 500 }),
+    rulesProblem({ ...DEFAULT_RULES, presence_interval_min: 40 }), rulesProblem({ ...DEFAULT_RULES, leave_types: [] }), rulesProblem({ ...DEFAULT_RULES, leave_max_days: 0 }), rulesProblem({ ...DEFAULT_RULES, leave_back_days: 999 }),
+  ];
+  for (const text of problems) {
+    assert.ok(text, "a problem was found");
+    assert.ok(!latin.test(translateText(text!, "kn")), `no Kannada for "${text}"`);
+  }
 });
 
 test("menu labels from the admin sidebar are all Kannada", () => {
