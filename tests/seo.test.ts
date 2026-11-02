@@ -75,13 +75,15 @@ test("merchant listing shipping: delivering godowns' PIN codes and fee; pickup-o
 
 test("every product has a description: its own, else one from its facts", () => {
   assert.equal(productDescription({ name: "Rice", description: "  Long grain rice.  ", weight: "5 kg" }), "Long grain rice.");
-  const made = "Long Grain Basumathi Rice, pack size 10 kg. Sold by Grain Bazar with a GST invoice, for pickup or delivery from our Challakere and Hubli godowns.";
+  const made = "Long Grain Basumathi Rice, pack size 10 kg. Sold by Grain Bazar with a GST invoice.";
   assert.equal(productDescription({ name: "Long Grain Basumathi Rice", description: "", weight: "10 kg" }), made);
   assert.equal(productDescription({ name: "Long Grain Basumathi Rice", weight: "10 kg" }), made);
   // The import's placeholder is not a description.
   const placeholder = "Newly added product pending catalogue review.";
   assert.equal(ownDescription({ description: placeholder }), "");
   assert.match(productDescription({ name: "Gold Winner Oil - 15 L Tin", description: placeholder, weight: "15 Litre (13.650 kg)" }), /^Gold Winner Oil - 15 L Tin, pack size 15 Litre \(13\.650 kg\)\. Sold by/);
+  // It makes no promise about pickup or delivery: the page says which applies.
+  assert.doesNotMatch(made, /pickup|delivery|Hubli|Challakere/i);
   // A pack size the name already says is not repeated; no pack size is fine.
   assert.match(productDescription({ name: "Belgaum Sugar - 50 kg Bag", weight: "50 kg bag" }), /^Belgaum Sugar - 50 kg Bag\. Sold by/);
   assert.match(productDescription({ name: "Sugar" }), /^Sugar\. Sold by/);

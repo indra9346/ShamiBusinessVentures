@@ -4290,7 +4290,8 @@ export const kn: Record<string, string> = {
   "No photo": "ಫೋಟೋ ಇಲ್ಲ",
   "Photos could not be loaded. Close and open again.": "ಫೋಟೋಗಳನ್ನು ಲೋಡ್ ಮಾಡಲಾಗಲಿಲ್ಲ. ಮುಚ್ಚಿ ಮತ್ತೆ ತೆರೆಯಿರಿ.",
   // Product description made from the product's own facts, 2 Nov 2026
-  "{0}. Sold by Grain Bazar with a GST invoice, for pickup or delivery from our Challakere and Hubli godowns.": "{0}. ನಮ್ಮ ಚಳ್ಳಕೆರೆ ಮತ್ತು ಹುಬ್ಬಳ್ಳಿ ಗೋದಾಮುಗಳಿಂದ ಪಿಕಪ್ ಅಥವಾ ಡೆಲಿವರಿಗಾಗಿ, GST ಇನ್‌ವಾಯ್ಸ್‌ನೊಂದಿಗೆ Grain Bazar ಮಾರಾಟ ಮಾಡುತ್ತದೆ.",
+  "{0}, pack size {1}. Sold by Grain Bazar with a GST invoice.": "{0}, ಪ್ಯಾಕ್ ಗಾತ್ರ {1}. GST ಇನ್‌ವಾಯ್ಸ್‌ನೊಂದಿಗೆ Grain Bazar ಮಾರಾಟ ಮಾಡುತ್ತದೆ.",
+  "{0}. Sold by Grain Bazar with a GST invoice.": "{0}. GST ಇನ್‌ವಾಯ್ಸ್‌ನೊಂದಿಗೆ Grain Bazar ಮಾರಾಟ ಮಾಡುತ್ತದೆ.",
   // Channel partner history, 1 Nov 2026
   "Partner history": "ಪಾಲುದಾರರ ಇತಿಹಾಸ",
   "Changing a partner never moves past data: each order's commission stays with the partner who was active when it was placed (even if it is delivered or paid later), a suspended partner's login stops at once, and the new partner earns only on orders placed after they were added.": "ಪಾಲುದಾರರನ್ನು ಬದಲಾಯಿಸಿದರೂ ಹಳೆಯ ಮಾಹಿತಿ ಬದಲಾಗುವುದಿಲ್ಲ: ಪ್ರತಿ ಆರ್ಡರ್‌ನ ಕಮಿಷನ್ ಆರ್ಡರ್ ಮಾಡಿದಾಗ ಸಕ್ರಿಯರಾಗಿದ್ದ ಪಾಲುದಾರರಿಗೇ ಸೇರುತ್ತದೆ (ನಂತರ ತಲುಪಿಸಿದರೂ ಅಥವಾ ಪಾವತಿಸಿದರೂ), ಅಮಾನತುಗೊಂಡ ಪಾಲುದಾರರ ಲಾಗಿನ್ ತಕ್ಷಣ ನಿಲ್ಲುತ್ತದೆ, ಮತ್ತು ಹೊಸ ಪಾಲುದಾರರು ಸೇರಿದ ನಂತರದ ಆರ್ಡರ್‌ಗಳಿಗೆ ಮಾತ್ರ ಕಮಿಷನ್ ಪಡೆಯುತ್ತಾರೆ.",

@@ -140,8 +140,8 @@ export function ratingSummary(ratings: { product_id: string; rating: number }[],
 }
 
 /**
- * The delivery time the site promises at checkout and on the product page, "2-4 business days", in
- * the two parts Google asks for: out of the godown in 0-1 days, then 2-3 days on the road.
+ * The delivery time the site promises for home delivery (checkout and the product's Delivery tab),
+ * "2-4 business days", in the two parts Google asks for: out of the godown in 0-1 days, then 2-3 on the road.
  */
 const DELIVERY_TIME = {
   "@type": "ShippingDeliveryTime",
@@ -161,7 +161,8 @@ export function productDescription(p: { name: string; description?: string | und
   if (own) return own;
   const squeezed = (text: string) => text.toLowerCase().replace(/\s+/g, "");
   const pack = p.weight && !squeezed(p.name).includes(squeezed(p.weight)) ? `, pack size ${p.weight}` : "";
-  return `${p.name}${pack}. Sold by Grain Bazar with a GST invoice, for pickup or delivery from our Challakere and Hubli godowns.`;
+  // Nothing about pickup or delivery here: that depends on the godown and the shopper's PIN code.
+  return `${p.name}${pack}. Sold by Grain Bazar with a GST invoice.`;
 }
 
 /** Product rich result: name, description, image, SKU, brand, real ratings and the INR offer with stock and delivery. */
