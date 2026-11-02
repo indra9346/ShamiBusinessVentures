@@ -78,7 +78,7 @@ export const Route = createFileRoute("/admin/orders/$id")({
     >
       <Panel title="404">
         <p className="text-sm text-slate">The order you are looking for does not exist.</p>
-        <Link to="/admin/orders" className="mt-3 inline-block text-sm font-semibold text-gold">
+        <Link to="/admin/orders" search={true} className="mt-3 inline-block text-sm font-semibold text-gold">
           Back to Orders
         </Link>
       </Panel>
@@ -115,7 +115,7 @@ function AdminOrderDetail() {
       >
         <Panel title="404">
           <p className="text-sm text-slate">Order id "{id}" was not found.</p>
-          <Link to="/admin/orders" className="mt-3 inline-block text-sm font-semibold text-gold">
+          <Link to="/admin/orders" search={true} className="mt-3 inline-block text-sm font-semibold text-gold">
             Back to Orders
           </Link>
         </Panel>
@@ -173,7 +173,7 @@ function AdminOrderDetail() {
       {/* Top Header Actions */}
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <Link to="/admin/orders" className="text-sm font-semibold text-navy hover:text-gold">
+          <Link to="/admin/orders" search={true} className="text-sm font-semibold text-navy hover:text-gold">
             ← Back to Orders
           </Link>
           <span className="text-slate/40">|</span>
@@ -605,10 +605,6 @@ function AdminOrderDetail() {
             <div className="flex justify-between border-t border-border pt-1.5">
               <dt className="text-slate">Payment Date</dt>
               <dd className="font-medium text-navy">{order.date}</dd>
-            </div>
-            <div className="flex justify-between">
-              <dt className="text-slate">Gateway</dt>
-              <dd className="text-xs text-slate">Razorpay / Net Banking</dd>
             </div>
           </dl>
         </Panel>

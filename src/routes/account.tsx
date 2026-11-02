@@ -19,6 +19,7 @@ import { useApp } from "@/lib/store";
 import { resizedImage } from "@/lib/image-url";
 import { orderBelongsToUser } from "@/lib/account-identity";
 import { notificationBelongsToUser } from "@/lib/account-identity";
+import { OPEN_ORDERS } from "@/lib/panel-filters";
 
 export const Route = createFileRoute("/account")({
   head: () => ({
@@ -109,10 +110,10 @@ function Account() {
       </Link>
 
       <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
-        <StatCard label="Total Orders" value={String(ordersList.length)} icon={Package} compact />
-        <StatCard label="Total Spend" value={inr(totalSpend)} icon={Wallet} highlight compact />
-        <StatCard label="Active Deliveries" value={String(activeDeliveries)} icon={Truck} compact />
-        <StatCard label="Wishlist Items" value={String(wishlist.length)} icon={Heart} compact />
+        <StatCard link={{ to: "/account/orders" }} label="Total Orders" value={String(ordersList.length)} icon={Package} compact />
+        <StatCard link={{ to: "/account/invoices" }} label="Total Spend" value={inr(totalSpend)} icon={Wallet} highlight compact />
+        <StatCard link={{ to: "/account/orders", search: { status: OPEN_ORDERS } }} label="Active Deliveries" value={String(activeDeliveries)} icon={Truck} compact />
+        <StatCard link={{ to: "/wishlist" }} label="Wishlist Items" value={String(wishlist.length)} icon={Heart} compact />
       </div>
 
       <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">

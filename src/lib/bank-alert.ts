@@ -12,8 +12,9 @@ const CREDIT = /\b(credited|received|deposited|credit(?:ed)? to|cr\.?\s*(?:to|in
 const AMOUNT = /(?:(?:rs|inr)\.?:?\s*|₹\s*)([0-9][0-9,]*(?:\.[0-9]{1,2})?)/gi;
 const BARE_AMOUNT = /\bcredit(?:ed)?\s+(?:by|with|for)\s+(?:(?:rs|inr)\.?:?\s*|₹\s*)?([0-9][0-9,]*(?:\.[0-9]{1,2})?)/i;
 const BALANCE_BEFORE = /(bal(?:ance)?|avl|avail(?:able)?)[^0-9]{0,18}$/i;
-const UTR_AFTER_LABEL = /(?:utr|rrn|ref(?:erence)?\.?\s*(?:no|number)?|refno|upi\s*ref(?:\s*no)?|upi|txn\s*(?:id|no)?|transaction\s*(?:id|no))\s*[.:#\-/]*\s*(?:no\.?\s*)?[:\-]?\s*([0-9]{12})(?![0-9])/i;
-const LONE_12_DIGITS = /(?<![0-9])([0-9]{12})(?![0-9])/g;
+// A reference stands on its own: digits inside a longer token (NEFT UTR SBIN422215123456, an account number) are not one.
+const UTR_AFTER_LABEL = /(?:utr|rrn|ref(?:erence)?\.?\s*(?:no|number)?|refno|upi\s*ref(?:\s*no)?|upi|imps|txn\s*(?:id|no)?|transaction\s*(?:id|no))\s*[.:#\-/]*\s*(?:no\.?\s*)?[:\-]?\s*([0-9]{12})(?![0-9A-Za-z])/i;
+const LONE_12_DIGITS = /(?<![0-9A-Za-z])([0-9]{12})(?![0-9A-Za-z])/g;
 const VPA = /\b([a-z0-9._-]{2,64}@[a-z]{2,32})\b/i;
 
 /** "2,518.95" → 2518.95 (paise kept exactly). */
@@ -40,7 +41,7 @@ function upiReference(sms: string): string | null {
   const labelled = UTR_AFTER_LABEL.exec(sms);
   if (labelled?.[1]) return labelled[1];
   // UPI/P2A/612345678901/NAME style.
-  const slashed = /\bupi\/(?:[a-z0-9]+\/)?([0-9]{12})(?![0-9])/i.exec(sms);
+  const slashed = /\bupi\/(?:[a-z0-9]+\/)?([0-9]{12})(?![0-9A-Za-z])/i.exec(sms);
   if (slashed?.[1]) return slashed[1];
   const all = [...sms.matchAll(LONE_12_DIGITS)].map((match) => match[1]!);
   const unique = [...new Set(all)];

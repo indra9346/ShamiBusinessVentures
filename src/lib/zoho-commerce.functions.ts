@@ -3225,8 +3225,15 @@ async function syncZohoOrder(db: Awaited<ReturnType<typeof dbAdmin>>, region: Re
   const safeNumber = str(created.salesorder?.["salesorder_number"]) || order.order_no;
   const salesOrderId = str(created.salesorder?.["salesorder_id"]);
   if (!salesOrderId) throw new Error("Zoho created a sales order but returned no salesorder_id");
-  const { error: saveError } = await db.from("orders").update({ zoho_salesorder_id: salesOrderId }).eq("id", order.id).is("zoho_salesorder_id", null);
+  const { data: savedRows, error: saveError } = await db.from("orders").update({ zoho_salesorder_id: salesOrderId }).eq("id", order.id).is("zoho_salesorder_id", null).select("id");
   if (saveError) throw new Error("Zoho sales order created, but its ID could not be stored; the retry finds it by its Reference#");
+  if (!savedRows?.length) {
+    // Another push linked a sales order first. If it is a different one, this one is a duplicate: never invoice it.
+    const { data: linked } = await db.from("orders").select("zoho_salesorder_id").eq("id", order.id).maybeSingle();
+    if (linked?.zoho_salesorder_id && linked.zoho_salesorder_id !== salesOrderId) {
+      throw new NeedsReviewError(`Two Zoho sales orders exist for ${order.order_no}: ${linked.zoho_salesorder_id} is linked and ${safeNumber} is a duplicate. Delete the duplicate in Zoho.`);
+    }
+  }
   await saveZohoZohoState(db, order.id, created.salesorder ?? {});
   // Official Zoho notification: Zoho Books "Email a sales order" (Books workflow email alerts do
   // not fire for orders created through the API). Never blocks or fails the order sync.
@@ -3245,6 +3252,11 @@ async function syncZohoOrder(db: Awaited<ReturnType<typeof dbAdmin>>, region: Re
   const zohoTotal = Number(created.salesorder?.["total"]);
   if (Number.isFinite(zohoTotal) && Math.abs(zohoTotal - Number(order.total)) > 2.00)
     throw new NeedsReviewError(`Zoho accepted order ${safeNumber}, but total ₹${zohoTotal.toFixed(2)} differs from Grain Bazar ₹${Number(order.total).toFixed(2)}. Review taxes, discount, and shipping before processing.`);
+  // Already paid when it reached Zoho (confirmed by the bank alert or an admin): confirm it, invoice it and
+  // record the payment now, or they wait until someone next moves the order.
+  if (!["Placed", "Awaiting Payment"].includes(order.order_status)) {
+    await syncLinkedZohoOrder(db, region, organizationId, token, { ...order, zoho_salesorder_id: salesOrderId }, items);
+  }
 }
 
 
@@ -4022,8 +4034,19 @@ export const syncZohoProducts = createServerFn({ method: "POST" })
  * Pushes one order to Zoho now instead of waiting behind the shared queue, and settles its
  * queue entries: complete on success, needs_review with Zoho's answer on failure (so the
  * error shows in Admin > Zoho). Returns the Zoho sales order ID or throws Zoho's message.
+ * One at a time per order: two at once could create two sales orders or two invoices. The later one waits,
+ * then brings Zoho up to date with whatever changed meanwhile.
  */
-async function pushOrderToZohoDirect(db: Awaited<ReturnType<typeof dbAdmin>>, orderId: string) {
+const directPushes = new Map<string, Promise<unknown>>();
+function pushOrderToZohoDirect(db: Awaited<ReturnType<typeof dbAdmin>>, orderId: string) {
+  const next = (directPushes.get(orderId) ?? Promise.resolve()).catch(() => undefined).then(() => pushOrderToZohoNow(db, orderId));
+  directPushes.set(orderId, next);
+  const forget = () => { if (directPushes.get(orderId) === next) directPushes.delete(orderId); };
+  next.then(forget, forget);
+  return next;
+}
+
+async function pushOrderToZohoNow(db: Awaited<ReturnType<typeof dbAdmin>>, orderId: string) {
   const { data: connection, error: connectionError } = await db
     .from("zoho_commerce_connection")
     .select("organization_id,region,refresh_token_ciphertext,token_iv,token_tag")
@@ -4036,6 +4059,14 @@ async function pushOrderToZohoDirect(db: Awaited<ReturnType<typeof dbAdmin>>, or
   const openJobs = () => db.from("zoho_sync_outbox").select("id")
     .eq("entity_type", "order").eq("entity_id", orderId)
     .in("status", ["pending", "failed", "needs_review"]);
+  // The queue worker stays off this order while this push runs.
+  await db.from("zoho_sync_outbox").update({ available_at: new Date(Date.now() + 5 * 60_000).toISOString() })
+    .eq("entity_type", "order").eq("entity_id", orderId).in("status", ["pending", "failed"]);
+  // If it already has this order, leave it: two pushes at once could create two sales orders.
+  const { data: working } = await db.from("zoho_sync_outbox").select("id")
+    .eq("entity_type", "order").eq("entity_id", orderId)
+    .eq("status", "processing").gt("locked_until", new Date().toISOString()).limit(1);
+  if (working?.length) throw new Error("Zoho is already processing this order. Check again in a minute.");
   try {
     // attempts: 2 first looks for an earlier half-finished push by its Reference#.
     await withZohoPurpose("Website → Zoho: order (instant)", () => syncZohoOrder(db, region, connection.organization_id, token, {

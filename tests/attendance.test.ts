@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  attendanceWorkbook, cleanMobile, clockTime, dayPresenceSchedule, dayStatus, distanceMeters, earliestRuleDate, earlyLeaveMinutes, earlyText, formatDuration, geofenceRefusal, holidayDates, indiaDate, indiaInstant,
+  attendanceWorkbook, cleanMobile, clockTime, datesOfTile, dayPresenceSchedule, dayStatus, distanceMeters, earliestRuleDate, earlyLeaveMinutes, earlyText, formatDuration, geofenceRefusal, holidayDates, indiaDate, indiaInstant,
   lateMinutes, lateText, leaveDays, leaveProblem, locationVerdict, monthDays, parseCoordinates, periodDays, presenceSchedule, registerMark,
   reviewStatus, ruleChanges, ruleLines, rulesLookup, rulesOn, rulesProblem, selfiePath, staffLoginEmail, staffPasswordProblem, summariseMonth, summarisePeriod, summaryRow, workedMark, workedMinutes,
   DEFAULT_RULES, FIRST_RULES_DATE, SUMMARY_HEADER, type GodownRules, type RuleVersion,
@@ -442,4 +442,15 @@ test("staff sign in with mobile number and password", () => {
   assert.equal(staffPasswordProblem(sample(10, 0)), "Use letters and at least one number");
   assert.equal(staffPasswordProblem(sample(0, 8)), "Use letters and at least one number");
   assert.equal(staffPasswordProblem(sample(72, 1)), "Use at most 72 characters");
+});
+
+test("a staff member's month total lists its own days, newest first", () => {
+  const dates = ["2026-11-01", "2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05"];
+  const marks = ["P", "L", "LV", "A", "WO"];
+  assert.deepEqual(datesOfTile(dates, marks, "Present"), ["2026-11-02", "2026-11-01"]);
+  assert.deepEqual(datesOfTile(dates, marks, "Late days"), ["2026-11-02"]);
+  assert.deepEqual(datesOfTile(dates, marks, "Leave"), ["2026-11-03"]);
+  assert.deepEqual(datesOfTile(dates, marks, "Absent"), ["2026-11-04"]);
+  assert.deepEqual(datesOfTile(["2026-11-06", "2026-11-07"], ["HD", "H"], "Half day"), ["2026-11-06"]);
+  assert.deepEqual(datesOfTile(["2026-11-06", "2026-11-07"], ["HD", "H"], "Holiday"), ["2026-11-07"]);
 });

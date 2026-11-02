@@ -1,4 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { useHydrated, useKeepEarlyInput } from "@/hooks/use-hydrated";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { AuthCard } from "@/components/site/AuthCard";
@@ -29,6 +30,9 @@ function VendorLogin() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const hydrated = useHydrated();
+  const emailRef = useKeepEarlyInput(setEmail);
+  const passwordRef = useKeepEarlyInput(setPassword);
 
   // Already signed in: go to the panel, but only with a real session (never on a stale memory).
   useEffect(() => {
@@ -71,10 +75,11 @@ function VendorLogin() {
       title="Vendor Login"
       subtitle="Use the business email and password assigned to your vendor account. Vendor access is provisioned by an administrator."
     >
-      <form autoComplete="off" onSubmit={(event) => void finish(event)} className="space-y-4">
+      <form autoComplete="off" method="post" onSubmit={(event) => void finish(event)} className="space-y-4">
         <label className="block">
           <span className="mb-1.5 block text-xs font-semibold text-charcoal">Business email</span>
           <Input
+            ref={emailRef}
             required
             type="email"
             name="vendor_login_email"
@@ -87,6 +92,7 @@ function VendorLogin() {
         <label className="block">
           <span className="mb-1.5 block text-xs font-semibold text-charcoal">Password</span>
           <Input
+            ref={passwordRef}
             required
             type="password"
             name="vendor_login_password"
@@ -98,7 +104,7 @@ function VendorLogin() {
         </label>
         <button
           type="submit"
-          disabled={submitting}
+          disabled={submitting || !hydrated}
           className="w-full rounded-md bg-navy py-3 text-sm font-semibold text-white transition-colors hover:bg-midnight disabled:opacity-60"
         >
           {submitting ? "Signing in…" : "Sign in to Vendor Panel"}

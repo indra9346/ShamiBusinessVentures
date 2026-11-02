@@ -202,12 +202,18 @@ function ensureLoaded() {
     subscribed = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const schedule = () => { if (timer) clearTimeout(timer); timer = setTimeout(() => void reloadBranches(), 400); };
+    let connectedOnce = false;
     supabase.channel("branches-live")
       .on("postgres_changes", { event: "*", schema: "public", table: "branches" }, schedule)
       .on("postgres_changes", { event: "*", schema: "public", table: "branch_stock" }, schedule)
       .on("postgres_changes", { event: "*", schema: "public", table: "branch_prices" }, schedule)
       .on("postgres_changes", { event: "*", schema: "public", table: "settings" }, schedule)
-      .subscribe();
+      .subscribe((status) => {
+        // Changes made while the connection was down are not sent again, so read them after it returns.
+        if (status !== "SUBSCRIBED") return;
+        if (connectedOnce) schedule();
+        connectedOnce = true;
+      });
   }
 }
 

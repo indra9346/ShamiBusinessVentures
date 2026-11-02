@@ -1,16 +1,17 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { renderSVG } from "uqr";
 import { toast } from "sonner";
-import { CheckCircle2, Clock, KeyRound, MessageSquare, QrCode, ShieldAlert, Smartphone, XCircle } from "lucide-react";
+import { CheckCircle2, Clock, KeyRound, Landmark, MessageSquare, QrCode, ShieldAlert, Smartphone, XCircle } from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { Panel, StatCard } from "@/components/panel/widgets";
 import { adminNav } from "@/lib/panel-nav";
-import { useApp } from "@/lib/store";
+import { pushOrderToZohoInBackground, useApp } from "@/lib/store";
+import { bankDetailChanges, bankDetailsProblem, cleanBankDetails, EMPTY_BANK_DETAILS, REFUNDED_UTR_NOTE, REUSED_UTR_NOTE, UNCHECKED_UTR_NOTE, type BankDetails } from "@/lib/payment-rules";
 import { inrPrecise } from "@/lib/data";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { DEFAULT_UPI_SETTINGS, isValidVpa, settingsProblem, upiPaymentUri, type UpiSettings } from "@/lib/upi-pay";
-import { loadUpiAudit, reviewUpiPayment, saveUpiSettings, settleBankCredit, useUpiPayments, type BankCredit, type UpiAuditRow } from "@/lib/upi-store";
+import { loadBankAudit, loadBankSettings, loadUpiAudit, markUtrRefunded, reviewUpiPayment, saveBankDetails, saveUpiSettings, settleBankCredit, useUpiPayments, type BankAuditRow, type BankCredit, type UpiAuditRow } from "@/lib/upi-store";
 import { parseBankCredit } from "@/lib/bank-alert";
 import { AWAITING_PAYMENT, clockText, holdSecondsLeft } from "@/lib/payment-hold";
 import { CustomersPayingNow } from "@/components/panel/CustomersPayingNow";
@@ -22,19 +23,22 @@ import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/admin/upi-payments")({
-  head: () => ({ meta: [{ title: "UPI Payments | Grain Bazar Admin" }, { name: "robots", content: "noindex" }] }),
+  head: () => ({ meta: [{ title: "UPI & Bank Payments | Grain Bazar Admin" }, { name: "robots", content: "noindex" }] }),
   component: AdminUpiPayments,
 });
 
+const scrollToSection = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
 const istTime = (iso: string) => new Date(iso).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
 
 /**
- * Direct UPI (zero gateway fee): the business UPI ID customers pay, and the UTRs customers send
- * after paying, to be checked against the bank account and confirmed (marks the order paid).
+ * Direct UPI (zero gateway fee) and NEFT/RTGS bank transfer: the business UPI ID and bank account
+ * customers pay, and the UTRs customers send after paying, to be checked against the bank account and
+ * confirmed (marks the order paid).
  */
 function AdminUpiPayments() {
   const { settings, submissions, credits } = useUpiPayments();
-  const { confirmPayment, paymentHolds, simulateBankAlert } = useApp();
+  const { confirmPayment, paymentHolds, orders, simulateBankAlert } = useApp();
+  const methodOf = (orderNo: string) => paymentHolds.find((hold) => hold.orderNo === orderNo)?.method ?? orders.find((order) => order.id === orderNo)?.method ?? "UPI";
   const awaiting = paymentHolds.filter((hold) => hold.status === AWAITING_PAYMENT);
   const [form, setForm] = useState<UpiSettings>(DEFAULT_UPI_SETTINGS);
   const [saving, setSaving] = useState(false);
@@ -46,7 +50,28 @@ function AdminUpiPayments() {
   const problem = settingsProblem(form);
   const previewQr = useMemo(() => (isValidVpa(form.vpa) ? renderSVG(upiPaymentUri(form, 1, "TEST-1"), { border: 2 }) : ""), [form]);
   const waiting = submissions.filter((s) => s.status === "submitted");
-  const done = submissions.filter((s) => s.status !== "submitted");
+  // Not checked in time: the money may be in the bank, so these stay open until someone closes them.
+  const lapsed = submissions.filter((s) => s.status === "rejected" && s.note === UNCHECKED_UTR_NOTE);
+  const done = submissions.filter((s) => s.status !== "submitted" && s.note !== UNCHECKED_UTR_NOTE);
+  // The Confirmed and Rejected cards open the list below, showing just those.
+  const [doneFilter, setDoneFilter] = useState<"all" | "confirmed" | "rejected">("all");
+  const doneShown = doneFilter === "all" ? done : done.filter((s) => s.status === doneFilter);
+  const openDone = (status: "confirmed" | "rejected") => {
+    setDoneFilter(status);
+    window.requestAnimationFrame(() => scrollToSection("checked-payments"));
+  };
+  const markRefunded = async (orderNo: string, utr: string) => {
+    if (!window.confirm(`Record that UTR ${utr} for ${orderNo} was refunded?\n\nThat UTR can then pay for nothing, and the customer is told.`)) return;
+    setBusy(orderNo);
+    try {
+      await markUtrRefunded(orderNo);
+      toast.success(`${orderNo}: refund recorded`);
+    } catch (cause) {
+      toast.error("Could not record the refund", { description: cause instanceof Error ? cause.message : undefined });
+    } finally {
+      setBusy("");
+    }
+  };
 
   const save = async () => {
     if (problem) { toast.error(problem); return; }
@@ -70,8 +95,9 @@ function AdminUpiPayments() {
         if (awaiting.some((hold) => hold.orderNo === orderNo)) simulateBankAlert(orderNo);
         else if (!(await confirmPayment(orderNo, amount, utr))) throw new Error("The order could not be marked paid");
       }
-      // Live: one database step records the payment (order paid, sent to Zoho Books) and closes the UTR.
-      await reviewUpiPayment(orderNo, "confirmed");
+      // Live: one database step records the payment for this UTR and closes it.
+      await reviewUpiPayment(orderNo, "confirmed", utr);
+      pushOrderToZohoInBackground(orderNo);
       toast.success(`${orderNo} marked paid`, { description: `UTR ${utr}` });
     } catch (cause) {
       toast.error("Could not confirm", { description: cause instanceof Error ? cause.message : undefined });
@@ -79,13 +105,14 @@ function AdminUpiPayments() {
       setBusy("");
     }
   };
-  const reject = async (orderNo: string) => {
+  const reject = async (orderNo: string, utr: string) => {
     const note = window.prompt("Why is this UTR not accepted? The customer sees this.", "No matching credit in the bank account");
     if (note === null) return;
     setBusy(orderNo);
     try {
-      await reviewUpiPayment(orderNo, "rejected", note.trim() || undefined);
-      toast.message(`${orderNo}: UTR rejected`, { description: "The customer is told and can send a corrected UTR." });
+      const rejections = await reviewUpiPayment(orderNo, "rejected", utr, note.trim() || undefined);
+      if (rejections >= 3 && awaiting.some((hold) => hold.orderNo === orderNo)) toast.message(`${orderNo}: third wrong UTR`, { description: "The checkout has ended and its stock is back on sale. The customer is told." });
+      else toast.message(`${orderNo}: UTR rejected`, { description: "The customer is told and can send a corrected UTR." });
     } catch (cause) {
       toast.error("Could not reject", { description: cause instanceof Error ? cause.message : undefined });
     } finally {
@@ -94,7 +121,7 @@ function AdminUpiPayments() {
   };
 
   return (
-    <PanelLayout items={adminNav} tone="admin" title="UPI Payments" subtitle="Zero-fee UPI straight to the company's bank account">
+    <PanelLayout items={adminNav} tone="admin" title="UPI & Bank Payments" subtitle="UPI, NEFT and RTGS straight to the company's bank account">
       {STATIC_DATA_MODE ? (
         <p className="mb-4 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950">
           <ShieldAlert className="mr-1 inline h-4 w-4" /> Demo / mock: settings and payments here are kept only in this browser. No real money moves.
@@ -107,44 +134,76 @@ function AdminUpiPayments() {
       )}
 
       <div className="mb-6 grid gap-4 sm:grid-cols-3">
-        <StatCard label="Waiting for your check" value={String(waiting.length)} icon={QrCode} highlight={waiting.length > 0} description={waiting.length ? `${inrPrecise(waiting.reduce((s, w) => s + w.amount, 0))} to match in the bank` : "Nothing to check"} />
-        <StatCard label="Confirmed" value={String(done.filter((s) => s.status === "confirmed").length)} icon={CheckCircle2} description="Marked paid" />
-        <StatCard label="Rejected" value={String(done.filter((s) => s.status === "rejected").length)} icon={XCircle} description="Customer asked to correct" />
+        <StatCard onClick={() => scrollToSection("payments-to-check")} label="Waiting for your check" value={String(waiting.length)} icon={QrCode} highlight={waiting.length > 0} description={waiting.length ? `${inrPrecise(waiting.reduce((s, w) => s + w.amount, 0))} to match in the bank` : "Nothing to check"} />
+        <StatCard onClick={() => openDone("confirmed")} label="Confirmed" value={String(done.filter((s) => s.status === "confirmed").length)} icon={CheckCircle2} description="Marked paid" />
+        <StatCard onClick={() => openDone("rejected")} label="Rejected" value={String(done.filter((s) => s.status === "rejected").length)} icon={XCircle} description="Customer asked to correct" />
       </div>
 
+      {lapsed.length > 0 && (
+        <Panel title="Not checked in time" className="mb-6">
+          <p className="mb-3 text-sm text-red-800">These customers sent a UTR and nobody checked it within 24 hours, so the stock was released. Check the bank account. If the money came, ask the customer to press Reorder and send the same UTR. If you refund it instead, press Refunded.</p>
+          <ul className="divide-y divide-border text-sm">
+            {lapsed.map((s) => {
+              const hold = paymentHolds.find((item) => item.orderNo === s.orderNo);
+              return (
+                <li key={s.orderNo} className="flex flex-wrap items-center justify-between gap-3 py-2">
+                  <div className="min-w-0">
+                    <p className="font-mono text-xs text-navy">{s.orderNo} · <b>{s.utr}</b> · {inrPrecise(s.amount)}</p>
+                    <p className="text-xs text-slate">{s.customer || "—"}{hold?.phone ? ` · ${hold.phone}` : ""}</p>
+                    {hold && <p className="text-[11px] text-slate">{hold.lines.map((line) => `${line.name ?? line.productId} × ${line.qty}`).join(", ")}</p>}
+                  </div>
+                  <Button size="sm" variant="outline" disabled={busy === s.orderNo} onClick={() => void markRefunded(s.orderNo, s.utr)}>Refunded</Button>
+                </li>
+              );
+            })}
+          </ul>
+        </Panel>
+      )}
+
+      <div id="payments-to-check" className="scroll-mt-36">
       <Panel title="Payments to check" className="mb-6">
         <p className="mb-3 text-xs text-slate">Open the bank account (or its UPI app), find a credit with this <b>UTR</b> and <b>amount</b>, then confirm. Confirming marks the order paid, like a manual payment.</p>
-        {!waiting.length ? <p className="text-sm text-slate">No UPI payments waiting.</p> : (
+        {!waiting.length ? <p className="text-sm text-slate">No payments waiting.</p> : (
           <div className="overflow-x-auto">
             <ResizableTable tableId="upi-waiting" className="w-full min-w-[760px] text-left text-sm">
               <thead><tr className="border-b border-border text-[11px] font-bold uppercase tracking-wider text-slate">
                 <th className="px-2 py-2">Sent</th><th className="px-2 py-2">Order</th><th className="px-2 py-2">Customer</th>
-                <th className="px-2 py-2 text-right">Amount</th><th className="px-2 py-2">UTR</th><th className="px-2 py-2">Action</th>
+                <th className="px-2 py-2 text-right">Amount</th><th className="px-2 py-2">Method</th><th className="px-2 py-2">UTR</th><th className="px-2 py-2">Action</th>
               </tr></thead>
               <tbody>
-                {waiting.map((s) => (
+                {waiting.map((s) => {
+                  // A checkout waiting for payment is not on the order pages yet, so its items are shown here.
+                  const hold = paymentHolds.find((item) => item.orderNo === s.orderNo);
+                  return (
                   <tr key={s.orderNo} className="border-b border-border/60">
                     <td className="whitespace-nowrap px-2 py-2 text-xs text-slate">{istTime(s.submittedAt)}</td>
-                    <td className="px-2 py-2 font-mono text-xs"><Link to="/admin/orders/$id" params={{ id: s.orderNo }} className="text-navy hover:text-gold">{s.orderNo}</Link></td>
+                    <td className="px-2 py-2 font-mono text-xs">
+                      {hold ? <span className="text-navy">{s.orderNo}</span> : <Link to="/admin/orders/$id" params={{ id: s.orderNo }} className="text-navy hover:text-gold">{s.orderNo}</Link>}
+                      {hold && <span className="mt-0.5 block font-sans text-[11px] text-slate">{hold.lines.map((line) => `${line.name ?? line.productId} × ${line.qty}`).join(", ")}</span>}
+                      {hold?.holdUntil && <span className="mt-0.5 block font-sans text-[11px] font-semibold text-amber-800">{`Stock held until ${istTime(new Date(Date.parse(hold.holdUntil) + 86_400_000).toISOString())}`}</span>}
+                    </td>
                     <td className="px-2 py-2">{s.customer || "—"}</td>
                     <td className="px-2 py-2 text-right font-semibold tabular-nums">{inrPrecise(s.amount)}</td>
+                    <td className="px-2 py-2 text-xs font-bold">{methodOf(s.orderNo)}</td>
                     <td className="px-2 py-2 font-mono tracking-wider">{s.utr}</td>
                     <td className="px-2 py-2">
                       <div className="flex gap-2">
                         <Button size="sm" className="bg-emerald-600 text-white hover:bg-emerald-700" disabled={busy === s.orderNo} onClick={() => void confirm(s.orderNo, s.amount, s.utr)}>Confirm paid</Button>
-                        <Button size="sm" variant="outline" className="text-danger" disabled={busy === s.orderNo} onClick={() => void reject(s.orderNo)}>Reject</Button>
+                        <Button size="sm" variant="outline" className="text-danger" disabled={busy === s.orderNo} onClick={() => void reject(s.orderNo, s.utr)}>Reject</Button>
                       </div>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </ResizableTable>
           </div>
         )}
       </Panel>
+      </div>
 
       <Panel title="Waiting for payment (not orders yet)" className="mb-6">
-        <p className="mb-3 text-xs text-slate">Checkouts whose customer has not paid yet. Their stock is held; they become orders the moment the bank alert (or your confirmation) matches the payment, and end on their own when the time is up.</p>
+        <p className="mb-3 text-xs text-slate">Checkouts whose customer has not paid yet. Their stock is held; they become orders when the bank alert (UPI) or your confirmation matches the payment, and end on their own when the time is up. NEFT and RTGS always wait for your confirmation: an amount alone never confirms them.</p>
         <CustomersPayingNow />
       </Panel>
 
@@ -154,8 +213,10 @@ function AdminUpiPayments() {
         else toast.message("No checkout is waiting for that amount", { description: "Kept as unmatched money." });
       }} />
 
+      <BankDetailsPanel />
+
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_260px]">
-        <Panel title="Settings">
+        <Panel title="UPI settings">
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="grid gap-1.5">
               <Label>Business UPI ID</Label>
@@ -173,7 +234,7 @@ function AdminUpiPayments() {
             <label className="flex items-center gap-3 self-end text-sm">
               <Switch checked={form.enabled} onCheckedChange={(enabled) => setForm({ ...form, enabled })} />
               <span>
-                <span className="font-semibold text-navy">Show "Pay by UPI" at checkout</span>
+                <span className="font-semibold text-navy">Show "Pay by UPI" at checkout (orders below ₹1,00,000)</span>
                 <span className="block text-[11px] text-slate">Off until a UPI ID is entered and you switch it on</span>
               </span>
             </label>
@@ -205,31 +266,176 @@ function AdminUpiPayments() {
         </Panel>
       )}
 
-      {done.length > 0 && (
-        <Panel title="Checked payments" className="mt-6">
+      {(done.length > 0 || doneFilter !== "all") && (
+        <div id="checked-payments" className="mt-6 scroll-mt-36">
+        <Panel
+          title={doneFilter === "confirmed" ? "Confirmed payments" : doneFilter === "rejected" ? "Rejected payments" : "Checked payments"}
+          action={doneFilter === "all" ? undefined : <button type="button" className="text-xs font-semibold text-gold hover:underline" onClick={() => setDoneFilter("all")}>Show all</button>}
+        >
+          {doneShown.length === 0 ? <p className="text-sm text-slate">None yet.</p> : (
           <div className="overflow-x-auto">
             <ResizableTable tableId="upi-done" className="w-full min-w-[700px] text-left text-sm">
               <thead><tr className="border-b border-border text-[11px] font-bold uppercase tracking-wider text-slate">
                 <th className="px-2 py-2">Checked</th><th className="px-2 py-2">Order</th><th className="px-2 py-2 text-right">Amount</th><th className="px-2 py-2">UTR</th><th className="px-2 py-2">Result</th>
               </tr></thead>
               <tbody>
-                {done.map((s) => (
+                {doneShown.map((s) => {
+                  const hold = paymentHolds.find((item) => item.orderNo === s.orderNo);
+                  return (
                   <tr key={s.orderNo} className="border-b border-border/60">
                     <td className="whitespace-nowrap px-2 py-2 text-xs text-slate">{s.reviewedAt ? istTime(s.reviewedAt) : "—"}</td>
-                    <td className="px-2 py-2 font-mono text-xs">{s.orderNo}</td>
+                    <td className="px-2 py-2 font-mono text-xs">
+                      {s.orderNo}
+                      {hold && hold.status !== "Payment Confirmed" && <span className="mt-0.5 block font-sans text-[11px] text-slate">{hold.lines.map((line) => `${line.name ?? line.productId} × ${line.qty}`).join(", ")}</span>}
+                    </td>
                     <td className="px-2 py-2 text-right tabular-nums">{inrPrecise(s.amount)}</td>
                     <td className="px-2 py-2 font-mono">{s.utr}</td>
                     <td className={cn("px-2 py-2 text-xs font-semibold", s.status === "confirmed" ? "text-emerald-700" : "text-danger")}>
-                      {s.status === "confirmed" ? "Confirmed paid" : `Rejected${s.note ? `: ${s.note}` : ""}`}
+                      {s.status === "confirmed" ? "Confirmed paid"
+                        : s.note === REFUNDED_UTR_NOTE ? "Refunded"
+                        : REUSED_UTR_NOTE.test(s.note ?? "") ? s.note
+                        : `Rejected${s.note ? `: ${s.note}` : ""}`}
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </ResizableTable>
           </div>
+          )}
         </Panel>
+        </div>
       )}
     </PanelLayout>
+  );
+}
+
+/**
+ * The account customers pay by NEFT and RTGS. Until it is saved those methods are hidden, so orders of
+ * Rs 1 lakh and above cannot be paid. Every change is logged and every admin told, by the database.
+ */
+function BankDetailsPanel() {
+  const [form, setForm] = useState<BankDetails>(EMPTY_BANK_DETAILS);
+  const [saved, setSaved] = useState<BankDetails>(EMPTY_BANK_DETAILS);
+  const [saving, setSaving] = useState(false);
+  const [audit, setAudit] = useState<BankAuditRow[]>([]);
+  // Blank fields after a failed read would look like "nothing saved", so the form stays shut until the read works.
+  const [loadState, setLoadState] = useState<"loading" | "failed" | "ready">("loading");
+  const [numberAgain, setNumberAgain] = useState("");
+  const load = () => {
+    setLoadState("loading");
+    void loadBankSettings().then(
+      (details) => { setForm(details); setSaved(details); setLoadState("ready"); },
+      () => setLoadState("failed"),
+    );
+    void loadBankAudit().then(setAudit);
+  };
+  useEffect(load, []);
+  // Someone else changed them: show it at once, on this very page, without touching what is being typed.
+  const { notifications } = useApp();
+  const changeAlerts = notifications.filter((item) => item.title === "Bank details changed").length;
+  const typing = useRef(false);
+  typing.current = JSON.stringify(cleanBankDetails(form)) !== JSON.stringify(cleanBankDetails(saved));
+  useEffect(() => {
+    const refresh = () => {
+      void loadBankAudit().then(setAudit);
+      void loadBankSettings().then((details) => {
+        setSaved(details);
+        if (!typing.current) setForm(details);
+        setLoadState("ready");
+      }, () => undefined);
+    };
+    if (changeAlerts) refresh();
+    window.addEventListener("focus", refresh);
+    return () => window.removeEventListener("focus", refresh);
+  }, [changeAlerts]);
+  const problem = bankDetailsProblem(form);
+  const live = !bankDetailsProblem(saved);
+  const changed = JSON.stringify(cleanBankDetails(form)) !== JSON.stringify(cleanBankDetails(saved));
+  const numberChanged = cleanBankDetails(form).accountNumber !== cleanBankDetails(saved).accountNumber;
+  const save = async () => {
+    if (problem) { toast.error(problem); return; }
+    const clean = cleanBankDetails(form);
+    // One wrong digit sends customers' money to the wrong account.
+    if (numberChanged && cleanBankDetails({ ...form, accountNumber: numberAgain }).accountNumber !== clean.accountNumber) {
+      toast.error("The two account numbers do not match");
+      return;
+    }
+    if (!window.confirm(`${live ? "Change the account customers pay into?" : "Customers will pay into this account:"}\n\n${clean.accountName}\nAccount ${clean.accountNumber}\nIFSC ${clean.ifsc}\nBank ${clean.bankName}\n\nEvery admin is told about this.`)) return;
+    setSaving(true);
+    try {
+      // Another admin may have changed them since this page was opened: never put their old values back.
+      const current = await loadBankSettings();
+      if (JSON.stringify(cleanBankDetails(current)) !== JSON.stringify(cleanBankDetails(saved))) {
+        setForm(current);
+        setSaved(current);
+        setNumberAgain("");
+        setAudit(await loadBankAudit());
+        toast.error("Another admin changed the bank details", { description: "The form now shows what is saved. Check it and make your change again." });
+        return;
+      }
+      await saveBankDetails(clean);
+      setForm(clean);
+      setSaved(clean);
+      setNumberAgain("");
+      setAudit(await loadBankAudit());
+      toast.success("Bank details saved", { description: "NEFT and RTGS are now offered at checkout." });
+    } catch (cause) {
+      toast.error("Could not save", { description: cause instanceof Error ? cause.message : undefined });
+    } finally {
+      setSaving(false);
+    }
+  };
+  const field = (label: string, key: keyof BankDetails, placeholder = "") => (
+    <div className="grid gap-1.5">
+      <Label>{label}</Label>
+      <Input value={form[key]} placeholder={placeholder} onChange={(event) => setForm({ ...form, [key]: event.target.value })} />
+    </div>
+  );
+  return (
+    <Panel title="Bank details for NEFT and RTGS" className="mb-6">
+      {loadState === "failed" && (
+        <p className="mb-3 rounded-md border border-red-200 bg-red-50 p-2 text-xs text-red-800">
+          Could not read the saved bank details, so they are not shown. Customers still see what was saved. <button type="button" className="font-semibold underline" onClick={load}>Try again</button>
+        </p>
+      )}
+      {loadState === "ready" && (
+        <p className={cn("mb-3 flex items-start gap-2 rounded-md border p-2 text-xs", live ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-amber-300 bg-amber-50 text-amber-950")}>
+          <Landmark className="mt-0.5 h-4 w-4 shrink-0" />
+          {live
+            ? "NEFT and RTGS are offered at checkout. Signed-in customers see this account when they pay. Every change is logged below and every admin is told."
+            : "NEFT and RTGS are hidden until these are saved, so orders of ₹1,00,000 and above cannot be paid on the website."}
+        </p>
+      )}
+      <div className="grid gap-4 sm:grid-cols-2">
+        {field("Account name", "accountName", "Exactly as the bank has it")}
+        {field("Account number", "accountNumber")}
+        {numberChanged && (
+          <div className="grid gap-1.5">
+            <Label>Account number again</Label>
+            <Input value={numberAgain} autoComplete="off" onChange={(event) => setNumberAgain(event.target.value)} />
+          </div>
+        )}
+        {field("IFSC", "ifsc", "e.g. HDFC0001234")}
+        {field("Bank", "bankName", "e.g. HDFC Bank")}
+        {field("Branch (optional)", "branch")}
+      </div>
+      {problem && (form.accountName || form.accountNumber || form.ifsc || form.bankName) && <p className="mt-3 text-xs font-semibold text-danger">{problem}</p>}
+      <div className="mt-4"><Button className="bg-navy text-white hover:bg-navy/90" disabled={saving || !changed || loadState !== "ready"} onClick={() => void save()}>Save bank details</Button></div>
+      {audit.length > 0 && (
+        <ul className="mt-4 space-y-1 border-t border-border pt-3 text-xs">
+          {audit.map((row, index) => (
+            <li key={`${row.changedAt}-${index}`} className="flex flex-wrap gap-x-3">
+              <span className="text-slate">{istTime(row.changedAt)}</span>
+              <span className="font-semibold">{row.changedBy}</span>
+              {bankDetailChanges(row.oldValue, row.newValue).map((change) => (
+                <span key={change.label}>{change.label}: {change.from || "—"} → <b>{change.to || "—"}</b></span>
+              ))}
+            </li>
+          ))}
+        </ul>
+      )}
+    </Panel>
   );
 }
 

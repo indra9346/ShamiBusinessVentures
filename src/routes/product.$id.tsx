@@ -428,7 +428,7 @@ function ProductDetail() {
                 <PickupPointCard pin={null} heading="Our godown" />
               </>
             )}
-            Online payment options are shown at checkout (UPI, Credit/Debit Card, Net Banking); Cash on Delivery is not available.
+            Payment options are shown at checkout, by order value: UPI, or bank transfer by NEFT or RTGS. Cash on Delivery is not available.
           </TabsContent>
           <TabsContent value="reviews" className="rounded-lg border border-border bg-card p-6">
             <div className="space-y-5">

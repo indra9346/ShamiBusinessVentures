@@ -6,7 +6,9 @@ import { inrPrecise } from "@/lib/data";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { normaliseUtr, settingsProblem, upiPaymentUri, utrProblem, type UpiSettings } from "@/lib/upi-pay";
 import { UpiAppButtons } from "@/components/site/UpiAppButtons";
-import { submitUpiPayment, useUpiPayments } from "@/lib/upi-store";
+import { BankTransferDetails, BankUtrForm } from "@/components/site/BankTransferPay";
+import { allowedMethods, isBankMethod } from "@/lib/payment-rules";
+import { submitUpiPayment, useBankDetails, useUpiPayments } from "@/lib/upi-store";
 import { cn } from "@/lib/utils";
 
 /**
@@ -19,9 +21,48 @@ export function OrderUpiPay({ orderNo, status, payment, method, balance, custome
   const { settings, submissions } = useUpiPayments();
   const sent = submissions.find((item) => item.orderNo === orderNo);
   const on = settings?.enabled && !settingsProblem(settings);
+  const byBank = isBankMethod(method);
+  const { details: bankDetails, loaded: bankLoaded, failed: bankFailed } = useBankDetails(byBank);
+  if (byBank) {
+    if (status === "Cancelled") return null;
+    if (sent?.status === "confirmed") {
+      return (
+        <div className="mb-6 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-left text-sm text-emerald-900">
+          <p className="flex items-center gap-2 font-bold"><CheckCircle2 className="h-5 w-5" /> {`Payment received · UTR ${sent.utr}`}</p>
+        </div>
+      );
+    }
+    // Paid some other way (an admin recorded it): nothing to transfer, whatever became of a UTR sent earlier.
+    if (payment === "Paid" || balance <= 0) return null;
+    // A rejected UTR's row keeps the old amount: what is due now is the balance.
+    const amount = sent?.status === "submitted" ? sent.amount : balance;
+    // A bigger order may also go by RTGS.
+    const byWhat = method === "NEFT" && allowedMethods(amount).includes("RTGS") ? "NEFT or RTGS" : method;
+    return (
+      <div className="mb-6 rounded-lg border border-border bg-card p-4 text-left shadow-card">
+        <p className="text-xs font-bold uppercase tracking-wider text-slate">{`Pay by ${byWhat}`}</p>
+        <p className="mt-1 text-2xl font-extrabold text-navy">{inrPrecise(amount)}</p>
+        {sent?.status === "submitted" ? (
+          <div className="mt-4 rounded-md border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">
+            <p className="flex items-center gap-2 font-semibold"><ShieldCheck className="h-4 w-4" /> Payment being verified</p>
+            <p className="mt-1">{`UTR ${sent.utr} sent. We will confirm it against our bank account.`}</p>
+          </div>
+        ) : (
+          <>
+            {bankLoaded || bankFailed
+              ? <BankTransferDetails details={bankDetails} amount={amount} method={byWhat} orderNo={orderNo} timed={false} />
+              : <p className="mt-4 text-sm text-slate">Loading our bank details…</p>}
+            <div className="mt-4 border-t border-border pt-4">
+              <BankUtrForm orderNo={orderNo} amount={amount} method={method} customer={customer} submission={sent} />
+            </div>
+          </>
+        )}
+      </div>
+    );
+  }
   if (!settings || status === "Cancelled") return null;
   if (!sent && (!on || payment === "Paid" || balance <= 0 || !/upi/i.test(method))) return null;
-  return <div className="mb-6"><UpiPayPanel settings={settings} orderNo={orderNo} amount={sent?.amount ?? balance} customer={customer} /></div>;
+  return <div className="mb-6"><UpiPayPanel settings={settings} orderNo={orderNo} amount={sent && sent.status !== "rejected" ? sent.amount : balance} customer={customer} /></div>;
 }
 
 /**

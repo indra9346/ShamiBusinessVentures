@@ -18,6 +18,9 @@ import { DataTable, Panel, StatCard, StatusBadge } from "@/components/panel/widg
 import { Pager } from "@/components/panel/pager";
 import { adminNav } from "@/lib/panel-nav";
 import { canCancelOrder, inr, orderStages, type OrderStatus } from "@/lib/data";
+import { allowedMethods } from "@/lib/payment-rules";
+import { lineGst } from "@/lib/pricing";
+import { inOrderRange, matchesOrderStatus, OPEN_ORDERS, orderListSearch, orderStatusFilter } from "@/lib/panel-filters";
 import { useApp, type Address } from "@/lib/store";
 import { supabase } from "@/integrations/supabase/client";
 import { godownOfferOf, orderGodownFor, useBranches } from "@/lib/branches";
@@ -54,6 +57,7 @@ import {
 import { InvoicePreviewButton } from "@/components/site/InvoicePreviewDialog";
 
 export const Route = createFileRoute("/admin/orders")({
+  validateSearch: orderListSearch,
   head: () => ({
     meta: [
       { title: "Orders | Shami Business Ventures Admin" },
@@ -70,13 +74,16 @@ export const Route = createFileRoute("/admin/orders")({
 });
 
 const PAGE_SIZE = 10;
-const paymentMethods = ["UPI", "Credit Card", "Debit Card", "Net Banking"];
+const paymentMethods = ["UPI", "NEFT", "RTGS", "Credit Card", "Debit Card", "Net Banking"];
 
 function AdminOrders() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const { orders, customers, products, placeOrder, updateOrderStatus } = useApp();
+  const routeSearch = Route.useSearch();
+  // The router keeps values validateSearch dropped, so only a clean range is used.
+  const range = orderListSearch(routeSearch);
   const [q, setQ] = useState("");
-  const [status, setStatus] = useState("all");
+  const [status, setStatus] = useState(() => orderStatusFilter(routeSearch.status, [...orderStages, "Cancelled"]));
   const [payment, setPayment] = useState("all");
   const [sort, setSort] = useState("date-desc");
   const [page, setPage] = useState(1);
@@ -239,7 +246,8 @@ function AdminOrders() {
           capacity: line.capacity,
           unitPrice: line.unitPrice,
         })),
-        method: "UPI",
+        // The order's value decides how it can be paid: bank transfer from Rs 1 lakh.
+        method: allowedMethods(lines.reduce((sum, line) => sum + line.unitPrice * line.qty + lineGst(line.unitPrice, line.qty, line.product!.gst), 0))[0] ?? "NEFT",
         payment: "Pending",
         customerOverride: customer,
         ...(shippingAddress ? { shippingAddress } : {}),
@@ -258,6 +266,12 @@ function AdminOrders() {
     setDraftItems([]);
   };
 
+  // A link can change the filter while this list stays open (the sidebar's Orders, "Show all").
+  useEffect(() => {
+    setStatus(orderStatusFilter(routeSearch.status, [...orderStages, "Cancelled"]));
+    setPage(1);
+  }, [routeSearch.status, range.from, range.to]);
+
   const filtered = useMemo(() => {
     let list = orders.filter((o) => {
       const s = q.trim().toLowerCase();
@@ -266,9 +280,9 @@ function AdminOrders() {
         o.id.toLowerCase().includes(s) ||
         o.customer.toLowerCase().includes(s) ||
         o.phone.toLowerCase().includes(s);
-      const matchesStatus = status === "all" || o.status === status;
+      const matchesStatus = matchesOrderStatus(o.status, status);
       const matchesPayment = payment === "all" || o.method === payment;
-      return matchesQ && matchesStatus && matchesPayment;
+      return matchesQ && matchesStatus && matchesPayment && inOrderRange(o, range.from, range.to);
     });
     list = [...list].sort((a, b) => {
       if (sort === "date-desc") return b.id.localeCompare(a.id);
@@ -278,7 +292,7 @@ function AdminOrders() {
       return 0;
     });
     return list;
-  }, [orders, q, status, payment, sort]);
+  }, [orders, q, status, payment, sort, range.from, range.to]);
 
   if (pathname !== "/admin/orders" && pathname !== "/admin/orders/") {
     return <Outlet />;
@@ -401,6 +415,7 @@ function AdminOrders() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Status</SelectItem>
+                <SelectItem value={OPEN_ORDERS}>All pending</SelectItem>
                 {[...orderStages, "Cancelled"].map((s) => (
                   <SelectItem key={s} value={s}>
                     {s}
@@ -449,6 +464,13 @@ function AdminOrders() {
           </div>
         }
       >
+        {range.from && range.to && (
+          <p className="mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md bg-ivory px-3 py-2 text-xs text-navy">
+            <span>Orders placed</span>
+            <span className="font-semibold">{new Date(range.from).toLocaleDateString("en-IN")} – {new Date(range.to).toLocaleDateString("en-IN")}</span>
+            <Link to="/admin/orders" search={{}} onClick={() => { setStatus("all"); setPage(1); }} className="font-semibold text-gold hover:underline">Show all</Link>
+          </p>
+        )}
         <DataTable
           columns={[
             "Order ID",
@@ -471,6 +493,7 @@ function AdminOrders() {
                 <Link
                   to="/admin/orders/$id"
                   params={{ id: o.id }}
+                  search={true}
                   className="font-mono font-bold text-navy hover:text-gold hover:underline transition-colors block"
                 >
                   {o.id}
@@ -505,7 +528,7 @@ function AdminOrders() {
               <StatusBadge status={o.status} />,
               inr(o.amount),
               <div className="flex flex-wrap items-center gap-1.5">
-                <Link to="/admin/orders/$id" params={{ id: o.id }}>
+                <Link to="/admin/orders/$id" params={{ id: o.id }} search={true}>
                   <Button variant="outline" size="sm">
                     View
                   </Button>

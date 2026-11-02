@@ -13,6 +13,8 @@ import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { AWAITING_PAYMENT, isHeldStatus, type PaymentHold } from "@/lib/payment-hold";
 import { loadUpiSettings } from "@/lib/upi-store";
+import { isBankMethod, mergeIntoCart, reorderPlan, type ReorderLine, type ReorderPlan } from "@/lib/payment-rules";
+import { isStorefrontProduct as isOnSale } from "@/lib/data";
 import type { Database } from "@/integrations/supabase/types";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { branchForPin, branchStockOf, defaultBranchOf, godownPriceOf, useAdminBranch, useBranches, useShopperPin } from "@/lib/branches";
@@ -20,7 +22,7 @@ import { isOutsideServiceArea, OUT_OF_AREA_EVENT } from "@/lib/godown-rules";
 import { afterPageLoad, snapshotIsFresh, useStorefrontSnapshot, type StorefrontSnapshot } from "@/lib/storefront-snapshot";
 
 /** Sends a placed or changed order to Zoho in the background; the daily run is the backup. */
-function pushOrderToZohoInBackground(orderNo: string) {
+export function pushOrderToZohoInBackground(orderNo: string) {
   if (STATIC_DATA_MODE) return;
   void import("@/lib/zoho-commerce.functions")
     .then(async ({ pushOrderChangeToZoho, pushOrderStockToZoho }) => {
@@ -211,7 +213,11 @@ type AppState = {
   }) => Promise<Order>;
   /** Checkouts waiting for payment (and recently expired ones). Not orders: kept out of `orders`. */
   paymentHolds: PaymentHold[];
+  /** This customer's orders and checkouts have been read (a page can tell "loading" from "not found"). */
+  ordersLoaded: boolean;
   cancelPaymentHold: (orderNo: string) => Promise<boolean>;
+  /** An unpaid checkout's items back in the cart, as far as they are on sale today. */
+  reorderLines: (lines: ReorderLine[]) => ReorderPlan & { outOfArea: boolean };
   /** Static demo only: the bank SMS for this held checkout "arrives". */
   simulateBankAlert: (orderNo: string) => void;
   updateOrderStatus: (id: string, status: OrderStatus) => Promise<boolean>;
@@ -337,6 +343,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [batches, setBatches] = useState<PurchaseBatch[]>(STATIC_DATA_MODE ? seedBatches : []);
   const [orders, setOrders] = useState<Order[]>(STATIC_DATA_MODE ? seedOrders : []);
   const [paymentHolds, setPaymentHolds] = useState<PaymentHold[]>(readDemoHolds);
+  const [ordersLoadedFor, setOrdersLoadedFor] = useState<string | null | undefined>(undefined);
   useEffect(() => {
     if (!STATIC_DATA_MODE) return;
     try {
@@ -455,6 +462,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         } else {
           console.error("Could not load inventory batches", batchError);
         }
+        let ordersRead = false;
         if (!orderError) {
           const ids = (orderRows ?? []).map((order) => order.id);
           const [
@@ -490,9 +498,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
             const allowedStatuses: OrderStatus[] = ["Placed", "Payment Confirmed", "Accepted", "Packed", "Dispatched", "Out for Delivery", "Delivered", "Cancelled"];
             // Unpaid checkouts are not orders: they are kept apart for the payment screens.
             setPaymentHolds((orderRows ?? []).filter((row) => isHeldStatus(row.order_status)).map((row) => ({
-              orderNo: row.order_no, amount: Number(row.total) - Number(row.paid_amount), createdAt: row.created_at, customer: row.customer_name || undefined,
+              orderNo: row.order_no, amount: Number(row.total) - Number(row.paid_amount), createdAt: row.created_at, customer: row.customer_name || undefined, phone: row.customer_phone || undefined,
               status: row.order_status as PaymentHold["status"], holdUntil: row.payment_hold_until ?? null, outcome: (row.payment_hold_outcome ?? null) as PaymentHold["outcome"],
-              lines: (itemsByOrder.get(row.id) ?? []).map((item) => ({ productId: item.product_id, qty: Number(item.qty) })),
+              method: row.payment_method ?? "UPI",
+              lines: (itemsByOrder.get(row.id) ?? []).map((item) => ({ productId: item.product_id, qty: Number(item.qty), name: item.product_name ?? undefined })),
             })));
             setOrders((orderRows ?? []).filter((row) => !isHeldStatus(row.order_status)).map((row) => {
               const orderDate = new Date(row.created_at);
@@ -541,11 +550,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
               };
             }));
           }
+          ordersRead = !itemError;
           if (paymentError) console.error("Could not load payment references", paymentError);
           if (fulfillmentError) console.error("Could not load vendor fulfillment statuses", fulfillmentError);
         } else {
           console.error("Could not load orders", orderError);
         }
+        // A page may say "not found" only once they were really read. A failed read is tried again.
+        if (ordersRead) setOrdersLoadedFor(user?.id ?? null);
+        else if (user) { if (refreshTimer) clearTimeout(refreshTimer); refreshTimer = setTimeout(() => void reloadCatalog(), 5000); }
         const asDate = (value: string) => new Date(value).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
         const liveProducts = (productResult.data ?? []).map((row) => row.payload as unknown as Product);
         if (!reviewError) {
@@ -1219,6 +1232,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
           ? current.map((line) => line.id === id ? { ...line, qty: safeQty } : line)
           : [...current, { id, qty: safeQty }]);
       },
+      reorderLines: (lines) => {
+        // The same check as adding to the cart: only the PIN codes our godowns serve can buy.
+        const shopperPin = chosenPin || fallbackPin;
+        if (isShopper && branchState.ready && isOutsideServiceArea(branchState.branches, branchState.features.branchRouting, shopperPin)) {
+          window.dispatchEvent(new CustomEvent(OUT_OF_AREA_EVENT, { detail: { pin: shopperPin } }));
+          return { items: [], reduced: [], unavailable: [], outOfArea: true };
+        }
+        const plan = reorderPlan(lines, (id) => {
+          const product = products.find((item) => item.id === id);
+          return product && isOnSale(product) ? { name: product.name, available: getAvailablePurchaseQuantity(product) } : null;
+        });
+        if (plan.items.length) setCart((current) => mergeIntoCart(current, plan.items));
+        return { ...plan, outOfArea: false };
+      },
       setQty: (id, qty) => {
         const product = products.find((item) => item.id === id);
         const parsed = Math.max(1, Math.floor(Number(qty) || 1));
@@ -1489,7 +1516,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       orders,
       placeOrder: async ({ lines, method, payment, coupon, customerIndex = 0, customerOverride, shippingAddress, delivery, subtotal, discount, tax, shipping, source, paymentDueDate, payFirst = false, business }) => {
         if (method === "Cash on Delivery" || method === "COD") {
-          throw new Error("Cash on delivery is not enabled for this store. Please select an online payment method (UPI, Card, Net Banking).");
+          throw new Error("Cash on delivery is not enabled for this store. Please select an online payment method (UPI, NEFT or RTGS).");
         }
         const requestedByProduct = new Map<string, number>();
         for (const line of lines) {
@@ -1615,14 +1642,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }
         if (payFirst && STATIC_DATA_MODE) {
           // The demo holds the checkout for the admin's payment window, like the database does.
-          const minutes = Math.min(60, Math.max(5, (await loadUpiSettings()).payWindowMinutes || 15));
+          const minutes = isBankMethod(method) ? 60 : Math.min(60, Math.max(5, (await loadUpiSettings()).payWindowMinutes || 15));
           order.holdUntil = new Date(Date.now() + minutes * 60_000).toISOString();
         }
         const held = Boolean(order.holdUntil);
         if (held) {
           setPaymentHolds((list) => [{
             orderNo: order.id, amount: order.amount, status: AWAITING_PAYMENT, holdUntil: order.holdUntil ?? null, createdAt: new Date().toISOString(), customer: order.customer,
-            lines: lines.map((line) => ({ productId: line.product.id, qty: line.qty })),
+            method,
+            lines: lines.map((line) => ({ productId: line.product.id, qty: line.qty, name: line.product.name })),
           }, ...list.filter((hold) => hold.orderNo !== order.id)]);
           if (STATIC_DATA_MODE) demoHeldOrders.set(order.id, order);
         } else {
@@ -1666,6 +1694,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         return order;
       },
       paymentHolds,
+      ordersLoaded: STATIC_DATA_MODE || ordersLoadedFor === (user?.id ?? null),
       cancelPaymentHold: async (orderNo) => {
         if (!STATIC_DATA_MODE) {
           const { error } = await supabase.rpc("cancel_payment_hold", { _order_no: orderNo });
@@ -1689,8 +1718,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (!order) return;
         demoHeldOrders.delete(orderNo);
         setPaymentHolds((list) => list.map((item) => item.orderNo === orderNo ? { ...item, status: "Payment Confirmed", holdUntil: null } : item));
-        setOrders((o) => [{ ...order, holdUntil: null, status: "Payment Confirmed", payment: "Paid", paidAmount: order.amount, method: "UPI" }, ...o]);
-        pushNotif("New order received", `${order.id} was paid by UPI and placed worth ₹${order.amount.toLocaleString("en-IN")}.`, "info");
+        setOrders((o) => [{ ...order, holdUntil: null, status: "Payment Confirmed", payment: "Paid", paidAmount: order.amount }, ...o]);
+        pushNotif("New order received", `${order.id} was paid by ${order.method} and placed worth ₹${order.amount.toLocaleString("en-IN")}.`, "info");
       },
       updateOrderStatus: async (id, status) => {
         const existing = orders.find((order) => order.id === id);
@@ -2090,7 +2119,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         return true;
       },
     };
-  }, [branchState, chosenPin, fallbackPin, isShopper, adminBranchId, hydrated, authReady, user, cart, wishlist, wishlistsByUser, categories, viewProducts, batches, orders, paymentHolds, vendors, customers, reviews, returns, coupons, notifications, addresses, addressesByUser, productCatalogStatus, categoryCatalogStatus, saveProduct, logout]);
+  }, [branchState, chosenPin, fallbackPin, isShopper, adminBranchId, hydrated, authReady, user, cart, wishlist, wishlistsByUser, categories, viewProducts, batches, orders, paymentHolds, ordersLoadedFor, vendors, customers, reviews, returns, coupons, notifications, addresses, addressesByUser, productCatalogStatus, categoryCatalogStatus, saveProduct, logout]);
 
   // An administrator working in one godown sees that branch's orders, and stock as that branch's count.
   const scopedValue = useMemo<AppState>(() => {

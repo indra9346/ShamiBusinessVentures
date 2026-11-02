@@ -3,8 +3,9 @@ import { useState } from "react";
 import { Boxes, IndianRupee, Package, ShoppingCart, Star, Users, Wallet } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { PanelLayout } from "@/components/panel/PanelLayout";
-import { DataTable, Filters, Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
+import { DataTable, Filters, Panel, StatCard, StatusBadge, ViewAll } from "@/components/panel/widgets";
 import { vendorNav } from "@/lib/panel-nav";
+import { OPEN_ORDERS } from "@/lib/panel-filters";
 import { compactInr, getOrderItemTotal, inr, type Order } from "@/lib/data";
 import { useVendorScope } from "@/lib/store";
 
@@ -119,23 +120,24 @@ function VendorDashboard() {
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
+          link={{ to: "/vendor/earnings" }}
           label={`${period} Paid Sales`}
           value={inr(periodRevenue)}
           description={awaitingPayment ? `${inr(bookedValue)} booked · ${awaitingPayment} awaiting payment` : `${inr(bookedValue)} booked`}
           icon={IndianRupee}
           highlight
         />
-        <StatCard label={`${period} Orders`} value={String(periodOrders.length)} icon={ShoppingCart} />
-        <StatCard label="Pending Orders" value={String(pendingOrders)} description="All open orders, not yet delivered" icon={ShoppingCart} />
-        <StatCard label="Total Products" value={String(vendorProducts.length)} icon={Package} />
-        <StatCard label="Unique Customers" value={String(uniqueCustomers)} icon={Users} />
-        <StatCard label="Low Stock Products" value={String(lowStock.length)} icon={Boxes} />
-        <StatCard label="Average Rating" value={publishedReviews.length ? `${avgRating} / 5` : "—"} icon={Star} />
-        <StatCard label="Pending Earnings" value={inr(pendingEarnings)} icon={Wallet} />
+        <StatCard link={{ to: "/vendor/orders" }} label={`${period} Orders`} value={String(periodOrders.length)} icon={ShoppingCart} />
+        <StatCard link={{ to: "/vendor/orders", search: { status: OPEN_ORDERS } }} label="Pending Orders" value={String(pendingOrders)} description="All open orders, not yet delivered" icon={ShoppingCart} />
+        <StatCard link={{ to: "/vendor/products" }} label="Total Products" value={String(vendorProducts.length)} icon={Package} />
+        <StatCard link={{ to: "/vendor/orders" }} label="Unique Customers" value={String(uniqueCustomers)} icon={Users} />
+        <StatCard link={{ to: "/vendor/inventory" }} label="Low Stock Products" value={String(lowStock.length)} icon={Boxes} />
+        <StatCard link={{ to: "/vendor/reviews" }} label="Average Rating" value={publishedReviews.length ? `${avgRating} / 5` : "—"} icon={Star} />
+        <StatCard link={{ to: "/vendor/earnings" }} label="Pending Earnings" value={inr(pendingEarnings)} icon={Wallet} />
       </div>
 
       <div className="mt-6 grid grid-cols-[minmax(0,1fr)] gap-6 xl:grid-cols-2">
-        <Panel title="Sales Overview">
+        <Panel title="Sales Overview" action={<ViewAll to="/vendor/earnings" />}>
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={salesSeries}>
@@ -150,7 +152,7 @@ function VendorDashboard() {
             </ResponsiveContainer>
           </div>
         </Panel>
-        <Panel title="Orders Overview">
+        <Panel title="Orders Overview" action={<ViewAll to="/vendor/orders" />}>
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={salesSeries}>
