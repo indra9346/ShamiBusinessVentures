@@ -546,8 +546,9 @@ export function PanelLayout({
               </div>
             </div>
             <div className="flex items-center gap-2 sm:gap-3">
-              {tone === "admin" && <AdminBranchSelect />}
-              <LanguageSwitcher />
+              {tone === "admin" && <AdminBranchSelect className="hidden sm:flex" />}
+              <LanguageSwitcher compact className="sm:hidden" />
+              <LanguageSwitcher className="hidden sm:inline-flex" />
               <div className="relative hidden md:block">
                 <Search className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-slate" />
                 <Input
@@ -731,7 +732,7 @@ export function PanelLayout({
                   </>
                 )}
               </div>
-              <div className="flex items-center gap-2 rounded-full border border-border py-1 pr-3 pl-1">
+              <div className="flex items-center gap-2 rounded-full border border-border py-1 pr-1 pl-1 sm:pr-3">
                 <span className="grid h-7 w-7 place-items-center rounded-full bg-navy text-[11px] font-bold text-white">
                   {(user?.name ?? tone).slice(0, 2).toUpperCase()}
                 </span>
@@ -741,6 +742,12 @@ export function PanelLayout({
               </div>
             </div>
           </div>
+          {/* On phones the branch picker gets its own row so the title and icons still fit. */}
+          {tone === "admin" && (
+            <div className="border-t border-border px-4 py-2 empty:hidden sm:hidden">
+              <AdminBranchSelect className="w-full [&>select]:max-w-none [&>select]:flex-1" />
+            </div>
+          )}
         </header>
         <main className="min-w-0 flex-1 p-4 sm:p-6">
           {tone === "vendor" && !STATIC_DATA_MODE && branchState.ready && !branchState.features.marketplaceVendors ? (

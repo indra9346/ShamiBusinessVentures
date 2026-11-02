@@ -318,19 +318,23 @@ function Account() {
         </Panel>
 
         <Panel title="Active Coupons">
-          <div className="space-y-3">
-            {activeCoupons.map((c) => (
-              <div key={c.code} className="flex items-center gap-3">
-                <Gift className="h-4 w-4 shrink-0 text-gold" />
-                <div className="min-w-0">
-                  <p className="text-sm font-semibold text-navy">{c.code}</p>
-                  <p className="text-xs text-slate">
-                    {c.value} off · min {inr(c.min)}
-                  </p>
+          {activeCoupons.length === 0 ? (
+            <p className="text-sm text-slate">No active coupons right now.</p>
+          ) : (
+            <div className="space-y-3">
+              {activeCoupons.map((c) => (
+                <div key={c.code} className="flex items-center gap-3">
+                  <Gift className="h-4 w-4 shrink-0 text-gold" />
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-navy">{c.code}</p>
+                    <p className="text-xs text-slate">
+                      {c.value} off · min {inr(c.min)}
+                    </p>
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </Panel>
       </div>
 
