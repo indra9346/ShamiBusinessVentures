@@ -10,10 +10,12 @@ import { getOrderItemTotal, inr, orderStages, vendorOrderStatusOptions, type Ord
 import { useApp, useVendorScope } from "@/lib/store";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { matchesOrderStatus, OPEN_ORDERS, orderStatusFilter } from "@/lib/panel-filters";
 
 export const Route = createFileRoute("/vendor/orders")({
   validateSearch: (search: Record<string, unknown>) => ({
     ...(typeof search["q"] === "string" ? { q: search["q"] } : {}),
+    ...(typeof search["status"] === "string" ? { status: search["status"] } : {}),
   }),
   head: () => ({
     meta: [
@@ -42,9 +44,15 @@ function VendorOrdersPanel() {
   const { updateOrderStatus } = useApp();
   const { vendor, vendorOrders, vendorId } = useVendorScope();
   const [q, setQ] = useState(routeSearch.q ?? "");
-  const [status, setStatus] = useState("all");
+  const [status, setStatus] = useState(() => orderStatusFilter(routeSearch.status, [...orderStages, "Cancelled"]));
   const [sort, setSort] = useState("date-desc");
   const [page, setPage] = useState(1);
+
+  // A link can change the filter while this list stays open (the sidebar's Orders, "Show all").
+  useEffect(() => {
+    setStatus(orderStatusFilter(routeSearch.status, [...orderStages, "Cancelled"]));
+    setPage(1);
+  }, [routeSearch.status]);
 
   useEffect(() => {
     setQ(routeSearch.q ?? "");
@@ -65,7 +73,7 @@ function VendorOrdersPanel() {
     let list = withAmounts.filter(({ order: o }) => {
       const s = q.trim().toLowerCase();
       const matchesQ = !s || `${o.id} ${o.customer} ${o.status} ${o.items.map((line) => `${line.product.name} ${line.product.sku}`).join(" ")}`.toLowerCase().includes(s);
-      const matchesStatus = status === "all" || o.status === status;
+      const matchesStatus = matchesOrderStatus(o.status, status);
       return matchesQ && matchesStatus;
     });
     list = [...list].sort((a, b) => {
@@ -112,6 +120,7 @@ function VendorOrdersPanel() {
               <SelectTrigger className="h-9 w-40"><SelectValue placeholder="Status" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Status</SelectItem>
+                <SelectItem value={OPEN_ORDERS}>All pending</SelectItem>
                 {[...orderStages, "Cancelled"].map((s) => (
                   <SelectItem key={s} value={s}>{s}</SelectItem>
                 ))}
@@ -132,7 +141,7 @@ function VendorOrdersPanel() {
         <DataTable
           columns={["Order ID", "Date", "Customer", "Items", "Subtotal", "Payment", "Status", "Actions"]}
           rows={rows.map(({ order: o, items, amount }) => [
-            <Link to="/vendor/orders/$id" params={{ id: o.id }} className="font-semibold text-navy hover:text-gold">
+            <Link to="/vendor/orders/$id" params={{ id: o.id }} search={true} className="font-semibold text-navy hover:text-gold">
               {o.id}
             </Link>,
             o.date,

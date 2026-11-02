@@ -1,4 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { useHydrated, useKeepEarlyInput } from "@/hooks/use-hydrated";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { AuthCard } from "@/components/site/AuthCard";
@@ -16,6 +17,9 @@ function PartnerLogin() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const hydrated = useHydrated();
+  const emailRef = useKeepEarlyInput(setEmail);
+  const passwordRef = useKeepEarlyInput(setPassword);
 
   // Already signed in as an active partner: straight to the dashboard.
   useEffect(() => {
@@ -56,18 +60,18 @@ function PartnerLogin() {
       title="Channel Partner Login"
       subtitle="Channel Partner Commission Platform. Sign in with the email and password the Grain Bazar office gave you."
     >
-      <form autoComplete="off" onSubmit={(event) => void finish(event)} className="space-y-4">
+      <form autoComplete="off" method="post" onSubmit={(event) => void finish(event)} className="space-y-4">
         <label className="block">
           <span className="mb-1.5 block text-xs font-semibold text-charcoal">Email</span>
-          <Input required type="email" name="partner_login_email" autoComplete="username" value={email} onChange={(event) => setEmail(event.target.value)} />
+          <Input ref={emailRef} required type="email" name="partner_login_email" autoComplete="username" value={email} onChange={(event) => setEmail(event.target.value)} />
         </label>
         <label className="block">
           <span className="mb-1.5 block text-xs font-semibold text-charcoal">Password</span>
-          <Input required type="password" name="partner_login_password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} />
+          <Input ref={passwordRef} required type="password" name="partner_login_password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} />
         </label>
         <button
           type="submit"
-          disabled={submitting}
+          disabled={submitting || !hydrated}
           className="w-full rounded-md bg-navy py-3 text-sm font-semibold text-white transition-colors hover:bg-midnight disabled:opacity-60"
         >
           {submitting ? "Signing in…" : "Sign in to Partner Dashboard"}

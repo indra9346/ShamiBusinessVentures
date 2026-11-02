@@ -1,6 +1,7 @@
 import { useRef, useState, type ReactNode } from "react";
+import { Link, type LinkProps } from "@tanstack/react-router";
 import { useColumnResize } from "@/hooks/use-column-resize";
-import { TrendingDown, TrendingUp } from "lucide-react";
+import { ChevronRight, TrendingDown, TrendingUp } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export function StatCard({
@@ -11,6 +12,8 @@ export function StatCard({
   icon: Icon,
   highlight,
   compact = false,
+  link,
+  onClick,
 }: {
   label: string;
   value: string;
@@ -19,16 +22,21 @@ export function StatCard({
   icon: React.ComponentType<{ className?: string }>;
   highlight?: boolean;
   compact?: boolean;
+  /** The page with this data: tapping the card opens it. */
+  link?: LinkProps;
+  /** Or what tapping does when the data is further down this same page. */
+  onClick?: () => void;
 }) {
   const up = !delta?.startsWith("-");
-  return (
-    <div
-      className={cn(
-        "rounded-lg border border-border bg-card shadow-card transition-all hover:-translate-y-0.5 hover:border-gold",
-        compact ? "p-3 sm:p-4" : "p-5",
-        highlight && "border-gold/50 bg-ivory",
-      )}
-    >
+  const classes = cn(
+    "rounded-lg border border-border bg-card shadow-card transition-all hover:-translate-y-0.5 hover:border-gold",
+    compact ? "p-3 sm:p-4" : "p-5",
+    highlight && "border-gold/50 bg-ivory",
+  );
+  const tappable = "relative block w-full text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold";
+  const arrow = <ChevronRight aria-hidden="true" className="absolute right-2.5 bottom-2.5 h-4 w-4 text-slate" />;
+  const body = (
+    <>
       <div className={cn("flex items-start justify-between", compact ? "gap-2" : "gap-3")}>
         <p className={cn("font-medium tracking-wide text-slate uppercase", compact ? "min-w-0 text-[10px] leading-tight sm:text-xs" : "text-xs")}>{label}</p>
         <span
@@ -49,8 +57,16 @@ export function StatCard({
         </p>
       )}
       {description && <p className="mt-1 text-xs text-slate">{description}</p>}
-    </div>
+    </>
   );
+  if (link) return <Link {...link} className={cn(classes, tappable)}>{body}{arrow}</Link>;
+  if (onClick) return <button type="button" onClick={onClick} className={cn(classes, tappable, "flex flex-col justify-start")}>{body}{arrow}</button>;
+  return <div className={classes}>{body}</div>;
+}
+
+/** A dashboard panel's link to the page with all of its data. */
+export function ViewAll(props: LinkProps) {
+  return <Link {...props} className="text-xs font-semibold whitespace-nowrap text-gold hover:underline">View all</Link>;
 }
 
 export function Panel({

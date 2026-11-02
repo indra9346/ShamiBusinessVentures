@@ -305,6 +305,16 @@ export function summariseMonth(month: string, records: DayRecord[], leaves: Leav
   return summarisePeriod(monthDays(month), records, leaves, today, options);
 }
 
+/** The four month totals on a staff member's home page, and the day marks each one counts. */
+export const MONTH_TILES = { Present: ["P", "L"], "Late days": ["L"], Leave: ["LV"], Absent: ["A"] } as const;
+export type MonthTile = keyof typeof MONTH_TILES;
+
+/** The dates behind one total, newest first (dates and marks in the same order). */
+export function datesOfTile(dates: string[], marks: readonly string[], tile: MonthTile) {
+  const wanted: readonly string[] = MONTH_TILES[tile];
+  return dates.filter((_, index) => wanted.includes(marks[index] ?? "")).reverse();
+}
+
 /** "9:05 am" in India time. */
 export function indiaTime(at: string | number | Date) {
   return new Date(at).toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "Asia/Kolkata" });

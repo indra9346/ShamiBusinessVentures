@@ -1,5 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { matchesStockFilter, NEEDS_RESTOCK, stockFilterOf } from "@/lib/panel-filters";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
   Boxes,
@@ -38,6 +39,7 @@ import { downloadCSV } from "@/lib/export-utils";
 import { ResizableTable } from "@/hooks/use-column-resize";
 
 export const Route = createFileRoute("/admin/inventory")({
+  validateSearch: (search: Record<string, unknown>) => (search["filter"] === NEEDS_RESTOCK ? { filter: NEEDS_RESTOCK } : {}),
   head: () => ({
     meta: [
       { title: "Inventory Costing (FIFO) | Shami Admin" },
@@ -91,9 +93,15 @@ function AdminInventory() {
     return totals;
   }, [orders]);
   const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState("All");
+  const routeSearch = Route.useSearch();
+  const [filter, setFilter] = useState(() => stockFilterOf(routeSearch.filter));
   const [sort, setSort] = useState("stock-asc");
   const [page, setPage] = useState(1);
+  // A link can change the filter while this list stays open (the sidebar's Inventory).
+  useEffect(() => {
+    setFilter(stockFilterOf(routeSearch.filter));
+    setPage(1);
+  }, [routeSearch.filter]);
 
   // Update Stock Dialog
   const [target, setTarget] = useState<string | null>(null);
@@ -147,8 +155,7 @@ function AdminInventory() {
       const matchSearch =
         p.name.toLowerCase().includes(search.toLowerCase()) ||
         p.sku.toLowerCase().includes(search.toLowerCase());
-      const matchFilter =
-        filter === "All" || stockStatus(p.stock, p.minimumStock ?? REORDER) === filter;
+      const matchFilter = matchesStockFilter(stockStatus(p.stock, p.minimumStock ?? REORDER), filter);
       return matchSearch && matchFilter;
     });
     list = [...list].sort((a, b) => {
@@ -318,7 +325,7 @@ function AdminInventory() {
                 setPage(1);
               }}
             >
-              <SelectTrigger className="h-9 w-36">
+              <SelectTrigger className="h-9 w-44">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -326,6 +333,7 @@ function AdminInventory() {
                 <SelectItem value="In Stock">In Stock</SelectItem>
                 <SelectItem value="Low Stock">Low Stock</SelectItem>
                 <SelectItem value="Out of Stock">Out of Stock</SelectItem>
+                <SelectItem value={NEEDS_RESTOCK}>Low or Out of Stock</SelectItem>
               </SelectContent>
             </Select>
             <Select value={sort} onValueChange={setSort}>

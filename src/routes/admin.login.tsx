@@ -1,4 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { useHydrated, useKeepEarlyInput } from "@/hooks/use-hydrated";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { AuthCard } from "@/components/site/AuthCard";
@@ -7,6 +8,7 @@ import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { useApp } from "@/lib/store";
 import { supabase } from "@/integrations/supabase/client";
 import { signInProvisionedAccount } from "@/lib/provisioned-auth";
+import { startAdminIdleClock } from "@/lib/admin-idle";
 
 export const Route = createFileRoute("/admin/login")({
   head: () => ({
@@ -33,6 +35,9 @@ function AdminLogin() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const hydrated = useHydrated();
+  const emailRef = useKeepEarlyInput(setEmail);
+  const passwordRef = useKeepEarlyInput(setPassword);
 
   // Already signed in: go to the panel, but only with a real session (never on a stale memory).
   useEffect(() => {
@@ -64,6 +69,7 @@ function AdminLogin() {
 
       const account = await signInProvisionedAccount(email, password, "admin");
       if (!account) return;
+      startAdminIdleClock(account.id);
       login({ ...account, role: "admin" });
       toast.success("Signed in to the admin panel");
       navigate({ to: "/admin/dashboard", replace: true });
@@ -77,12 +83,13 @@ function AdminLogin() {
       title="Admin Login"
       subtitle="Use the administrator email and password provisioned for you. Public admin registration is disabled."
     >
-      <form autoComplete="off" onSubmit={(event) => void finish(event)} className="space-y-4">
+      <form autoComplete="off" method="post" onSubmit={(event) => void finish(event)} className="space-y-4">
         <label className="block">
           <span className="mb-1.5 block text-xs font-semibold text-charcoal">
             Administrator email
           </span>
           <Input
+            ref={emailRef}
             required
             type="email"
             name="admin_login_identifier"
@@ -95,6 +102,7 @@ function AdminLogin() {
         <label className="block">
           <span className="mb-1.5 block text-xs font-semibold text-charcoal">Password</span>
           <Input
+            ref={passwordRef}
             required
             type="password"
             name="admin_login_secret"
@@ -106,7 +114,7 @@ function AdminLogin() {
         </label>
         <button
           type="submit"
-          disabled={submitting}
+          disabled={submitting || !hydrated}
           className="w-full rounded-md bg-navy py-3 text-sm font-semibold text-white transition-colors hover:bg-midnight disabled:opacity-60"
         >
           {submitting ? "Signing in…" : "Sign in to Admin Panel"}

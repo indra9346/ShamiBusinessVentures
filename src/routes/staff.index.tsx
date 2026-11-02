@@ -16,7 +16,7 @@ import type { Database } from "@/integrations/supabase/types";
 import { serverNow, syncServerClock } from "@/lib/server-clock";
 import {
   LEAVE_TYPES, earlyText, formatDuration, geofenceRefusal, indiaDate, indiaInstant, indiaTime, lateMinutes, lateText, leaveDays, leaveProblem,
-  locationVerdict, presenceSchedule, summariseMonth, workedMinutes, type Fix, type LeaveType,
+  datesOfTile, locationVerdict, monthDays, presenceSchedule, summariseMonth, workedMinutes, type Fix, type LeaveType, type MonthTile,
 } from "@/lib/attendance";
 
 export const Route = createFileRoute("/staff/")({
@@ -99,8 +99,11 @@ function StaffHome() {
 
   const todayRow = days.find((day) => day.work_date === today) ?? null;
   const onLeaveToday = leaves.some((leave) => leave.status === "approved" && leave.from_date <= today && today <= leave.to_date);
-  const monthSummary = useMemo(() => summariseMonth(month, days, leaves, today, { joined: me?.joined_on ?? "", weeklyOff: godown?.weekly_off ?? null }).summary,
+  const monthRegister = useMemo(() => summariseMonth(month, days, leaves, today, { joined: me?.joined_on ?? "", weeklyOff: godown?.weekly_off ?? null }),
     [month, days, leaves, today, me?.joined_on, godown?.weekly_off]);
+  const monthSummary = monthRegister.summary;
+  const [dayFilter, setDayFilter] = useState<MonthTile | null>(null);
+  const tileDates = dayFilter ? datesOfTile(monthDays(month), monthRegister.marks, dayFilter) : [];
   const schedule = useMemo(() => (todayRow && godown ? presenceSchedule({
     checkInAt: Date.parse(todayRow.check_in_at), checkOutAt: todayRow.check_out_at ? Date.parse(todayRow.check_out_at) : null,
     shiftEndAt: indiaInstant(today, godown.shift_end), intervalMin: godown.presence_interval_min, photos: photos.map((photo) => Date.parse(photo.taken_at)), now,
@@ -176,11 +179,26 @@ function StaffHome() {
           <h2 className="mb-3 flex items-center gap-2 text-sm font-bold text-navy"><CalendarDays className="h-4 w-4" /> This month</h2>
           <div className="grid grid-cols-4 gap-2 text-center">
             {[["Present", String(monthSummary.present)], ["Late days", String(monthSummary.late)], ["Leave", String(monthSummary.leave)], ["Absent", String(monthSummary.absent)]].map(([label, value]) => (
-              <div key={label} className="rounded-lg bg-ivory px-1 py-2"><p className="text-lg font-extrabold text-navy">{value}</p><p className="text-[11px] text-slate">{label}</p></div>
+              <button key={label} type="button" aria-pressed={dayFilter === label} onClick={() => setDayFilter(dayFilter === label ? null : label as MonthTile)} className={`flex flex-col items-center justify-start rounded-lg px-1 py-2 ${dayFilter === label ? "bg-navy/10 ring-2 ring-navy" : "bg-ivory"}`}><p className="text-lg font-extrabold text-navy">{value}</p><p className="text-[11px] text-slate">{label}</p></button>
             ))}
           </div>
           {monthSummary.lateMinutes > 0 && <p className="mt-2 text-xs text-amber-800">{`Total late this month: ${formatDuration(monthSummary.lateMinutes)}`}</p>}
-          <ul className="mt-3 divide-y divide-border text-sm">
+          {dayFilter && (
+            <ul className="mt-3 divide-y divide-border text-sm">
+              {tileDates.length === 0 && <li className="py-2 text-xs text-slate">No days here this month.</li>}
+              {tileDates.map((date) => {
+                const day = days.find((row) => row.work_date === date);
+                return (
+                  <li key={date} className="flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5 py-2">
+                    <span className="text-charcoal">{new Date(`${date}T00:00:00`).toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" })}</span>
+                    {day ? <span className="text-xs text-slate">{indiaTime(day.check_in_at)}{day.check_out_at ? ` – ${indiaTime(day.check_out_at)}` : ""}</span> : <span className="text-xs text-slate">{dayFilter}</span>}
+                    {day && day.late_minutes > 0 && <span className="text-xs font-semibold text-amber-800">{lateText(day.late_minutes)}</span>}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          {!dayFilter && <ul className="mt-3 divide-y divide-border text-sm">
             {days.slice(0, 10).map((day) => (
               <li key={day.id} className="flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5 py-2">
                 <span className="text-charcoal">{new Date(`${day.work_date}T00:00:00`).toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" })}</span>
@@ -188,7 +206,7 @@ function StaffHome() {
                 {day.late_minutes > 0 ? <span className="text-xs font-semibold text-amber-800">{lateText(day.late_minutes)}</span> : <AttendanceStatusBadge status={day.status} />}
               </li>
             ))}
-          </ul>
+          </ul>}
         </section>
       </main>
     </div>
