@@ -18,6 +18,7 @@ import { showCustomerNotification } from "@/components/site/CartFloatingNotifica
 import { AddToCartPicker } from "@/components/site/AddToCartPicker";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { products as demoProducts } from "@/lib/data";
+import { storeCategorySlug } from "@/lib/category-slug";
 
 export const Route = createFileRoute("/product/$id")({
   loader: async ({ params, parentMatchPromise }) => {
@@ -55,7 +56,6 @@ export const Route = createFileRoute("/product/$id")({
     const p = loaderData.product;
     const path = `/product/${encodeURIComponent(p.id)}`;
     const own = ownDescription(p);
-    const categorySlug = (p.category ?? "").toLowerCase().replace(/^cooking oil$/, "oil").replace(/[^a-z0-9]+/g, "-");
     return {
       ...pageHead({
         title: `${p.name} at ${inr(p.price)} | ${SITE_NAME}`,
@@ -78,7 +78,7 @@ export const Route = createFileRoute("/product/$id")({
         })),
         jsonLdScript(breadcrumbJsonLd([
           { name: "Home", path: "/" },
-          ...(p.category ? [{ name: p.category, path: `/categories/${categorySlug}` }] : []),
+          ...(p.category ? [{ name: p.category, path: `/categories/${storeCategorySlug(p.category)}` }] : []),
           { name: p.name, path },
         ])),
       ],

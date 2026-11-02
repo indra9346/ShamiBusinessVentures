@@ -14,6 +14,7 @@ import { FlipkartCategoryBar } from "@/components/site/FlipkartCategoryBar";
 import { AdShowcase } from "@/components/site/AdShowcase";
 import { DiyaLedge, RangoliCorners } from "@/components/site/DiwaliDecor";
 import { useFestiveTheme } from "@/lib/festive";
+import { storeCategorySlug } from "@/lib/category-slug";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -93,7 +94,7 @@ function Index() {
             </div>
           ))}
           {displayCategories.map((category) => {
-            const slug = category.name.toLowerCase();
+            const slug = storeCategorySlug(category.name);
             return (
               <Link
                 key={category.id}
