@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { loadKannada, translateText } from "../src/lib/i18n-core.ts";
 import { kn } from "../src/lib/i18n-kn.ts";
+import { productDescription } from "../src/lib/seo.ts";
 
 await loadKannada();
 
@@ -80,4 +81,12 @@ test("dates show Kannada month names; vendor names stay as written", () => {
 test("notifications written by the database are translated with their values", () => {
   const out = translateText("Order ORD-26102719610 is now Delivered.", "kn");
   assert.ok(out.includes("ORD-26102719610") && out.includes(kn.Delivered) && !/is now/.test(out));
+});
+
+test("a product description made from its facts reads in Kannada", () => {
+  const withPack = translateText(productDescription({ name: "Long Grain Basumathi Rice", weight: "10 kg" }), "kn");
+  assert.ok(withPack.includes("10 kg") && withPack.includes("ಪ್ಯಾಕ್ ಗಾತ್ರ") && withPack.includes("GST"), withPack);
+  assert.doesNotMatch(withPack, /pack size|Sold by/);
+  const noPack = translateText(productDescription({ name: "Belgaum Sugar - 50 kg Bag", weight: "50 kg bag" }), "kn");
+  assert.doesNotMatch(noPack, /pack size|Sold by/);
 });

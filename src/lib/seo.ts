@@ -100,6 +100,7 @@ export type ProductForSeo = {
   id: string;
   name: string;
   description?: string;
+  weight?: string;
   image?: string;
   sku?: string;
   brand?: string;
@@ -138,7 +139,33 @@ export function ratingSummary(ratings: { product_id: string; rating: number }[],
   return { rating: Math.round((mine.reduce((sum, row) => sum + row.rating, 0) / mine.length) * 10) / 10, reviews: mine.length };
 }
 
-/** Product rich result: name, image, SKU, brand, real ratings and the INR offer with stock and delivery. */
+/**
+ * The delivery time the site promises for home delivery (checkout and the product's Delivery tab),
+ * "2-4 business days", in the two parts Google asks for: out of the godown in 0-1 days, then 2-3 on the road.
+ */
+const DELIVERY_TIME = {
+  "@type": "ShippingDeliveryTime",
+  handlingTime: { "@type": "QuantitativeValue", minValue: 0, maxValue: 1, unitCode: "DAY" },
+  transitTime: { "@type": "QuantitativeValue", minValue: 2, maxValue: 3, unitCode: "DAY" },
+};
+
+/** The product's own description, or "" when it has none (imported products carry this placeholder). */
+export function ownDescription(p: { description?: string | undefined }) {
+  const text = (p.description ?? "").trim();
+  return /pending catalogue review/i.test(text) ? "" : text;
+}
+
+/** The product page's description: its own, else one from what is known about it (no invented claims). */
+export function productDescription(p: { name: string; description?: string | undefined; weight?: string | undefined }) {
+  const own = ownDescription(p);
+  if (own) return own;
+  const squeezed = (text: string) => text.toLowerCase().replace(/\s+/g, "");
+  const pack = p.weight && !squeezed(p.name).includes(squeezed(p.weight)) ? `, pack size ${p.weight}` : "";
+  // Nothing about pickup or delivery here: that depends on the godown and the shopper's PIN code.
+  return `${p.name}${pack}. Sold by Grain Bazar with a GST invoice.`;
+}
+
+/** Product rich result: name, description, image, SKU, brand, real ratings and the INR offer with stock and delivery. */
 export function productJsonLd(p: ProductForSeo) {
   const price = Math.round(p.price * 100) / 100;
   const offer = {
@@ -155,6 +182,7 @@ export function productJsonLd(p: ProductForSeo) {
             "@type": "OfferShippingDetails",
             shippingRate: { "@type": "MonetaryAmount", value: area.freeAbove !== null && price >= area.freeAbove ? 0 : area.fee, currency: "INR" },
             shippingDestination: { "@type": "DefinedRegion", addressCountry: "IN", postalCode: area.postalCodes },
+            deliveryTime: DELIVERY_TIME,
           })),
         }
       : {}),
@@ -163,7 +191,7 @@ export function productJsonLd(p: ProductForSeo) {
     "@context": "https://schema.org",
     "@type": "Product",
     name: p.name,
-    ...(p.description ? { description: clip(p.description, 500) } : {}),
+    description: clip(productDescription(p), 500),
     ...(p.image ? { image: [absoluteUrl(p.image)] } : {}),
     ...(p.sku ? { sku: p.sku } : {}),
     ...(p.brand ? { brand: { "@type": "Brand", name: p.brand } } : {}),

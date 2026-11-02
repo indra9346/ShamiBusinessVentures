@@ -1,5 +1,5 @@
 import { createFileRoute, Link, notFound } from "@tanstack/react-router";
-import { pageHead, jsonLdScript, breadcrumbJsonLd, deliveryAreasForSeo, productJsonLd, ratingSummary, SITE_NAME } from "@/lib/seo";
+import { pageHead, jsonLdScript, breadcrumbJsonLd, deliveryAreasForSeo, ownDescription, productDescription, productJsonLd, ratingSummary, SITE_NAME } from "@/lib/seo";
 import { useState, useEffect } from "react";
 import { Heart, Minus, Plus, ShieldCheck, Star, Truck, Store, ShoppingCart } from "lucide-react";
 import { toast } from "sonner";
@@ -54,11 +54,12 @@ export const Route = createFileRoute("/product/$id")({
     }
     const p = loaderData.product;
     const path = `/product/${encodeURIComponent(p.id)}`;
+    const own = ownDescription(p);
     const categorySlug = (p.category ?? "").toLowerCase().replace(/^cooking oil$/, "oil").replace(/[^a-z0-9]+/g, "-");
     return {
       ...pageHead({
         title: `${p.name} at ${inr(p.price)} | ${SITE_NAME}`,
-        description: `Buy ${p.name}${p.weight ? ` (${p.weight})` : ""} at ${inr(p.price)} + GST from Grain Bazar. ${p.description ? `${p.description} ` : ""}GST invoice, pickup or delivery from Challakere and Hubli.`,
+        description: `Buy ${p.name}${p.weight ? ` (${p.weight})` : ""} at ${inr(p.price)} + GST from Grain Bazar. ${own ? `${own} ` : ""}GST invoice, pickup or delivery from Challakere and Hubli.`,
         path,
         type: "product",
         ...(p.image ? { image: p.image } : {}),
@@ -67,6 +68,7 @@ export const Route = createFileRoute("/product/$id")({
         jsonLdScript(productJsonLd({
           id: p.id, name: p.name, price: p.price, stock: p.stock,
           ...(p.description ? { description: p.description } : {}),
+          ...(p.weight ? { weight: p.weight } : {}),
           ...(p.image ? { image: p.image } : {}),
           ...(p.sku ? { sku: p.sku } : {}),
           ...(p.brand ? { brand: p.brand } : {}),
@@ -389,7 +391,7 @@ function ProductDetail() {
             {display.showRatings && <TabsTrigger value="reviews">Reviews</TabsTrigger>}
           </TabsList>
           <TabsContent value="desc" className="rounded-lg border border-border bg-card p-6 text-sm leading-relaxed text-charcoal">
-            {product.description}
+            {productDescription(product)}
           </TabsContent>
           <TabsContent value="spec" className="rounded-lg border border-border bg-card p-6">
             <dl className="grid gap-4 text-sm sm:grid-cols-2">

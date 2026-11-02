@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { absoluteUrl, breadcrumbJsonLd, clip, deliveryAreasForSeo, jsonLdScript, pageHead, productJsonLd, ratingSummary, sitemapXml } from "../src/lib/seo.ts";
+import { absoluteUrl, breadcrumbJsonLd, clip, deliveryAreasForSeo, jsonLdScript, ownDescription, pageHead, productDescription, productJsonLd, ratingSummary, sitemapXml } from "../src/lib/seo.ts";
 
 test("one canonical address for every page", () => {
   assert.equal(absoluteUrl("/"), "https://grainbazar.com");
@@ -54,17 +54,42 @@ test("merchant listing shipping: delivering godowns' PIN codes and fee; pickup-o
     { fee: 0, freeAbove: null, postalCodes: ["580020", "580021"] },
     { fee: 150, freeAbove: 5000, postalCodes: ["560001"] },
   ]);
+  // The site's "2-4 business days": 0-1 days out of the godown + 2-3 days on the road.
+  const deliveryTime = {
+    "@type": "ShippingDeliveryTime",
+    handlingTime: { "@type": "QuantitativeValue", minValue: 0, maxValue: 1, unitCode: "DAY" },
+    transitTime: { "@type": "QuantitativeValue", minValue: 2, maxValue: 3, unitCode: "DAY" },
+  };
   const cheap = productJsonLd({ id: "P1", name: "Oil", price: 2151.45, stock: 5, deliveryAreas: areas }).offers;
   assert.deepEqual(cheap.shippingDetails, [
     { "@type": "OfferShippingDetails", shippingRate: { "@type": "MonetaryAmount", value: 0, currency: "INR" },
-      shippingDestination: { "@type": "DefinedRegion", addressCountry: "IN", postalCode: ["580020", "580021"] } },
+      shippingDestination: { "@type": "DefinedRegion", addressCountry: "IN", postalCode: ["580020", "580021"] }, deliveryTime },
     { "@type": "OfferShippingDetails", shippingRate: { "@type": "MonetaryAmount", value: 150, currency: "INR" },
-      shippingDestination: { "@type": "DefinedRegion", addressCountry: "IN", postalCode: ["560001"] } },
+      shippingDestination: { "@type": "DefinedRegion", addressCountry: "IN", postalCode: ["560001"] }, deliveryTime },
   ]);
   // At or above the free-delivery value the fee is 0.
   const dear = productJsonLd({ id: "P2", name: "Sugar", price: 5000, deliveryAreas: areas }).offers;
   assert.equal(dear.shippingDetails?.[1]?.shippingRate.value, 0);
   assert.equal("shippingDetails" in productJsonLd({ id: "P3", name: "x", price: 1 }).offers, false);
+});
+
+test("every product has a description: its own, else one from its facts", () => {
+  assert.equal(productDescription({ name: "Rice", description: "  Long grain rice.  ", weight: "5 kg" }), "Long grain rice.");
+  const made = "Long Grain Basumathi Rice, pack size 10 kg. Sold by Grain Bazar with a GST invoice.";
+  assert.equal(productDescription({ name: "Long Grain Basumathi Rice", description: "", weight: "10 kg" }), made);
+  assert.equal(productDescription({ name: "Long Grain Basumathi Rice", weight: "10 kg" }), made);
+  // The import's placeholder is not a description.
+  const placeholder = "Newly added product pending catalogue review.";
+  assert.equal(ownDescription({ description: placeholder }), "");
+  assert.match(productDescription({ name: "Gold Winner Oil - 15 L Tin", description: placeholder, weight: "15 Litre (13.650 kg)" }), /^Gold Winner Oil - 15 L Tin, pack size 15 Litre \(13\.650 kg\)\. Sold by/);
+  // It makes no promise about pickup or delivery: the page says which applies.
+  assert.doesNotMatch(made, /pickup|delivery|Hubli|Challakere/i);
+  // A pack size the name already says is not repeated; no pack size is fine.
+  assert.match(productDescription({ name: "Belgaum Sugar - 50 kg Bag", weight: "50 kg bag" }), /^Belgaum Sugar - 50 kg Bag\. Sold by/);
+  assert.match(productDescription({ name: "Sugar" }), /^Sugar\. Sold by/);
+  // Google always gets one, clipped to fit.
+  assert.equal(productJsonLd({ id: "P1", name: "Sugar", price: 1 }).description, productDescription({ name: "Sugar" }));
+  assert.ok(productJsonLd({ id: "P1", name: "Sugar", price: 1, description: "x".repeat(900) }).description.length <= 500);
 });
 
 test("Google rating comes only from published reviews", () => {
