@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
-  AlertTriangle, CalendarCheck, Camera, Check, Clock, Copy, Crosshair, Download, FileSpreadsheet, KeyRound, MapPin, RefreshCw, Save, Smartphone,
+  AlertTriangle, CalendarCheck, Camera, Check, Clock, Copy, Download, FileSpreadsheet, KeyRound, MapPin, RefreshCw, Smartphone,
   Trash2, UserCheck, UserPlus, Users, X,
 } from "lucide-react";
 import { Panel, StatCard } from "@/components/panel/widgets";
 import { AttendanceStatusBadge, DecisionChips } from "@/components/attendance/AttendanceBits";
-import { getBestFix } from "@/components/attendance/geolocation";
+import { GodownRulesDesk, type RulesGodown } from "@/components/attendance/GodownRules";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -17,9 +17,9 @@ import { downloadXlsx } from "@/lib/xlsx";
 import { monthLabel, monthStart, suggestPartnerPassword } from "@/lib/partners";
 import type { DaySelfies } from "@/lib/attendance.functions";
 import {
-  LEAVE_TYPES, REGISTER_LEGEND, STAFF_LOGIN_URL, SUMMARY_HEADER, WEEKDAYS, attendanceWorkbook, earlyText, formatDuration, indiaDate, indiaInstant,
-  indiaTime, lateText, leaveDays, mapLink, monthDays, parseCoordinates, periodDays, presenceSchedule, staffPasswordProblem, summarisePeriod,
-  summariseMonth, summaryRow, weekday, workedMinutes, type RegisterMark,
+  DEFAULT_RULES, LEAVE_TYPES, MARK_WORDS, REGISTER_LEGEND, STAFF_LOGIN_URL, SUMMARY_HEADER, attendanceWorkbook, clockTime, dayPresenceSchedule, dayStatus, earlyText, formatDuration,
+  holidayDates, indiaDate, indiaTime, lateText, leaveDays, mapLink, monthDays, periodDays, rulesLookup, rulesOn, staffPasswordProblem, summarisePeriod,
+  summariseMonth, summaryRow, weekday, workedMark, workedMinutes, type GodownHoliday, type RegisterMark, type RuleVersion,
 } from "@/lib/attendance";
 import { cn } from "@/lib/utils";
 
@@ -34,25 +34,18 @@ type Day = Database["public"]["Tables"]["attendance_days"]["Row"];
 type Leave = Database["public"]["Tables"]["leave_requests"]["Row"];
 type Presence = Database["public"]["Tables"]["attendance_presence"]["Row"];
 type Device = Pick<Database["public"]["Tables"]["godown_devices"]["Row"], "id" | "branch_id" | "label" | "active" | "created_at" | "last_seen_at" | "revoked_at">;
-type Godown = {
-  id: string; name: string; latitude: number | null; longitude: number | null; attendance_radius_m: number; shift_start: string; shift_end: string;
-  late_grace_min: number; weekly_off: number | null; presence_interval_min: number;
-};
+type Godown = RulesGodown;
 type Selfies = Record<string, DaySelfies>;
 
-const GODOWN_COLUMNS = "id,name,vendor_id,latitude,longitude,attendance_radius_m,shift_start,shift_end,late_grace_min,weekly_off,presence_interval_min";
+const GODOWN_COLUMNS = "id,name,vendor_id,latitude,longitude";
 const monthEnd = (month: string) => monthDays(month).at(-1)!;
 const formatDay = (date: string) => new Date(`${date}T00:00:00`).toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" });
-const clock = (time: string) => indiaTime(`2000-01-01T${time.slice(0, 5)}:00+05:30`);
 const istStart = (date: string) => `${date}T00:00:00+05:30`;
 const nextDay = (date: string) => new Date(Date.parse(`${date}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
 
-function scheduleFor(day: Day, godown: Godown | undefined, photos: Presence[], now: number) {
-  return presenceSchedule({
-    checkInAt: Date.parse(day.check_in_at), checkOutAt: day.check_out_at ? Date.parse(day.check_out_at) : null,
-    shiftEndAt: indiaInstant(day.work_date, godown?.shift_end ?? "18:30"), intervalMin: godown?.presence_interval_min ?? 0,
-    photos: photos.filter((photo) => photo.attendance_day_id === day.id).map((photo) => Date.parse(photo.taken_at)), now,
-  });
+/** A day's presence photos, judged by the rules that day was checked in under. */
+function scheduleFor(day: Day, versions: RuleVersion[], photos: Presence[], now: number) {
+  return dayPresenceSchedule(day, rulesLookup(versions, day.branch_id)(day.work_date, day), photos.filter((photo) => photo.attendance_day_id === day.id).map((photo) => Date.parse(photo.taken_at)), now);
 }
 
 function useAttendanceDesk(viewer: Viewer, partnerBranchId: string | undefined, month: string) {
@@ -64,6 +57,8 @@ function useAttendanceDesk(viewer: Viewer, partnerBranchId: string | undefined, 
   const [monthRows, setMonthRows] = useState<Day[]>([]);
   const [leaves, setLeaves] = useState<Leave[]>([]);
   const [devices, setDevices] = useState<Device[]>([]);
+  const [versions, setVersions] = useState<RuleVersion[]>([]);
+  const [holidays, setHolidays] = useState<GodownHoliday[]>([]);
   const [selfies, setSelfies] = useState<Selfies>({});
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
@@ -73,7 +68,7 @@ function useAttendanceDesk(viewer: Viewer, partnerBranchId: string | undefined, 
     const end = monthEnd(month);
     let branchQuery = supabase.from("branches").select(GODOWN_COLUMNS).order("sort_order");
     if (partnerBranchId) branchQuery = branchQuery.eq("id", partnerBranchId);
-    const [b, e, p, t, tp, m, l, dv] = await Promise.all([
+    const [b, e, p, t, tp, m, l, dv, rv, hd] = await Promise.all([
       branchQuery,
       supabase.from("staff_employees").select("*").order("name"),
       viewer === "admin" ? supabase.from("channel_partners").select("branch_id").eq("status", "active") : Promise.resolve({ data: partnerBranchId ? [{ branch_id: partnerBranchId }] : [], error: null }),
@@ -82,11 +77,13 @@ function useAttendanceDesk(viewer: Viewer, partnerBranchId: string | undefined, 
       supabase.from("attendance_days").select("*").gte("work_date", month).lte("work_date", end),
       supabase.from("leave_requests").select("*").or(`status.eq.pending,and(to_date.gte.${month},from_date.lte.${end})`).order("from_date", { ascending: false }),
       viewer === "admin" ? supabase.from("godown_devices").select("id,branch_id,label,active,created_at,last_seen_at,revoked_at").order("created_at", { ascending: false }) : Promise.resolve({ data: [], error: null }),
+      supabase.from("godown_rule_versions").select("*").order("effective_from").order("created_at"),
+      supabase.from("godown_holidays").select("id,branch_id,holiday_date,name").is("removed_at", null).order("holiday_date"),
     ]);
-    const failed = [b, e, t, tp, m, l].find((result) => result.error);
+    const failed = [b, e, t, tp, m, l, rv, hd].find((result) => result.error);
     if (failed?.error) {
       setError(/does not exist|schema cache/i.test(failed.error.message)
-        ? "Attendance is not fully set up in the database yet (migration 20261101090000_attendance_v2)."
+        ? "Attendance is not fully set up in the database yet (migration 20261102120000_godown_attendance_rules)."
         : failed.error.message);
     } else setError("");
     setGodowns(((b.data ?? []) as (Godown & { vendor_id: string | null })[]).filter((row) => !row.vendor_id));
@@ -98,6 +95,8 @@ function useAttendanceDesk(viewer: Viewer, partnerBranchId: string | undefined, 
     setMonthRows((m.data as Day[] | null) ?? []);
     setLeaves((l.data as Leave[] | null) ?? []);
     setDevices((dv.data as Device[] | null) ?? []);
+    setVersions((rv.data as RuleVersion[] | null) ?? []);
+    setHolidays((hd.data as GodownHoliday[] | null) ?? []);
     setLoaded(true);
     const ids = todayRows.map((row) => row.id).slice(0, 300);
     if (ids.length) {
@@ -115,7 +114,7 @@ function useAttendanceDesk(viewer: Viewer, partnerBranchId: string | undefined, 
     return () => clearInterval(timer);
   }, [load]);
 
-  return { godowns, employees, partnerGodowns, todayDays, todayPhotos, monthRows, leaves, devices, selfies, setSelfies, loaded, error, today, load };
+  return { godowns, employees, partnerGodowns, todayDays, todayPhotos, monthRows, leaves, devices, versions, holidays, selfies, setSelfies, loaded, error, today, load };
 }
 
 type Desk = ReturnType<typeof useAttendanceDesk>;
@@ -127,19 +126,20 @@ export function AttendanceManager({ viewer, partnerBranchId }: { viewer: Viewer;
   const employeeOf = useMemo(() => new Map(desk.employees.map((employee) => [employee.id, employee])), [desk.employees]);
   const godownOf = useMemo(() => new Map(desk.godowns.map((godown) => [godown.id, godown])), [desk.godowns]);
   const pendingLeaves = desk.leaves.filter((leave) => leave.status === "pending");
-  const waitingOnMe = pendingLeaves.filter((leave) => (viewer === "admin" ? leave.head_office_decision : leave.partner_decision) === null).length;
+  const waitingOnMe = pendingLeaves.filter((leave) => (viewer === "admin" ? leave.head_office_decision === null : leave.partner_decision === null && partnerDecides(leave, desk.versions))).length;
   const active = desk.employees.filter((employee) => employee.status === "active");
   // Today's counts cover active employees only: a deactivated employee's day stays in the register, not here.
   const activeIds = new Set(active.map((employee) => employee.id));
   const todayActive = desk.todayDays.filter((day) => activeIds.has(day.employee_id));
-  const lateToday = todayActive.filter((day) => day.late_minutes > 0);
+  const presentToday = todayActive.filter((day) => markOf(day, desk) !== "A");
+  const lateToday = todayActive.filter((day) => markOf(day, desk) === "L");
   const onLeaveToday = new Set(desk.leaves.filter((leave) => leave.status === "approved" && leave.from_date <= desk.today && desk.today <= leave.to_date && activeIds.has(leave.employee_id)).map((leave) => leave.employee_id));
 
   return (
     <div className="space-y-6">
       {desk.error && <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{desk.error}</p>}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard label="Present today" value={`${todayActive.length} of ${active.length}`} icon={UserCheck} />
+        <StatCard label="Present today" value={`${presentToday.length} of ${active.length}`} icon={UserCheck} />
         <StatCard label="Late today" value={String(lateToday.length)} icon={Clock} {...(lateToday.length ? { description: `Total ${formatDuration(lateToday.reduce((sum, day) => sum + day.late_minutes, 0))}` } : {})} />
         <StatCard label="On leave today" value={String(onLeaveToday.size)} icon={CalendarCheck} description={`${pendingLeaves.length} leave request(s) waiting · ${waitingOnMe} need your decision`} />
         <StatCard label="Employees" value={String(active.length)} icon={Users} {...(viewer === "admin" ? { description: `${desk.godowns.length} godowns` } : {})} />
@@ -152,7 +152,7 @@ export function AttendanceManager({ viewer, partnerBranchId }: { viewer: Viewer;
           <TabsTrigger value="register">Monthly register</TabsTrigger>
           <TabsTrigger value="reports">Reports & Excel</TabsTrigger>
           <TabsTrigger value="employees">Employees</TabsTrigger>
-          {viewer === "admin" && <TabsTrigger value="godowns">Godown settings</TabsTrigger>}
+          <TabsTrigger value="godowns">Godown rules</TabsTrigger>
           {viewer === "admin" && <TabsTrigger value="devices">Godown devices</TabsTrigger>}
         </TabsList>
 
@@ -180,11 +180,9 @@ export function AttendanceManager({ viewer, partnerBranchId }: { viewer: Viewer;
           <EmployeesPanel viewer={viewer} desk={desk} />
         </TabsContent>
 
-        {viewer === "admin" && (
-          <TabsContent value="godowns" className="mt-4 space-y-6">
-            {desk.godowns.map((godown) => <GodownSettings key={godown.id} godown={godown} onSaved={desk.load} />)}
-          </TabsContent>
-        )}
+        <TabsContent value="godowns" className="mt-4">
+          <GodownRulesDesk editable={viewer === "admin"} godowns={desk.godowns} versions={desk.versions} holidays={desk.holidays} today={desk.today} onSaved={desk.load} />
+        </TabsContent>
         {viewer === "admin" && (
           <TabsContent value="devices" className="mt-4 space-y-6">
             {desk.godowns.map((godown) => <GodownDevices key={godown.id} godown={godown} devices={desk.devices.filter((device) => device.branch_id === godown.id)} onChange={desk.load} />)}
@@ -196,6 +194,16 @@ export function AttendanceManager({ viewer, partnerBranchId }: { viewer: Viewer;
         godown={open ? godownOf.get(open.branch_id) ?? null : null} onClose={() => setOpen(null)} />
     </div>
   );
+}
+
+/** What a marked day counts as, under the rules it was marked with. */
+function markOf(day: Day, desk: Desk) {
+  return workedMark(day.work_date, day, rulesLookup(desk.versions, day.branch_id)(day.work_date, day), desk.today);
+}
+
+/** Whether a leave request needs the channel partner: the rule it was sent under, as the database decides. */
+function partnerDecides(leave: Leave, versions: RuleVersion[]) {
+  return versions.find((version) => version.id === leave.rule_version_id)?.leave_partner_required ?? true;
 }
 
 function SelfieThumb({ url, onClick }: { url?: string | undefined; onClick: () => void }) {
@@ -210,17 +218,21 @@ function TodayBoard({ godown, employees, desk, onLeaveToday, onOpen, viewer }: {
   godown: Godown; employees: Employee[]; desk: Desk; onLeaveToday: Set<string>; onOpen: (day: Day) => void; viewer: Viewer;
 }) {
   const dayOf = new Map(desk.todayDays.filter((day) => day.branch_id === godown.id).map((day) => [day.employee_id, day]));
-  const present = employees.filter((employee) => dayOf.has(employee.id)).length;
+  const present = employees.filter((employee) => { const day = dayOf.get(employee.id); return day && markOf(day, desk) !== "A"; }).length;
   const now = Date.now();
+  const rules = rulesOn(desk.versions, godown.id, desk.today) ?? DEFAULT_RULES;
+  const holiday = desk.holidays.find((entry) => entry.branch_id === godown.id && entry.holiday_date === desk.today);
   return (
     <Panel title={`${godown.name} · ${present} of ${employees.length} present`}
-      action={<span className="text-xs text-slate">{`Shift ${clock(godown.shift_start)} – ${clock(godown.shift_end)} · grace ${godown.late_grace_min} min · radius ${godown.attendance_radius_m} m${godown.presence_interval_min ? ` · photo every ${formatDuration(godown.presence_interval_min)}` : ""}`}</span>}>
+      action={<span className="text-xs text-slate">{`Shift ${clockTime(rules.shift_start)} – ${clockTime(rules.shift_end)} · grace ${rules.late_grace_min} min · radius ${rules.radius_m} m${rules.presence_interval_min ? ` · photo every ${formatDuration(rules.presence_interval_min)}` : ""}`}</span>}>
       {godown.latitude === null && (
         <p className="mb-3 flex items-start gap-2 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-          {viewer === "admin" ? "Set this godown's location in Godown settings. Until then nobody at this godown can check in." : "Head office has not set this godown's location yet, so nobody can check in."}
+          {viewer === "admin" ? "Set this godown's location in Godown rules. Until then nobody at this godown can check in." : "Head office has not set this godown's location yet, so nobody can check in."}
         </p>
       )}
+      {holiday ? <p className="mb-3 rounded-md bg-sky-50 px-3 py-2 text-sm font-semibold text-sky-800">{`Holiday today: ${holiday.name}`}</p>
+        : rules.weekly_off === weekday(desk.today) ? <p className="mb-3 rounded-md bg-sky-50 px-3 py-2 text-sm font-semibold text-sky-800">Today is this godown's weekly off.</p> : null}
       {employees.length === 0 ? <p className="text-sm text-slate">No employees added for this godown yet.</p> : (
         <div className="overflow-x-auto">
           <table className="w-full min-w-[760px] text-sm">
@@ -230,7 +242,7 @@ function TodayBoard({ godown, employees, desk, onLeaveToday, onOpen, viewer }: {
             <tbody>
               {employees.map((employee) => {
                 const day = dayOf.get(employee.id);
-                const schedule = day ? scheduleFor(day, godown, desk.todayPhotos, now) : null;
+                const schedule = day ? scheduleFor(day, desk.versions, desk.todayPhotos, now) : null;
                 return (
                   <tr key={employee.id} className="border-b border-border/60 align-top last:border-0">
                     <td className="py-2 pr-3"><p className="font-semibold text-charcoal">{employee.name}</p><p className="text-xs text-slate">{employee.designation || employee.phone}</p></td>
@@ -251,7 +263,7 @@ function TodayBoard({ godown, employees, desk, onLeaveToday, onOpen, viewer }: {
                       </button>
                     ) : day ? <span className="text-slate">{day.check_out_at ? "None due" : "None due yet"}</span> : ""}</td>
                     <td className="py-2">
-                      {day ? <AttendanceStatusBadge status={day.status} />
+                      {day ? <AttendanceStatusBadge status={dayStatus(day, rulesLookup(desk.versions, day.branch_id)(day.work_date, day), desk.today)} />
                         : onLeaveToday.has(employee.id) ? <span className="rounded-full bg-sky-50 px-2 py-0.5 text-xs font-semibold text-sky-800">On leave</span>
                         : <span className="text-xs text-slate">Not marked yet</span>}
                     </td>
@@ -295,10 +307,10 @@ function LeaveApprovals({ viewer, desk, employeeOf, godownOf }: {
 }) {
   const mine = (leave: Leave) => (viewer === "admin" ? leave.head_office_decision : leave.partner_decision);
   const leaves = desk.leaves.filter((leave) => leave.status === "pending").sort((a, b) => Number(mine(a) !== null) - Number(mine(b) !== null));
-  const required = (branchId: string) => viewer === "partner" || desk.partnerGodowns.has(branchId);
+  const required = (leave: Leave) => partnerDecides(leave, desk.versions) && (viewer === "partner" || desk.partnerGodowns.has(leave.branch_id));
   return (
     <Panel title={`Leave requests waiting (${leaves.length})`}>
-      <p className="mb-3 text-xs text-slate">Check-ins need no approval. Leave needs head office and the godown's channel partner.</p>
+      <p className="mb-3 text-xs text-slate">Check-ins need no approval. Who approves leave follows each godown's rules.</p>
       {leaves.length === 0 ? <p className="text-sm text-slate">No leave requests waiting.</p> : (
         <ul className="divide-y divide-border">
           {leaves.map((leave) => (
@@ -312,8 +324,10 @@ function LeaveApprovals({ viewer, desk, employeeOf, godownOf }: {
                 {` · ${leaveDays(leave.from_date, leave.to_date)} day(s) · `}{LEAVE_TYPES.find((option) => option.value === leave.leave_type)?.label ?? leave.leave_type}
               </p>
               <p className="text-sm text-slate">{leave.reason}</p>
-              <DecisionChips head={leave.head_office_decision} partner={leave.partner_decision} partnerRequired={required(leave.branch_id)} />
-              <DecideButtons id={leave.id} current={mine(leave)} onDone={desk.load} />
+              <DecisionChips head={leave.head_office_decision} partner={leave.partner_decision} partnerRequired={required(leave)} />
+              {viewer === "partner" && !required(leave)
+                ? <p className="text-xs text-slate">Head office alone decides leave at this godown.</p>
+                : <DecideButtons id={leave.id} current={mine(leave)} onDone={desk.load} />}
             </li>
           ))}
         </ul>
@@ -323,7 +337,7 @@ function LeaveApprovals({ viewer, desk, employeeOf, godownOf }: {
 }
 
 const MARK_STYLE: Record<RegisterMark, string> = {
-  P: "bg-emerald-100 text-emerald-800", L: "bg-lime-100 text-lime-800", LV: "bg-sky-100 text-sky-800", WO: "bg-slate-100 text-slate-500", "?": "bg-amber-100 text-amber-900",
+  P: "bg-emerald-100 text-emerald-800", L: "bg-lime-100 text-lime-800", HD: "bg-orange-100 text-orange-800", LV: "bg-sky-100 text-sky-800", WO: "bg-slate-100 text-slate-500", H: "bg-violet-100 text-violet-800", "?": "bg-amber-100 text-amber-900",
   X: "bg-red-100 text-red-700", A: "bg-red-50 text-red-600", "": "text-slate/40",
 };
 
@@ -338,9 +352,12 @@ function Register({ desk, month, setMonth, onOpen }: { desk: Desk; month: string
   const rows = staff.map((employee) => ({
     employee,
     ...summariseMonth(month, desk.monthRows.filter((day) => day.employee_id === employee.id), leaves.filter((leave) => leave.employee_id === employee.id), desk.today,
-      { joined: employee.joined_on, weeklyOff: desk.godowns.find((godown) => godown.id === employee.branch_id)?.weekly_off ?? null }),
+      { joined: employee.joined_on, rulesFor: rulesLookup(desk.versions, employee.branch_id), holidays: holidayDates(desk.holidays, employee.branch_id) }),
   }));
   const dayOf = new Map(desk.monthRows.map((day) => [`${day.employee_id}:${day.work_date}`, day]));
+  // A date is shown in red only when it is a day off at every godown on screen.
+  const dayOff = (date: string) => godowns.length > 0 && godowns.every((godown) => desk.holidays.some((entry) => entry.branch_id === godown.id && entry.holiday_date === date)
+    || rulesOn(desk.versions, godown.id, date)?.weekly_off === weekday(date));
 
   return (
     <Panel title={`Monthly register · ${monthLabel(month)}`} action={
@@ -362,8 +379,8 @@ function Register({ desk, month, setMonth, onOpen }: { desk: Desk; month: string
           <table className="text-xs">
             <thead><tr className="text-slate">
               <th className="sticky left-0 z-10 bg-card py-1 pr-3 text-left">Employee</th>
-              {dates.map((date) => <th key={date} className={cn("w-7 px-0.5 py-1 text-center font-semibold", weekday(date) === 0 && "text-red-500")}>{Number(date.slice(8))}</th>)}
-              {["P", "L", "LV", "WO", "A", "Total late", "Worked"].map((label) => <th key={label} className="whitespace-nowrap px-1.5 py-1 text-center">{label}</th>)}
+              {dates.map((date) => <th key={date} className={cn("w-7 px-0.5 py-1 text-center font-semibold", dayOff(date) && "text-red-500")}>{Number(date.slice(8))}</th>)}
+              {["P", "L", "HD", "LV", "WO", "H", "A", "Total late", "Worked"].map((label) => <th key={label} className="whitespace-nowrap px-1.5 py-1 text-center">{label}</th>)}
             </tr></thead>
             <tbody>
               {rows.map(({ employee, marks, summary: s }) => (
@@ -382,7 +399,7 @@ function Register({ desk, month, setMonth, onOpen }: { desk: Desk; month: string
                       </td>
                     );
                   })}
-                  {[s.present, s.late, s.leave, s.weeklyOff, s.absent, formatDuration(s.lateMinutes), formatDuration(s.workedMinutes)].map((value, index) => (
+                  {[s.present, s.late, s.halfDay, s.leave, s.weeklyOff, s.holiday, s.absent, formatDuration(s.lateMinutes), formatDuration(s.workedMinutes)].map((value, index) => (
                     <td key={index} className="whitespace-nowrap px-1.5 text-center font-semibold text-navy">{value}</td>
                   ))}
                 </tr>
@@ -428,9 +445,9 @@ function Reports({ desk }: { desk: Desk }) {
     const days = (data?.days ?? []).filter((day) => day.employee_id === employee.id);
     const godown = desk.godowns.find((entry) => entry.id === employee.branch_id);
     const { summary } = summarisePeriod(dates, days, (data?.leaves ?? []).filter((leave) => leave.employee_id === employee.id), desk.today,
-      { joined: employee.joined_on, weeklyOff: godown?.weekly_off ?? null });
+      { joined: employee.joined_on, rulesFor: rulesLookup(desk.versions, employee.branch_id), holidays: holidayDates(desk.holidays, employee.branch_id) });
     const photos = days.reduce((sum, day) => {
-      const schedule = scheduleFor(day, godown, data?.photos ?? [], now);
+      const schedule = scheduleFor(day, desk.versions, data?.photos ?? [], now);
       return { required: sum.required + schedule.required, done: sum.done + schedule.done, late: sum.late + schedule.late, missed: sum.missed + schedule.missed };
     }, { required: 0, done: 0, late: 0, missed: 0 });
     return { employee, godown, summary, photos };
@@ -441,6 +458,7 @@ function Reports({ desk }: { desk: Desk }) {
     employees: staff, days: (data?.days ?? []).filter((day) => staff.some((employee) => employee.id === day.employee_id)),
     presence: (data?.photos ?? []).filter((photo) => ids.has(photo.branch_id)),
     leaves: (data?.leaves ?? []).filter((leave) => staff.some((employee) => employee.id === leave.employee_id)),
+    rules: desk.versions, holidays: desk.holidays,
   });
   const exportExcel = () => downloadXlsx(`attendance-${from}-to-${to}`, workbook());
   const exportCsv = () => downloadCSV(`attendance-summary-${from}-to-${to}.csv`, SUMMARY_HEADER,
@@ -463,14 +481,14 @@ function Reports({ desk }: { desk: Desk }) {
         <button type="button" disabled={!data} onClick={exportExcel} className="inline-flex h-9 items-center gap-1.5 rounded-md bg-navy px-3 text-sm font-semibold text-white disabled:opacity-50"><FileSpreadsheet className="h-4 w-4" /> Download Excel</button>
         <button type="button" disabled={!data} onClick={exportCsv} className="inline-flex h-9 items-center gap-1.5 rounded-md border border-border px-3 text-sm font-semibold text-navy disabled:opacity-50"><Download className="h-4 w-4" /> CSV</button>
       </div>
-      <p className="mb-3 text-xs text-slate">The Excel file has these sheets: Dashboard, Staff (details and totals), Daily attendance (check-in, check-out, late, early, worked), Presence photos, Register per godown, Leave history and Rules.</p>
+      <p className="mb-3 text-xs text-slate">The Excel file has these sheets: Dashboard, Staff (details and totals), Daily attendance (check-in, check-out, late, early, worked), Presence photos, Register per godown, Leave history and Rules (each godown's rules and holidays over the period).</p>
       {busy || !data ? <p className="flex items-center gap-2 text-sm text-slate"><RefreshCw className="h-4 w-4 animate-spin" /> Loading…</p> : rows.length === 0 ? <p className="text-sm text-slate">No employees.</p> : (
         <div className="overflow-x-auto">
           <table className="w-full min-w-[900px] text-sm">
             <thead><tr className="border-b border-border text-left text-xs uppercase tracking-wider text-slate">
-              <th className="py-2 pr-3">Employee</th><th className="py-2 pr-3">Godown</th><th className="py-2 pr-3 text-right">Present</th><th className="py-2 pr-3 text-right">Late days</th>
+              <th className="py-2 pr-3">Employee</th><th className="py-2 pr-3">Godown</th><th className="py-2 pr-3 text-right">Present</th><th className="py-2 pr-3 text-right">Half days</th><th className="py-2 pr-3 text-right">Late days</th>
               <th className="py-2 pr-3 text-right">Total late</th><th className="py-2 pr-3 text-right">Left early</th><th className="py-2 pr-3 text-right">Worked</th>
-              <th className="py-2 pr-3 text-right">Leave</th><th className="py-2 pr-3 text-right">Absent</th><th className="py-2 text-right">Photos missed</th>
+              <th className="py-2 pr-3 text-right">Leave</th><th className="py-2 pr-3 text-right">Holidays</th><th className="py-2 pr-3 text-right">Absent</th><th className="py-2 text-right">Photos missed</th>
             </tr></thead>
             <tbody>
               {rows.map(({ employee, godown, summary: s, photos }) => (
@@ -478,11 +496,13 @@ function Reports({ desk }: { desk: Desk }) {
                   <td className="py-2 pr-3"><p className="font-semibold text-charcoal">{employee.name}</p><p className="text-xs text-slate">{employee.phone}</p></td>
                   <td className="py-2 pr-3 text-xs">{godown?.name ?? employee.branch_id}</td>
                   <td className="py-2 pr-3 text-right font-semibold">{s.present}</td>
+                  <td className="py-2 pr-3 text-right">{s.halfDay}</td>
                   <td className="py-2 pr-3 text-right">{s.late}</td>
                   <td className={cn("py-2 pr-3 text-right", s.lateMinutes > 0 && "font-semibold text-amber-800")}>{formatDuration(s.lateMinutes)}</td>
                   <td className="py-2 pr-3 text-right">{s.earlyDays ? `${s.earlyDays} · ${formatDuration(s.earlyMinutes)}` : "—"}</td>
                   <td className="py-2 pr-3 text-right">{formatDuration(s.workedMinutes)}</td>
                   <td className="py-2 pr-3 text-right">{s.leave}</td>
+                  <td className="py-2 pr-3 text-right">{s.holiday}</td>
                   <td className="py-2 pr-3 text-right">{s.absent}</td>
                   <td className={cn("py-2 text-right", photos.missed > 0 && "font-semibold text-red-700")}>{photos.required ? `${photos.missed} of ${photos.required}` : "—"}</td>
                 </tr>
@@ -650,105 +670,6 @@ function AddEmployeeForm({ godowns, onAdded }: { godowns: Godown[]; onAdded: () 
   );
 }
 
-const PRESENCE_OPTIONS = [0, 60, 90, 120, 180, 240];
-
-function GodownSettings({ godown, onSaved }: { godown: Godown; onSaved: () => Promise<void> }) {
-  const [lat, setLat] = useState(godown.latitude?.toString() ?? "");
-  const [lng, setLng] = useState(godown.longitude?.toString() ?? "");
-  const [paste, setPaste] = useState("");
-  const [radius, setRadius] = useState(String(godown.attendance_radius_m));
-  const [shift, setShift] = useState(godown.shift_start.slice(0, 5));
-  const [shiftEnd, setShiftEnd] = useState(godown.shift_end.slice(0, 5));
-  const [grace, setGrace] = useState(String(godown.late_grace_min));
-  const [weeklyOff, setWeeklyOff] = useState(godown.weekly_off === null ? "none" : String(godown.weekly_off));
-  const [presence, setPresence] = useState(String(godown.presence_interval_min));
-  const [busy, setBusy] = useState(false);
-  const [locating, setLocating] = useState(false);
-
-  const applyPasted = (text: string) => {
-    setPaste(text);
-    const point = parseCoordinates(text);
-    if (point) { setLat(point.lat.toFixed(6)); setLng(point.lng.toFixed(6)); }
-  };
-  const takeDeviceLocation = async () => {
-    setLocating(true);
-    try {
-      const fix = await getBestFix();
-      setLat(fix.lat.toFixed(6)); setLng(fix.lng.toFixed(6));
-      toast.success(`Location taken (±${fix.accuracyM} m)`, { description: "Save to use it." });
-    } catch (cause) {
-      toast.error("Location not found", { description: cause instanceof Error ? cause.message : undefined });
-    } finally {
-      setLocating(false);
-    }
-  };
-  const save = async () => {
-    const latitude = lat.trim() === "" ? null : Number(lat), longitude = lng.trim() === "" ? null : Number(lng);
-    if ((latitude === null) !== (longitude === null) || (latitude !== null && (!Number.isFinite(latitude) || Math.abs(latitude) > 90)) || (longitude !== null && (!Number.isFinite(longitude) || Math.abs(longitude) > 180))) {
-      toast.error("Enter both latitude and longitude"); return;
-    }
-    const radiusM = Math.round(Number(radius)), graceMin = Math.round(Number(grace));
-    if (!(radiusM >= 25 && radiusM <= 2000)) { toast.error("Radius must be 25 to 2000 metres"); return; }
-    if (!(graceMin >= 0 && graceMin <= 240)) { toast.error("Grace must be 0 to 240 minutes"); return; }
-    if (!/^\d{2}:\d{2}$/.test(shift) || !/^\d{2}:\d{2}$/.test(shiftEnd)) { toast.error("Enter the shift start and end times"); return; }
-    if (shiftEnd <= shift) { toast.error("The shift must end after it starts"); return; }
-    setBusy(true);
-    const { error } = await supabase.from("branches").update({
-      latitude, longitude, attendance_radius_m: radiusM, shift_start: shift, shift_end: shiftEnd, late_grace_min: graceMin,
-      weekly_off: weeklyOff === "none" ? null : Number(weeklyOff), presence_interval_min: Number(presence), updated_at: new Date().toISOString(),
-    }).eq("id", godown.id);
-    setBusy(false);
-    if (error) { toast.error("Could not save", { description: error.message }); return; }
-    toast.success(`${godown.name} attendance settings saved`);
-    await onSaved();
-  };
-
-  return (
-    <Panel title={godown.name}>
-      <div className="grid gap-4 lg:grid-cols-2">
-        <div className="space-y-3">
-          <label className="block"><span className="mb-1 block text-xs font-semibold text-charcoal">Paste a Google Maps link or “latitude, longitude”</span>
-            <Input value={paste} onChange={(event) => applyPasted(event.target.value)} placeholder="https://maps.google.com/…@14.31,76.65 or 14.3123, 76.6512" /></label>
-          <div className="grid grid-cols-2 gap-2">
-            <label className="block"><span className="mb-1 block text-xs font-semibold text-charcoal">Latitude</span><Input value={lat} onChange={(event) => setLat(event.target.value)} inputMode="decimal" /></label>
-            <label className="block"><span className="mb-1 block text-xs font-semibold text-charcoal">Longitude</span><Input value={lng} onChange={(event) => setLng(event.target.value)} inputMode="decimal" /></label>
-          </div>
-          <div className="flex flex-wrap items-center gap-3 text-sm">
-            <button type="button" disabled={locating} onClick={() => void takeDeviceLocation()} className="inline-flex items-center gap-1.5 font-semibold text-navy hover:underline disabled:opacity-60">
-              <Crosshair className="h-4 w-4" /> {locating ? "Finding location…" : "Use this device's location"}
-            </button>
-            {lat && lng && Number.isFinite(Number(lat)) && Number.isFinite(Number(lng)) && (
-              <a href={mapLink(Number(lat), Number(lng))} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-semibold text-navy hover:underline"><MapPin className="h-4 w-4" /> Check on Google Maps</a>
-            )}
-          </div>
-          <p className="text-xs text-slate">Use this device's location only while standing inside the godown.</p>
-          <label className="block"><span className="mb-1 block text-xs font-semibold text-charcoal">Radius (m): staff can check in and out only within it</span><Input type="number" min={25} max={2000} value={radius} onChange={(event) => setRadius(event.target.value)} /></label>
-        </div>
-        <div className="space-y-3">
-          <div className="grid grid-cols-3 gap-2">
-            <label className="block"><span className="mb-1 block text-xs font-semibold text-charcoal">Shift starts</span><Input type="time" value={shift} onChange={(event) => setShift(event.target.value)} /></label>
-            <label className="block"><span className="mb-1 block text-xs font-semibold text-charcoal">Shift ends</span><Input type="time" value={shiftEnd} onChange={(event) => setShiftEnd(event.target.value)} /></label>
-            <label className="block"><span className="mb-1 block text-xs font-semibold text-charcoal">Grace (min)</span><Input type="number" min={0} max={240} value={grace} onChange={(event) => setGrace(event.target.value)} /></label>
-          </div>
-          <label className="block"><span className="mb-1 block text-xs font-semibold text-charcoal">Weekly off (not counted as absent)</span>
-            <select value={weeklyOff} onChange={(event) => setWeeklyOff(event.target.value)} className="h-10 w-full rounded-md border border-input bg-white px-2 text-sm">
-              {WEEKDAYS.map((day, index) => <option key={day} value={String(index)}>{day}</option>)}
-              <option value="none">No weekly off (open every day)</option>
-            </select></label>
-          <label className="block"><span className="mb-1 block text-xs font-semibold text-charcoal">Presence photo (live geotagged selfie while checked in)</span>
-            <select value={presence} onChange={(event) => setPresence(event.target.value)} className="h-10 w-full rounded-md border border-input bg-white px-2 text-sm">
-              {PRESENCE_OPTIONS.map((minutes) => <option key={minutes} value={String(minutes)}>{minutes ? `Every ${formatDuration(minutes)}` : "Off"}</option>)}
-            </select></label>
-          <p className="text-xs text-slate">{`Late = check-in after ${shift || "?"} + ${grace || "0"} min, counted from ${shift || "?"}. Left early = check-out before ${shiftEnd || "?"}.`}</p>
-          <button type="button" disabled={busy} onClick={() => void save()} className="inline-flex items-center gap-1.5 rounded-md bg-navy px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">
-            <Save className="h-4 w-4" /> {busy ? "Saving…" : "Save"}
-          </button>
-        </div>
-      </div>
-    </Panel>
-  );
-}
-
 function GodownDevices({ godown, devices, onChange }: { godown: Godown; devices: Device[]; onChange: () => Promise<void> }) {
   const [label, setLabel] = useState("");
   const [code, setCode] = useState<{ code: string; expiresAt: string } | null>(null);
@@ -820,6 +741,8 @@ function DayDialog({ day, desk, employee, godown, onClose }: {
 }) {
   const urls = day ? desk.selfies[day.id] : undefined;
   const { setSelfies } = desk;
+  const dayRules = day ? rulesLookup(desk.versions, day.branch_id)(day.work_date, day) : undefined;
+  const countedAs = day && day.status === "present" ? workedMark(day.work_date, day, dayRules, desk.today) : "";
   const [failed, setFailed] = useState(false);
   // Days outside today have no links yet: fetch this one.
   useEffect(() => {
@@ -861,6 +784,12 @@ function DayDialog({ day, desk, employee, godown, onClose }: {
                 ))}
             </div>
             {day.check_out_at && <p className="text-sm text-slate">{`Worked ${formatDuration(workedMinutes(day.check_in_at, day.check_out_at))}`}</p>}
+            {dayRules && (
+              <p className="text-xs text-slate">
+                <span>{`Rules that day: shift ${clockTime(dayRules.shift_start)} – ${clockTime(dayRules.shift_end)} · grace ${dayRules.late_grace_min} min`}</span>
+                {countedAs && <>{" · "}<span>{`Counted as: ${MARK_WORDS[countedAs]}`}</span></>}
+              </p>
+            )}
             <div className="border-t border-border pt-3">
               <h3 className="mb-2 flex items-center gap-2 text-sm font-bold text-navy"><Camera className="h-4 w-4" /> Presence photos</h3>
               {!urls ? <p className="text-xs text-slate">{failed ? waiting : "Loading…"}</p> : urls.presence.length === 0 ? <p className="text-xs text-slate">No presence photos.</p> : (
