@@ -3,7 +3,7 @@ import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { CheckCircle2, PackageX, RotateCcw, TriangleAlert } from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
-import { DataTable, Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
+import { DataTable, FilterNote, Panel, scrollToSection, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { adminNav } from "@/lib/panel-nav";
 import { inr } from "@/lib/data";
 import { useApp } from "@/lib/store";
@@ -33,6 +33,12 @@ function AdminReturns() {
   const [status, setStatus] = useState("All");
   const [page, setPage] = useState(1);
   const [view, setView] = useState<(typeof returns)[number] | null>(null);
+  const openList = (next: string) => {
+    setSearch("");
+    setStatus(next);
+    setPage(1);
+    scrollToSection("return-requests");
+  };
 
   const stats = useMemo(() => {
     const requested = returns.filter((r) => r.status === "Requested").length;
@@ -59,14 +65,15 @@ function AdminReturns() {
   return (
     <PanelLayout items={adminNav} tone="admin" title="Returns" subtitle="Return requests and refund workflow">
       <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
-        <StatCard label="Total Returns" value={String(stats.total)} icon={RotateCcw} />
-        <StatCard label="Requested" value={String(stats.requested)} icon={TriangleAlert} highlight />
-        <StatCard label="Approved" value={String(stats.approved)} icon={CheckCircle2} />
-        <StatCard label="Completed" value={String(stats.completed)} icon={PackageX} />
-        <StatCard label="Total Value" value={inr(stats.amount)} icon={RotateCcw} />
+        <StatCard onClick={() => openList("All")} label="Total Returns" value={String(stats.total)} icon={RotateCcw} />
+        <StatCard onClick={() => openList("Requested")} label="Requested" value={String(stats.requested)} icon={TriangleAlert} highlight />
+        <StatCard onClick={() => openList("Approved")} label="Approved" value={String(stats.approved)} icon={CheckCircle2} />
+        <StatCard onClick={() => openList("Completed")} label="Completed" value={String(stats.completed)} icon={PackageX} />
+        <StatCard onClick={() => openList("All")} label="Total Value" value={inr(stats.amount)} icon={RotateCcw} />
       </div>
 
       <Panel
+        id="return-requests"
         title="Return Requests"
         action={
           <div className="flex flex-wrap items-center gap-2">
@@ -85,6 +92,7 @@ function AdminReturns() {
           </div>
         }
       >
+        {status !== "All" && <FilterNote label={status} onClear={() => { setStatus("All"); setPage(1); }} />}
         <DataTable
           columns={["Return", "Order", "Customer", "Product", "Vendor", "Amount", "Status", "Refund", "Actions"]}
           rows={pageItems.map((r) => [

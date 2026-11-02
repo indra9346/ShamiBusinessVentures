@@ -2,7 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { Star } from "lucide-react";
 import { toast } from "sonner";
 import { PanelLayout } from "@/components/panel/PanelLayout";
-import { Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
+import { FilterNote, Panel, scrollToSection, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { accountNav } from "@/lib/account-nav";
 import { useApp } from "@/lib/store";
 import { supabase } from "@/integrations/supabase/client";
@@ -29,21 +29,28 @@ function AccountReviews() {
     ? reviews.filter((r) => !deletedIds.includes(r.id) && (r.customerId === user.id || (!user.id && (r.customerId === user.email || r.customerId === user.phone))))
     : [];
   const avg = mine.length ? Math.round((mine.reduce((s, r) => s + r.rating, 0) / mine.length) * 10) / 10 : 0;
+  const [fiveStarOnly, setFiveStarOnly] = useState(false);
+  const shown = fiveStarOnly ? mine.filter((r) => r.rating === 5) : mine;
+  const openList = (five: boolean) => {
+    setFiveStarOnly(five);
+    scrollToSection("my-reviews");
+  };
 
   return (
     <PanelLayout items={accountNav} tone="customer" title="Reviews & Ratings" subtitle="Feedback you have shared">
       <div className="grid gap-4 sm:grid-cols-3">
-        <StatCard label="Reviews Written" value={String(mine.length)} icon={Star} highlight />
-        <StatCard label="Average Rating Given" value={mine.length ? `${avg} / 5` : "—"} icon={Star} />
-        <StatCard label="5-Star Reviews" value={String(mine.filter((r) => r.rating === 5).length)} icon={Star} />
+        <StatCard onClick={() => openList(false)} label="Reviews Written" value={String(mine.length)} icon={Star} highlight />
+        <StatCard onClick={() => openList(false)} label="Average Rating Given" value={mine.length ? `${avg} / 5` : "—"} icon={Star} />
+        <StatCard onClick={() => openList(true)} label="5-Star Reviews" value={String(mine.filter((r) => r.rating === 5).length)} icon={Star} />
       </div>
 
-      <Panel title="My Reviews" className="mt-6">
-        {mine.length === 0 ? (
-          <p className="py-8 text-center text-sm text-slate">You haven’t written any reviews yet.</p>
+      <Panel id="my-reviews" title="My Reviews" className="mt-6">
+        {fiveStarOnly && <FilterNote label="5-Star Reviews" onClear={() => setFiveStarOnly(false)} />}
+        {shown.length === 0 ? (
+          <p className="py-8 text-center text-sm text-slate">{mine.length === 0 ? "You haven’t written any reviews yet." : "No reviews match your filters."}</p>
         ) : (
           <div className="space-y-3">
-            {mine.map((r) => (
+            {shown.map((r) => (
               <div key={r.id} className="rounded-lg border border-border p-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <Link

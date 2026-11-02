@@ -4,7 +4,7 @@ import { IndianRupee, Percent, Wallet, WalletCards } from "lucide-react";
 import { toast } from "sonner";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { PanelLayout } from "@/components/panel/PanelLayout";
-import { DataTable, Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
+import { DataTable, FilterNote, Panel, scrollToSection, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { vendorNav } from "@/lib/panel-nav";
 import { compactInr, getOrderItemTotal, inr } from "@/lib/data";
 import { useApp, useVendorScope } from "@/lib/store";
@@ -38,6 +38,12 @@ function VendorEarnings() {
   const [reservedPayouts, setReservedPayouts] = useState<number | null>(null);
   const [payoutRefreshKey, setPayoutRefreshKey] = useState(0);
   const [submitting, setSubmitting] = useState(false);
+  // The revenue cards open Transactions with just the paid orders they add up.
+  const [paidOnly, setPaidOnly] = useState(false);
+  const openPaid = () => {
+    setPaidOnly(true);
+    scrollToSection("transactions");
+  };
 
   useEffect(() => {
     if (!vendorId) { setReservedPayouts(null); return; }
@@ -110,10 +116,10 @@ function VendorEarnings() {
   return (
     <PanelLayout items={vendorNav} tone="vendor" title="Earnings" subtitle="Revenue, commission and settlement summary">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Paid Revenue" value={inr(revenue)} icon={IndianRupee} highlight />
-        <StatCard label="Platform Commission" value={`${inr(commissionAmt)} (${commission}%)`} icon={Percent} />
-        <StatCard label="Net Revenue" value={inr(netRevenue)} icon={WalletCards} />
-        <StatCard label="Available Earnings" value={availableEarnings === null ? "Loading…" : inr(availableEarnings)} icon={Wallet} />
+        <StatCard onClick={openPaid} label="Paid Revenue" value={inr(revenue)} icon={IndianRupee} highlight />
+        <StatCard onClick={openPaid} label="Platform Commission" value={`${inr(commissionAmt)} (${commission}%)`} icon={Percent} />
+        <StatCard onClick={openPaid} label="Net Revenue" value={inr(netRevenue)} icon={WalletCards} />
+        <StatCard link={{ to: "/vendor/payouts" }} label="Available Earnings" value={availableEarnings === null ? "Loading…" : inr(availableEarnings)} icon={Wallet} />
       </div>
       <p className="mt-3 text-xs text-slate">Paid revenue uses each order line’s captured price. Available earnings include only paid, delivered orders after commission and payout reservations.</p>
 
@@ -138,6 +144,7 @@ function VendorEarnings() {
       </Panel>
 
       <Panel
+        id="transactions"
         title="Transactions"
         className="mt-6"
         action={
@@ -146,9 +153,10 @@ function VendorEarnings() {
           </Button>
         }
       >
+        {paidOnly && <FilterNote label="Paid Revenue" onClear={() => setPaidOnly(false)} />}
         <DataTable
           columns={["Order", "Date", "Customer", "Amount", "Payment", "Status"]}
-          rows={vendorOrders.map((o) => {
+          rows={(paidOnly ? vendorOrders.filter((o) => o.payment === "Paid" && o.status !== "Cancelled") : vendorOrders).map((o) => {
             const amt = o.items.filter((i) => i.vendorId === vendorId).reduce((t, i) => t + getOrderItemTotal(i), 0);
             return [
               <span className="font-semibold text-navy">{o.id}</span>,

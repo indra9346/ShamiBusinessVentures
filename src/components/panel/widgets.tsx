@@ -64,17 +64,35 @@ export function StatCard({
   return <div className={classes}>{body}</div>;
 }
 
+/** A data card opening data further down this page: the section needs an id. Waits a frame so a new filter has drawn. */
+export const scrollToSection = (id: string) =>
+  window.requestAnimationFrame(() => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" }));
+
+/** What a data card narrowed a list to, with the way back to everything. */
+export function FilterNote({ label, onClear }: { label: string; onClear: () => void }) {
+  return (
+    <p className="mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md bg-ivory px-3 py-2 text-xs text-navy">
+      <span>Showing:</span>
+      <span className="font-semibold">{label}</span>
+      <button type="button" onClick={onClear} className="font-semibold text-gold hover:underline">Show all</button>
+    </p>
+  );
+}
+
 /** A dashboard panel's link to the page with all of its data. */
 export function ViewAll(props: LinkProps) {
   return <Link {...props} className="text-xs font-semibold whitespace-nowrap text-gold hover:underline">View all</Link>;
 }
 
 export function Panel({
+  id,
   title,
   action,
   children,
   className,
 }: {
+  /** Where a data card scrolls to: the panel's content, so on a phone its filters don't push the list off the screen. */
+  id?: string;
   title?: string;
   action?: ReactNode;
   children: ReactNode;
@@ -88,7 +106,7 @@ export function Panel({
           {action && <div className="flex flex-wrap items-center gap-2">{action}</div>}
         </header>
       )}
-      <div className="p-4 sm:p-5">{children}</div>
+      <div id={id} className={cn("p-4 sm:p-5", id && "scroll-mt-36")}>{children}</div>
     </section>
   );
 }

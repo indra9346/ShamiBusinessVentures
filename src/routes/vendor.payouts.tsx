@@ -3,9 +3,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CreditCard, IndianRupee, Wallet } from "lucide-react";
 import { toast } from "sonner";
 import { PanelLayout } from "@/components/panel/PanelLayout";
-import { DataTable, Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
+import { DataTable, FilterNote, Panel, scrollToSection, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { vendorNav } from "@/lib/panel-nav";
 import { inr } from "@/lib/data";
+import { matchesPayoutStatus, OPEN_PAYOUTS } from "@/lib/panel-filters";
 import { useVendorScope } from "@/lib/store";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -24,6 +25,8 @@ function VendorPayouts() {
   const [open, setOpen] = useState(false);
   const [amount, setAmount] = useState("");
   const [busy, setBusy] = useState(false);
+  const [filter, setFilter] = useState("All");
+  const openList = (next: string) => { setFilter(next); scrollToSection("payout-history"); };
   const loadRevision = useRef(0);
   const load = useCallback(async () => {
     if (!vendorId) { setRows([]); return; }
@@ -60,9 +63,10 @@ function VendorPayouts() {
   const totals = useMemo(()=>({total:rows.reduce((s,p)=>s+p.amount,0),paid:rows.filter(p=>p.status==="Paid").reduce((s,p)=>s+p.amount,0),pending:rows.filter(p=>p.status!=="Paid"&&p.status!=="Rejected").reduce((s,p)=>s+p.amount,0)}),[rows]);
   const request = async () => { const value=Number(amount); if(!Number.isFinite(value)||value<=0){toast.error("Enter a valid payout amount");return;} setBusy(true); const {error}=await supabase.rpc("request_vendor_payout",{_amount:value,_method:"NEFT"}); setBusy(false); if(error){toast.error(error.message);return;} toast.success("Payout request submitted for review");setAmount("");setOpen(false);await load(); };
   return <PanelLayout items={vendorNav} tone="vendor" title="Payouts" subtitle="Your settlement history and payout requests">
-    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><StatCard label="Total Requested" value={inr(totals.total)} icon={Wallet} highlight/><StatCard label="Paid Out" value={inr(totals.paid)} icon={IndianRupee}/><StatCard label="Pending / Processing" value={inr(totals.pending)} icon={CreditCard}/><StatCard label="Payout Records" value={String(rows.length)} icon={CreditCard}/></div>
-    <Panel title="Payout History" className="mt-6" action={<Button size="sm" className="bg-navy text-white" onClick={()=>setOpen(true)}>Request Payout</Button>}>
-      <DataTable columns={["Payout ID","Date","Amount","Method","Status","Actions"]} rows={rows.map(p=>[<span className="font-semibold text-navy">{p.id.slice(0,8)}</span>,new Date(p.requested_at).toLocaleDateString("en-IN"),inr(p.amount),p.method,<StatusBadge status={p.status}/>,<Button variant="outline" size="sm" onClick={()=>setViewing(p)}>View</Button>])}/>
+    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><StatCard onClick={()=>openList("All")} label="Total Requested" value={inr(totals.total)} icon={Wallet} highlight/><StatCard onClick={()=>openList("Paid")} label="Paid Out" value={inr(totals.paid)} icon={IndianRupee}/><StatCard onClick={()=>openList(OPEN_PAYOUTS)} label="Pending / Processing" value={inr(totals.pending)} icon={CreditCard}/><StatCard onClick={()=>openList("All")} label="Payout Records" value={String(rows.length)} icon={CreditCard}/></div>
+    <Panel id="payout-history" title="Payout History" className="mt-6" action={<Button size="sm" className="bg-navy text-white" onClick={()=>setOpen(true)}>Request Payout</Button>}>
+      {filter!=="All"&&<FilterNote label={filter==="Paid"?"Paid Out":"Pending / Processing"} onClear={()=>setFilter("All")}/>}
+      <DataTable columns={["Payout ID","Date","Amount","Method","Status","Actions"]} rows={rows.filter(p=>matchesPayoutStatus(p.status,filter)).map(p=>[<span className="font-semibold text-navy">{p.id.slice(0,8)}</span>,new Date(p.requested_at).toLocaleDateString("en-IN"),inr(p.amount),p.method,<StatusBadge status={p.status}/>,<Button variant="outline" size="sm" onClick={()=>setViewing(p)}>View</Button>])}/>
       {!rows.length&&<p className="py-4 text-sm text-slate">No payout requests yet. Available settled earnings are checked securely when you submit a request.</p>}
     </Panel>
     <Dialog open={open} onOpenChange={setOpen}><DialogContent><DialogHeader><DialogTitle>Request a payout</DialogTitle></DialogHeader><p className="text-sm text-slate">Only paid orders marked delivered are eligible. The server checks your available balance and commission before accepting the request.</p><label htmlFor="payout-amount">Amount (₹)</label><Input id="payout-amount" type="number" min="1" step="0.01" value={amount} onChange={e=>setAmount(e.target.value)}/><div className="flex justify-end gap-2"><Button variant="outline" onClick={()=>setOpen(false)}>Cancel</Button><Button className="bg-navy text-white" disabled={busy} onClick={()=>void request()}>Submit request</Button></div></DialogContent></Dialog>

@@ -3,8 +3,9 @@ import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { BadgePercent, CheckCircle2, Clock, Plus, Trash2, Copy } from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
-import { DataTable, Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
+import { DataTable, FilterNote, Panel, scrollToSection, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { adminNav } from "@/lib/panel-nav";
+import { matchesCouponView } from "@/lib/panel-filters";
 import { useApp, type Coupon } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -36,6 +37,13 @@ function AdminCoupons() {
   const { coupons, addCoupon, deleteCoupon } = useApp();
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState(emptyForm);
+  // The cards open the list below with just the coupons they count; redemptions start with the most used.
+  const [view, setView] = useState("all");
+  const shown = coupons.filter((c) => matchesCouponView(c, view)).sort((a, b) => (view === "used" ? b.used - a.used : 0));
+  const openList = (next: string) => {
+    setView(next);
+    scrollToSection("all-coupons");
+  };
 
   const stats = useMemo(() => {
     const active = coupons.filter((c) => c.status === "Active").length;
@@ -85,13 +93,14 @@ function AdminCoupons() {
   return (
     <PanelLayout items={adminNav} tone="admin" title="Coupons" subtitle="Discounts and promotional codes">
       <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Total Coupons" value={String(stats.total)} icon={BadgePercent} />
-        <StatCard label="Active" value={String(stats.active)} icon={CheckCircle2} highlight />
-        <StatCard label="Scheduled" value={String(stats.scheduled)} icon={Clock} />
-        <StatCard label="Total Redemptions" value={String(stats.used)} icon={BadgePercent} />
+        <StatCard onClick={() => openList("all")} label="Total Coupons" value={String(stats.total)} icon={BadgePercent} />
+        <StatCard onClick={() => openList("Active")} label="Active" value={String(stats.active)} icon={CheckCircle2} highlight />
+        <StatCard onClick={() => openList("Scheduled")} label="Scheduled" value={String(stats.scheduled)} icon={Clock} />
+        <StatCard onClick={() => openList("used")} label="Total Redemptions" value={String(stats.used)} icon={BadgePercent} />
       </div>
 
       <Panel
+        id="all-coupons"
         title="All Coupons"
         action={
           <Dialog open={open} onOpenChange={setOpen}>
@@ -127,9 +136,10 @@ function AdminCoupons() {
           </Dialog>
         }
       >
+        {view !== "all" && <FilterNote label={view === "used" ? "Total Redemptions" : view} onClear={() => setView("all")} />}
         <DataTable
           columns={["Code", "Type", "Value", "Min/Max", "Validity", "Usage", "Status", "Actions"]}
-          rows={coupons.map((c) => [
+          rows={shown.map((c) => [
             <div className="flex items-center gap-2">
               <span className="font-semibold text-navy">{c.code}</span>
               {c.source === "zoho" && <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">Zoho</span>}

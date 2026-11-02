@@ -20,6 +20,7 @@ import {
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { DataTable, Panel, StatCard } from "@/components/panel/widgets";
 import { adminNav } from "@/lib/panel-nav";
+import { APPROVED_VENDORS } from "@/lib/panel-filters";
 import { useApp } from "@/lib/store";
 import { compactInr, getOrderItemTotal, getOrderPaymentsReceived, getVendorPaidSales, inr } from "@/lib/data";
 import { Button } from "@/components/ui/button";
@@ -82,7 +83,7 @@ function AdminReports() {
   const [customEnd, setCustomEnd] = useState("");
   const [reportType, setReportType] = useState("Revenue");
 
-  const filteredOrders = useMemo(() => {
+  const { filteredOrders, rangeSearch } = useMemo(() => {
     const now = new Date();
     const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const end = new Date(start);
@@ -104,10 +105,14 @@ function AdminReports() {
         : range === "Custom" && customEnd
           ? end.getTime()
           : now.getTime();
-    return orders.filter((order) => {
-      const date = new Date(order.createdAt ?? order.date).getTime();
-      return Number.isFinite(date) && date >= lower && date <= upper;
-    });
+    return {
+      filteredOrders: orders.filter((order) => {
+        const date = new Date(order.createdAt ?? order.date).getTime();
+        return Number.isFinite(date) && date >= lower && date <= upper;
+      }),
+      // A card's order list shows the same date range as the card.
+      rangeSearch: Number.isFinite(lower) && Number.isFinite(upper) ? { from: new Date(lower).toISOString(), to: new Date(upper).toISOString() } : {},
+    };
   }, [orders, range, customStart, customEnd]);
 
   const reportSeries = useMemo(() => {
@@ -314,20 +319,22 @@ function AdminReports() {
 
       <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
+          link={{ to: "/admin/orders", search: rangeSearch }}
           label="Revenue Collected"
           value={inr(stats.revenue)}
           icon={IndianRupee}
           description="Recorded payments; cancelled and refunded orders excluded"
           highlight
         />
-        <StatCard label="GST Collected" value={inr(stats.gst)} icon={FileBarChart} description="Estimated from recorded payments" />
+        <StatCard link={{ to: "/admin/orders", search: rangeSearch }} label="GST Collected" value={inr(stats.gst)} icon={FileBarChart} description="Estimated from recorded payments" />
         <StatCard
+          link={{ to: "/admin/orders", search: rangeSearch }}
           label="Average Order Value"
           value={inr(stats.aov)}
           icon={ShoppingCart}
           description="Order value per non-cancelled order"
         />
-        <StatCard label="Units Shipped" value={String(stats.units)} icon={Package} description="Dispatched or later vendor shipments" />
+        <StatCard link={{ to: "/admin/orders", search: rangeSearch }} label="Units Shipped" value={String(stats.units)} icon={Package} description="Dispatched or later vendor shipments" />
       </div>
 
       <div className="mb-6 grid gap-6 xl:grid-cols-[1.6fr_1fr]">
@@ -463,15 +470,16 @@ function AdminReports() {
 
       <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
+          link={{ to: "/admin/vendors", search: { status: APPROVED_VENDORS } }}
           label="Active Vendors"
           value={String(
             vendors.filter((v) => v.status === "active" || v.status === "approved").length,
           )}
           icon={Users}
         />
-        <StatCard label="Registered Customers" value={String(customers.length)} icon={Users} />
-        <StatCard label="Catalogue Size" value={String(products.length)} icon={Package} />
-        <StatCard label="Completed Orders" value={String(stats.count)} icon={ShoppingCart} />
+        <StatCard link={{ to: "/admin/customers" }} label="Registered Customers" value={String(customers.length)} icon={Users} />
+        <StatCard link={{ to: "/admin/products" }} label="Catalogue Size" value={String(products.length)} icon={Package} />
+        <StatCard link={{ to: "/admin/orders", search: rangeSearch }} label="Completed Orders" value={String(stats.count)} icon={ShoppingCart} />
       </div>
     </PanelLayout>
   );

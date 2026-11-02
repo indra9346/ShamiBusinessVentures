@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { PanelLayout } from "@/components/panel/PanelLayout";
-import { DataTable, Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
+import { DataTable, FilterNote, Panel, scrollToSection, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { Pager } from "@/components/panel/pager";
 import { adminNav } from "@/lib/panel-nav";
 import { canCancelOrder, inr, orderStages, type OrderStatus } from "@/lib/data";
@@ -80,6 +80,7 @@ function AdminOrders() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const { orders, customers, products, placeOrder, updateOrderStatus } = useApp();
   const routeSearch = Route.useSearch();
+  const navigate = Route.useNavigate();
   // The router keeps values validateSearch dropped, so only a clean range is used.
   const range = orderListSearch(routeSearch);
   const [q, setQ] = useState("");
@@ -89,6 +90,19 @@ function AdminOrders() {
   const [page, setPage] = useState(1);
   const [newOrderOpen, setNewOrderOpen] = useState(false);
   const [zohoSync, setZohoSync] = useState<"idle" | "pulling" | "linking">("idle");
+  // The cards count every order, so they open the list below without any other filter or date range.
+  // resetScroll: the page stays here to scroll to the list.
+  const showOrders = (next: string) => {
+    setQ("");
+    setPayment("all");
+    setStatus(next);
+    setPage(1);
+    void navigate({ search: next === "all" ? {} : { status: next }, resetScroll: false });
+  };
+  const openList = (next: string) => {
+    showOrders(next);
+    scrollToSection("all-orders");
+  };
   // Pull order changes made in Zoho (void, confirm, shipped…) whenever the admin opens Orders.
   const pullZohoChanges = async (announce: boolean) => {
     if (STATIC_DATA_MODE) return;
@@ -356,13 +370,14 @@ function AdminOrders() {
     >
       <CustomersPayingNow compact />
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Total Orders" value={String(total)} icon={ShoppingCart} highlight />
-        <StatCard label="Pending" value={String(pending)} icon={PackageX} />
-        <StatCard label="Delivered" value={String(delivered)} icon={PackageCheck} />
-        <StatCard label="Revenue Collected" value={inr(revenue)} icon={IndianRupee} />
+        <StatCard onClick={() => openList("all")} label="Total Orders" value={String(total)} icon={ShoppingCart} highlight />
+        <StatCard onClick={() => openList(OPEN_ORDERS)} label="Pending" value={String(pending)} icon={PackageX} />
+        <StatCard onClick={() => openList("Delivered")} label="Delivered" value={String(delivered)} icon={PackageCheck} />
+        <StatCard link={{ to: "/admin/payments", search: { status: "Successful" } }} label="Revenue Collected" value={inr(revenue)} icon={IndianRupee} />
       </div>
 
       <Panel
+        id="all-orders"
         title="All Orders"
         className="mt-6"
         action={
@@ -470,6 +485,9 @@ function AdminOrders() {
             <span className="font-semibold">{new Date(range.from).toLocaleDateString("en-IN")} – {new Date(range.to).toLocaleDateString("en-IN")}</span>
             <Link to="/admin/orders" search={{}} onClick={() => { setStatus("all"); setPage(1); }} className="font-semibold text-gold hover:underline">Show all</Link>
           </p>
+        )}
+        {!range.from && status !== "all" && (
+          <FilterNote label={status === OPEN_ORDERS ? "All pending" : status} onClear={() => showOrders("all")} />
         )}
         <DataTable
           columns={[

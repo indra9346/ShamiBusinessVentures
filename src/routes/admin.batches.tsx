@@ -6,9 +6,10 @@ import {
   Phone, RefreshCw, Search, ShoppingCart, TrendingDown, TrendingUp, UserRound, Warehouse,
 } from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
-import { Panel, StatCard } from "@/components/panel/widgets";
+import { Panel, scrollToSection, StatCard } from "@/components/panel/widgets";
 import { adminNav } from "@/lib/panel-nav";
 import { inrPrecise } from "@/lib/data";
+import { matchesBatchStatus, type BatchStatus } from "@/lib/panel-filters";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { downloadXlsx } from "@/lib/xlsx";
 import { supabase } from "@/integrations/supabase/client";
@@ -58,14 +59,14 @@ function AdminBatches() {
       const merged: Search = { ...prev, ...next };
       for (const key of Object.keys(merged) as (keyof Search)[]) if (!merged[key]) delete merged[key];
       return merged;
-    }, replace });
+    }, replace, resetScroll: !replace });
   }, [navigate]);
   const [data, setData] = useState<BatchData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [receiveOpen, setReceiveOpen] = useState(false);
   const [editRow, setEditRow] = useState<BatchReportRow | null>(null);
-  const [status, setStatus] = useState<"all" | "stock" | "soldout">("all");
+  const [status, setStatus] = useState<BatchStatus>("all");
   const [productFilter, setProductFilter] = useState("");
 
   const load = useCallback(async () => {
@@ -174,26 +175,34 @@ function AdminBatches() {
 
 function BatchList({ report, data, search, go, status, setStatus, productFilter, setProductFilter }: {
   report: BatchReport; data: BatchData; search: Search; go: (next: Partial<Search>, replace?: boolean) => void;
-  status: "all" | "stock" | "soldout"; setStatus: (s: "all" | "stock" | "soldout") => void;
+  status: BatchStatus; setStatus: (s: BatchStatus) => void;
   productFilter: string; setProductFilter: (p: string) => void;
 }) {
   const [query, setQuery] = useState(search.q ?? "");
   const found = searchBatchReport(report, query);
   const rows = found.rows.filter((row) => (!search.godown || row.batch.branch_id === search.godown)
     && (!productFilter || row.batch.product_id === productFilter)
-    && (status === "all" || (status === "stock" ? row.available > 0 : row.available <= 0)));
+    && matchesBatchStatus(row, status));
+  // The cards count the whole scope, so they open the list without a search or product filter.
+  const openList = (next: BatchStatus) => {
+    setQuery("");
+    setProductFilter("");
+    setStatus(next);
+    if (search.q) go({ q: undefined }, true);
+    scrollToSection("batch-list");
+  };
   const scope = search.godown ? report.godowns.find((g) => g.godownId === search.godown) : null;
   const totals = scope ?? { ...report.all, batches: report.rows.length, active: report.rows.filter((r) => r.available > 0).length, averageDaysToSellOut: average(report.rows) };
   const products = [...new Map(report.rows.map((r) => [r.batch.product_id, r.batch.product_name])).entries()].sort((a, b) => a[1].localeCompare(b[1]));
   return (
     <div className="grid min-w-0 gap-4 [&>*]:min-w-0">
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-        <StatCard compact label="Batches in stock" value={`${totals.active} / ${totals.batches}`} icon={Layers} description="with units left / all" />
-        <StatCard compact label="Units available" value={units(totals.available)} icon={PackageCheck} description={`of ${units(totals.purchased)} purchased`} />
-        <StatCard compact label="Sales (excl. GST)" value={money(totals.sales)} icon={ShoppingCart} description={`${units(totals.sold)} units sold`} />
-        <StatCard compact label={totals.profit < 0 ? "Loss" : "Profit"} value={money(totals.profit)} icon={totals.profit < 0 ? TrendingDown : TrendingUp} highlight description="after cost and stock lost" />
-        <StatCard compact label="Stock lost" value={money(totals.lossValue)} icon={TrendingDown} description={`${units(totals.lost)} units (counts, damage)`} />
-        <StatCard compact label="Avg. days to sell out" value={totals.averageDaysToSellOut === null ? "—" : String(totals.averageDaysToSellOut)} icon={Clock3} description="sold-out batches" />
+        <StatCard onClick={() => openList("stock")} compact label="Batches in stock" value={`${totals.active} / ${totals.batches}`} icon={Layers} description="with units left / all" />
+        <StatCard onClick={() => openList("stock")} compact label="Units available" value={units(totals.available)} icon={PackageCheck} description={`of ${units(totals.purchased)} purchased`} />
+        <StatCard onClick={() => openList("all")} compact label="Sales (excl. GST)" value={money(totals.sales)} icon={ShoppingCart} description={`${units(totals.sold)} units sold`} />
+        <StatCard onClick={() => openList("all")} compact label={totals.profit < 0 ? "Loss" : "Profit"} value={money(totals.profit)} icon={totals.profit < 0 ? TrendingDown : TrendingUp} highlight description="after cost and stock lost" />
+        <StatCard onClick={() => openList("lost")} compact label="Stock lost" value={money(totals.lossValue)} icon={TrendingDown} description={`${units(totals.lost)} units (counts, damage)`} />
+        <StatCard onClick={() => openList("soldout")} compact label="Avg. days to sell out" value={totals.averageDaysToSellOut === null ? "—" : String(totals.averageDaysToSellOut)} icon={Clock3} description="sold-out batches" />
       </div>
 
       {!search.godown && (
@@ -218,7 +227,7 @@ function BatchList({ report, data, search, go, status, setStatus, productFilter,
         </div>
       )}
 
-      <Panel title={scope ? `${scope.godown} · batches` : "All batches"}>
+      <Panel id="batch-list" title={scope ? `${scope.godown} · batches` : "All batches"}>
         <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-3">
           <label className="relative min-w-[220px] flex-1">
             <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-slate" />
@@ -234,7 +243,7 @@ function BatchList({ report, data, search, go, status, setStatus, productFilter,
             {products.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
           </select>
           <div className="flex rounded-md border border-input bg-white p-0.5 text-xs">
-            {([["all", "All"], ["stock", "In stock"], ["soldout", "Sold out"]] as const).map(([key, label]) => (
+            {([["all", "All"], ["stock", "In stock"], ["soldout", "Sold out"], ["lost", "Stock lost"]] as const).map(([key, label]) => (
               <button key={key} type="button" onClick={() => setStatus(key)} className={cn("rounded px-2.5 py-1 font-semibold", status === key ? "bg-navy text-white" : "text-slate")}>{label}</button>
             ))}
           </div>

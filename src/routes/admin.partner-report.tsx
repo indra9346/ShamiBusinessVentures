@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { toast } from "sonner";
 import { Download, FileSpreadsheet, Handshake, IndianRupee, Printer, Radio, RefreshCw, Target, TrendingDown, TrendingUp } from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
-import { Panel, StatCard } from "@/components/panel/widgets";
+import { Panel, scrollToSection, StatCard } from "@/components/panel/widgets";
 import { TargetBar } from "@/components/partners/PartnerWidgets";
 import { adminNav } from "@/lib/panel-nav";
 import { inrPrecise } from "@/lib/data";
@@ -164,23 +164,23 @@ function AdminPartnerReport() {
 
       {all && (
         <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <StatCard label="Partner sales (excl. GST)" value={money(all.sales)} icon={Handshake} highlight description={`${all.orders} orders · ${all.unitsSold} units · ${report!.partners.length} partners`} />
-          <StatCard label="Commission" value={money(all.commissionEarned + all.commissionPending)} icon={IndianRupee}
+          <StatCard onClick={() => scrollToSection("partner-lines")} label="Partner sales (excl. GST)" value={money(all.sales)} icon={Handshake} highlight description={`${all.orders} orders · ${all.unitsSold} units · ${report!.partners.length} partners`} />
+          <StatCard onClick={() => scrollToSection("partner-lines")} label="Commission" value={money(all.commissionEarned + all.commissionPending)} icon={IndianRupee}
             description={`Earned ${money(all.commissionEarned)} · pending ${money(all.commissionPending)}`} />
-          <StatCard label={all.netProfit < 0 ? "Net loss after commission" : "Net profit after commission"} value={money(Math.abs(all.netProfit))}
+          <StatCard onClick={() => scrollToSection("partner-table")} label={all.netProfit < 0 ? "Net loss after commission" : "Net profit after commission"} value={money(Math.abs(all.netProfit))}
             icon={all.netProfit < 0 ? TrendingDown : TrendingUp} description={all.salesWithoutCost ? `${money(all.salesWithoutCost)} of sales have no purchase rate` : `Gross ${money(all.grossProfit)}`} />
-          <StatCard label="Target reached" value={all.achievedPercent === null ? "No target" : `${all.achievedPercent}%`} icon={Target}
+          <StatCard onClick={() => scrollToSection("partner-table")} label="Target reached" value={all.achievedPercent === null ? "No target" : `${all.achievedPercent}%`} icon={Target}
             description={`${money(all.eligibleSales)} of ${money(all.target)}`} />
         </div>
       )}
 
-      <Panel title={`Partners · ${period}`}>
+      <Panel id="partner-table" title={`Partners · ${period}`}>
         {!report ? <p className="text-sm text-slate">Loading…</p>
           : !report.partners.length ? <p className="text-sm text-slate">No channel partners yet. Create their logins on <Link to="/admin/partners" className="font-semibold text-navy underline">Channel Partners</Link>.</p>
           : <PartnerTable rows={report.partners} all={report.all} onDownload={download} />}
       </Panel>
 
-      <Panel title={`Partner sales as they happened · ${report?.lines.length ?? 0} lines`} className="mt-6">
+      <Panel id="partner-lines" title={`Partner sales as they happened · ${report?.lines.length ?? 0} lines`} className="mt-6">
         {!report ? <p className="text-sm text-slate">Loading…</p> : <PartnerLines lines={report.lines} names={new Map(report.partners.map((row) => [row.partner.id, row.partner.name]))} />}
       </Panel>
     </PanelLayout>

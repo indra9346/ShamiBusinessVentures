@@ -3,7 +3,7 @@ import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { CheckCircle2, MessageSquareText, Star, Trash2, XCircle } from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
-import { Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
+import { FilterNote, Panel, scrollToSection, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { adminNav } from "@/lib/panel-nav";
 import { useApp } from "@/lib/store";
 import { Input } from "@/components/ui/input";
@@ -46,6 +46,13 @@ function AdminReviews() {
   const [rating, setRating] = useState("All");
   const [status, setStatus] = useState("All");
   const [page, setPage] = useState(1);
+  const openList = (next: string) => {
+    setSearch("");
+    setRating("All");
+    setStatus(next);
+    setPage(1);
+    scrollToSection("customer-reviews");
+  };
 
   const stats = useMemo(() => {
     const total = reviews.length;
@@ -73,14 +80,15 @@ function AdminReviews() {
   return (
     <PanelLayout items={adminNav} tone="admin" title="Reviews" subtitle="Moderate product reviews">
       <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
-        <StatCard label="Total Reviews" value={String(stats.total)} icon={MessageSquareText} />
-        <StatCard label="Average Rating" value={stats.avg} icon={Star} highlight />
-        <StatCard label="Published" value={String(stats.published)} icon={CheckCircle2} />
-        <StatCard label="Pending" value={String(stats.pending)} icon={MessageSquareText} />
-        <StatCard label="Rejected" value={String(stats.rejected)} icon={XCircle} />
+        <StatCard onClick={() => openList("All")} label="Total Reviews" value={String(stats.total)} icon={MessageSquareText} />
+        <StatCard onClick={() => openList("All")} label="Average Rating" value={stats.avg} icon={Star} highlight />
+        <StatCard onClick={() => openList("Published")} label="Published" value={String(stats.published)} icon={CheckCircle2} />
+        <StatCard onClick={() => openList("Pending")} label="Pending" value={String(stats.pending)} icon={MessageSquareText} />
+        <StatCard onClick={() => openList("Rejected")} label="Rejected" value={String(stats.rejected)} icon={XCircle} />
       </div>
 
       <Panel
+        id="customer-reviews"
         title="Customer Reviews"
         action={
           <div className="flex flex-wrap items-center gap-2">
@@ -104,6 +112,7 @@ function AdminReviews() {
           </div>
         }
       >
+        {status !== "All" && <FilterNote label={status} onClear={() => { setStatus("All"); setPage(1); }} />}
         <div className="grid gap-4">
           {pageItems.length === 0 && <p className="py-10 text-center text-sm text-slate">No reviews match your filters.</p>}
           {pageItems.map((r) => (

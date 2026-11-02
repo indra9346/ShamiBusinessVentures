@@ -14,7 +14,7 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
-import { DataTable, Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
+import { DataTable, FilterNote, Panel, scrollToSection, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { adminNav } from "@/lib/panel-nav";
 import { inr, type Product, type PurchaseBatch } from "@/lib/data";
 import { useApp } from "@/lib/store";
@@ -102,6 +102,12 @@ function AdminInventory() {
     setFilter(stockFilterOf(routeSearch.filter));
     setPage(1);
   }, [routeSearch.filter]);
+  const openList = (next: string) => {
+    setSearch("");
+    setFilter(next);
+    setPage(1);
+    scrollToSection("stock-list");
+  };
 
   // Update Stock Dialog
   const [target, setTarget] = useState<string | null>(null);
@@ -279,19 +285,21 @@ function AdminInventory() {
       subtitle="FIFO batch valuation and stock ledger"
     >
       <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
-        <StatCard label="Total SKUs" value={String(stats.total)} icon={Boxes} />
-        <StatCard label="In Stock" value={String(stats.inStock)} icon={PackageCheck} />
-        <StatCard label="Low Stock" value={String(stats.low)} icon={TriangleAlert} highlight />
+        <StatCard onClick={() => openList("All")} label="Total SKUs" value={String(stats.total)} icon={Boxes} />
+        <StatCard onClick={() => openList("In Stock")} label="In Stock" value={String(stats.inStock)} icon={PackageCheck} />
+        <StatCard onClick={() => openList("Low Stock")} label="Low Stock" value={String(stats.low)} icon={TriangleAlert} highlight />
         <StatCard
+          onClick={() => openList("All")}
           label="FIFO Valuation"
           value={inr(stats.fifoTotalValuation)}
           icon={IndianRupee}
           highlight
         />
-        <StatCard label="Avg. Gross Margin" value={`${stats.avgMargin}%`} icon={Percent} />
+        <StatCard onClick={() => openList("All")} label="Avg. Gross Margin" value={`${stats.avgMargin}%`} icon={Percent} />
       </div>
 
       <Panel
+        id="stock-list"
         title="Product Stock & FIFO Costing"
         action={
           <div className="flex flex-wrap items-center gap-2">
@@ -349,6 +357,7 @@ function AdminInventory() {
           </div>
         }
       >
+        {filter !== "All" && <FilterNote label={filter === NEEDS_RESTOCK ? "Low or Out of Stock" : filter} onClear={() => { setFilter("All"); setPage(1); }} />}
         <DataTable
           columns={[
             "Product",

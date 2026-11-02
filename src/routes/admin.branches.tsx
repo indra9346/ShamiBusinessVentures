@@ -3,9 +3,10 @@ import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { MapPin, Phone, Plus, RefreshCw, Star, Truck, Warehouse } from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
-import { Panel, StatCard } from "@/components/panel/widgets";
+import { FilterNote, Panel, scrollToSection, StatCard } from "@/components/panel/widgets";
 import { adminNav } from "@/lib/panel-nav";
 import { inr } from "@/lib/data";
+import { matchesBranchView } from "@/lib/panel-filters";
 import { useApp } from "@/lib/store";
 import { PLATFORM_FEATURES_KEY, reloadBranches, useBranches, type Branch } from "@/lib/branches";
 import { supabase } from "@/integrations/supabase/client";
@@ -64,6 +65,12 @@ function AdminBranches() {
   const [priceLists, setPriceLists] = useState<{ id: string; name: string; type: "per_item" | "percentage"; active: boolean }[] | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [stockMaster, setStockMaster] = useState<boolean | null>(null);
+  // The cards open the godown list below with just the branches they count.
+  const [view, setView] = useState("all");
+  const openList = (next: string) => {
+    setView(next);
+    scrollToSection("branch-list");
+  };
 
   // "Zoho is the stock master" (private setting, read by the admin only).
   useEffect(() => {
@@ -209,10 +216,10 @@ function AdminBranches() {
   return (
     <PanelLayout items={adminNav} tone="admin" title="Branches" subtitle="Godowns, the PIN codes they serve, pickup and delivery">
       <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Active branches" value={String(active.length)} icon={Warehouse} />
-        <StatCard label="PIN codes served" value={String(new Set(active.flatMap((branch) => branch.servesPincodes)).size)} icon={MapPin} />
-        <StatCard label="Offering home delivery" value={String(active.filter((branch) => branch.deliveryEnabled).length)} icon={Truck} />
-        <StatCard label="Default branch" value={branches.find((branch) => branch.isDefault)?.code ?? "—"} icon={Star} />
+        <StatCard onClick={() => openList("active")} label="Active branches" value={String(active.length)} icon={Warehouse} />
+        <StatCard onClick={() => openList("active")} label="PIN codes served" value={String(new Set(active.flatMap((branch) => branch.servesPincodes)).size)} icon={MapPin} />
+        <StatCard onClick={() => openList("delivery")} label="Offering home delivery" value={String(active.filter((branch) => branch.deliveryEnabled).length)} icon={Truck} />
+        <StatCard onClick={() => openList("default")} label="Default branch" value={branches.find((branch) => branch.isDefault)?.code ?? "—"} icon={Star} />
       </div>
 
       <Panel title="Match customers to godowns by PIN" className="mb-6">
@@ -246,13 +253,16 @@ function AdminBranches() {
         </div>
       </Panel>
 
-      <div className="mb-4 flex justify-end">
+      <div id="branch-list" className="mb-4 flex scroll-mt-36 justify-end">
         <Button className="bg-navy text-white hover:bg-navy/90" onClick={() => setForm({ ...emptyForm })}>
           <Plus className="mr-1 h-4 w-4" /> Add branch
         </Button>
       </div>
+      {view !== "all" && (
+        <FilterNote label={view === "active" ? "Active branches" : view === "delivery" ? "Offering home delivery" : "Default branch"} onClear={() => setView("all")} />
+      )}
       <div className="grid gap-4 lg:grid-cols-2">
-        {godowns.map((branch) => {
+        {godowns.filter((branch) => matchesBranchView(branch, view)).map((branch) => {
           const stat = stats.get(branch.id);
           return (
             <Panel key={branch.id} title={`${branch.name}${branch.isDefault ? "  ·  Default" : ""}`}>

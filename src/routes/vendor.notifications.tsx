@@ -3,7 +3,7 @@ import { useMemo, useState } from "react";
 import { Bell, BellRing, CheckCheck } from "lucide-react";
 import { toast } from "sonner";
 import { PanelLayout } from "@/components/panel/PanelLayout";
-import { Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
+import { Panel, scrollToSection, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { Button } from "@/components/ui/button";
 import { vendorNav } from "@/lib/panel-nav";
 import { notificationTarget } from "@/lib/notification-target";
@@ -31,14 +31,19 @@ function VendorNotifications() {
     ? vendorNotifications.filter((item) => !item.read)
     : vendorNotifications;
   const unreadCount = vendorNotifications.filter((item) => !item.read).length;
+  const openList = (unread: boolean) => {
+    setUnreadOnly(unread);
+    scrollToSection("store-updates");
+  };
 
   return (
     <PanelLayout items={vendorNav} tone="vendor" title="Notifications" subtitle="Live updates for your store">
       <div className="mb-6 grid gap-4 sm:grid-cols-2">
-        <StatCard label="All Notifications" value={String(vendorNotifications.length)} icon={Bell} />
-        <StatCard label="Unread" value={String(unreadCount)} icon={BellRing} highlight={unreadCount > 0} />
+        <StatCard onClick={() => openList(false)} label="All Notifications" value={String(vendorNotifications.length)} icon={Bell} />
+        <StatCard onClick={() => openList(true)} label="Unread" value={String(unreadCount)} icon={BellRing} highlight={unreadCount > 0} />
       </div>
       <Panel
+        id="store-updates"
         title={`Store updates (${visibleNotifications.length})`}
         action={
           <div className="flex flex-wrap gap-2">

@@ -3,11 +3,12 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { toast } from "sonner";
 import { Download, FileSpreadsheet, IndianRupee, Printer, Radio, RefreshCw, ShoppingCart, TrendingDown, TrendingUp } from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
-import { Panel, StatCard } from "@/components/panel/widgets";
+import { FilterNote, Panel, scrollToSection, StatCard } from "@/components/panel/widgets";
 import { adminNav } from "@/lib/panel-nav";
 import { useApp } from "@/lib/store";
 import { useBranches } from "@/lib/branches";
 import { inrPrecise, getOrderItemTotal } from "@/lib/data";
+import { isLossLine } from "@/lib/panel-filters";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { downloadCSV } from "@/lib/export-utils";
 import { downloadXlsx } from "@/lib/xlsx";
@@ -128,6 +129,14 @@ function GodownReport() {
     };
   }, [live, load]);
 
+  // The cards open the tables below; Losses shows only the lines behind its figures.
+  const [lossOnly, setLossOnly] = useState(false);
+  const openLines = (loss: boolean) => {
+    setLossOnly(loss);
+    scrollToSection("sale-lines");
+  };
+  const shownLines = report ? (lossOnly ? report.lines.filter(isLossLine) : report.lines) : [];
+
   const period = from === to ? istDateLabel(from) : `${istDateLabel(from)} – ${istDateLabel(to)}`;
   const godownLabel = branchId ? godowns.find((g) => g.id === branchId)?.name ?? "No godown (direct)" : "All godowns";
   const all = report?.all;
@@ -216,16 +225,16 @@ function GodownReport() {
 
       {all && (
         <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <StatCard label="Sales (excl. GST)" value={money(all.sales)} icon={ShoppingCart} description={`${all.orders} orders (${all.deliveredOrders} delivered) · ${all.unitsSold} units`} highlight />
-          <StatCard label="Cost of goods" value={money(all.cost)} icon={IndianRupee} description={all.linesWithoutCost ? `${money(all.salesWithoutCost)} of sales have no purchase rate: left out of profit` : "From item purchase rates"} />
-          <StatCard label={all.netProfit < 0 ? "Net loss" : "Net profit"} value={money(Math.abs(all.netProfit))} icon={all.netProfit < 0 ? TrendingDown : TrendingUp}
+          <StatCard onClick={() => openLines(false)} label="Sales (excl. GST)" value={money(all.sales)} icon={ShoppingCart} description={`${all.orders} orders (${all.deliveredOrders} delivered) · ${all.unitsSold} units`} highlight />
+          <StatCard onClick={() => openLines(false)} label="Cost of goods" value={money(all.cost)} icon={IndianRupee} description={all.linesWithoutCost ? `${money(all.salesWithoutCost)} of sales have no purchase rate: left out of profit` : "From item purchase rates"} />
+          <StatCard onClick={() => scrollToSection("godown-summary")} label={all.netProfit < 0 ? "Net loss" : "Net profit"} value={money(Math.abs(all.netProfit))} icon={all.netProfit < 0 ? TrendingDown : TrendingUp}
             description={`Gross ${money(all.grossProfit)} · commission ${money(all.commission)}`} />
-          <StatCard label="Losses" value={money(all.lossBelowCost)} icon={TrendingDown}
+          <StatCard onClick={() => openLines(true)} label="Losses" value={money(all.lossBelowCost)} icon={TrendingDown}
             description={`Sold below cost · cancelled ${money(all.cancelledValue)} (${all.cancelledOrders}) · refunded ${money(all.refunded)}`} />
         </div>
       )}
 
-      <Panel title={`Godown summary · ${period}`}>
+      <Panel id="godown-summary" title={`Godown summary · ${period}`}>
         {!report ? <p className="text-sm text-slate">Loading…</p> : <SummaryTable rows={report.godowns} all={report.all} onDownload={downloadExcel} />}
       </Panel>
 
@@ -235,8 +244,9 @@ function GodownReport() {
         </Panel>
       )}
 
-      <Panel title={`Sales as they happened · ${report?.lines.length ?? 0} lines`} className="mt-6">
-        {!report ? <p className="text-sm text-slate">Loading…</p> : <SalesTable lines={report.lines} />}
+      <Panel id="sale-lines" title={`Sales as they happened · ${shownLines.length} lines`} className="mt-6">
+        {lossOnly && <FilterNote label="Losses" onClear={() => setLossOnly(false)} />}
+        {!report ? <p className="text-sm text-slate">Loading…</p> : <SalesTable lines={shownLines} />}
       </Panel>
     </PanelLayout>
   );

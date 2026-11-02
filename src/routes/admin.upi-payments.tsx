@@ -4,7 +4,7 @@ import { renderSVG } from "uqr";
 import { toast } from "sonner";
 import { CheckCircle2, Clock, KeyRound, Landmark, MessageSquare, QrCode, ShieldAlert, Smartphone, XCircle } from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
-import { Panel, StatCard } from "@/components/panel/widgets";
+import { Panel, scrollToSection, StatCard } from "@/components/panel/widgets";
 import { adminNav } from "@/lib/panel-nav";
 import { pushOrderToZohoInBackground, useApp } from "@/lib/store";
 import { bankDetailChanges, bankDetailsProblem, cleanBankDetails, EMPTY_BANK_DETAILS, REFUNDED_UTR_NOTE, REUSED_UTR_NOTE, UNCHECKED_UTR_NOTE, type BankDetails } from "@/lib/payment-rules";
@@ -27,7 +27,6 @@ export const Route = createFileRoute("/admin/upi-payments")({
   component: AdminUpiPayments,
 });
 
-const scrollToSection = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
 const istTime = (iso: string) => new Date(iso).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
 
 /**
@@ -58,7 +57,7 @@ function AdminUpiPayments() {
   const doneShown = doneFilter === "all" ? done : done.filter((s) => s.status === doneFilter);
   const openDone = (status: "confirmed" | "rejected") => {
     setDoneFilter(status);
-    window.requestAnimationFrame(() => scrollToSection("checked-payments"));
+    scrollToSection("checked-payments");
   };
   const markRefunded = async (orderNo: string, utr: string) => {
     if (!window.confirm(`Record that UTR ${utr} for ${orderNo} was refunded?\n\nThat UTR can then pay for nothing, and the customer is told.`)) return;

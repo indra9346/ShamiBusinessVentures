@@ -3,9 +3,9 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Boxes, IndianRupee, Package, Percent } from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
-import { DataTable, Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
+import { DataTable, FilterNote, Panel, scrollToSection, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { adminNav } from "@/lib/panel-nav";
-import { getVendorPaidSales, inr } from "@/lib/data";
+import { getVendorPaidSales, inr, vendorSaleCounts } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -41,6 +41,14 @@ function AdminVendorDetail() {
   const [reviewingId, setReviewingId] = useState<string | null>(null);
   const [payoutRows, setPayoutRows] = useState<Array<{ id: string; date: string; amount: number; method: string; status: string }>>([]);
   const vendor = vendors.find((v) => v.id === id);
+  // The cards open the tab below with their data.
+  const [tab, setTab] = useState("products");
+  const [paidOnly, setPaidOnly] = useState(false);
+  const openTab = (next: string, paid = false) => {
+    setTab(next);
+    setPaidOnly(paid);
+    scrollToSection("vendor-tabs");
+  };
 
   useEffect(() => {
     let active = true;
@@ -120,10 +128,10 @@ function AdminVendorDetail() {
       <Link to="/admin/vendors" className="mb-4 inline-block text-sm font-semibold text-navy hover:text-gold">← Back to Vendors</Link>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Total Sales" value={inr(vendorSales)} icon={IndianRupee} highlight />
-        <StatCard label="Products Listed" value={String(vProducts.length)} icon={Boxes} />
-        <StatCard label="Total Orders" value={String(vOrders.length)} icon={Package} />
-        <StatCard label="Commission Rate" value={`${vendor.commission}%`} icon={Percent} />
+        <StatCard onClick={() => openTab("orders", true)} label="Total Sales" value={inr(vendorSales)} icon={IndianRupee} highlight />
+        <StatCard onClick={() => openTab("products")} label="Products Listed" value={String(vProducts.length)} icon={Boxes} />
+        <StatCard onClick={() => openTab("orders")} label="Total Orders" value={String(vOrders.length)} icon={Package} />
+        <StatCard link={{ to: "/admin/commissions" }} label="Commission Rate" value={`${vendor.commission}%`} icon={Percent} />
       </div>
 
       <Panel
@@ -178,7 +186,7 @@ function AdminVendorDetail() {
       </Panel>
 
       <div className="mt-6">
-        <Tabs defaultValue="products">
+        <Tabs id="vendor-tabs" value={tab} onValueChange={setTab} className="scroll-mt-36">
           <TabsList>
             <TabsTrigger value="products">Products</TabsTrigger>
             <TabsTrigger value="orders">Orders</TabsTrigger>
@@ -221,9 +229,10 @@ function AdminVendorDetail() {
 
           <TabsContent value="orders">
             <Panel>
+              {paidOnly && <FilterNote label="Total Sales" onClear={() => setPaidOnly(false)} />}
               <DataTable
                 columns={["Order", "Date", "Customer", "Amount", "Status"]}
-                rows={vOrders.slice(0, 25).map((o) => [
+                rows={(paidOnly ? vOrders.filter((o) => vendorSaleCounts(o, vendor.id)) : vOrders).map((o) => [
                   <Link to="/admin/orders/$id" params={{ id: o.id }} className="font-semibold text-navy hover:text-gold">{o.id}</Link>,
                   o.date, o.customer, inr(o.amount), <StatusBadge status={o.status} />,
                 ])}

@@ -3,10 +3,11 @@ import { useEffect, useMemo, useState } from "react";
 import { Package, PackagePlus, PackageX, TrendingUp } from "lucide-react";
 import { toast } from "sonner";
 import { PanelLayout } from "@/components/panel/PanelLayout";
-import { DataTable, Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
+import { DataTable, FilterNote, Panel, scrollToSection, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { Pager } from "@/components/panel/pager";
 import { vendorNav } from "@/lib/panel-nav";
 import { inr } from "@/lib/data";
+import { matchesVendorProduct } from "@/lib/panel-filters";
 import { useApp, useVendorScope } from "@/lib/store";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -69,6 +70,15 @@ function VendorProductsPanel() {
     setPage(1);
   }, [routeSearch.q]);
 
+  // The cards open the list below with just those products.
+  const openList = (next: string) => {
+    setQ("");
+    setCategory("all");
+    setStatus(next);
+    setPage(1);
+    scrollToSection("all-products");
+  };
+
   const [editing, setEditing] = useState<Product | null>(null);
   const [editForm, setEditForm] = useState<Partial<Product>>({});
   const [stockDialog, setStockDialog] = useState<Product | null>(null);
@@ -79,8 +89,7 @@ function VendorProductsPanel() {
       const s = q.trim().toLowerCase();
       const matchesQ = !s || `${p.name} ${p.sku} ${p.category}`.toLowerCase().includes(s);
       const matchesCat = category === "all" || p.category === category;
-      const matchesStatus = status === "all" || p.status === status;
-      return matchesQ && matchesCat && matchesStatus;
+      return matchesQ && matchesCat && matchesVendorProduct(p, status);
     });
     list = [...list].sort((a, b) => {
       if (sort === "created-desc") return b.created.localeCompare(a.created);
@@ -88,6 +97,7 @@ function VendorProductsPanel() {
       if (sort === "price-desc") return b.price - a.price;
       if (sort === "price-asc") return a.price - b.price;
       if (sort === "stock-asc") return a.stock - b.stock;
+      if (sort === "sold-desc") return b.sold - a.sold;
       return 0;
     });
     return list;
@@ -105,13 +115,14 @@ function VendorProductsPanel() {
   return (
     <PanelLayout items={vendorNav} tone="vendor" title="My Products" subtitle="Manage your vendor catalogue">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Total Products" value={String(total)} icon={Package} highlight />
-        <StatCard label="Active Products" value={String(active)} icon={Package} />
-        <StatCard label="Out of Stock" value={String(outOfStock)} icon={PackageX} />
-        <StatCard label="Units Sold" value={String(totalSold)} icon={TrendingUp} />
+        <StatCard onClick={() => openList("all")} label="Total Products" value={String(total)} icon={Package} highlight />
+        <StatCard onClick={() => openList("on-sale")} label="Active Products" value={String(active)} icon={Package} />
+        <StatCard onClick={() => openList("out")} label="Out of Stock" value={String(outOfStock)} icon={PackageX} />
+        <StatCard onClick={() => { setSort("sold-desc"); openList("all"); }} label="Units Sold" value={String(totalSold)} icon={TrendingUp} />
       </div>
 
       <Panel
+        id="all-products"
         title="All Products"
         className="mt-6"
         action={
@@ -138,6 +149,8 @@ function VendorProductsPanel() {
                 <SelectItem value="approved">Approved</SelectItem>
                 <SelectItem value="pending">Pending</SelectItem>
                 <SelectItem value="rejected">Rejected</SelectItem>
+                <SelectItem value="on-sale">Active</SelectItem>
+                <SelectItem value="out">Out of Stock</SelectItem>
               </SelectContent>
             </Select>
             <Select value={sort} onValueChange={setSort}>
@@ -148,6 +161,7 @@ function VendorProductsPanel() {
                 <SelectItem value="price-desc">Price: High to Low</SelectItem>
                 <SelectItem value="price-asc">Price: Low to High</SelectItem>
                 <SelectItem value="stock-asc">Stock: Low to High</SelectItem>
+                <SelectItem value="sold-desc">Sold: High to Low</SelectItem>
               </SelectContent>
             </Select>
             <Link to="/vendor/products/add">
@@ -158,6 +172,9 @@ function VendorProductsPanel() {
           </div>
         }
       >
+        {(status === "on-sale" || status === "out") && (
+          <FilterNote label={status === "on-sale" ? "Active Products" : "Out of Stock"} onClear={() => { setStatus("all"); setPage(1); }} />
+        )}
         <DataTable
           columns={["Image", "Name", "SKU", "Category", "Price", "MRP", "Discount", "Stock", "Sold", "Rating", "Status", "Active", "Created", "Actions"]}
           rows={rows.map((p) => {

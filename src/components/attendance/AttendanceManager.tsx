@@ -4,7 +4,7 @@ import {
   AlertTriangle, CalendarCheck, Camera, Check, Clock, Copy, Crosshair, Download, FileSpreadsheet, KeyRound, MapPin, RefreshCw, Save, Smartphone,
   Trash2, UserCheck, UserPlus, Users, X,
 } from "lucide-react";
-import { Panel, StatCard } from "@/components/panel/widgets";
+import { FilterNote, Panel, scrollToSection, StatCard } from "@/components/panel/widgets";
 import { AttendanceStatusBadge, DecisionChips } from "@/components/attendance/AttendanceBits";
 import { getBestFix } from "@/components/attendance/geolocation";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -134,18 +134,29 @@ export function AttendanceManager({ viewer, partnerBranchId }: { viewer: Viewer;
   const todayActive = desk.todayDays.filter((day) => activeIds.has(day.employee_id));
   const lateToday = todayActive.filter((day) => day.late_minutes > 0);
   const onLeaveToday = new Set(desk.leaves.filter((leave) => leave.status === "approved" && leave.from_date <= desk.today && desk.today <= leave.to_date && activeIds.has(leave.employee_id)).map((leave) => leave.employee_id));
+  // The cards open the tabs below; the Today cards show just the people they count.
+  const [tab, setTab] = useState("today");
+  const [todayView, setTodayView] = useState<"all" | "present" | "late" | "leave">("all");
+  const openToday = (view: typeof todayView) => {
+    setTodayView(view);
+    setTab("today");
+    scrollToSection("attendance-tabs");
+  };
+  const todayOnly = todayView === "present" ? new Set(todayActive.map((day) => day.employee_id))
+    : todayView === "late" ? new Set(lateToday.map((day) => day.employee_id))
+      : todayView === "leave" ? onLeaveToday : null;
 
   return (
     <div className="space-y-6">
       {desk.error && <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{desk.error}</p>}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard label="Present today" value={`${todayActive.length} of ${active.length}`} icon={UserCheck} />
-        <StatCard label="Late today" value={String(lateToday.length)} icon={Clock} {...(lateToday.length ? { description: `Total ${formatDuration(lateToday.reduce((sum, day) => sum + day.late_minutes, 0))}` } : {})} />
-        <StatCard label="On leave today" value={String(onLeaveToday.size)} icon={CalendarCheck} description={`${pendingLeaves.length} leave request(s) waiting · ${waitingOnMe} need your decision`} />
-        <StatCard label="Employees" value={String(active.length)} icon={Users} {...(viewer === "admin" ? { description: `${desk.godowns.length} godowns` } : {})} />
+        <StatCard onClick={() => openToday("present")} label="Present today" value={`${todayActive.length} of ${active.length}`} icon={UserCheck} />
+        <StatCard onClick={() => openToday("late")} label="Late today" value={String(lateToday.length)} icon={Clock} {...(lateToday.length ? { description: `Total ${formatDuration(lateToday.reduce((sum, day) => sum + day.late_minutes, 0))}` } : {})} />
+        <StatCard onClick={() => openToday("leave")} label="On leave today" value={String(onLeaveToday.size)} icon={CalendarCheck} description={`${pendingLeaves.length} leave request(s) waiting · ${waitingOnMe} need your decision`} />
+        <StatCard onClick={() => { setTab("employees"); scrollToSection("attendance-tabs"); }} label="Employees" value={String(active.length)} icon={Users} {...(viewer === "admin" ? { description: `${desk.godowns.length} godowns` } : {})} />
       </div>
 
-      <Tabs defaultValue="today">
+      <Tabs id="attendance-tabs" value={tab} onValueChange={setTab} className="scroll-mt-36">
         <TabsList className="flex h-auto flex-wrap justify-start">
           <TabsTrigger value="today">Today</TabsTrigger>
           <TabsTrigger value="approvals">{`Leave approvals (${pendingLeaves.length})`}</TabsTrigger>
@@ -157,8 +168,11 @@ export function AttendanceManager({ viewer, partnerBranchId }: { viewer: Viewer;
         </TabsList>
 
         <TabsContent value="today" className="mt-4 space-y-6">
+          {todayView !== "all" && (
+            <FilterNote label={todayView === "present" ? "Present today" : todayView === "late" ? "Late today" : "On leave today"} onClear={() => setTodayView("all")} />
+          )}
           {desk.loaded && desk.godowns.map((godown) => (
-            <TodayBoard key={godown.id} godown={godown} desk={desk} onLeaveToday={onLeaveToday} onOpen={setOpen}
+            <TodayBoard key={godown.id} godown={godown} desk={desk} onLeaveToday={onLeaveToday} onOpen={setOpen} only={todayOnly}
               employees={active.filter((employee) => employee.branch_id === godown.id)} viewer={viewer} />
           ))}
           {!desk.loaded && <p className="flex items-center gap-2 text-sm text-slate"><RefreshCw className="h-4 w-4 animate-spin" /> Loading…</p>}
@@ -206,11 +220,12 @@ function SelfieThumb({ url, onClick }: { url?: string | undefined; onClick: () =
   );
 }
 
-function TodayBoard({ godown, employees, desk, onLeaveToday, onOpen, viewer }: {
-  godown: Godown; employees: Employee[]; desk: Desk; onLeaveToday: Set<string>; onOpen: (day: Day) => void; viewer: Viewer;
+function TodayBoard({ godown, employees, desk, onLeaveToday, onOpen, viewer, only }: {
+  godown: Godown; employees: Employee[]; desk: Desk; onLeaveToday: Set<string>; onOpen: (day: Day) => void; viewer: Viewer; only: Set<string> | null;
 }) {
   const dayOf = new Map(desk.todayDays.filter((day) => day.branch_id === godown.id).map((day) => [day.employee_id, day]));
   const present = employees.filter((employee) => dayOf.has(employee.id)).length;
+  const shown = only ? employees.filter((employee) => only.has(employee.id)) : employees;
   const now = Date.now();
   return (
     <Panel title={`${godown.name} · ${present} of ${employees.length} present`}
@@ -221,14 +236,14 @@ function TodayBoard({ godown, employees, desk, onLeaveToday, onOpen, viewer }: {
           {viewer === "admin" ? "Set this godown's location in Godown settings. Until then nobody at this godown can check in." : "Head office has not set this godown's location yet, so nobody can check in."}
         </p>
       )}
-      {employees.length === 0 ? <p className="text-sm text-slate">No employees added for this godown yet.</p> : (
+      {employees.length === 0 ? <p className="text-sm text-slate">No employees added for this godown yet.</p> : shown.length === 0 ? <p className="text-sm text-slate">Nobody here today.</p> : (
         <div className="overflow-x-auto">
           <table className="w-full min-w-[760px] text-sm">
             <thead><tr className="border-b border-border text-left text-xs uppercase tracking-wider text-slate">
               <th className="py-2 pr-3">Employee</th><th className="py-2 pr-3">Check-in</th><th className="py-2 pr-3">Check-out</th><th className="py-2 pr-3">Presence photos</th><th className="py-2">Status</th>
             </tr></thead>
             <tbody>
-              {employees.map((employee) => {
+              {shown.map((employee) => {
                 const day = dayOf.get(employee.id);
                 const schedule = day ? scheduleFor(day, godown, desk.todayPhotos, now) : null;
                 return (

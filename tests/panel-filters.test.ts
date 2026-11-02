@@ -2,8 +2,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { adminActivityKey, clearAdminIdleClock, startAdminIdleClock } from "../src/lib/admin-idle.ts";
 import {
-  inOrderRange, isOpenOrder, matchesOrderStatus, matchesStockFilter, NEEDS_RESTOCK, OPEN_ORDERS, orderListSearch,
-  orderStatusFilter, orderTimestamp, stockFilterOf,
+  APPROVED_VENDORS, inOrderRange, isLossLine, isOpenOrder, isUnpaid, matchesBatchStatus, matchesBranchView, matchesCommissionStatus, matchesCouponView,
+  matchesOrderStatus, matchesPaymentFilter, matchesPayoutStatus, matchesReadFilter, matchesReviewCard, matchesStockBand, matchesStockFilter,
+  matchesVendorProduct, matchesVendorStatus, matchesVendorStock, MONEY_RECEIVED, NEEDS_RESTOCK, OPEN_ORDERS, OPEN_PAYOUTS, orderListSearch,
+  orderStatusFilter, orderTimestamp, paymentFilterOf, stockFilterOf, UNPAID, vendorStatusFilter,
 } from "../src/lib/panel-filters.ts";
 
 const stages = ["Placed", "Packed", "Delivered", "Cancelled"];
@@ -61,6 +63,139 @@ test("the stock filter: restock means low or out, as the dashboard counts it", (
   assert.equal(stockFilterOf(NEEDS_RESTOCK), NEEDS_RESTOCK);
   assert.equal(stockFilterOf("nonsense"), "All");
   assert.equal(stockFilterOf(undefined), "All");
+});
+
+test("the Products page's stock cards: low is 1 to 29, out is exactly none", () => {
+  const stocks = [-1, 0, 1, 29, 30];
+  assert.deepEqual(stocks.filter((stock) => matchesStockBand(stock, "low")), [1, 29]);
+  assert.deepEqual(stocks.filter((stock) => matchesStockBand(stock, "out")), [0]);
+  assert.equal(stocks.filter((stock) => matchesStockBand(stock, "all")).length, 5);
+});
+
+test("a vendor's stock cards: low includes out of stock, healthy is at or above its own minimum", () => {
+  const products = [{ stock: 0, minimum: 10 }, { stock: 5, minimum: 10 }, { stock: 10, minimum: 10 }, { stock: 40, minimum: 50 }];
+  const stocks = (view: string) => products.filter((p) => matchesVendorStock(p.stock, p.minimum, view)).map((p) => p.stock);
+  assert.deepEqual(stocks("low"), [0, 5, 40]);
+  assert.deepEqual(stocks("healthy"), [10]);
+  assert.deepEqual(stocks("out"), [0]);
+  assert.equal(stocks("all").length, 4);
+  // Every product is either healthy or low.
+  assert.equal(stocks("low").length + stocks("healthy").length, products.length);
+});
+
+test("a vendor's product list: the review status, or the Active and Out of Stock cards", () => {
+  const live = { active: true, stock: 5, status: "approved" };
+  const off = { active: false, stock: 0, status: "pending" };
+  assert.equal(matchesVendorProduct(live, "on-sale"), true);
+  assert.equal(matchesVendorProduct(off, "on-sale"), false);
+  assert.equal(matchesVendorProduct(off, "out"), true);
+  assert.equal(matchesVendorProduct(live, "out"), false);
+  assert.equal(matchesVendorProduct(off, "pending"), true);
+  assert.equal(matchesVendorProduct(live, "pending"), false);
+  assert.equal(matchesVendorProduct(off, "all"), true);
+});
+
+test("the Approved vendors card counts approved and active; a link's status: a known one, else all", () => {
+  assert.equal(matchesVendorStatus("approved", APPROVED_VENDORS), true);
+  assert.equal(matchesVendorStatus("active", APPROVED_VENDORS), true);
+  assert.equal(matchesVendorStatus("pending", APPROVED_VENDORS), false);
+  assert.equal(matchesVendorStatus("suspended", "suspended"), true);
+  assert.equal(matchesVendorStatus("suspended", "all"), true);
+  assert.equal(vendorStatusFilter(APPROVED_VENDORS), APPROVED_VENDORS);
+  assert.equal(vendorStatusFilter("pending"), "pending");
+  assert.equal(vendorStatusFilter("nonsense"), "all");
+  assert.equal(vendorStatusFilter(undefined), "all");
+});
+
+test("the payment cards: each card's figure comes from the rows it opens", () => {
+  const txns = [
+    { status: "Successful", payment: "Paid", amount: 100, paid: 100 },
+    { status: "Partially Paid", payment: "Partially Paid", amount: 100, paid: 30 },
+    { status: "Pending", payment: "Pending", amount: 50, paid: 0 },
+    { status: "Overdue", payment: "Pending", amount: 20, paid: 0 },
+    { status: "Failed", payment: "Failed", amount: 10, paid: 0 },
+    { status: "Refunded", payment: "Refunded", amount: 40, paid: 0 },
+  ];
+  const shown = (filter: string) => txns.filter((t) => matchesPaymentFilter(t, filter));
+  assert.equal(shown(MONEY_RECEIVED).reduce((sum, t) => sum + t.paid, 0), txns.reduce((sum, t) => sum + t.paid, 0));
+  assert.equal(shown(MONEY_RECEIVED).length, 2);
+  // Unpaid: the three open orders, and what is still due on them.
+  assert.deepEqual(shown(UNPAID).map((t) => t.status), ["Partially Paid", "Pending", "Overdue"]);
+  assert.equal(shown(UNPAID).reduce((sum, t) => sum + t.amount - t.paid, 0), 140);
+  assert.equal(shown("Overdue").length, 1);
+  assert.equal(shown("All").length, 6);
+  assert.equal(isUnpaid("COD"), true);
+  assert.equal(isUnpaid("Failed"), false);
+  assert.equal(paymentFilterOf("Successful"), "Successful");
+  assert.equal(paymentFilterOf(MONEY_RECEIVED), MONEY_RECEIVED);
+  assert.equal(paymentFilterOf("nonsense"), "All");
+  assert.equal(paymentFilterOf(undefined), "All");
+});
+
+test("the open payouts card leaves out paid and rejected requests", () => {
+  const statuses = ["Pending", "Processing", "Paid", "Rejected"];
+  assert.deepEqual(statuses.filter((status) => matchesPayoutStatus(status, OPEN_PAYOUTS)), ["Pending", "Processing"]);
+  assert.deepEqual(statuses.filter((status) => matchesPayoutStatus(status, "Paid")), ["Paid"]);
+  assert.equal(statuses.filter((status) => matchesPayoutStatus(status, "All")).length, 4);
+});
+
+test("commission lines: the same split as the commission cards", () => {
+  const statuses = ["earned", "pending", "held", "cancelled"];
+  const shown = (filter: string) => statuses.filter((status) => matchesCommissionStatus(status, filter));
+  assert.deepEqual(shown("earned"), ["earned"]);
+  assert.deepEqual(shown("pending"), ["pending", "held"]);
+  assert.deepEqual(shown("sales"), ["earned", "pending", "held"]);
+  assert.equal(shown("all").length, 4);
+});
+
+test("the vendor review cards count published reviews only", () => {
+  const reviews = [
+    { status: "Published", rating: 5 }, { status: "Published", rating: 3 }, { status: "Published", rating: 2 },
+    { status: "Pending", rating: 5 }, { status: "Rejected", rating: 1 },
+  ];
+  const count = (card: string) => reviews.filter((review) => matchesReviewCard(review, card)).length;
+  assert.equal(count("all"), 5);
+  assert.equal(count("published"), 3);
+  assert.equal(count("five"), 1);
+  assert.equal(count("low"), 1);
+});
+
+test("the coupon, read and batch views", () => {
+  const coupons = [{ status: "Active", used: 3 }, { status: "Scheduled", used: 0 }, { status: "Expired", used: 1 }];
+  assert.equal(coupons.filter((coupon) => matchesCouponView(coupon, "all")).length, 3);
+  assert.equal(coupons.filter((coupon) => matchesCouponView(coupon, "used")).length, 2);
+  assert.equal(coupons.filter((coupon) => matchesCouponView(coupon, "Scheduled")).length, 1);
+  assert.equal(matchesReadFilter(false, "unread"), true);
+  assert.equal(matchesReadFilter(true, "unread"), false);
+  assert.equal(matchesReadFilter(true, "read"), true);
+  assert.equal(matchesReadFilter(false, "read"), false);
+  assert.equal(matchesReadFilter(false, "all"), true);
+  const batches = [{ available: 5, lost: 0 }, { available: 0, lost: 2 }];
+  assert.equal(matchesBatchStatus(batches[0]!, "stock"), true);
+  assert.equal(matchesBatchStatus(batches[1]!, "stock"), false);
+  assert.equal(matchesBatchStatus(batches[1]!, "soldout"), true);
+  assert.equal(matchesBatchStatus(batches[0]!, "lost"), false);
+  assert.equal(matchesBatchStatus(batches[1]!, "lost"), true);
+  assert.equal(matchesBatchStatus(batches[0]!, "all"), true);
+});
+
+test("the branch cards: delivery counts active branches only", () => {
+  const base = { active: true, deliveryEnabled: true, isDefault: false };
+  assert.equal(matchesBranchView(base, "delivery"), true);
+  assert.equal(matchesBranchView({ ...base, active: false }, "delivery"), false);
+  assert.equal(matchesBranchView({ ...base, active: false }, "active"), false);
+  assert.equal(matchesBranchView(base, "default"), false);
+  assert.equal(matchesBranchView({ ...base, isDefault: true }, "default"), true);
+  assert.equal(matchesBranchView({ ...base, active: false }, "all"), true);
+});
+
+test("a loss line: sold below cost, cancelled or refunded; a line with no cost is not a loss", () => {
+  const line = { margin: 10 as number | null, orderStatus: "Placed", paymentStatus: "Paid" };
+  assert.equal(isLossLine(line), false);
+  assert.equal(isLossLine({ ...line, margin: -1 }), true);
+  assert.equal(isLossLine({ ...line, margin: null }), false);
+  assert.equal(isLossLine({ ...line, orderStatus: "Cancelled" }), true);
+  assert.equal(isLossLine({ ...line, paymentStatus: "Refunded" }), true);
 });
 
 test("a new admin sign-in replaces the idle clock left by an earlier session", () => {
