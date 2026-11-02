@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { IndianRupee, PackageCheck, PackageX, ShoppingCart } from "lucide-react";
 import { toast } from "sonner";
 import { PanelLayout } from "@/components/panel/PanelLayout";
-import { DataTable, Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
+import { DataTable, FilterNote, Panel, scrollToSection, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { Pager } from "@/components/panel/pager";
 import { vendorNav } from "@/lib/panel-nav";
 import { getOrderItemTotal, inr, orderStages, vendorOrderStatusOptions, type OrderStatus } from "@/lib/data";
@@ -41,12 +41,28 @@ function VendorOrders() {
 
 function VendorOrdersPanel() {
   const routeSearch = Route.useSearch();
+  const navigate = Route.useNavigate();
   const { updateOrderStatus } = useApp();
   const { vendor, vendorOrders, vendorId } = useVendorScope();
   const [q, setQ] = useState(routeSearch.q ?? "");
   const [status, setStatus] = useState(() => orderStatusFilter(routeSearch.status, [...orderStages, "Cancelled"]));
   const [sort, setSort] = useState("date-desc");
   const [page, setPage] = useState(1);
+  // The Revenue Collected card shows the paid orders it adds up.
+  const [paidOnly, setPaidOnly] = useState(false);
+
+  // The cards open the list below with just those orders. resetScroll: the page stays here to scroll to the list.
+  const showOrders = (next: string, paid = false) => {
+    setQ("");
+    setStatus(next);
+    setPaidOnly(paid);
+    setPage(1);
+    void navigate({ search: next === "all" ? {} : { status: next }, resetScroll: false });
+  };
+  const openList = (next: string, paid = false) => {
+    showOrders(next, paid);
+    scrollToSection("vendor-orders");
+  };
 
   // A link can change the filter while this list stays open (the sidebar's Orders, "Show all").
   useEffect(() => {
@@ -74,7 +90,7 @@ function VendorOrdersPanel() {
       const s = q.trim().toLowerCase();
       const matchesQ = !s || `${o.id} ${o.customer} ${o.status} ${o.items.map((line) => `${line.product.name} ${line.product.sku}`).join(" ")}`.toLowerCase().includes(s);
       const matchesStatus = matchesOrderStatus(o.status, status);
-      return matchesQ && matchesStatus;
+      return matchesQ && matchesStatus && (!paidOnly || (o.payment === "Paid" && o.status !== "Cancelled"));
     });
     list = [...list].sort((a, b) => {
       const createdAt = (order: typeof a.order) => Date.parse(order.createdAt ?? order.date) || 0;
@@ -85,7 +101,7 @@ function VendorOrdersPanel() {
       return 0;
     });
     return list;
-  }, [withAmounts, q, status, sort]);
+  }, [withAmounts, q, status, sort, paidOnly]);
 
   const pages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const pageSafe = Math.min(page, pages);
@@ -99,13 +115,14 @@ function VendorOrdersPanel() {
   return (
     <PanelLayout items={vendorNav} tone="vendor" title="Orders" subtitle={`Orders containing ${vendor?.business ?? "your store"} items`}>
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Total Orders" value={String(total)} icon={ShoppingCart} highlight />
-        <StatCard label="Pending" value={String(pending)} icon={PackageX} />
-        <StatCard label="Delivered" value={String(delivered)} icon={PackageCheck} />
-        <StatCard label="Revenue Collected" value={inr(revenue)} icon={IndianRupee} />
+        <StatCard onClick={() => openList("all")} label="Total Orders" value={String(total)} icon={ShoppingCart} highlight />
+        <StatCard onClick={() => openList(OPEN_ORDERS)} label="Pending" value={String(pending)} icon={PackageX} />
+        <StatCard onClick={() => openList("Delivered")} label="Delivered" value={String(delivered)} icon={PackageCheck} />
+        <StatCard onClick={() => openList("all", true)} label="Revenue Collected" value={inr(revenue)} icon={IndianRupee} />
       </div>
 
       <Panel
+        id="vendor-orders"
         title="All Orders"
         className="mt-6"
         action={
@@ -138,6 +155,9 @@ function VendorOrdersPanel() {
           </div>
         }
       >
+        {(paidOnly || status !== "all") && (
+          <FilterNote label={paidOnly ? "Revenue Collected" : status === OPEN_ORDERS ? "All pending" : status} onClear={() => showOrders("all")} />
+        )}
         <DataTable
           columns={["Order ID", "Date", "Customer", "Items", "Subtotal", "Payment", "Status", "Actions"]}
           rows={rows.map(({ order: o, items, amount }) => [

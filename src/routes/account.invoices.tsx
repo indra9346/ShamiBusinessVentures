@@ -2,7 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { Download, FileText, IndianRupee, Receipt } from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
-import { DataTable, Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
+import { DataTable, Panel, scrollToSection, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { accountNav } from "@/lib/account-nav";
 import { inr } from "@/lib/data";
 import { useApp } from "@/lib/store";
@@ -79,12 +79,13 @@ function AccountInvoices() {
       subtitle="GST invoices for your orders"
     >
       <div className="grid gap-4 sm:grid-cols-3">
-        <StatCard label="Total Invoices" value={String(list.length)} icon={FileText} highlight />
-        <StatCard label="Invoiced Value" value={inr(total)} icon={IndianRupee} />
-        <StatCard label="GST Paid" value={inr(gst)} icon={Receipt} />
+        <StatCard onClick={() => scrollToSection("invoice-history")} label="Total Invoices" value={String(list.length)} icon={FileText} highlight />
+        <StatCard onClick={() => scrollToSection("invoice-history")} label="Invoiced Value" value={inr(total)} icon={IndianRupee} />
+        <StatCard onClick={() => scrollToSection("invoice-history")} label="GST Paid" value={inr(gst)} icon={Receipt} />
       </div>
 
       <Panel
+        id="invoice-history"
         title="Invoice History"
         className="mt-6"
         action={

@@ -2,14 +2,13 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { CalendarCheck, IndianRupee, LogOut, RefreshCw, Target, Timer, Trophy } from "lucide-react";
 import { LogoMark } from "@/components/brand/Logo";
-import { Panel, StatCard } from "@/components/panel/widgets";
+import { FilterNote, Panel, scrollToSection, StatCard } from "@/components/panel/widgets";
 import { CommissionLinesTable, PartnerLeaderboard, TargetBar, commissionTotals, usePartnerData } from "@/components/partners/PartnerWidgets";
 import { MyPartnerReport } from "@/components/partners/MyPartnerReport";
 import { supabase } from "@/integrations/supabase/client";
 import { inrPrecise } from "@/lib/data";
 import { describeRate, monthLabel, monthStart, targetProgress, type CommissionKind } from "@/lib/partners";
-
-const scrollToSection = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+import { matchesCommissionStatus } from "@/lib/panel-filters";
 
 export const Route = createFileRoute("/partner/")({
   head: () => ({ meta: [{ title: "Channel Partner Commission Platform | Grain Bazar" }, { name: "robots", content: "noindex" }] }),
@@ -27,6 +26,12 @@ function PartnerDashboard() {
   const [rates, setRates] = useState<Rate[]>([]);
   const [target, setTarget] = useState<number>(0);
   const { leaders, lines, error } = usePartnerData(month);
+  // The money cards open the commission list below, showing just what they add up.
+  const [lineView, setLineView] = useState("all");
+  const openLines = (view: string) => {
+    setLineView(view);
+    scrollToSection("your-commissions");
+  };
 
   // Only an active partner may stay here; anyone else goes to the partner login.
   useEffect(() => {
@@ -93,9 +98,9 @@ function PartnerDashboard() {
         {error && <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
         <p className="text-xs text-slate">{monthLabel(month)} · updates live every 30 seconds</p>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <StatCard onClick={() => scrollToSection("your-commissions")} label="Commission earned" value={inrPrecise(totals.earned)} icon={IndianRupee} description="Delivered and fully paid orders" />
-          <StatCard onClick={() => scrollToSection("your-commissions")} label="Commission pending" value={inrPrecise(totals.pending)} icon={Timer} description="Becomes earned on delivery + full payment" />
-          <StatCard onClick={() => scrollToSection("your-commissions")} label="Sales (excl. GST)" value={inrPrecise(totals.sales)} icon={Target} description={`${totals.orders} orders`} />
+          <StatCard onClick={() => openLines("earned")} label="Commission earned" value={inrPrecise(totals.earned)} icon={IndianRupee} description="Delivered and fully paid orders" />
+          <StatCard onClick={() => openLines("pending")} label="Commission pending" value={inrPrecise(totals.pending)} icon={Timer} description="Becomes earned on delivery + full payment" />
+          <StatCard onClick={() => openLines("sales")} label="Sales (excl. GST)" value={inrPrecise(totals.sales)} icon={Target} description={`${totals.orders} orders`} />
           <StatCard onClick={() => scrollToSection("leaderboard")} label="Leaderboard rank" value={myRank ? `#${myRank} of ${leaders?.length ?? 0}` : "—"} icon={Trophy} />
         </div>
 
@@ -136,7 +141,10 @@ function PartnerDashboard() {
 
         <div id="your-commissions" className="scroll-mt-36">
           <Panel title={`Your commissions · ${monthLabel(month)}`}>
-            <CommissionLinesTable lines={lines?.filter((line) => line.partner_id === me.id) ?? null} />
+            {lineView !== "all" && (
+              <FilterNote label={lineView === "earned" ? "Commission earned" : lineView === "pending" ? "Commission pending" : "Sales (excl. GST)"} onClear={() => setLineView("all")} />
+            )}
+            <CommissionLinesTable lines={lines?.filter((line) => line.partner_id === me.id && matchesCommissionStatus(line.status, lineView)) ?? null} />
           </Panel>
         </div>
       </main>

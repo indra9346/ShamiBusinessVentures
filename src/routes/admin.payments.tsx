@@ -3,10 +3,11 @@ import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { CheckCircle2, Clock, IndianRupee, RotateCcw, XCircle } from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
-import { DataTable, Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
+import { DataTable, FilterNote, Panel, scrollToSection, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { adminNav } from "@/lib/panel-nav";
 import { inr, inrPrecise } from "@/lib/data";
 import { loadAdvancePercent } from "@/lib/business-rules";
+import { isUnpaid, matchesPaymentFilter, MONEY_RECEIVED, paymentFilterOf, UNPAID } from "@/lib/panel-filters";
 import { toPaise } from "@/lib/pricing";
 import { useApp } from "@/lib/store";
 import { Input } from "@/components/ui/input";
@@ -21,6 +22,7 @@ import {
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 export const Route = createFileRoute("/admin/payments")({
+  validateSearch: (search: Record<string, unknown>) => (typeof search["status"] === "string" ? { status: search["status"] } : {}),
   head: () => ({
     meta: [
       { title: "Payments | Shami Business Ventures Admin" },
@@ -40,6 +42,7 @@ const PAGE_SIZE = 10;
 
 function AdminPayments() {
   const { orders, confirmPayment } = useApp();
+  const routeSearch = Route.useSearch();
 
   const txns = useMemo(
     () =>
@@ -50,6 +53,7 @@ function AdminPayments() {
         phone: o.phone,
         utr: o.utr ?? "",
         vendor: o.items[0]!.vendor,
+        payment: o.payment,
         amount: o.amount,
         paid: o.paidAmount ?? (o.payment === "Paid" ? o.amount : 0),
         due: o.paymentDueDate ?? "—",
@@ -76,8 +80,20 @@ function AdminPayments() {
 
   const [search, setSearch] = useState("");
   const [method, setMethod] = useState("All");
-  const [status, setStatus] = useState("All");
+  const [status, setStatus] = useState(() => paymentFilterOf(routeSearch.status));
   const [page, setPage] = useState(1);
+  // A link can change the filter while this list stays open (the sidebar's Payments).
+  useEffect(() => {
+    setStatus(paymentFilterOf(routeSearch.status));
+    setPage(1);
+  }, [routeSearch.status]);
+  const openList = (next: string) => {
+    setSearch("");
+    setMethod("All");
+    setStatus(next);
+    setPage(1);
+    scrollToSection("transactions");
+  };
   const [view, setView] = useState<(typeof txns)[number] | null>(null);
   const [confirmOrder, setConfirmOrder] = useState<string | null>(null);
   const [utr, setUtr] = useState("");
@@ -91,7 +107,7 @@ function AdminPayments() {
   const stats = useMemo(() => {
     const collected = txns.reduce((s, t) => s + t.paid, 0);
     const pending = orders
-      .filter((o) => o.payment !== "Paid" && o.payment !== "Refunded" && o.payment !== "Failed")
+      .filter((o) => isUnpaid(o.payment))
       .reduce((s, o) => s + Math.max(0, o.amount - (o.paidAmount ?? 0)), 0);
     const failed = txns.filter((t) => t.status === "Failed").length;
     const refunded = txns.filter((t) => t.status === "Refunded").reduce((s, t) => s + t.amount, 0);
@@ -120,8 +136,7 @@ function AdminPayments() {
           inr(t.amount),
         ].some((v) => v.toLowerCase().includes(search.toLowerCase()));
         const matchMethod = method === "All" || t.method === method;
-        const matchStatus = status === "All" || t.status === status;
-        return matchSearch && matchMethod && matchStatus;
+        return matchSearch && matchMethod && matchesPaymentFilter(t, status);
       }),
     [txns, search, method, status],
   );
@@ -138,18 +153,20 @@ function AdminPayments() {
     >
       <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
         <StatCard
+          onClick={() => openList(MONEY_RECEIVED)}
           label="Total Collected"
           value={inr(stats.collected)}
           icon={IndianRupee}
           highlight
         />
-        <StatCard label="Successful" value={String(stats.success)} icon={CheckCircle2} />
-        <StatCard label="Pending" value={inr(stats.pending)} icon={Clock} />
-        <StatCard label="Failed" value={String(stats.failed)} icon={XCircle} />
-        <StatCard label="Refunded" value={inr(stats.refunded)} icon={RotateCcw} />
+        <StatCard onClick={() => openList("Successful")} label="Successful" value={String(stats.success)} icon={CheckCircle2} />
+        <StatCard onClick={() => openList(UNPAID)} label="Pending" value={inr(stats.pending)} icon={Clock} />
+        <StatCard onClick={() => openList("Failed")} label="Failed" value={String(stats.failed)} icon={XCircle} />
+        <StatCard onClick={() => openList("Refunded")} label="Refunded" value={inr(stats.refunded)} icon={RotateCcw} />
       </div>
 
       <Panel
+        id="transactions"
         title="Transactions"
         action={
           <div className="flex flex-wrap items-center gap-2">
@@ -193,6 +210,8 @@ function AdminPayments() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="All">All Status</SelectItem>
+                <SelectItem value={MONEY_RECEIVED}>Money received</SelectItem>
+                <SelectItem value={UNPAID}>Unpaid</SelectItem>
                 <SelectItem value="Successful">Successful</SelectItem>
                 <SelectItem value="Pending">Pending</SelectItem>
                 <SelectItem value="Overdue">Overdue</SelectItem>
@@ -204,6 +223,7 @@ function AdminPayments() {
           </div>
         }
       >
+        {status !== "All" && <FilterNote label={status} onClear={() => { setStatus("All"); setPage(1); }} />}
         <DataTable
           columns={[
             "Txn",

@@ -3,8 +3,9 @@ import { useMemo, useState } from "react";
 import { AlertTriangle, Boxes, Package, PackageX } from "lucide-react";
 import { toast } from "sonner";
 import { PanelLayout } from "@/components/panel/PanelLayout";
-import { DataTable, Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
+import { DataTable, FilterNote, Panel, scrollToSection, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { vendorNav } from "@/lib/panel-nav";
+import { matchesVendorStock } from "@/lib/panel-filters";
 import { useApp, useVendorScope } from "@/lib/store";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -33,25 +34,31 @@ function VendorInventory() {
   const [q, setQ] = useState("");
   const [stockDialog, setStockDialog] = useState<Product | null>(null);
   const [stockValue, setStockValue] = useState("");
+  // The cards open the All Stock list with just the products they count.
+  const [view, setView] = useState("all");
+  const openList = (next: string) => {
+    setQ("");
+    setView(next);
+    scrollToSection("all-stock");
+  };
 
+  const countedAs = (card: string) => vendorProducts.filter((p) => matchesVendorStock(p.stock, p.minimumStock ?? REORDER_LEVEL, card));
   const filtered = useMemo(
-    () => vendorProducts.filter((p) => `${p.name} ${p.sku} ${p.category}`.toLowerCase().includes(q.trim().toLowerCase())),
-    [vendorProducts, q],
+    () => vendorProducts.filter((p) => `${p.name} ${p.sku} ${p.category}`.toLowerCase().includes(q.trim().toLowerCase()) && matchesVendorStock(p.stock, p.minimumStock ?? REORDER_LEVEL, view)),
+    [vendorProducts, q, view],
   );
 
-  const outOfStock = vendorProducts.filter((p) => p.stock === 0);
-  const lowStock = vendorProducts
-    .filter((p) => p.stock <= 0 || p.stock < (p.minimumStock ?? REORDER_LEVEL))
-    .sort((a, b) => a.stock - b.stock || a.name.localeCompare(b.name));
-  const healthy = vendorProducts.filter((p) => p.stock > 0 && p.stock >= (p.minimumStock ?? REORDER_LEVEL));
+  const outOfStock = countedAs("out");
+  const lowStock = countedAs("low").sort((a, b) => a.stock - b.stock || a.name.localeCompare(b.name));
+  const healthy = countedAs("healthy");
 
   return (
     <PanelLayout items={vendorNav} tone="vendor" title="Inventory" subtitle="Stock levels and reorder alerts">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Total SKUs" value={String(vendorProducts.length)} icon={Package} highlight />
-        <StatCard label="Healthy Stock" value={String(healthy.length)} icon={Boxes} />
-        <StatCard label="Low Stock" value={String(lowStock.length)} icon={AlertTriangle} />
-        <StatCard label="Out of Stock" value={String(outOfStock.length)} icon={PackageX} />
+        <StatCard onClick={() => openList("all")} label="Total SKUs" value={String(vendorProducts.length)} icon={Package} highlight />
+        <StatCard onClick={() => openList("healthy")} label="Healthy Stock" value={String(healthy.length)} icon={Boxes} />
+        <StatCard onClick={() => openList("low")} label="Low Stock" value={String(lowStock.length)} icon={AlertTriangle} />
+        <StatCard onClick={() => openList("out")} label="Out of Stock" value={String(outOfStock.length)} icon={PackageX} />
       </div>
 
       {lowStock.length > 0 && (
@@ -70,10 +77,12 @@ function VendorInventory() {
       )}
 
       <Panel
+        id="all-stock"
         title="All Stock"
         className="mt-6"
         action={<Input placeholder="Search name, SKU, or category" aria-label="Search inventory by product name, SKU, or category" value={q} onChange={(e) => setQ(e.target.value)} className="h-9 w-56" />}
       >
+        {view !== "all" && <FilterNote label={view === "healthy" ? "Healthy Stock" : view === "low" ? "Low Stock" : "Out of Stock"} onClear={() => setView("all")} />}
         <DataTable
           columns={["Product", "SKU", "Category", "Stock", "Reserved", "Status", "Actions"]}
           rows={filtered.map((p) => [

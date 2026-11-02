@@ -3,7 +3,7 @@ import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Download, IndianRupee, Mail, ShieldCheck, Users, UserX } from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
-import { DataTable, Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
+import { DataTable, FilterNote, Panel, scrollToSection, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { Pager } from "@/components/panel/pager";
 import { adminNav } from "@/lib/panel-nav";
 import { inr } from "@/lib/data";
@@ -48,6 +48,13 @@ function AdminCustomersPanel() {
   const [sort, setSort] = useState("spend-desc");
   const [page, setPage] = useState(1);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const openList = (next: string) => {
+    setQ("");
+    setCity("all");
+    setStatus(next);
+    setPage(1);
+    scrollToSection("all-customers");
+  };
 
   const cities = useMemo(() => Array.from(new Set(customers.map((c) => c.city))), [customers]);
 
@@ -173,13 +180,14 @@ function AdminCustomersPanel() {
   return (
     <PanelLayout items={adminNav} tone="admin" title="Customers" subtitle="Every buyer registered on the platform">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Total Customers" value={String(customers.length)} icon={Users} highlight />
-        <StatCard label="Active" value={String(active)} icon={ShieldCheck} />
-        <StatCard label="Blocked" value={String(blocked)} icon={UserX} />
-        <StatCard label="Lifetime Spend" value={inr(totalSpend)} icon={IndianRupee} />
+        <StatCard onClick={() => openList("all")} label="Total Customers" value={String(customers.length)} icon={Users} highlight />
+        <StatCard onClick={() => openList("active")} label="Active" value={String(active)} icon={ShieldCheck} />
+        <StatCard onClick={() => openList("blocked")} label="Blocked" value={String(blocked)} icon={UserX} />
+        <StatCard onClick={() => { setSort("spend-desc"); openList("all"); }} label="Lifetime Spend" value={inr(totalSpend)} icon={IndianRupee} />
       </div>
 
       <Panel
+        id="all-customers"
         title="All Customers"
         className="mt-6"
         action={
@@ -219,6 +227,7 @@ function AdminCustomersPanel() {
           </div>
         }
       >
+        {status !== "all" && <FilterNote label={status === "active" ? "Active" : "Blocked"} onClear={() => { setStatus("all"); setPage(1); }} />}
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-border bg-ivory/70 p-3">
           <div className="min-w-0">
             <p className="text-sm font-semibold text-navy">

@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Building2, Percent, Save, ShieldCheck, Truck } from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
-import { Panel, StatCard } from "@/components/panel/widgets";
+import { Panel, scrollToSection, StatCard } from "@/components/panel/widgets";
 import { adminNav } from "@/lib/panel-nav";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -40,6 +40,12 @@ const settingKeys = ["business_profile", "tax_config", "commerce_rules", "securi
 
 function AdminSettings() {
   const { vendors } = useApp();
+  // The cards open the tab with their setting.
+  const [tab, setTab] = useState("business");
+  const openTab = (next: string) => {
+    setTab(next);
+    scrollToSection("settings-tabs");
+  };
   const [business, setBusiness] = useState({
     name: "Shami Business Ventures Private Limited",
     email: "shamibusinessventurespvtltd@gmail.com",
@@ -121,13 +127,13 @@ function AdminSettings() {
   return (
     <PanelLayout items={adminNav} tone="admin" title="System Settings" subtitle="Platform-wide business configuration">
       <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Average Vendor Commission" value={`${vendors.length ? (vendors.reduce((sum, vendor) => sum + vendor.commission, 0) / vendors.length).toFixed(1) : "0"}%`} icon={Percent} highlight />
-        <StatCard label="Advance on Order" value={`${commerce.advance}%`} icon={ShieldCheck} />
-        <StatCard label="Free Freight Above" value={`₹${Number(commerce.freeShipAbove).toLocaleString("en-IN")}`} icon={Truck} />
-        <StatCard label="GST on New Products" value={tax.gstEnabled ? "Enabled" : "Disabled"} icon={Building2} />
+        <StatCard link={{ to: "/admin/commissions" }} label="Average Vendor Commission" value={`${vendors.length ? (vendors.reduce((sum, vendor) => sum + vendor.commission, 0) / vendors.length).toFixed(1) : "0"}%`} icon={Percent} highlight />
+        <StatCard onClick={() => openTab("commerce")} label="Advance on Order" value={`${commerce.advance}%`} icon={ShieldCheck} />
+        <StatCard onClick={() => openTab("commerce")} label="Free Freight Above" value={`₹${Number(commerce.freeShipAbove).toLocaleString("en-IN")}`} icon={Truck} />
+        <StatCard onClick={() => openTab("tax")} label="GST on New Products" value={tax.gstEnabled ? "Enabled" : "Disabled"} icon={Building2} />
       </div>
 
-      <Tabs defaultValue="business">
+      <Tabs id="settings-tabs" value={tab} onValueChange={setTab} className="scroll-mt-36">
         <TabsList className="mb-4 flex-wrap">
           <TabsTrigger value="business">Business</TabsTrigger>
           <TabsTrigger value="tax">Tax & Invoicing</TabsTrigger>

@@ -3,7 +3,8 @@ import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Bell, BellRing, Building2, CheckCheck, CheckCircle2, ExternalLink, Mail, Send, Trash2 } from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
-import { Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
+import { FilterNote, Panel, scrollToSection, StatCard, StatusBadge } from "@/components/panel/widgets";
+import { matchesReadFilter } from "@/lib/panel-filters";
 import { adminNav } from "@/lib/panel-nav";
 import { useApp } from "@/lib/store";
 import { Button } from "@/components/ui/button";
@@ -43,14 +44,24 @@ function AdminNotifications() {
   const [role, setRole] = useState("All");
   const [type, setType] = useState("All");
   const [broadcast, setBroadcast] = useState({ audience: "All Vendors", subject: "", message: "" });
+  // The cards open the inbox with just the alerts they count.
+  const [tab, setTab] = useState("inbox");
+  const [readView, setReadView] = useState("all");
+  const openInbox = (nextRole: string, nextRead = "all") => {
+    setRole(nextRole);
+    setType("All");
+    setReadView(nextRead);
+    setTab("inbox");
+    scrollToSection("alerts-inbox");
+  };
 
   const list = useMemo(
     () =>
       notifications.filter(
         (n) =>
-          (role === "All" || n.role === role.toLowerCase()) && (type === "All" || n.type === type),
+          (role === "All" || n.role === role.toLowerCase()) && (type === "All" || n.type === type) && matchesReadFilter(n.read, readView),
       ),
-    [notifications, role, type],
+    [notifications, role, type, readView],
   );
 
   const stats = useMemo(
@@ -88,13 +99,13 @@ function AdminNotifications() {
       subtitle="Platform alerts and broadcasts"
     >
       <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Total Alerts" value={String(stats.total)} icon={Bell} />
-        <StatCard label="Unread" value={String(stats.unread)} icon={BellRing} highlight />
-        <StatCard label="Admin Alerts" value={String(stats.admin)} icon={Mail} />
-        <StatCard label="Vendor Alerts" value={String(stats.vendor)} icon={Mail} />
+        <StatCard onClick={() => openInbox("All")} label="Total Alerts" value={String(stats.total)} icon={Bell} />
+        <StatCard onClick={() => openInbox("All", "unread")} label="Unread" value={String(stats.unread)} icon={BellRing} highlight />
+        <StatCard onClick={() => openInbox("Admin")} label="Admin Alerts" value={String(stats.admin)} icon={Mail} />
+        <StatCard onClick={() => openInbox("Vendor")} label="Vendor Alerts" value={String(stats.vendor)} icon={Mail} />
       </div>
 
-      <Tabs defaultValue="inbox">
+      <Tabs value={tab} onValueChange={setTab}>
         <TabsList className="mb-4 flex-wrap">
           <TabsTrigger value="inbox">Inbox</TabsTrigger>
           <TabsTrigger value="broadcast">Broadcast</TabsTrigger>
@@ -104,6 +115,7 @@ function AdminNotifications() {
 
         <TabsContent value="inbox">
           <Panel
+            id="alerts-inbox"
             title={`Alerts (${list.length})`}
             action={
               <Button
@@ -117,6 +129,9 @@ function AdminNotifications() {
               </Button>
             }
           >
+            {(readView === "unread" || role === "Admin" || role === "Vendor") && (
+              <FilterNote label={readView === "unread" ? "Unread" : role === "Admin" ? "Admin Alerts" : "Vendor Alerts"} onClear={() => { setRole("All"); setReadView("all"); }} />
+            )}
             <div className="mb-4 flex flex-wrap gap-3">
               <Select value={role} onValueChange={setRole}>
                 <SelectTrigger className="w-[160px]">

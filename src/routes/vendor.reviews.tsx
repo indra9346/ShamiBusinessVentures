@@ -3,8 +3,9 @@ import { useMemo, useState } from "react";
 import { Flag, MessageSquare, Star } from "lucide-react";
 import { toast } from "sonner";
 import { PanelLayout } from "@/components/panel/PanelLayout";
-import { DataTable, Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
+import { DataTable, FilterNote, Panel, scrollToSection, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { vendorNav } from "@/lib/panel-nav";
+import { matchesReviewCard } from "@/lib/panel-filters";
 import { useApp, useVendorScope } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -28,13 +29,20 @@ function VendorReviews() {
   const { vendor, vendorReviews } = useVendorScope();
   const { replyReview, reportReview } = useApp();
   const [rating, setRating] = useState("all");
+  // The Published cards open the list below with just the reviews they count.
+  const [card, setCard] = useState("all");
+  const openList = (next: string) => {
+    setRating("all");
+    setCard(next);
+    scrollToSection("all-reviews");
+  };
   const [replying, setReplying] = useState<(typeof vendorReviews)[number] | null>(null);
   const [reply, setReply] = useState("");
   const [replies, setReplies] = useState<Record<string, string>>({});
 
   const filtered = useMemo(
-    () => vendorReviews.filter((r) => rating === "all" || String(r.rating) === rating),
-    [vendorReviews, rating],
+    () => vendorReviews.filter((r) => (rating === "all" || String(r.rating) === rating) && matchesReviewCard(r, card)),
+    [vendorReviews, rating, card],
   );
 
   const publishedReviews = vendorReviews.filter((review) => review.status === "Published");
@@ -47,10 +55,10 @@ function VendorReviews() {
   return (
     <PanelLayout items={vendorNav} tone="vendor" title="Reviews" subtitle={`Customer feedback on ${vendor?.business ?? "your store"} products`}>
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Total Reviews" value={String(vendorReviews.length)} icon={MessageSquare} highlight />
-        <StatCard label="Published Average Rating" value={publishedReviews.length ? `${Math.round(avg * 10) / 10} / 5` : "—"} icon={Star} />
-        <StatCard label="Published 5-Star Reviews" value={String(distribution[0]!.count)} icon={Star} />
-        <StatCard label="Published Low Ratings (≤2★)" value={String(distribution[3]!.count + distribution[4]!.count)} icon={Flag} />
+        <StatCard onClick={() => openList("all")} label="Total Reviews" value={String(vendorReviews.length)} icon={MessageSquare} highlight />
+        <StatCard onClick={() => openList("published")} label="Published Average Rating" value={publishedReviews.length ? `${Math.round(avg * 10) / 10} / 5` : "—"} icon={Star} />
+        <StatCard onClick={() => openList("five")} label="Published 5-Star Reviews" value={String(distribution[0]!.count)} icon={Star} />
+        <StatCard onClick={() => openList("low")} label="Published Low Ratings (≤2★)" value={String(distribution[3]!.count + distribution[4]!.count)} icon={Flag} />
       </div>
 
       <Panel title="Rating Distribution" className="mt-6">
@@ -71,6 +79,7 @@ function VendorReviews() {
       </Panel>
 
       <Panel
+        id="all-reviews"
         title="All Reviews"
         className="mt-6"
         action={
@@ -85,6 +94,9 @@ function VendorReviews() {
           </Select>
         }
       >
+        {card !== "all" && (
+          <FilterNote label={card === "five" ? "Published 5-Star Reviews" : card === "low" ? "Published Low Ratings (≤2★)" : "Published"} onClear={() => setCard("all")} />
+        )}
         <DataTable
           columns={["Product", "Customer", "Rating", "Review", "Reply", "Status", "Actions"]}
           rows={filtered.map((r) => [

@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Package } from "lucide-react";
 import { toast } from "sonner";
 import { PanelLayout } from "@/components/panel/PanelLayout";
-import { DataTable, Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
+import { DataTable, FilterNote, Panel, scrollToSection, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { Pager } from "@/components/panel/pager";
 import { accountNav } from "@/lib/account-nav";
 import { canCancelOrder, inr, inrPrecise, orderStages, type OrderStatus } from "@/lib/data";
@@ -61,6 +61,7 @@ const PAGE_SIZE = 10;
 function AccountOrders() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const routeSearch = Route.useSearch();
+  const navigate = Route.useNavigate();
   const { user, orders, updateOrderStatus, addToCart, paymentHolds } = useApp();
   const unpaid = paymentHolds.filter((hold) => hold.status === AWAITING_PAYMENT);
   const now = useServerNow();
@@ -93,6 +94,18 @@ function AccountOrders() {
     setQ(routeSearch.q ?? "");
     setPage(1);
   }, [routeSearch.q]);
+
+  // The cards open the list below with just those orders. resetScroll: the page stays here to scroll to the list.
+  const showOrders = (next: string) => {
+    setQ("");
+    setStatus(next);
+    setPage(1);
+    void navigate({ search: next === "all" ? {} : { status: next }, resetScroll: false });
+  };
+  const openList = (next: string) => {
+    showOrders(next);
+    scrollToSection("my-orders");
+  };
 
   const myOrders = useMemo(
     () => orders.filter((order) => orderBelongsToUser(order, user)),
@@ -181,12 +194,13 @@ function AccountOrders() {
         </Panel>
       )}
       <div className="grid gap-4 sm:grid-cols-3">
-        <StatCard label="Total Orders" value={String(myOrders.length)} icon={Package} highlight />
-        <StatCard label="Active" value={String(active)} icon={Package} />
-        <StatCard label="Delivered" value={String(delivered)} icon={Package} />
+        <StatCard onClick={() => openList("all")} label="Total Orders" value={String(myOrders.length)} icon={Package} highlight />
+        <StatCard onClick={() => openList(OPEN_ORDERS)} label="Active" value={String(active)} icon={Package} />
+        <StatCard onClick={() => openList("Delivered")} label="Delivered" value={String(delivered)} icon={Package} />
       </div>
 
       <Panel
+        id="my-orders"
         title="All Orders"
         className="mt-6"
         action={
@@ -234,6 +248,7 @@ function AccountOrders() {
           </div>
         }
       >
+        {status !== "all" && <FilterNote label={status === OPEN_ORDERS ? "All pending" : status} onClear={() => showOrders("all")} />}
         {myOrders.length === 0 ? (
           <div className="py-8 text-center">
             <p className="text-sm font-medium text-slate">

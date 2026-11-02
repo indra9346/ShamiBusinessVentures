@@ -3,7 +3,7 @@ import { useMemo, useState, type ChangeEvent } from "react";
 import { toast } from "sonner";
 import { Layers, Package, Plus, Tags, Trash2, Pencil, ImagePlus } from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
-import { DataTable, Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
+import { DataTable, Panel, scrollToSection, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { adminNav } from "@/lib/panel-nav";
 import { defaultCategoryImageFit, normalizeCategoryImageFit, storeCategorySeed, type CategoryImageFit, type StoreCategory } from "@/lib/data";
 import { CategoryImageFitter } from "@/components/panel/CategoryImageFitter";
@@ -81,9 +81,9 @@ function AdminCategories() {
   return (
     <PanelLayout items={adminNav} tone="admin" title="Categories" subtitle="Manage storefront categories, images and subcategories">
       <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        <StatCard label="Total Categories" value={String(categories.length)} icon={Tags} />
-        <StatCard label="Total Subcategories" value={String(categories.reduce((sum, c) => sum + c.grades.length, 0))} icon={Layers} />
-        <StatCard label="Total Products" value={String(products.length)} icon={Package} />
+        <StatCard onClick={() => scrollToSection("all-categories")} label="Total Categories" value={String(categories.length)} icon={Tags} />
+        <StatCard onClick={() => scrollToSection("all-categories")} label="Total Subcategories" value={String(categories.reduce((sum, c) => sum + c.grades.length, 0))} icon={Layers} />
+        <StatCard link={{ to: "/admin/products" }} label="Total Products" value={String(products.length)} icon={Package} />
       </div>
       <div className="mb-6 flex justify-end">
         <Dialog open={open} onOpenChange={setOpen}>
@@ -104,7 +104,7 @@ function AdminCategories() {
       <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {ordered.map((c) => <div key={c.id} className="overflow-hidden rounded-lg border border-border bg-card shadow-card"><CategoryImage src={c.image} alt={c.name} fit={c.imageFit} className="h-36" /><div className="p-4"><div className="flex items-start justify-between gap-2"><div><p className="font-bold text-navy">{c.name}</p><p className="text-xs text-slate">{c.grades.length} subcategories</p></div><StatusBadge status={c.enabled ? "Active" : "Hidden"} /></div><p className="mt-2 text-2xl font-bold text-navy">{counts[c.name] ?? 0}</p><p className="text-xs text-slate">products</p><p className="mt-2 text-xs text-slate">{c.grades.join(" · ")}</p><div className="mt-3 flex gap-2"><Button size="sm" variant="outline" onClick={() => startEdit(c)}><Pencil className="mr-1 h-3.5 w-3.5" /> Edit</Button><AlertDialog><AlertDialogTrigger asChild><Button size="sm" variant="outline" className="text-danger hover:text-danger"><Trash2 className="mr-1 h-3.5 w-3.5" /> Delete</Button></AlertDialogTrigger><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Delete “{c.name}”?</AlertDialogTitle><AlertDialogDescription>Products assigned to this category are retained but may no longer appear in storefront category filters.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction onClick={async () => { if (await deleteCategory(c.id)) toast.success(`Category “${c.name}” deleted`); }}>Delete</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog></div></div></div>)}
       </div>
-      <Panel title="All Categories"><DataTable columns={["Category", "Subcategories", "Products", "Visibility"]} rows={ordered.map((c) => [<span className="font-semibold text-navy">{c.name}</span>, <span className="text-xs text-slate">{c.grades.join(", ")}</span>, counts[c.name] ?? 0, <StatusBadge status={c.enabled ? "Active" : "Hidden"} />])} /></Panel>
+      <Panel id="all-categories" title="All Categories"><DataTable columns={["Category", "Subcategories", "Products", "Visibility"]} rows={ordered.map((c) => [<span className="font-semibold text-navy">{c.name}</span>, <span className="text-xs text-slate">{c.grades.join(", ")}</span>, counts[c.name] ?? 0, <StatusBadge status={c.enabled ? "Active" : "Hidden"} />])} /></Panel>
       <p className="mt-2 text-xs text-slate">Category and product counts reflect the connected Supabase catalog.</p>
     </PanelLayout>
   );

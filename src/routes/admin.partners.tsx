@@ -3,13 +3,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Copy, Handshake, IndianRupee, KeyRound, Target, Timer, Trash2, UserPlus } from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
-import { Panel, StatCard } from "@/components/panel/widgets";
+import { FilterNote, Panel, scrollToSection, StatCard } from "@/components/panel/widgets";
 import { CommissionLinesTable, PartnerLeaderboard, commissionTotals, usePartnerData } from "@/components/partners/PartnerWidgets";
 import { PartnerHistoryPanel } from "@/components/partners/PartnerHistory";
 import { adminNav } from "@/lib/panel-nav";
 import { useApp } from "@/lib/store";
 import { useBranches } from "@/lib/branches";
 import { inrPrecise } from "@/lib/data";
+import { matchesCommissionStatus } from "@/lib/panel-filters";
 import { describeRate, monthLabel, monthStart, partnerPasswordProblem, suggestPartnerPassword, type CommissionKind } from "@/lib/partners";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
@@ -37,6 +38,12 @@ function AdminPartners() {
   // Bumped after a partner is added, suspended or reactivated, so the history reloads.
   const [historyKey, setHistoryKey] = useState(0);
   const firstLoad = useRef(true);
+  // The money cards open the commission list below, showing just what they add up.
+  const [lineView, setLineView] = useState("all");
+  const openLines = (view: string) => {
+    setLineView(view);
+    scrollToSection("all-commissions");
+  };
 
   const load = useCallback(async () => {
     const [p, r] = await Promise.all([
@@ -62,13 +69,13 @@ function AdminPartners() {
           className="h-9 rounded-md border border-input bg-white px-2 text-sm" />
       </div>
       <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard label="Active partners" value={String((partners ?? []).filter((p) => p.status === "active").length)} icon={Handshake} />
-        <StatCard label={`Earned · ${monthLabel(month)}`} value={inrPrecise(totals.earned)} icon={IndianRupee} description="Delivered and fully paid" />
-        <StatCard label="Pending" value={inrPrecise(totals.pending)} icon={Timer} description="Open orders" />
-        <StatCard label="Partner sales (excl. GST)" value={inrPrecise(totals.sales)} icon={Target} description={`${totals.orders} orders`} />
+        <StatCard onClick={() => scrollToSection("godown-partners")} label="Active partners" value={String((partners ?? []).filter((p) => p.status === "active").length)} icon={Handshake} />
+        <StatCard onClick={() => openLines("earned")} label={`Earned · ${monthLabel(month)}`} value={inrPrecise(totals.earned)} icon={IndianRupee} description="Delivered and fully paid" />
+        <StatCard onClick={() => openLines("pending")} label="Pending" value={inrPrecise(totals.pending)} icon={Timer} description="Open orders" />
+        <StatCard onClick={() => openLines("sales")} label="Partner sales (excl. GST)" value={inrPrecise(totals.sales)} icon={Target} description={`${totals.orders} orders`} />
       </div>
 
-      <div className="space-y-6">
+      <div id="godown-partners" className="scroll-mt-36 space-y-6">
         {godowns.map((godown) => (
           <GodownPartnerCard key={godown.id} godownId={godown.id} godownName={godown.name}
             partner={(partners ?? []).find((p) => p.branch_id === godown.id && p.status === "active") ?? null}
@@ -81,8 +88,11 @@ function AdminPartners() {
 
       <div className="mt-6 grid gap-6 lg:grid-cols-[360px_minmax(0,1fr)]">
         <Panel title={`Leaderboard · ${monthLabel(month)}`}><PartnerLeaderboard leaders={leaders} /></Panel>
-        <Panel title={`All partner commissions · ${monthLabel(month)}`}>
-          <CommissionLinesTable lines={lines} showPartner partnerNames={partnerNames} />
+        <Panel id="all-commissions" title={`All partner commissions · ${monthLabel(month)}`}>
+          {lineView !== "all" && (
+            <FilterNote label={lineView === "earned" ? "Earned" : lineView === "pending" ? "Pending" : "Partner sales (excl. GST)"} onClear={() => setLineView("all")} />
+          )}
+          <CommissionLinesTable lines={lines?.filter((line) => matchesCommissionStatus(line.status, lineView)) ?? null} showPartner partnerNames={partnerNames} />
         </Panel>
       </div>
     </PanelLayout>

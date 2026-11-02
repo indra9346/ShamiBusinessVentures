@@ -14,7 +14,8 @@ import {
   Trash2,
 } from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
-import { DataTable, Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
+import { DataTable, FilterNote, Panel, scrollToSection, StatCard, StatusBadge } from "@/components/panel/widgets";
+import { matchesStockBand } from "@/lib/panel-filters";
 import { Pager } from "@/components/panel/pager";
 import { adminNav } from "@/lib/panel-nav";
 import { DEFAULT_MAX_PURCHASE_QUANTITY, DEFAULT_PRICING_DISPLAY_MODE, getMaxPurchaseQuantity, getPricingDisplayMode, inr, isZohoMirrorProduct, storeCategorySeed, type PricingDisplayMode, type Product } from "@/lib/data";
@@ -186,6 +187,17 @@ function AdminProductsPanel() {
   const [sort, setSort] = useState("created-desc");
   const [showZoho, setShowZoho] = useState(false);
   const [page, setPage] = useState(1);
+  // The stock cards open the catalogue below with just the products they count.
+  const [stockBand, setStockBand] = useState("all");
+  const openList = (band: string) => {
+    setQ("");
+    setCategory("all");
+    setVendorId("all");
+    setStatus("all");
+    setStockBand(band);
+    setPage(1);
+    scrollToSection("catalogue");
+  };
 
   const [addOpen, setAddOpen] = useState(false);
   const [form, setForm] = useState(
@@ -383,7 +395,7 @@ function AdminProductsPanel() {
       const matchesVendor = vendorId === "all" || p.vendorId === vendorId;
       const matchesStatus = status === "all"
         || (status === "shown" ? shownOnStorefront(p) : status === "hidden" ? !shownOnStorefront(p) : p.status === status);
-      return matchesQ && matchesCat && matchesVendor && matchesStatus;
+      return matchesQ && matchesCat && matchesVendor && matchesStatus && matchesStockBand(p.stock, stockBand);
     });
     list = [...list].sort((a, b) => {
       if (sort === "created-desc") return b.created.localeCompare(a.created);
@@ -393,14 +405,14 @@ function AdminProductsPanel() {
       return 0;
     });
     return list;
-  }, [scoped, q, category, vendorId, status, sort]);
+  }, [scoped, q, category, vendorId, status, sort, stockBand]);
 
   const pages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const pageSafe = Math.min(page, pages);
   const rows = filtered.slice((pageSafe - 1) * PAGE_SIZE, pageSafe * PAGE_SIZE);
 
-  const lowStock = scoped.filter((p) => p.stock > 0 && p.stock < 30).length;
-  const outStock = scoped.filter((p) => p.stock === 0).length;
+  const lowStock = scoped.filter((p) => matchesStockBand(p.stock, "low")).length;
+  const outStock = scoped.filter((p) => matchesStockBand(p.stock, "out")).length;
 
   const submitQuickAdd = async () => {
     if (!quickForm.name.trim() || !quickForm.qty) {
@@ -611,13 +623,14 @@ function AdminProductsPanel() {
       subtitle="Marketplace-wide catalogue"
     >
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Total Products" value={String(scoped.length)} icon={Package} highlight />
-        <StatCard label="Low Stock" value={String(lowStock)} icon={AlertTriangle} />
-        <StatCard label="Out of Stock" value={String(outStock)} icon={PackageX} />
-        <StatCard label="Total Vendors" value={String(vendors.length)} icon={Boxes} />
+        <StatCard onClick={() => openList("all")} label="Total Products" value={String(scoped.length)} icon={Package} highlight />
+        <StatCard onClick={() => openList("low")} label="Low Stock" value={String(lowStock)} icon={AlertTriangle} />
+        <StatCard onClick={() => openList("out")} label="Out of Stock" value={String(outStock)} icon={PackageX} />
+        <StatCard link={{ to: "/admin/vendors" }} label="Total Vendors" value={String(vendors.length)} icon={Boxes} />
       </div>
 
       <Panel
+        id="catalogue"
         title="Catalogue"
         className="mt-6"
         action={
@@ -1107,6 +1120,7 @@ function AdminProductsPanel() {
           </div>
         }
       >
+        {stockBand !== "all" && <FilterNote label={stockBand === "low" ? "Low Stock" : "Out of Stock"} onClear={() => { setStockBand("all"); setPage(1); }} />}
         <DataTable
           minWidth={900}
           columns={["Product", "Category / Vendor", "Price", "Stock", "Storefront / Approval", "Created", "Actions"]}

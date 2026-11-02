@@ -3,10 +3,11 @@ import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Building2, CheckCircle2, Download, IndianRupee, XCircle } from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
-import { DataTable, Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
+import { DataTable, FilterNote, Panel, scrollToSection, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { Pager } from "@/components/panel/pager";
 import { adminNav } from "@/lib/panel-nav";
 import { getVendorPaidSales, inr } from "@/lib/data";
+import { APPROVED_VENDORS, matchesVendorStatus, vendorStatusFilter } from "@/lib/panel-filters";
 import { useApp } from "@/lib/store";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -21,6 +22,7 @@ import {
 } from "@/components/ui/alert-dialog";
 
 export const Route = createFileRoute("/admin/vendors")({
+  validateSearch: (search: Record<string, unknown>) => (typeof search["status"] === "string" ? { status: search["status"] } : {}),
   head: () => ({
     meta: [
       { title: "Vendors | Shami Business Ventures Admin" },
@@ -45,13 +47,25 @@ function AdminVendors() {
 
 function AdminVendorsPanel() {
   const { vendors, setVendorStatus, products, orders, reviews } = useApp();
+  const routeSearch = Route.useSearch();
   const [applications, setApplications] = useState<Array<{ id: string; applicant_id: string; business_name: string; owner_name: string; email: string; phone: string; gstin: string; city: string; address: string; status: string; admin_notes: string | null; created_at: string }>>([]);
   const [applicationNotes, setApplicationNotes] = useState<Record<string, string>>({});
   const [reviewingApplication, setReviewingApplication] = useState<string | null>(null);
   const [q, setQ] = useState("");
-  const [status, setStatus] = useState("all");
+  const [status, setStatus] = useState(() => vendorStatusFilter(routeSearch.status));
   const [sort, setSort] = useState("sales-desc");
   const [page, setPage] = useState(1);
+  // A link can change the filter while this list stays open (the sidebar's Vendors).
+  useEffect(() => {
+    setStatus(vendorStatusFilter(routeSearch.status));
+    setPage(1);
+  }, [routeSearch.status]);
+  const openList = (next: string) => {
+    setQ("");
+    setStatus(next);
+    setPage(1);
+    scrollToSection("all-vendors");
+  };
 
   useEffect(() => {
     let active = true;
@@ -112,8 +126,7 @@ function AdminVendorsPanel() {
     let list = enrichedVendors.filter((v) => {
       const s = q.trim().toLowerCase();
       const matchesQ = !s || v.business.toLowerCase().includes(s) || v.owner.toLowerCase().includes(s) || v.email.toLowerCase().includes(s);
-      const matchesStatus = status === "all" || v.status === status;
-      return matchesQ && matchesStatus;
+      return matchesQ && matchesVendorStatus(v.status, status);
     });
     list = [...list].sort((a, b) => {
       if (sort === "sales-desc") return b.sales - a.sales;
@@ -159,10 +172,10 @@ function AdminVendorsPanel() {
     <PanelLayout items={adminNav} tone="admin" title="Vendors" subtitle="Marketplace seller network">
       <MarketplaceSwitch />
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Total Vendors" value={String(vendors.length)} icon={Building2} highlight />
-        <StatCard label="Approved" value={String(approved)} icon={CheckCircle2} />
-        <StatCard label="Pending Approval" value={String(pending)} icon={XCircle} />
-        <StatCard label="Total Sales" value={inr(totalSales)} icon={IndianRupee} />
+        <StatCard onClick={() => openList("all")} label="Total Vendors" value={String(vendors.length)} icon={Building2} highlight />
+        <StatCard onClick={() => openList(APPROVED_VENDORS)} label="Approved" value={String(approved)} icon={CheckCircle2} />
+        <StatCard onClick={() => openList("pending")} label="Pending Approval" value={String(pending)} icon={XCircle} />
+        <StatCard onClick={() => { setSort("sales-desc"); openList("all"); }} label="Total Sales" value={inr(totalSales)} icon={IndianRupee} />
       </div>
 
       <Panel title={`Vendor Applications (${applications.filter((application) => application.status === "Pending").length} pending)`} className="mt-6">
@@ -183,6 +196,7 @@ function AdminVendorsPanel() {
       </Panel>
 
       <Panel
+        id="all-vendors"
         title="All Vendors"
         className="mt-6"
         action={
@@ -200,6 +214,7 @@ function AdminVendorsPanel() {
               <SelectTrigger className="h-9 w-36"><SelectValue placeholder="Status" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Status</SelectItem>
+                <SelectItem value={APPROVED_VENDORS}>Approved or active</SelectItem>
                 <SelectItem value="approved">Approved</SelectItem>
                 <SelectItem value="active">Active</SelectItem>
                 <SelectItem value="pending">Pending</SelectItem>
@@ -217,6 +232,9 @@ function AdminVendorsPanel() {
           </div>
         }
       >
+        {(status === APPROVED_VENDORS || status === "pending") && (
+          <FilterNote label={status === "pending" ? "Pending Approval" : "Approved or active"} onClear={() => { setStatus("all"); setPage(1); }} />
+        )}
         <DataTable
           columns={["Vendor", "Owner", "Contact", "City", "GST", "Products", "Orders", "Revenue", "Commission", "Rating", "Joined", "Status", "Actions"]}
           rows={rows.map((v) => [

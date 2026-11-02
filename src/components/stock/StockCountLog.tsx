@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AlertTriangle, Boxes, Download, RefreshCw } from "lucide-react";
-import { Panel, StatCard } from "@/components/panel/widgets";
+import { Panel, scrollToSection, StatCard } from "@/components/panel/widgets";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
 import { downloadCSV } from "@/lib/export-utils";
@@ -46,6 +46,12 @@ export function StockCountLog({ godowns }: { godowns: { id: string; name: string
   const godownName = useMemo(() => new Map(godowns.map((godown) => [godown.id, godown.name])), [godowns]);
   const shown = (rows ?? []).filter((row) => (godownId === "all" || row.branch_id === godownId) && (!flaggedOnly || row.flagged));
   const flagged = (rows ?? []).filter((row) => row.flagged).length;
+  // The cards count every godown this month, so they open the list without a godown filter.
+  const openList = (bigChanges: boolean) => {
+    setGodownId("all");
+    setFlaggedOnly(bigChanges);
+    scrollToSection("stock-updates");
+  };
 
   const exportCsv = () => downloadCSV(`stock-counts-${month.slice(0, 7)}.csv`,
     ["Date", "Time", "Godown", "Product", "Zoho before", "Counted", "Change", "Website stock before", "Website stock after", "Reason", "Note", "Counted by", "Big change", "Zoho adjustment"],
@@ -57,11 +63,11 @@ export function StockCountLog({ godowns }: { godowns: { id: string; name: string
     <div className="space-y-6">
       {error && <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
       <div className="grid gap-4 sm:grid-cols-3">
-        <StatCard label={`Stock updates · ${monthLabel(month)}`} value={String(rows?.length ?? 0)} icon={Boxes} />
-        <StatCard label="Big changes (over 20%)" value={String(flagged)} icon={AlertTriangle} description="Check these against the godown" />
-        <StatCard label="Godowns counting" value={String(new Set((rows ?? []).map((row) => row.branch_id)).size)} icon={RefreshCw} />
+        <StatCard onClick={() => openList(false)} label={`Stock updates · ${monthLabel(month)}`} value={String(rows?.length ?? 0)} icon={Boxes} />
+        <StatCard onClick={() => openList(true)} label="Big changes (over 20%)" value={String(flagged)} icon={AlertTriangle} description="Check these against the godown" />
+        <StatCard onClick={() => openList(false)} label="Godowns counting" value={String(new Set((rows ?? []).map((row) => row.branch_id)).size)} icon={RefreshCw} />
       </div>
-      <Panel title={`Stock updates by godown staff · ${monthLabel(month)}`} action={
+      <Panel id="stock-updates" title={`Stock updates by godown staff · ${monthLabel(month)}`} action={
         <>
           <input type="month" value={month.slice(0, 7)} max={monthStart().slice(0, 7)} aria-label="Month"
             onChange={(event) => event.target.value && setMonth(`${event.target.value}-01`)} className="h-9 rounded-md border border-input bg-white px-2 text-sm" />

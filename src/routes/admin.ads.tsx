@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { ArrowDown, ArrowUp, Film, ImageIcon, Loader2, Megaphone, Pencil, Plus, Trash2, Upload } from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
-import { Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
+import { FilterNote, Panel, scrollToSection, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { adminNav } from "@/lib/panel-nav";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -106,6 +106,13 @@ function AdminAds() {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState<"main" | "mobile" | null>(null);
+  // The cards open the banner lists below with just the banners they count.
+  const [view, setView] = useState<"all" | "Live" | "Scheduled" | "videos">("all");
+  const inView = (banner: AdBanner) => view === "all" || (view === "videos" ? banner.mediaKind === "video" : bannerStatus(banner) === view);
+  const openList = (next: typeof view) => {
+    setView(next);
+    scrollToSection("banner-lists");
+  };
 
   const refresh = useCallback(async () => {
     try {
@@ -212,11 +219,11 @@ function AdminAds() {
         action={<Button size="sm" onClick={() => setDraft({ ...emptyDraft(list.length * 10), placement })}><Plus className="mr-1 h-4 w-4" /> Add</Button>}
       >
         <p className="mb-4 text-xs text-slate">{hint}</p>
-        {list.length === 0 && !loading && (
+        {!list.some(inView) && !loading && (
           <p className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-slate">No banners here yet.</p>
         )}
         <ul className="space-y-3">
-          {list.map((banner, i) => (
+          {list.map((banner, i) => inView(banner) && (
             <li key={banner.id} className="flex flex-col gap-3 rounded-xl border border-border bg-card p-3 sm:flex-row sm:items-center">
               <MediaPreview banner={banner} className={cn("w-full shrink-0 sm:w-56", placement === "main" ? "aspect-[21/9]" : "aspect-[16/9]")} />
               <div className="min-w-0 flex-1 space-y-1">
@@ -266,13 +273,15 @@ function AdminAds() {
   return (
     <PanelLayout items={adminNav} tone="admin" title="Ad Banners" subtitle="Offers, deals, new products, festival banners and promo videos on the home page">
       <div className="grid gap-4 sm:grid-cols-3">
-        <StatCard label="Live now" value={String(stats.live)} icon={Megaphone} />
-        <StatCard label="Scheduled" value={String(stats.scheduled)} icon={Megaphone} />
-        <StatCard label="Videos" value={String(stats.videos)} icon={Film} />
+        <StatCard onClick={() => openList("Live")} label="Live now" value={String(stats.live)} icon={Megaphone} />
+        <StatCard onClick={() => openList("Scheduled")} label="Scheduled" value={String(stats.scheduled)} icon={Megaphone} />
+        <StatCard onClick={() => openList("videos")} label="Videos" value={String(stats.videos)} icon={Film} />
       </div>
       <FestiveThemePanel />
       {loading && <p className="mt-6 inline-flex items-center gap-2 text-sm text-slate"><Loader2 className="h-4 w-4 animate-spin" /> Loading banners…</p>}
-      <div className="mt-6 grid gap-6">
+      <div id="banner-lists" className="mt-6 scroll-mt-36" />
+      {view !== "all" && <FilterNote label={view === "Live" ? "Live now" : view === "Scheduled" ? "Scheduled" : "Videos"} onClear={() => setView("all")} />}
+      <div className="grid gap-6">
         {section("main", "Big sliding banner", "Slides one after another at the top of the home page (videos play to the end). Best size 2100 × 900 (21:9); any size works: choose Fill or Whole picture.")}
         {section("side", "Side tiles", "Beside the big banner on computers, and a moving strip under it on phones. Best size 1280 × 720 (16:9).")}
       </div>

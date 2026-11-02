@@ -1,13 +1,15 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { useState } from "react";
 import { Bell, BellRing, CheckCheck } from "lucide-react";
 import { toast } from "sonner";
 import { PanelLayout } from "@/components/panel/PanelLayout";
-import { Panel, StatCard } from "@/components/panel/widgets";
+import { FilterNote, Panel, scrollToSection, StatCard } from "@/components/panel/widgets";
 import { accountNav } from "@/lib/account-nav";
 import { useApp } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { notificationTarget } from "@/lib/notification-target";
 import { notificationBelongsToUser } from "@/lib/account-identity";
+import { matchesReadFilter } from "@/lib/panel-filters";
 
 export const Route = createFileRoute("/account/notifications")({
   head: () => ({
@@ -32,6 +34,12 @@ function AccountNotifications() {
     (n) => (n.role === "customer" || !n.role) && (Boolean(n.databaseId) || notificationBelongsToUser(n, user, orders)),
   );
   const unread = mine.filter((n) => !n.read).length;
+  const [view, setView] = useState("all");
+  const shown = mine.filter((n) => matchesReadFilter(n.read, view));
+  const openList = (next: string) => {
+    setView(next);
+    scrollToSection("all-notifications");
+  };
 
   return (
     <PanelLayout
@@ -41,12 +49,13 @@ function AccountNotifications() {
       subtitle="Updates on your orders and offers"
     >
       <div className="grid gap-4 sm:grid-cols-3">
-        <StatCard label="Total Notifications" value={String(mine.length)} icon={Bell} highlight />
-        <StatCard label="Unread" value={String(unread)} icon={BellRing} />
-        <StatCard label="Read" value={String(mine.length - unread)} icon={CheckCheck} />
+        <StatCard onClick={() => openList("all")} label="Total Notifications" value={String(mine.length)} icon={Bell} highlight />
+        <StatCard onClick={() => openList("unread")} label="Unread" value={String(unread)} icon={BellRing} />
+        <StatCard onClick={() => openList("read")} label="Read" value={String(mine.length - unread)} icon={CheckCheck} />
       </div>
 
       <Panel
+        id="all-notifications"
         title="All Notifications"
         className="mt-6"
         action={
@@ -61,8 +70,10 @@ function AccountNotifications() {
           </Button>
         }
       >
+        {view !== "all" && <FilterNote label={view === "unread" ? "Unread" : "Read"} onClear={() => setView("all")} />}
+        {shown.length === 0 && <p className="py-8 text-center text-sm text-slate">No notifications here.</p>}
         <div className="space-y-3">
-          {mine.map((n) => (
+          {shown.map((n) => (
             <div
               key={n.id}
               role="button"

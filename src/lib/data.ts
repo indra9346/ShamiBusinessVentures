@@ -730,11 +730,14 @@ export function getOrderItemTotal(item: OrderItem): number {
   return Math.round((item.unitPrice ?? item.product.price) * item.qty * 100) / 100;
 }
 /** Merchandise sales actually collected for a vendor, excluding that vendor's cancelled shipment lines. */
+/** Does this order count towards the vendor's paid sales? */
+export function vendorSaleCounts(order: Order, vendorId: string): boolean {
+  if (order.payment !== "Paid" || order.status === "Cancelled") return false;
+  return order.vendorStatuses?.find((item) => item.vendorId === vendorId)?.status !== "Cancelled";
+}
 export function getVendorPaidSales(orders: Order[], vendorId: string): number {
   return orders.reduce((total, order) => {
-    if (order.payment !== "Paid" || order.status === "Cancelled") return total;
-    const fulfillment = order.vendorStatuses?.find((item) => item.vendorId === vendorId);
-    if (fulfillment?.status === "Cancelled") return total;
+    if (!vendorSaleCounts(order, vendorId)) return total;
     return total + order.items
       .filter((item) => item.vendorId === vendorId)
       .reduce((orderTotal, item) => orderTotal + getOrderItemTotal(item), 0);

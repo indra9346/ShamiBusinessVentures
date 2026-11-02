@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { IndianRupee, Percent, TrendingUp, Wallet } from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
-import { DataTable, Panel, StatCard } from "@/components/panel/widgets";
+import { DataTable, Panel, scrollToSection, StatCard } from "@/components/panel/widgets";
 import { adminNav } from "@/lib/panel-nav";
 import { compactInr, getVendorPaidSales, inr } from "@/lib/data";
 import { useApp } from "@/lib/store";
@@ -75,10 +75,10 @@ function AdminCommissions() {
   return (
     <PanelLayout items={adminNav} tone="admin" title="Commissions" subtitle="Vendor commission rates and earnings">
       <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Gross Sales" value={inr(totals.gross)} icon={IndianRupee} />
-        <StatCard label="Commission Earned" value={inr(totals.earned)} icon={Percent} highlight />
-        <StatCard label="Vendor Net Payable" value={inr(totals.net)} icon={Wallet} />
-        <StatCard label="Average Rate" value={`${totals.avgRate}%`} icon={TrendingUp} />
+        <StatCard onClick={() => scrollToSection("commission-breakdown")} label="Gross Sales" value={inr(totals.gross)} icon={IndianRupee} />
+        <StatCard onClick={() => scrollToSection("commission-breakdown")} label="Commission Earned" value={inr(totals.earned)} icon={Percent} highlight />
+        <StatCard onClick={() => scrollToSection("commission-breakdown")} label="Vendor Net Payable" value={inr(totals.net)} icon={Wallet} />
+        <StatCard onClick={() => scrollToSection("commission-breakdown")} label="Average Rate" value={`${totals.avgRate}%`} icon={TrendingUp} />
       </div>
 
       <CommissionRules />
@@ -96,7 +96,7 @@ function AdminCommissions() {
         </div>
       </Panel>
 
-      <Panel title="Vendor Commission Breakdown">
+      <Panel id="commission-breakdown" title="Vendor Commission Breakdown">
         <DataTable
           columns={["Vendor", "Gross Sales", "Commission %", "Commission Earned", "Vendor Net", "Action"]}
           rows={rows.map((r) => [

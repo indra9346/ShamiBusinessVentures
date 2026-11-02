@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Activity, AlertTriangle, ExternalLink, Gauge, RefreshCw } from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
-import { Panel, StatCard } from "@/components/panel/widgets";
+import { FilterNote, Panel, scrollToSection, StatCard } from "@/components/panel/widgets";
 import { adminNav } from "@/lib/panel-nav";
 import { supabase } from "@/integrations/supabase/client";
 import { ResizableTable } from "@/hooks/use-column-resize";
@@ -45,6 +45,13 @@ function ZohoApiCalls() {
   const rows = Object.values(current?.rows ?? {}).sort((a, b) => b.count - a.count);
   const hours = (current?.hours ?? []).map((count, hour) => ({ hour, count })).filter((h) => h.count > 0);
   const busiestHour = hours.reduce((best, h) => (h.count > (best?.count ?? 0) ? h : best), null as { hour: number; count: number } | null);
+  // The Calls and Failed cards open the endpoint list below.
+  const [failedOnly, setFailedOnly] = useState(false);
+  const openEndpoints = (failed: boolean) => {
+    setFailedOnly(failed);
+    scrollToSection("calls-by-endpoint");
+  };
+  const shownRows = failedOnly ? rows.filter((r) => r.errors > 0) : rows;
 
   return (
     <PanelLayout items={adminNav} tone="admin" title="Zoho API Calls" subtitle="What each Zoho API call from this website was for (last 7 days)">
@@ -66,15 +73,15 @@ function ZohoApiCalls() {
       </p>
 
       <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard label={`Calls · ${selected ? dayLabel(selected) : "—"}`} value={(current?.total ?? 0).toLocaleString("en-IN")} icon={Activity} highlight
+        <StatCard onClick={() => openEndpoints(false)} label={`Calls · ${selected ? dayLabel(selected) : "—"}`} value={(current?.total ?? 0).toLocaleString("en-IN")} icon={Activity} highlight
           description={`${Math.max(0, ZOHO_DAILY_LIMIT - (current?.total ?? 0)).toLocaleString("en-IN")} of ${ZOHO_DAILY_LIMIT.toLocaleString("en-IN")} left`} />
-        <StatCard label="Failed calls" value={String(current?.errors ?? 0)} icon={AlertTriangle} description="Zoho refused or did not answer" />
-        <StatCard label="Biggest user" value={purposes[0]?.purpose ?? "—"} icon={Gauge} description={purposes[0] ? `${purposes[0].count} calls` : "No calls yet"} compact />
-        <StatCard label="Busiest hour (IST)" value={busiestHour ? `${String(busiestHour.hour).padStart(2, "0")}:00` : "—"} icon={Activity} description={busiestHour ? `${busiestHour.count} calls` : "No calls yet"} />
+        <StatCard onClick={() => openEndpoints(true)} label="Failed calls" value={String(current?.errors ?? 0)} icon={AlertTriangle} description="Zoho refused or did not answer" />
+        <StatCard onClick={() => scrollToSection("calls-by-purpose")} label="Biggest user" value={purposes[0]?.purpose ?? "—"} icon={Gauge} description={purposes[0] ? `${purposes[0].count} calls` : "No calls yet"} compact />
+        <StatCard onClick={() => scrollToSection("calls-by-hour")} label="Busiest hour (IST)" value={busiestHour ? `${String(busiestHour.hour).padStart(2, "0")}:00` : "—"} icon={Activity} description={busiestHour ? `${busiestHour.count} calls` : "No calls yet"} />
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-        <Panel title="By purpose">
+        <Panel id="calls-by-purpose" title="By purpose">
           {!purposes.length ? <p className="text-sm text-slate">No calls logged for this day.</p> : (
             <div className="overflow-x-auto">
               <ResizableTable tableId="zoho-calls-purpose" className="w-full text-left text-sm">
@@ -95,7 +102,7 @@ function ZohoApiCalls() {
             </div>
           )}
         </Panel>
-        <Panel title="By hour (IST)">
+        <Panel id="calls-by-hour" title="By hour (IST)">
           {!hours.length ? <p className="text-sm text-slate">No calls logged for this day.</p> : (
             <div className="space-y-1">
               {hours.map((h) => (
@@ -110,8 +117,9 @@ function ZohoApiCalls() {
         </Panel>
       </div>
 
-      <Panel title={`Every Zoho endpoint called · ${rows.length}`} className="mt-6">
-        {!rows.length ? <p className="text-sm text-slate">No calls logged for this day.</p> : (
+      <Panel id="calls-by-endpoint" title={`Every Zoho endpoint called · ${shownRows.length}`} className="mt-6">
+        {failedOnly && <FilterNote label="Failed calls" onClear={() => setFailedOnly(false)} />}
+        {!shownRows.length ? <p className="text-sm text-slate">No calls logged for this day.</p> : (
           <div className="overflow-x-auto">
             <ResizableTable tableId="zoho-calls-endpoints" className="w-full min-w-[820px] text-left text-sm">
               <thead><tr className="border-b border-border text-[11px] font-bold uppercase tracking-wider text-slate">
@@ -119,7 +127,7 @@ function ZohoApiCalls() {
                 <th className="px-2 py-2 text-right">Calls</th><th className="px-2 py-2 text-right">Failed</th><th className="px-2 py-2">Last call</th>
               </tr></thead>
               <tbody>
-                {rows.map((r) => (
+                {shownRows.map((r) => (
                   <tr key={`${r.purpose}|${r.api}|${r.method}|${r.endpoint}`} className="border-b border-border/60">
                     <td className="px-2 py-1.5 text-navy">{r.purpose}</td>
                     <td className="px-2 py-1.5">{r.api}</td>

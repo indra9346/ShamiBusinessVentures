@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Calculator, IndianRupee, Layers, Tag } from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
-import { Panel, StatCard } from "@/components/panel/widgets";
+import { FilterNote, Panel, scrollToSection, StatCard } from "@/components/panel/widgets";
 import { adminNav } from "@/lib/panel-nav";
 import { inrPrecise } from "@/lib/data";
 import { priceLotTotals } from "@/lib/pricing";
@@ -63,6 +63,12 @@ function AdminPricing() {
   const [saving, setSaving] = useState(false);
   const [applying, setApplying] = useState<Lot | null>(null);
   const [busyApply, setBusyApply] = useState(false);
+  // The cards open the lots list below; Prices set shows only the lots that were applied.
+  const [appliedOnly, setAppliedOnly] = useState(false);
+  const openLots = (applied: boolean) => {
+    setAppliedOnly(applied);
+    scrollToSection("purchase-lots");
+  };
 
   const load = useCallback(async () => {
     const { data, error } = await supabase.from("price_lots").select("*")
@@ -174,10 +180,10 @@ function AdminPricing() {
   return (
     <PanelLayout items={adminNav} tone="admin" title="Pricing" subtitle="Purchase lots → landing cost → selling price per godown">
       <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Purchase lots" value={String(stats.count)} icon={Layers} />
-        <StatCard label="Latest selling price (bag)" value={latest ? inrPrecise(Number(latest.selling_bag)) : "—"} icon={Tag} />
-        <StatCard label="Latest landing price (qntl)" value={latest ? inrPrecise(Number(latest.landing_price)) : "—"} icon={IndianRupee} />
-        <StatCard label="Prices set on godowns" value={String(stats.applied)} icon={Calculator} />
+        <StatCard onClick={() => openLots(false)} label="Purchase lots" value={String(stats.count)} icon={Layers} />
+        <StatCard onClick={() => openLots(false)} label="Latest selling price (bag)" value={latest ? inrPrecise(Number(latest.selling_bag)) : "—"} icon={Tag} />
+        <StatCard onClick={() => openLots(false)} label="Latest landing price (qntl)" value={latest ? inrPrecise(Number(latest.landing_price)) : "—"} icon={IndianRupee} />
+        <StatCard onClick={() => openLots(true)} label="Prices set on godowns" value={String(stats.applied)} icon={Calculator} />
       </div>
 
       <Panel title={form.id ? "Edit purchase lot" : "New purchase lot"} className="mb-6">
@@ -228,7 +234,8 @@ function AdminPricing() {
         </div>
       </Panel>
 
-      <Panel title="Purchase lots">
+      <Panel id="purchase-lots" title="Purchase lots">
+        {appliedOnly && <FilterNote label="Prices set on godowns" onClear={() => setAppliedOnly(false)} />}
         {loadError ? (
           <p className="text-sm text-danger">Lots could not be loaded: {loadError}</p>
         ) : lots === null ? (
@@ -252,7 +259,7 @@ function AdminPricing() {
                 </tr>
               </thead>
               <tbody>
-                {lots.map((lot) => (
+                {(appliedOnly ? lots.filter((lot) => lot.applied_at) : lots).map((lot) => (
                   <tr key={lot.id} className="border-b border-border/60 align-top">
                     <td className="px-2 py-2 pl-0 text-left font-semibold text-navy">{lot.lot_code || "—"}</td>
                     <td className="px-2 py-2 text-left">{lot.purchase_date ? new Date(`${lot.purchase_date}T00:00:00`).toLocaleDateString("en-IN") : "—"}</td>
