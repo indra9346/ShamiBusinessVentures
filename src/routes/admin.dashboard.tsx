@@ -27,9 +27,10 @@ import {
   YAxis,
 } from "recharts";
 import { PanelLayout } from "@/components/panel/PanelLayout";
-import { DataTable, Filters, Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
+import { DataTable, Filters, Panel, StatCard, StatusBadge, ViewAll } from "@/components/panel/widgets";
 import { adminNav } from "@/lib/panel-nav";
 import { inr } from "@/lib/data";
+import { NEEDS_RESTOCK, OPEN_ORDERS, orderTimestamp } from "@/lib/panel-filters";
 import { useApp } from "@/lib/store";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -52,42 +53,6 @@ export const Route = createFileRoute("/admin/dashboard")({
 const pieColors = ["var(--navy)", "var(--gold)", "var(--gold-light)", "var(--slate)"];
 
 type TimeFilterOption = "Today" | "Yesterday" | "Week" | "Month" | "Year" | "Custom Range";
-
-function parseDate(dateStr: string): Date {
-  // Date-only values should be interpreted in local time, matching the date inputs.
-  const isoDate = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (isoDate) return new Date(Number(isoDate[1]), Number(isoDate[2]) - 1, Number(isoDate[3]));
-  const d = new Date(dateStr);
-  if (!isNaN(d.getTime())) return d;
-  const m = dateStr.match(/^(\d{1,2})\s+([A-Za-z]{3})\s+(\d{4})/);
-  if (m) {
-    const months: Record<string, number> = {
-      jan: 0,
-      feb: 1,
-      mar: 2,
-      apr: 3,
-      may: 4,
-      jun: 5,
-      jul: 6,
-      aug: 7,
-      sep: 8,
-      oct: 9,
-      nov: 10,
-      dec: 11,
-    };
-    const day = parseInt(m[1]!, 10);
-    const mon = months[m[2]!.toLowerCase()];
-    const year = parseInt(m[3]!, 10);
-    if (mon !== undefined) {
-      return new Date(year, mon, day);
-    }
-  }
-  return new Date(Number.NaN);
-}
-
-function orderTimestamp(order: { createdAt?: string; date: string }): Date {
-  return parseDate(order.createdAt || order.date);
-}
 
 function paymentsReceived(order: { amount: number; paidAmount?: number; payment: string; status: string }): number {
   if (order.status === "Cancelled") return 0;
@@ -301,6 +266,9 @@ function AdminDashboard() {
     };
   }, [filteredOrders, filteredPayouts, orders, payouts]);
 
+  // A card's order list shows the same date range as the card.
+  const rangeSearch = dateRange.valid === false ? {} : { from: dateRange.start.toISOString(), to: dateRange.end.toISOString() };
+
   // Derived counts for the period
   const pendingOrders = filteredOrders.filter(
     (o) => o.status !== "Delivered" && o.status !== "Cancelled",
@@ -446,6 +414,7 @@ function AdminDashboard() {
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
+          link={{ to: "/admin/payments" }}
           label="Lifetime Net Receipts"
           value={inr(financialStats.bankBalance)}
           description="Recorded payments less refunds and paid payouts · not a bank feed"
@@ -453,26 +422,30 @@ function AdminDashboard() {
           highlight
         />
         <StatCard
+          link={{ to: "/admin/payments" }}
           label="Payments Received"
           value={inr(financialStats.periodInflow)}
           icon={IndianRupee}
         />
-        <StatCard label="Order Value" value={inr(financialStats.periodOrderValue)} description="Non-cancelled orders in selected range" icon={Wallet} />
-        <StatCard label="Orders in Range" value={String(filteredOrders.length)} icon={ShoppingCart} />
-        <StatCard label="Pending Orders in Range" value={String(pendingOrders)} icon={ShoppingCart} />
+        <StatCard link={{ to: "/admin/orders", search: rangeSearch }} label="Order Value" value={inr(financialStats.periodOrderValue)} description="Non-cancelled orders in selected range" icon={Wallet} />
+        <StatCard link={{ to: "/admin/orders", search: rangeSearch }} label="Orders in Range" value={String(filteredOrders.length)} icon={ShoppingCart} />
+        <StatCard link={{ to: "/admin/orders", search: { ...rangeSearch, status: OPEN_ORDERS } }} label="Pending Orders in Range" value={String(pendingOrders)} icon={ShoppingCart} />
         <StatCard
+          link={{ to: "/admin/customers" }}
           label="Customers in Range"
           value={String(activeCustomerCount)}
           description="Unique customers with orders in range"
           icon={Users}
         />
         <StatCard
+          link={{ to: "/admin/vendors" }}
           label="Vendors in Range"
           value={String(activeVendorCount)}
           description="Unique vendors with orders in range"
           icon={Building2}
         />
         <StatCard
+          link={{ to: "/admin/inventory", search: { filter: NEEDS_RESTOCK } }}
           label="Low Stock Products"
           value={String(lowStockCount)}
           description="Current inventory · independent of date range"
@@ -482,7 +455,7 @@ function AdminDashboard() {
       </div>
 
       <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">
-        <Panel title={`Payments Received (${dateRange.label})`}>
+        <Panel title={`Payments Received (${dateRange.label})`} action={<ViewAll to="/admin/payments" />}>
           <div className="h-72">
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={dynamicSalesSeries}>
@@ -513,7 +486,7 @@ function AdminDashboard() {
             </ResponsiveContainer>
           </div>
         </Panel>
-        <Panel title={`Category Order Value (${dateRange.label})`}>
+        <Panel title={`Category Order Value (${dateRange.label})`} action={<ViewAll to="/admin/reports" />}>
           <div className="h-72">
             <ResponsiveContainer width="100%" height="100%">
               {dynamicCategorySales.length ? (
@@ -542,7 +515,7 @@ function AdminDashboard() {
       </div>
 
       <div className="mt-6 grid gap-6 xl:grid-cols-2">
-        <Panel title={`Customers with Orders (${dateRange.label})`}>
+        <Panel title={`Customers with Orders (${dateRange.label})`} action={<ViewAll to="/admin/customers" />}>
           <div className="h-60">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={dynamicSalesSeries}>
@@ -555,7 +528,7 @@ function AdminDashboard() {
             </ResponsiveContainer>
           </div>
         </Panel>
-        <Panel title={`Vendor Performance · Order Value (${dateRange.label})`}>
+        <Panel title={`Vendor Performance · Order Value (${dateRange.label})`} action={<ViewAll to="/admin/vendors" />}>
           <DataTable
             columns={["Vendor", "Period Orders", "Period Sales", "Commission", "Status"]}
             rows={dynamicVendorPerf.map((v) => [
@@ -570,7 +543,7 @@ function AdminDashboard() {
       </div>
 
       <div className="mt-6">
-        <Panel title={`Latest Orders (${dateRange.label})`}>
+        <Panel title={`Latest Orders (${dateRange.label})`} action={<ViewAll to="/admin/orders" search={rangeSearch} />}>
           <DataTable
             columns={["Order", "Date", "Customer", "Vendor", "Amount", "Payment", "Status"]}
             rows={[...filteredOrders]
@@ -590,7 +563,7 @@ function AdminDashboard() {
       </div>
 
       <div className="mt-6">
-        <Panel title="LOW STOCK ALERTS">
+        <Panel title="LOW STOCK ALERTS" action={<ViewAll to="/admin/inventory" search={{ filter: NEEDS_RESTOCK }} />}>
           {lowStockProducts.length ? (
             <div className="max-h-[34rem] overflow-auto">
               <DataTable

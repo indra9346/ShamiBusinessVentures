@@ -32,10 +32,12 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import { matchesOrderStatus, OPEN_ORDERS, orderStatusFilter } from "@/lib/panel-filters";
 
 export const Route = createFileRoute("/account/orders")({
   validateSearch: (search: Record<string, unknown>) => ({
     ...(typeof search["q"] === "string" ? { q: search["q"] } : {}),
+    ...(typeof search["status"] === "string" ? { status: search["status"] } : {}),
   }),
   head: () => ({
     meta: [
@@ -58,9 +60,15 @@ function AccountOrders() {
   const unpaid = paymentHolds.filter((hold) => hold.status === AWAITING_PAYMENT);
   const now = useServerNow();
   const [q, setQ] = useState(routeSearch.q ?? "");
-  const [status, setStatus] = useState("all");
+  const [status, setStatus] = useState(() => orderStatusFilter(routeSearch.status, [...orderStages, "Cancelled"]));
   const [sort, setSort] = useState("date-desc");
   const [page, setPage] = useState(1);
+
+  // A link can change the filter while this list stays open (the sidebar's Orders, "Show all").
+  useEffect(() => {
+    setStatus(orderStatusFilter(routeSearch.status, [...orderStages, "Cancelled"]));
+    setPage(1);
+  }, [routeSearch.status]);
 
   useEffect(() => {
     setQ(routeSearch.q ?? "");
@@ -78,7 +86,7 @@ function AccountOrders() {
       const matchesQ =
         !s ||
         `${o.id} ${o.status} ${o.items.map((i) => `${i.product.name} ${i.product.sku}`).join(" ")}`.toLowerCase().includes(s);
-      const matchesStatus = status === "all" || o.status === status;
+      const matchesStatus = matchesOrderStatus(o.status, status);
       return matchesQ && matchesStatus;
     });
     list = [...list].sort((a, b) => {
@@ -120,7 +128,7 @@ function AccountOrders() {
                   <p className="font-semibold text-navy">{hold.orderNo}</p>
                   <p className="text-xs text-slate">{inrPrecise(hold.amount)} · {holdSecondsLeft(hold.holdUntil, now) > 0 ? `pay within ${clockText(holdSecondsLeft(hold.holdUntil, now))}` : "checking the payment"}</p>
                 </div>
-                <Link to="/account/orders/$id" params={{ id: hold.orderNo }} className="rounded-md bg-gold px-4 py-2 text-sm font-bold text-midnight hover:bg-gold-light">Pay now</Link>
+                <Link to="/account/orders/$id" params={{ id: hold.orderNo }} search={true} className="rounded-md bg-gold px-4 py-2 text-sm font-bold text-midnight hover:bg-gold-light">Pay now</Link>
               </li>
             ))}
           </ul>
@@ -158,6 +166,7 @@ function AccountOrders() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Status</SelectItem>
+                <SelectItem value={OPEN_ORDERS}>All pending</SelectItem>
                 {[...orderStages, "Cancelled"].map((s) => (
                   <SelectItem key={s} value={s}>
                     {s}
@@ -197,6 +206,7 @@ function AccountOrders() {
             rows={rows.map((o) => [
               <Link
                 to="/account/orders/$id"
+                search={true}
                 params={{ id: o.id }}
                 className="font-semibold text-navy hover:text-gold"
               >
@@ -208,7 +218,7 @@ function AccountOrders() {
               <StatusBadge status={o.payment} />,
               <StatusBadge status={o.status} />,
               <div className="flex flex-wrap items-center gap-1.5">
-                <Link to="/account/orders/$id" params={{ id: o.id }}>
+                <Link to="/account/orders/$id" params={{ id: o.id }} search={true}>
                   <Button variant="outline" size="sm">
                     View
                   </Button>

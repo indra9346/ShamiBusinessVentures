@@ -54,7 +54,7 @@ export const Route = createFileRoute("/account/orders/$id")({
     >
       <Panel title="404">
         <p className="text-sm text-slate">The order you are looking for does not exist.</p>
-        <Link to="/account/orders" className="mt-3 inline-block text-sm font-semibold text-gold">
+        <Link to="/account/orders" search={true} className="mt-3 inline-block text-sm font-semibold text-gold">
           Back to Orders
         </Link>
       </Panel>
@@ -96,7 +96,7 @@ function AccountOrderDetail() {
       >
         <Panel title="404">
           <p className="text-sm text-slate">Order id "{id}" was not found.</p>
-          <Link to="/account/orders" className="mt-3 inline-block text-sm font-semibold text-gold">
+          <Link to="/account/orders" search={true} className="mt-3 inline-block text-sm font-semibold text-gold">
             Back to Orders
           </Link>
         </Panel>
@@ -118,7 +118,7 @@ function AccountOrderDetail() {
       <OrderUpiPay orderNo={order.id} status={order.status} payment={order.payment} method={order.method}
         balance={Math.max(0, order.amount - (order.paidAmount ?? 0))} customer={order.customer} />
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <Link to="/account/orders" className="text-sm font-semibold text-navy hover:text-gold">
+        <Link to="/account/orders" search={true} className="text-sm font-semibold text-navy hover:text-gold">
           ← Back to Orders
         </Link>
         <div className="flex flex-wrap items-center gap-2">

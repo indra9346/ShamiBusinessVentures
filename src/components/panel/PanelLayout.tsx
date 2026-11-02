@@ -12,6 +12,7 @@ import { notificationBelongsToUser } from "@/lib/account-identity";
 import { Input } from "@/components/ui/input";
 import { LanguageSwitcher } from "@/components/site/LanguageSwitcher";
 import { supabase } from "@/integrations/supabase/client";
+import { adminActivityKey, clearAdminIdleClock } from "@/lib/admin-idle";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { AdminBranchSelect } from "@/components/panel/AdminBranchSelect";
 import { useBranches } from "@/lib/branches";
@@ -126,7 +127,7 @@ export function PanelLayout({
 
   useEffect(() => {
     if (tone !== "admin" || !user?.id || !verifiedRole || typeof window === "undefined") return;
-    const key = `shami-admin-last-activity:${user.id}`;
+    const key = adminActivityKey(user.id);
     const timeoutMs = adminIdleTimeoutMinutes * 60_000;
     if (!localStorage.getItem(key)) localStorage.setItem(key, String(Date.now()));
     let signingOut = false;
@@ -483,6 +484,7 @@ export function PanelLayout({
         })}
         <button
           onClick={async () => {
+            if (user?.id) clearAdminIdleClock(user.id);
             await supabase.auth.signOut();
             logout();
             navigate({ to: "/" });

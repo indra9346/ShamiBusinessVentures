@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { useHydrated, useKeepEarlyInput } from "@/hooks/use-hydrated";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { AuthCard } from "@/components/site/AuthCard";
@@ -24,6 +25,8 @@ function ResetPasswordPage() {
   const [password, setPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const hydrated = useHydrated();
+  const emailRef = useKeepEarlyInput(setEmail);
 
   useEffect(() => {
     const url = new URL(window.location.href);
@@ -98,7 +101,7 @@ function ResetPasswordPage() {
   if (screen === "set") {
     return (
       <AuthCard title="Set your password" subtitle="Choose a password for your provisioned staff account." footer={loginLinks}>
-        <form onSubmit={(event) => void setNewPassword(event)} className="space-y-4">
+        <form method="post" onSubmit={(event) => void setNewPassword(event)} className="space-y-4">
           <label className="block">
             <span className="mb-1.5 block text-xs font-semibold text-charcoal">New password</span>
             <Input required type="password" minLength={8} autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} />
@@ -107,7 +110,7 @@ function ResetPasswordPage() {
             <span className="mb-1.5 block text-xs font-semibold text-charcoal">Confirm password</span>
             <Input required type="password" minLength={8} autoComplete="new-password" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} />
           </label>
-          <button type="submit" disabled={submitting} className="w-full rounded-md bg-navy py-3 text-sm font-semibold text-white hover:bg-midnight disabled:opacity-60">
+          <button type="submit" disabled={submitting || !hydrated} className="w-full rounded-md bg-navy py-3 text-sm font-semibold text-white hover:bg-midnight disabled:opacity-60">
             {submitting ? "Saving…" : "Set password"}
           </button>
         </form>
@@ -134,12 +137,12 @@ function ResetPasswordPage() {
 
   return (
     <AuthCard title="Set or reset staff password" subtitle="Enter the email for your provisioned vendor or admin account. We’ll email a secure password setup link." footer={loginLinks}>
-      <form onSubmit={(event) => void requestReset(event)} className="space-y-4">
+      <form method="post" onSubmit={(event) => void requestReset(event)} className="space-y-4">
         <label className="block">
           <span className="mb-1.5 block text-xs font-semibold text-charcoal">Staff account email</span>
-          <Input required type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} />
+          <Input ref={emailRef} required type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} />
         </label>
-        <button type="submit" disabled={submitting} className="w-full rounded-md bg-navy py-3 text-sm font-semibold text-white hover:bg-midnight disabled:opacity-60">
+        <button type="submit" disabled={submitting || !hydrated} className="w-full rounded-md bg-navy py-3 text-sm font-semibold text-white hover:bg-midnight disabled:opacity-60">
           {submitting ? "Sending…" : "Email password setup link"}
         </button>
       </form>

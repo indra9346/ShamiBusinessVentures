@@ -9,6 +9,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { inrPrecise } from "@/lib/data";
 import { describeRate, monthLabel, monthStart, targetProgress, type CommissionKind } from "@/lib/partners";
 
+const scrollToSection = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+
 export const Route = createFileRoute("/partner/")({
   head: () => ({ meta: [{ title: "Channel Partner Commission Platform | Grain Bazar" }, { name: "robots", content: "noindex" }] }),
   component: PartnerDashboard,
@@ -91,10 +93,10 @@ function PartnerDashboard() {
         {error && <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
         <p className="text-xs text-slate">{monthLabel(month)} · updates live every 30 seconds</p>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <StatCard label="Commission earned" value={inrPrecise(totals.earned)} icon={IndianRupee} description="Delivered and fully paid orders" />
-          <StatCard label="Commission pending" value={inrPrecise(totals.pending)} icon={Timer} description="Becomes earned on delivery + full payment" />
-          <StatCard label="Sales (excl. GST)" value={inrPrecise(totals.sales)} icon={Target} description={`${totals.orders} orders`} />
-          <StatCard label="Leaderboard rank" value={myRank ? `#${myRank} of ${leaders?.length ?? 0}` : "—"} icon={Trophy} />
+          <StatCard onClick={() => scrollToSection("your-commissions")} label="Commission earned" value={inrPrecise(totals.earned)} icon={IndianRupee} description="Delivered and fully paid orders" />
+          <StatCard onClick={() => scrollToSection("your-commissions")} label="Commission pending" value={inrPrecise(totals.pending)} icon={Timer} description="Becomes earned on delivery + full payment" />
+          <StatCard onClick={() => scrollToSection("your-commissions")} label="Sales (excl. GST)" value={inrPrecise(totals.sales)} icon={Target} description={`${totals.orders} orders`} />
+          <StatCard onClick={() => scrollToSection("leaderboard")} label="Leaderboard rank" value={myRank ? `#${myRank} of ${leaders?.length ?? 0}` : "—"} icon={Trophy} />
         </div>
 
         <Panel title={`Target for ${monthLabel(month)}`}>
@@ -113,9 +115,11 @@ function PartnerDashboard() {
         <MyPartnerReport partnerName={me.name} />
 
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
-          <Panel title="Leaderboard">
-            <PartnerLeaderboard leaders={leaders} highlightPartnerId={me.id} />
-          </Panel>
+          <div id="leaderboard" className="min-w-0 scroll-mt-36">
+            <Panel title="Leaderboard" className="h-full">
+              <PartnerLeaderboard leaders={leaders} highlightPartnerId={me.id} />
+            </Panel>
+          </div>
           <Panel title="Your commission rates">
             {rates.length ? (
               <ul className="space-y-2 text-sm">
@@ -130,9 +134,11 @@ function PartnerDashboard() {
           </Panel>
         </div>
 
-        <Panel title={`Your commissions · ${monthLabel(month)}`}>
-          <CommissionLinesTable lines={lines?.filter((line) => line.partner_id === me.id) ?? null} />
-        </Panel>
+        <div id="your-commissions" className="scroll-mt-36">
+          <Panel title={`Your commissions · ${monthLabel(month)}`}>
+            <CommissionLinesTable lines={lines?.filter((line) => line.partner_id === me.id) ?? null} />
+          </Panel>
+        </div>
       </main>
     </div>
   );

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  attendanceWorkbook, cleanMobile, distanceMeters, earlyLeaveMinutes, earlyText, formatDuration, geofenceRefusal, indiaDate, indiaInstant,
+  attendanceWorkbook, cleanMobile, datesOfTile, distanceMeters, earlyLeaveMinutes, earlyText, formatDuration, geofenceRefusal, indiaDate, indiaInstant,
   lateMinutes, lateText, leaveDays, leaveProblem, locationVerdict, monthDays, parseCoordinates, periodDays, presenceSchedule, registerMark,
   reviewStatus, selfiePath, staffLoginEmail, staffPasswordProblem, summariseMonth, summarisePeriod, summaryRow, workedMinutes, SUMMARY_HEADER,
 } from "../src/lib/attendance.ts";
@@ -244,4 +244,13 @@ test("staff sign in with mobile number and password", () => {
   assert.equal(staffPasswordProblem(sample(10, 0)), "Use letters and at least one number");
   assert.equal(staffPasswordProblem(sample(0, 8)), "Use letters and at least one number");
   assert.equal(staffPasswordProblem(sample(72, 1)), "Use at most 72 characters");
+});
+
+test("a staff member's month total lists its own days, newest first", () => {
+  const dates = ["2026-11-01", "2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05"];
+  const marks = ["P", "L", "LV", "A", "WO"];
+  assert.deepEqual(datesOfTile(dates, marks, "Present"), ["2026-11-02", "2026-11-01"]);
+  assert.deepEqual(datesOfTile(dates, marks, "Late days"), ["2026-11-02"]);
+  assert.deepEqual(datesOfTile(dates, marks, "Leave"), ["2026-11-03"]);
+  assert.deepEqual(datesOfTile(dates, marks, "Absent"), ["2026-11-04"]);
 });

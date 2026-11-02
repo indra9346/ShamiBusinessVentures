@@ -27,7 +27,7 @@ export const Route = createFileRoute("/vendor/orders/$id")({
     <PanelLayout items={vendorNav} tone="vendor" title="Order Not Found" subtitle="This order does not exist">
       <Panel title="Not Found">
         <p className="text-sm text-slate">We couldn't find this order in your account. It may have been removed.</p>
-        <Link to="/vendor/orders" className="mt-4 inline-block text-sm font-semibold text-gold hover:underline">
+        <Link to="/vendor/orders" search={true} className="mt-4 inline-block text-sm font-semibold text-gold hover:underline">
           Back to Orders
         </Link>
       </Panel>
@@ -46,7 +46,7 @@ function VendorOrderDetail() {
       <PanelLayout items={vendorNav} tone="vendor" title="Order Not Found" subtitle="This order does not exist">
         <Panel title="Not Found">
           <p className="text-sm text-slate">We couldn't find order {id} for your account.</p>
-          <Link to="/vendor/orders" className="mt-4 inline-block text-sm font-semibold text-gold hover:underline">
+          <Link to="/vendor/orders" search={true} className="mt-4 inline-block text-sm font-semibold text-gold hover:underline">
             Back to Orders
           </Link>
         </Panel>
