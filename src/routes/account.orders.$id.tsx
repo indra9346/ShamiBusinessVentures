@@ -33,6 +33,8 @@ import { HeldCheckoutPay } from "@/components/site/HeldCheckoutPay";
 import { useUpiPayments } from "@/lib/upi-store";
 import { resizedImage } from "@/lib/image-url";
 import { ItemBatchCodes, useOrderItemBatches } from "@/components/batches/OrderItemBatches";
+import { PAYMENT_EXPIRED } from "@/lib/payment-hold";
+import { isBankMethod } from "@/lib/payment-rules";
 
 export const Route = createFileRoute("/account/orders/$id")({
   head: ({ params }) => ({
@@ -64,7 +66,7 @@ export const Route = createFileRoute("/account/orders/$id")({
 
 function AccountOrderDetail() {
   const { id } = Route.useParams();
-  const { user, orders, updateOrderStatus, requestReturn, paymentHolds } = useApp();
+  const { user, orders, updateOrderStatus, requestReturn, paymentHolds, ordersLoaded } = useApp();
   const { settings: upiSettings } = useUpiPayments();
   const [returnOpen, setReturnOpen] = useState(false);
   const [returnItemIndex, setReturnItemIndex] = useState("0");
@@ -78,10 +80,22 @@ function AccountOrderDetail() {
 
   // A checkout waiting for payment is not an order yet: show its payment screen.
   const hold = order ? undefined : paymentHolds.find((candidate) => candidate.orderNo === id);
-  if (!order && hold && upiSettings) {
+  if (!order && hold) {
     return (
-      <PanelLayout items={accountNav} tone="customer" title={hold.orderNo} subtitle="Waiting for payment">
-        <HeldCheckoutPay settings={upiSettings} orderNo={hold.orderNo} amount={hold.amount} holdUntil={hold.holdUntil} customer={user?.name ?? ""} />
+      <PanelLayout items={accountNav} tone="customer" title={hold.orderNo} subtitle={hold.status === PAYMENT_EXPIRED ? "Not placed" : "Waiting for payment"}>
+        <div className="mb-4">
+          <Link to="/account/orders" search={true} className="text-sm font-semibold text-navy hover:text-gold">← Back to Orders</Link>
+        </div>
+        <HeldCheckoutPay key={hold.orderNo} settings={upiSettings} method={hold.method} orderNo={hold.orderNo} amount={hold.amount} holdUntil={hold.holdUntil} customer={user?.name ?? ""} />
+      </PanelLayout>
+    );
+  }
+
+  // A page reload: orders and checkouts are still being read.
+  if (!order && !ordersLoaded) {
+    return (
+      <PanelLayout items={accountNav} tone="customer" title={id} subtitle="Loading your order…">
+        <p className="text-sm text-slate">Loading your order…</p>
       </PanelLayout>
     );
   }

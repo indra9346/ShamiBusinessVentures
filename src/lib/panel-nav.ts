@@ -62,7 +62,7 @@ export const adminNav = [
   { label: "Stock Counts", to: "/admin/stock-counts", icon: ClipboardCheck },
   { label: "Orders", to: "/admin/orders", icon: ClipboardList },
   { label: "Payments & Matching", to: "/admin/payments", icon: CreditCard },
-  { label: "UPI Payments", to: "/admin/upi-payments", icon: QrCode },
+  { label: "UPI & Bank Payments", to: "/admin/upi-payments", icon: QrCode },
   { label: "Commissions", to: "/admin/commissions", icon: Percent },
   { label: "Payouts", to: "/admin/payouts", icon: Wallet },
   { label: "Coupons", to: "/admin/coupons", icon: BadgePercent },

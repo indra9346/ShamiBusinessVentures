@@ -26,7 +26,7 @@ export const Route = createFileRoute("/account/notifications")({
 });
 
 function AccountNotifications() {
-  const { notifications, markRead, markAllRead, user, orders } = useApp();
+  const { notifications, markRead, markAllRead, user, orders, paymentHolds } = useApp();
   const navigate = useNavigate();
   const mine = notifications.filter(
     (n) => (n.role === "customer" || !n.role) && (Boolean(n.databaseId) || notificationBelongsToUser(n, user, orders)),
@@ -68,12 +68,12 @@ function AccountNotifications() {
               role="button"
               tabIndex={0}
               onClick={() => {
-                void markRead(n.id).then((ok) => { if (ok) navigate({ to: notificationTarget(n, "customer", user, orders) as never }); });
+                void markRead(n.id).then((ok) => { if (ok) navigate({ to: notificationTarget(n, "customer", user, orders, paymentHolds) as never }); });
               }}
               onKeyDown={(event) => {
                 if (event.key === "Enter" || event.key === " ") {
                   event.preventDefault();
-                  void markRead(n.id).then((ok) => { if (ok) navigate({ to: notificationTarget(n, "customer", user, orders) as never }); });
+                  void markRead(n.id).then((ok) => { if (ok) navigate({ to: notificationTarget(n, "customer", user, orders, paymentHolds) as never }); });
                 }
               }}
               className={`flex cursor-pointer flex-wrap items-start justify-between gap-3 rounded-lg border p-4 transition-colors hover:bg-ivory ${n.read ? "border-border" : "border-gold/40 bg-gold/5"}`}

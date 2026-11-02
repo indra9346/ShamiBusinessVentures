@@ -1,12 +1,12 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { pageHead, SITE_NAME } from "@/lib/seo";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { z } from "zod";
-import { Check, CreditCard } from "lucide-react";
+import { Check, CreditCard, Loader2, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { SiteLayout, Breadcrumbs } from "@/components/site/SiteLayout";
 import { inr, inrPrecise } from "@/lib/data";
-import { couponDiscount, lineGst } from "@/lib/pricing";
+import { couponDiscount, lineGst, toPaise } from "@/lib/pricing";
 import { useApp } from "@/lib/store";
 import { PickupPointCard } from "@/components/site/PickupPointCard";
 import { usePickupSettings } from "@/lib/pickup-points";
@@ -17,9 +17,12 @@ import { supabase } from "@/integrations/supabase/client";
 import { UseMyLocationButton, type CapturedLocation } from "@/components/site/UseMyLocationButton";
 import { PickContactButton } from "@/components/site/PickContactButton";
 import { HeldCheckoutPay } from "@/components/site/HeldCheckoutPay";
+import { WaitingCheckouts } from "@/components/site/WaitingCheckouts";
+import { AWAITING_PAYMENT, PAYMENT_EXPIRED } from "@/lib/payment-hold";
 import { NotInYourArea } from "@/components/site/NotInYourArea";
 import { isOutsideServiceArea } from "@/lib/godown-rules";
-import { useUpiPayments } from "@/lib/upi-store";
+import { useBankDetails, useUpiPayments } from "@/lib/upi-store";
+import { isBankMethod, lapsedTransfer, methodLabel, methodsForOrders, pickMethod, UPI_BELOW, type PayMethod } from "@/lib/payment-rules";
 import { settingsProblem } from "@/lib/upi-pay";
 import { businessDetailsProblem, normaliseGstin } from "@/lib/gstin";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
@@ -40,7 +43,6 @@ export const Route = createFileRoute("/checkout")({
 });
 
 const steps = ["Address", "Delivery", "Payment", "Review", "Pay"];
-const methods = ["UPI", "Credit Card", "Debit Card", "Net Banking"];
 const defaultShipping = { freeAbove: 10000, standard: 250, express: 650 };
 
 function Checkout() {
@@ -59,6 +61,7 @@ function Checkout() {
     placeOrder,
     coupons,
     orders,
+    paymentHolds,
   } = useApp();
   const { productId, coupon: cartCoupon } = Route.useSearch();
   const navigate = useNavigate();
@@ -109,7 +112,7 @@ function Checkout() {
     }
   }, [user?.name, user?.phone]);
   const [ship, setShip] = useState<"Pickup" | "Delivery">("Pickup");
-  const [method, setMethod] = useState("UPI");
+  const [chosenMethod, setChosenMethod] = useState<PayMethod | null>(null);
   // A coupon applied on the cart page carries over.
   const [couponCode, setCouponCode] = useState(cartCoupon?.trim().toUpperCase() ?? "");
   // Company details on the invoice: company name (required) and GSTIN (optional) go on the order, its
@@ -131,12 +134,18 @@ function Checkout() {
     return () => { active = false; };
   }, [user?.id]);
   const [placedId, setPlacedId] = useState<string | null>(null);
-  const [placedOrders, setPlacedOrders] = useState<{ id: string; amount: number; holdUntil: string | null }[]>([]);
+  const [placedOrders, setPlacedOrders] = useState<{ id: string; amount: number; holdUntil: string | null; method: PayMethod }[]>([]);
   // Every held checkout from this visit has been paid and is now an order.
   const allPaid = placedOrders.length > 0 && placedOrders.every((placed) => orders.some((order) => order.id === placed.id));
+  // Every held checkout from this visit ended without being paid.
+  const [endedHolds, setEndedHolds] = useState<string[]>([]);
+  const markEnded = useCallback((orderNo: string) => setEndedHolds((list) => (list.includes(orderNo) ? list : [...list, orderNo])), []);
+  const allEnded = placedOrders.length > 0 && placedOrders.every((placed) => endedHolds.includes(placed.id) || paymentHolds.find((hold) => hold.orderNo === placed.id)?.status === PAYMENT_EXPIRED);
   // Direct UPI to the company's own account (no gateway fee), when the admin has switched it on.
-  const { settings: upiSettings } = useUpiPayments();
+  const { settings: upiSettings, submissions } = useUpiPayments();
   const directUpi = upiSettings && upiSettings.enabled && !settingsProblem(upiSettings) ? upiSettings : null;
+  // NEFT and RTGS: the company's bank account, once an admin has entered it.
+  const { details: bankDetails, loaded: bankLoaded, failed: bankFailed } = useBankDetails(Boolean(user), user?.id);
   const [savingAddress, setSavingAddress] = useState(false);
   const [placingOrder, setPlacingOrder] = useState(false);
   const [confirmationSummary, setConfirmationSummary] = useState<{
@@ -271,8 +280,29 @@ function Checkout() {
           c.maxPerUser),
   );
   const discount = appliedCoupon ? couponDiscount(appliedCoupon, subtotal) : 0;
-  const total = subtotal + shipCost + tax - discount;
+  const total = toPaise(subtotal + shipCost + tax - discount);
   const summary = confirmationSummary ?? { subtotal, shipCost, tax, discount, total };
+  // The order's value decides how it can be paid; the database checks again on the final total. A cart that
+  // splits is several orders, each with its own total.
+  const orderTotals = orderGroups.length > 1
+    ? orderGroups.map((group) => {
+      const goods = group.lines.reduce((sum, line) => sum + line.product.price * line.qty, 0);
+      const gst = group.lines.reduce((sum, line) => sum + lineGst(line.product.price, line.qty, line.product.gst), 0);
+      const point = group.point ? branches.find((branch) => branch.id === group.point) ?? null : null;
+      const delivers = point ? (fulfil === "Delivery" && point.deliveryEnabled) || !point.pickupEnabled : fulfil === "Delivery";
+      return toPaise(goods + gst + (delivers ? branchDeliveryFee(point ?? fulfilBranch, goods) : 0));
+    })
+    : [total];
+  const payOptions = methodsForOrders(orderTotals, { upi: Boolean(directUpi), bank: Boolean(bankDetails) });
+  // An earlier transfer of this amount that nobody checked in time: its UTR goes on the bank form, so start there.
+  const earlierTransfer = lapsedTransfer(submissions, Date.now());
+  const reuseTransfer = earlierTransfer && Math.abs(earlierTransfer.amount - total) < 0.005 && payOptions.includes("NEFT") ? earlierTransfer : undefined;
+  const payMethod = pickMethod(chosenMethod ?? (reuseTransfer ? "NEFT" : null), payOptions);
+  // Not "nothing on offer" while the settings are still being read, or could not be read just now.
+  const payOptionsKnown = upiSettings !== null && bankLoaded;
+  const waitingHolds = paymentHolds.filter((hold) => hold.status === AWAITING_PAYMENT && !placedOrders.some((placed) => placed.id === hold.orderNo));
+  const sentOrderNos = submissions.filter((item) => item.status === "submitted").map((item) => item.orderNo);
+  const placedMethod = placedOrders[0]?.method ?? "UPI";
 
   if (!hydrated || !authReady) {
     return (
@@ -343,9 +373,14 @@ function Checkout() {
       setAddressFormOpen(false);
       setChangingAddress(false);
     }
+    if (step === 2 && !payMethod) {
+      if (payOptionsKnown) toast.error("Online payment is being set up", { description: "Please call or WhatsApp us to order now." });
+      else toast.message("Checking payment options…");
+      return;
+    }
     if (step === 3) {
-      if (!directUpi) {
-        toast.error("Online payment is being set up", { description: "Orders open as soon as UPI payment is switched on. Please call or WhatsApp us to order now." });
+      if (!payMethod) {
+        toast.error("Online payment is being set up", { description: "Please call or WhatsApp us to order now." });
         return;
       }
       if (!shippingRatesReady) {
@@ -363,7 +398,7 @@ function Checkout() {
           const groupFulfil = point ? (fulfil === "Delivery" && point.deliveryEnabled) || !point.pickupEnabled ? "Delivery" : "Pickup" : fulfil;
           placed.push(await placeOrder({
             lines: group.lines,
-            method: "UPI",
+            method: payMethod,
             payment: "Pending",
             payFirst: true,
             business: isBusiness ? { isB2b: true, gstin: normaliseGstin(bizGstin), legalName: bizName.trim() } : { isB2b: false },
@@ -399,7 +434,7 @@ function Checkout() {
         toast.error("Some items were not ordered", { description: "They are still in your cart. Review them and place another order." });
       } else clearCart();
       setPlacedId(placed.map((order) => order.id).join(", "));
-      setPlacedOrders(placed.map((order) => ({ id: order.id, amount: order.amount, holdUntil: order.holdUntil ?? null })));
+      setPlacedOrders(placed.map((order) => ({ id: order.id, amount: order.amount, holdUntil: order.holdUntil ?? null, method: payMethod })));
       toast.success("Pay now to place your order", { description: "Prices and stock are held for you while you pay." });
       setStep(step + 1);
       return;
@@ -466,6 +501,7 @@ function Checkout() {
           <h1 className="text-2xl font-bold text-navy">
             {unavailable ? "Please review your cart" : "Your cart is empty"}
           </h1>
+          <WaitingCheckouts holds={waitingHolds} sent={sentOrderNos} className="mt-5 text-left" />
           <p className="mt-3 text-sm text-slate">
             {productCatalogStatus === "loading"
               ? "We’re loading the live catalog before verifying your cart."
@@ -541,6 +577,8 @@ function Checkout() {
             </li>
           ))}
         </ol>
+
+        {step < 4 && <WaitingCheckouts holds={waitingHolds} sent={sentOrderNos} className="mb-6" />}
 
         <div className="grid grid-cols-[minmax(0,1fr)] gap-6 sm:gap-8 lg:grid-cols-[minmax(0,1fr)_360px]">
           <div className="rounded-lg border border-border bg-card p-4 sm:p-6 shadow-card">
@@ -768,18 +806,36 @@ function Checkout() {
             {step === 2 && (
               <>
                 <h2 className="text-lg font-bold text-navy">Payment</h2>
-                {directUpi ? (
-                  <div className="mt-2 flex items-start gap-3 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
-                    <CreditCard className="mt-0.5 h-4 w-4 shrink-0" />
-                    <p>
-                      Pay by <span className="font-semibold">UPI with no extra charges</span> (Google Pay, PhonePe, Paytm or any UPI app),
-                      straight to {directUpi.payeeName}. Your order is placed and confirmed the moment the payment reaches us.
-                    </p>
+                {!payOptionsKnown && payOptions.length === 0 ? (
+                  <p className="mt-2 flex items-center gap-2 text-sm text-slate">
+                    <Loader2 className="h-4 w-4 animate-spin" /> {bankFailed ? "We could not load the payment options. Trying again…" : "Checking payment options…"}
+                  </p>
+                ) : payOptions.length > 0 ? (
+                  <div className="mt-2 space-y-2" role="radiogroup" aria-label="Payment method">
+                    {reuseTransfer && (
+                      <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm font-semibold text-amber-950">{`You already sent UTR ${reuseTransfer.utr} for an earlier checkout. Do not pay again: choose NEFT and send the same UTR on the next steps.`}</p>
+                    )}
+                    {Math.max(...orderTotals) >= UPI_BELOW && <p className="text-sm text-slate">Orders of ₹1,00,000 and above are paid by bank transfer.</p>}
+                    {payOptions.map((option) => (
+                      <label key={option} className={cn("flex cursor-pointer items-start gap-3 rounded-md border p-3 text-sm", payMethod === option ? "border-gold bg-gold/5" : "border-border bg-card")}>
+                        <input type="radio" name="pay-method" className="mt-1 accent-[var(--gold)]" checked={payMethod === option} onChange={() => setChosenMethod(option)} />
+                        <span className="min-w-0">
+                          <span className="flex items-center gap-2 font-semibold text-navy"><CreditCard className="h-4 w-4 shrink-0" /> {methodLabel(option)}</span>
+                          <span className="mt-0.5 block text-slate">
+                            {option === "UPI"
+                              ? "Pay now with Google Pay, PhonePe, Paytm or any UPI app, no extra charges. Your order is placed the moment the payment reaches us."
+                              : "Transfer from your bank to our account, then enter the UTR in your order details within 1 hour. Your order is placed once we check it against our bank account."}
+                          </span>
+                        </span>
+                      </label>
+                    ))}
                   </div>
                 ) : (
                   <p className="mt-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
-                    Online payment is being set up, so orders can't be placed on the website yet.
-                    Please <Link to="/contact" className="font-semibold underline">call or WhatsApp us</Link> to order.
+                    {directUpi
+                      ? "Payment by bank transfer is being set up, so orders of ₹1,00,000 and above can't be placed on the website yet. Smaller orders can be paid by UPI. Please "
+                      : "Online payment is being set up, so orders can't be placed on the website yet. Please "}
+                    <Link to="/contact" className="font-semibold underline">call or WhatsApp us</Link> to order.
                   </p>
                 )}
                 <div className="mt-5">
@@ -846,7 +902,9 @@ function Checkout() {
                 <dl className="mt-5 space-y-1.5 text-sm text-slate">
                   <div>Address: {selectedAddress?.line}</div>
                   <div>{fulfil === "Delivery" ? `Home delivery: ${shipCost === 0 ? "free" : inr(shipCost)}` : "Pickup: from our godown (free)"}</div>
-                  <div>Payment: UPI (pay on the next step; the order is placed when paid)</div>
+                  <div>{payMethod && isBankMethod(payMethod)
+                    ? `Payment: ${methodLabel(payMethod)} (our bank details are on the next step; enter the UTR within 1 hour)`
+                    : payMethod === "UPI" ? "Payment: UPI (pay on the next step; the order is placed when paid)" : "Payment: not available yet"}</div>
                   {isBusiness && !businessDetailsProblem(bizGstin, bizName, selectedAddress?.state) && (
                     normaliseGstin(bizGstin)
                       ? <div>Invoice to: {bizName.trim()} · GSTIN {normaliseGstin(bizGstin)}</div>
@@ -859,21 +917,28 @@ function Checkout() {
 
             {step === 4 && (
               <div className="py-6 text-center">
-                <span className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-gold/15 text-gold">
-                  <Check className="h-7 w-7" />
+                <span className={cn("mx-auto grid h-14 w-14 place-items-center rounded-full", allEnded ? "bg-muted text-slate" : "bg-gold/15 text-gold")}>
+                  {allEnded ? <XCircle className="h-7 w-7" /> : <Check className="h-7 w-7" />}
                 </span>
-                <h2 className="mt-5 text-xl font-bold text-navy">{allPaid ? "Order placed and confirmed" : "Pay to place your order"}</h2>
-                <p className="mt-2 text-sm text-slate">
-                  {allPaid
-                    ? `Total ${inrPrecise(summary.total)} paid by UPI. `
-                    : `Total ${inrPrecise(summary.total)}. Prices and stock are held for you while you pay; the order is placed and confirmed the moment the payment reaches us. `}
-                  {fulfil === "Pickup" ? "We will let you know when it is ready to collect." : "Delivery in 2–4 business days after payment."}
-                </p>
-                {directUpi && placedOrders.length > 0 && (
+                <h2 className="mt-5 text-xl font-bold text-navy">{allPaid ? "Order placed and confirmed" : allEnded ? "Order not placed" : "Pay to place your order"}</h2>
+                {!allEnded && (
+                  <p className="mt-2 text-sm text-slate">
+                    {allPaid
+                      ? `Total ${inrPrecise(summary.total)} paid by ${placedMethod}. `
+                      : isBankMethod(placedMethod)
+                        ? `Total ${inrPrecise(summary.total)}. Prices and stock are held for you: transfer the money and enter the UTR within the time shown. The order is placed once we check it. `
+                        : `Total ${inrPrecise(summary.total)}. Prices and stock are held for you while you pay; the order is placed and confirmed the moment the payment reaches us. `}
+                    {fulfil === "Pickup" ? "We will let you know when it is ready to collect." : "Delivery in 2–4 business days after payment."}
+                  </p>
+                )}
+                {placedOrders.length > 0 && (
                   <div className="mx-auto mt-6 max-w-2xl space-y-4">
                     {placedOrders.map((order) => (
-                      <HeldCheckoutPay key={order.id} settings={directUpi} orderNo={order.id} amount={order.amount} holdUntil={order.holdUntil} customer={user?.name ?? ""} />
+                      <HeldCheckoutPay key={order.id} settings={directUpi} method={order.method} orderNo={order.id} amount={order.amount} holdUntil={order.holdUntil} customer={user?.name ?? ""} onEnded={markEnded} />
                     ))}
+                    {!allPaid && !allEnded && isBankMethod(placedMethod) && (
+                      <Link to="/account/orders" className="block text-sm font-semibold text-gold hover:underline">You can close this page and enter the UTR later under My Orders.</Link>
+                    )}
                   </div>
                 )}
                 <div className="mt-6 flex flex-wrap justify-center gap-3">

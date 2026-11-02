@@ -1,6 +1,6 @@
 /*
  * Pay first, then the order is placed. A checkout is a held request ("Awaiting Payment") until the
- * full UPI payment is matched; one not paid in time becomes "Payment Expired". Neither is an order:
+ * full payment is matched or confirmed; one not paid in time becomes "Payment Expired". Neither is an order:
  * order lists, reports, dashboards and Zoho leave them out.
  */
 
@@ -36,15 +36,20 @@ export type PaymentHold = {
   createdAt: string;
   /** Who is paying (shown to admins). */
   customer?: string | undefined;
-  outcome?: "expired" | "dropped" | null | undefined;
-  /** Product ids and quantities, to put the items back in the cart if it is not paid. */
-  lines: { productId: string; qty: number }[];
+  /** To call them (shown to admins). */
+  phone?: string | undefined;
+  outcome?: "expired" | "dropped" | "ended" | null | undefined;
+  /** UPI, NEFT or RTGS (decides which payment screen it gets). */
+  method?: string | undefined;
+  /** Product ids and quantities, to reorder the same items if it is not paid. */
+  lines: { productId: string; qty: number; name?: string | undefined }[];
 };
 
 /** What the customer should see for a held request right now. */
 export function holdView(hold: Pick<PaymentHold, "status" | "holdUntil" | "outcome">, utrSent: boolean, now = Date.now()) {
-  if (hold.status === "Payment Confirmed") return "confirmed" as const;
   if (hold.status === PAYMENT_EXPIRED) return hold.outcome === "dropped" ? ("dropped" as const) : ("expired" as const);
+  // Any later status (Accepted, Packed...) means it was paid and is an order now.
+  if (hold.status !== AWAITING_PAYMENT) return "confirmed" as const;
   if (utrSent) return "verifying" as const;
   return holdSecondsLeft(hold.holdUntil, now) > 0 ? ("pay" as const) : ("closing" as const);
 }

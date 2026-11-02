@@ -73,6 +73,7 @@ export function PanelLayout({
     customers,
     vendors,
     orders,
+    paymentHolds,
   } = useApp();
   const branchState = useBranches();
   const navigate = useNavigate();
@@ -667,7 +668,7 @@ export function PanelLayout({
                               onClick={() => {
                                 markRead(n.id);
                                 setNotifOpen(false);
-                                const target = notificationTarget(n, tone, user, orders);
+                                const target = notificationTarget(n, tone, user, orders, paymentHolds);
                                 navigate({ to: target as never });
                               }}
                               className={cn(

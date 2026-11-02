@@ -54,3 +54,16 @@ test("forwarded payloads: JSON, form data or the plain text", () => {
   assert.deepEqual(smsFromPayload(new URLSearchParams({ sender: "VM-SBIUPI", body: sms }).toString()), { text: sms, sender: "VM-SBIUPI" });
   assert.deepEqual(smsFromPayload(sms), { text: sms, sender: null });
 });
+
+test("digits inside a longer token are not a UPI reference", () => {
+  assert.equal(parseBankCredit("INR 80,000.00 credited to your A/c XX1234 on 02/11/2026 through NEFT with UTR SBIN226306123456 by RAMESH"), null);
+  assert.equal(parseBankCredit("Rs.80000.00 credited to a/c XX12 NEFT Ref SBIN322215123456"), null);
+  assert.equal(parseBankCredit("NEFT Cr-SBIN0000123-RAMESH-SBIN422215123456 Rs 5,000 credited"), null);
+  assert.equal(parseBankCredit("Rs 5,000 credited to A/c XX123456789012AB"), null);
+});
+
+test("a whole 12-digit reference still reads, also an IMPS one", () => {
+  assert.equal(parseBankCredit("Rs 5,000 credited to A/c XX12 by IMPS Ref 330612345678")?.utr, "330612345678");
+  assert.equal(parseBankCredit("Rs 5,000 credited to A/c XX12 IMPS330612345678")?.utr, "330612345678");
+  assert.equal(parseBankCredit("Rs 5,000 received in A/c XX12. UPI/P2A/612345678901/RAMESH")?.utr, "612345678901");
+});

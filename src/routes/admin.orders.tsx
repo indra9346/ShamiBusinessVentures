@@ -18,6 +18,8 @@ import { DataTable, Panel, StatCard, StatusBadge } from "@/components/panel/widg
 import { Pager } from "@/components/panel/pager";
 import { adminNav } from "@/lib/panel-nav";
 import { canCancelOrder, inr, orderStages, type OrderStatus } from "@/lib/data";
+import { allowedMethods } from "@/lib/payment-rules";
+import { lineGst } from "@/lib/pricing";
 import { inOrderRange, matchesOrderStatus, OPEN_ORDERS, orderListSearch, orderStatusFilter } from "@/lib/panel-filters";
 import { useApp, type Address } from "@/lib/store";
 import { supabase } from "@/integrations/supabase/client";
@@ -72,7 +74,7 @@ export const Route = createFileRoute("/admin/orders")({
 });
 
 const PAGE_SIZE = 10;
-const paymentMethods = ["UPI", "Credit Card", "Debit Card", "Net Banking"];
+const paymentMethods = ["UPI", "NEFT", "RTGS", "Credit Card", "Debit Card", "Net Banking"];
 
 function AdminOrders() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
@@ -244,7 +246,8 @@ function AdminOrders() {
           capacity: line.capacity,
           unitPrice: line.unitPrice,
         })),
-        method: "UPI",
+        // The order's value decides how it can be paid: bank transfer from Rs 1 lakh.
+        method: allowedMethods(lines.reduce((sum, line) => sum + line.unitPrice * line.qty + lineGst(line.unitPrice, line.qty, line.product!.gst), 0))[0] ?? "NEFT",
         payment: "Pending",
         customerOverride: customer,
         ...(shippingAddress ? { shippingAddress } : {}),
