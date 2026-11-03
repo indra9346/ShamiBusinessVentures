@@ -31,17 +31,22 @@ const STRIP_FLICK_DECAY_MS = 325;
 const STRIP_FLICK_MAX = 4;
 const STRIP_FLICK_MIN = 0.02;
 
-function usePrefersReducedMotion() {
-  const [reduced, setReduced] = useState(false);
+/** Whether a media query matches; `initial` is what the server and the browser's first render assume. */
+function useMediaQuery(media: string, initial = false) {
+  const [matches, setMatches] = useState(initial);
   useEffect(() => {
-    const query = window.matchMedia?.("(prefers-reduced-motion: reduce)");
+    const query = window.matchMedia?.(media);
     if (!query) return;
-    setReduced(query.matches);
-    const onChange = () => setReduced(query.matches);
+    setMatches(query.matches);
+    const onChange = () => setMatches(query.matches);
     query.addEventListener?.("change", onChange);
     return () => query.removeEventListener?.("change", onChange);
-  }, []);
-  return reduced;
+  }, [media]);
+  return matches;
+}
+
+function usePrefersReducedMotion() {
+  return useMediaQuery("(prefers-reduced-motion: reduce)");
 }
 
 /** Opens a banner's link: pages on this site without a reload, other sites in a new tab. */
@@ -321,12 +326,15 @@ function SideTile({ banner, className, copy }: { banner: AdBanner; className?: s
 /** Desktop: up to two tiles stacked beside the big banner, taking turns when there are more. */
 function SideColumn({ banners }: { banners: AdBanner[] }) {
   const reducedMotion = usePrefersReducedMotion();
+  // Below desktop width the column is hidden: it would keep rebuilding its tiles and playing their videos unseen.
+  const shows = useMediaQuery("(min-width: 1024px)", true);
   const [offset, setOffset] = useState(0);
   useEffect(() => {
-    if (banners.length <= 2 || reducedMotion) return;
+    if (!shows || banners.length <= 2 || reducedMotion) return;
     const timer = window.setInterval(() => setOffset((o) => (o + 1) % banners.length), SLIDE_MS + 1000);
     return () => window.clearInterval(timer);
-  }, [banners.length, reducedMotion]);
+  }, [shows, banners.length, reducedMotion]);
+  if (!shows) return null;
   const shown = banners.length <= 2 ? banners : [banners[offset % banners.length]!, banners[(offset + 1) % banners.length]!];
   return (
     <div className="hidden h-full min-h-0 flex-col gap-3 lg:flex">
@@ -561,8 +569,8 @@ export function AdShowcase({ children }: { children?: ReactNode }) {
   return (
     <section className="relative isolate overflow-hidden">
       {/* Soft moving brand-coloured backdrop behind the banners and the category strip. */}
-      {/* (still while the festival backdrop covers it, so nothing under it repaints every frame) */}
-      <div aria-hidden className={cn("absolute inset-0 -z-10 bg-[length:200%_200%] bg-gradient-to-br from-[#e9f2ec] via-[#fbf5e6] to-[#eef4ef] motion-reduce:animate-none", !festive.on && "animate-ad-backdrop")} />
+      {/* (twice the band's size and slid, so the browser moves it without repainting; still while the festival backdrop covers it) */}
+      <div aria-hidden className={cn("absolute left-0 top-0 -z-10 h-[200%] w-[200%] bg-gradient-to-br from-[#e9f2ec] via-[#fbf5e6] to-[#eef4ef] motion-reduce:animate-none", !festive.on && "animate-ad-backdrop")} />
       <div aria-hidden className="absolute -left-24 -top-24 -z-10 h-72 w-72 rounded-full bg-gold/20 blur-3xl" />
       <div aria-hidden className="absolute -bottom-24 -right-16 -z-10 h-72 w-72 rounded-full bg-emerald-700/10 blur-3xl" />
       {/* Festival dates: warm Deepavali light and a marigold toran hanging in the band's top padding. */}

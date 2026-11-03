@@ -394,6 +394,12 @@
   stroke-dashoffset: 28;
   filter: drop-shadow(0 0 1.5px rgba(250, 204, 21, 0.95));
   animation: footer-heart-spark 1.8s linear infinite;
+  /* A dash offset is redrawn by the page on every frame, so it runs only while on screen (SiteFooter sets data-sparks). */
+  animation-play-state: paused;
+}
+
+[data-sparks] .footer-heart-spark {
+  animation-play-state: running;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -477,12 +483,13 @@
 @utility animate-ad-progress {
   animation: ad-progress linear both;
 }
+/* A full-width bar slid in from the left, clipped by its track: width would lay out the page on every frame. */
 @keyframes ad-progress {
   from {
-    width: 0%;
+    transform: translate3d(-100%, 0, 0);
   }
   to {
-    width: 100%;
+    transform: translate3d(0, 0, 0);
   }
 }
 
@@ -503,12 +510,13 @@
 @utility animate-ad-backdrop {
   animation: ad-backdrop 18s ease-in-out infinite alternate;
 }
+/* The element is twice the band's size: this is background-position 0% 50% to 100% 50%, without a repaint on every frame. */
 @keyframes ad-backdrop {
   from {
-    background-position: 0% 50%;
+    transform: translate3d(0, -25%, 0);
   }
   to {
-    background-position: 100% 50%;
+    transform: translate3d(-50%, -25%, 0);
   }
 }
 
