@@ -94,6 +94,22 @@ ALTER TABLE public.bank_credits DROP CONSTRAINT IF EXISTS bank_credits_status_ch
 ALTER TABLE public.bank_credits ADD CONSTRAINT bank_credits_status_check
   CHECK (status IN ('matched', 'unmatched', 'ambiguous', 'mismatch', 'late', 'settled', 'balance'));
 
+-- ---------------------------------------------------------------- a UTR that was replaced
+-- One row per order, so a corrected UTR overwrites the one before it. Kept: the bank's alert for the first one may still
+-- come, and that money must not pay someone else's order by its amount.
+ALTER TABLE public.upi_payment_submissions ADD COLUMN IF NOT EXISTS earlier_utrs text[] NOT NULL DEFAULT '{}';
+CREATE OR REPLACE FUNCTION private.keep_earlier_utr()
+RETURNS trigger LANGUAGE plpgsql AS $function$
+BEGIN
+  IF NEW.utr IS DISTINCT FROM OLD.utr THEN NEW.earlier_utrs := array_append(OLD.earlier_utrs, OLD.utr); END IF;
+  RETURN NEW;
+END;
+$function$;
+REVOKE ALL ON FUNCTION private.keep_earlier_utr() FROM PUBLIC, anon, authenticated;
+DROP TRIGGER IF EXISTS keep_earlier_utr ON public.upi_payment_submissions;
+CREATE TRIGGER keep_earlier_utr BEFORE UPDATE OF utr ON public.upi_payment_submissions
+  FOR EACH ROW EXECUTE FUNCTION private.keep_earlier_utr();
+
 -- ---------------------------------------------------------------- a payment that reached a Zoho invoice
 ALTER TABLE public.payments ADD COLUMN IF NOT EXISTS zoho_invoice_id text;
 ALTER TABLE public.payments ADD COLUMN IF NOT EXISTS zoho_payment_id text;
@@ -116,8 +132,8 @@ DECLARE
   other_status text;
 BEGIN
   IF auth.uid() IS NULL OR NOT public.has_role(auth.uid(), 'admin') THEN RAISE EXCEPTION 'Only administrators may reconcile a manual payment'; END IF;
-  -- Kannada, Devanagari, Arabic and full-width digits are the same number, and nothing below would see that. Zoho takes up to 100 characters.
-  reference := translate(trim(COALESCE(_utr,'')), '೦೧೨೩೪೫೬೭೮೯०१२३४५६७८९٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹０１２３４５６７８９', '01234567890123456789012345678901234567890123456789');
+  -- Digits in another script are the same number, and nothing below would see that. Zoho takes up to 100 characters.
+  reference := translate(trim(COALESCE(_utr,'')), '೦೧೨೩೪೫೬೭೮೯०१२३४५६७८९٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹０１２３４５６７８９౦౧౨౩౪౫౬౭౮౯௦௧௨௩௪௫௬௭௮௯০১২৩৪৫৬৭৮৯૦૧૨૩૪૫૬૭૮૯੦੧੨੩੪੫੬੭੮੯൦൧൨൩൪൫൬൭൮൯୦୧୨୩୪୫୬୭୮୯', '012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789');
   IF length(reference) < 4 OR length(reference) > 100 THEN RAISE EXCEPTION 'Enter the verified UTR / transfer reference'; END IF;
   -- The payment dialog sends a float: 70.14999999999999 must not leave a fully paid order "Partially Paid".
   _amount := round(_amount, 2);
@@ -394,7 +410,8 @@ BEGIN
   -- A customer sent this UTR and it was turned down or lapsed, and now the bank says the money came. It is that
   -- customer's money: a person looks, and it never pays someone else's order by its amount.
   SELECT s.order_id INTO paid_order FROM public.upi_payment_submissions s
-    WHERE private.same_utr(s.utr, c.utr) AND s.status = 'rejected' ORDER BY s.submitted_at DESC LIMIT 1;
+    WHERE (private.same_utr(s.utr, c.utr) AND s.status = 'rejected') OR EXISTS (SELECT 1 FROM unnest(s.earlier_utrs) AS e WHERE private.same_utr(e, c.utr))
+    ORDER BY s.submitted_at DESC LIMIT 1;
   IF paid_order IS NOT NULL
      AND NOT EXISTS (SELECT 1 FROM public.upi_payment_submissions s2 WHERE private.same_utr(s2.utr, c.utr) AND s2.status = 'submitted') THEN
     SELECT * INTO o FROM public.orders WHERE id = paid_order;
@@ -492,6 +509,13 @@ BEGIN
       AND NOT EXISTS (SELECT 1 FROM public.bank_credits b WHERE b.order_id = o2.id)) THEN
     candidates := candidates || NULL::uuid;  -- treat as more than one
   END IF;
+  -- So could another customer's placed order owing exactly this: an SMS usually comes before the UTR is typed.
+  IF COALESCE(array_length(candidates, 1), 0) = 1 AND EXISTS (
+    SELECT 1 FROM public.orders o2 WHERE o2.order_status NOT IN ('Awaiting Payment', 'Payment Expired', 'Cancelled')
+      AND o2.total - o2.paid_amount = c.amount
+      AND o2.user_id IS DISTINCT FROM (SELECT o3.user_id FROM public.orders o3 WHERE o3.id = candidates[1])) THEN
+    candidates := candidates || NULL::uuid;  -- treat as more than one
+  END IF;
   IF COALESCE(array_length(candidates, 1), 0) = 1 THEN
     SELECT * INTO o FROM public.orders WHERE id = candidates[1] FOR UPDATE;
     PERFORM private.confirm_held_payment(o.id, c.utr, 'Confirmed automatically from the bank alert (matched by amount)');
@@ -507,9 +531,9 @@ BEGIN
     RETURN jsonb_build_object('status', 'ambiguous');
   END IF;
 
-  -- 3. Paid for a request that already expired (same amount, last 2 days).
+  -- 3. Paid for a request that already ran out or was ended (same amount, last 2 days).
   SELECT o2.* INTO o FROM public.orders o2
-    WHERE o2.order_status = 'Payment Expired' AND o2.payment_hold_outcome = 'expired' AND o2.total = c.amount
+    WHERE o2.order_status = 'Payment Expired' AND o2.payment_hold_outcome IN ('expired', 'ended', 'dropped') AND o2.total = c.amount
       AND o2.created_at >= c.received_at - interval '2 days' AND o2.created_at <= c.received_at + interval '2 minutes'
     ORDER BY o2.created_at DESC LIMIT 1;
   IF FOUND THEN
@@ -520,6 +544,112 @@ BEGIN
     RETURN jsonb_build_object('status', 'late', 'order_no', o.order_no);
   END IF;
   RETURN jsonb_build_object('status', 'unmatched');
+END;
+$function$;
+
+-- ---------------------------------------------------------------- a customer sends a UTR
+CREATE OR REPLACE FUNCTION public.submit_upi_utr(_order_no text, _utr text)
+ RETURNS upi_payment_submissions
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+  me uuid := auth.uid();
+  ref text := upper(regexp_replace(COALESCE(_utr, ''), '\s', '', 'g'));
+  ref_key text;
+  earlier numeric;
+  by_bank boolean;
+  o public.orders%ROWTYPE;
+  cfg jsonb;
+  existing public.upi_payment_submissions%ROWTYPE;
+  result public.upi_payment_submissions%ROWTYPE;
+  credit public.bank_credits%ROWTYPE;
+BEGIN
+  IF me IS NULL THEN RAISE EXCEPTION 'Sign in to send the payment details'; END IF;
+  SELECT * INTO o FROM public.orders WHERE order_no = _order_no FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Order not found'; END IF;
+  IF o.user_id IS DISTINCT FROM me AND NOT public.has_role(me, 'admin') THEN RAISE EXCEPTION 'This is not your order'; END IF;
+  by_bank := COALESCE(o.payment_method, '') IN ('NEFT', 'RTGS');
+  IF by_bank THEN
+    IF ref !~ '^[0-9A-Z]{12,22}$' THEN RAISE EXCEPTION 'Enter the UTR from your bank: 12 to 22 letters and numbers'; END IF;
+  ELSE
+    SELECT value INTO cfg FROM public.settings WHERE key = 'upi_direct';
+    IF cfg IS NULL OR NOT COALESCE((cfg->>'enabled')::boolean, false) OR COALESCE(cfg->>'vpa', '') = '' THEN
+      RAISE EXCEPTION 'UPI payment is not switched on';
+    END IF;
+    IF ref !~ '^[0-9]{12}$' THEN RAISE EXCEPTION 'The UTR has 12 digits'; END IF;
+  END IF;
+  IF o.order_status = 'Cancelled' THEN RAISE EXCEPTION 'This order is cancelled'; END IF;
+  IF o.order_status = 'Payment Expired' THEN
+    RAISE EXCEPTION 'The payment time for this order ran out. If money left your account, call us with this UTR.';
+  END IF;
+  IF o.total - o.paid_amount <= 0 OR o.payment_status = 'Paid' THEN RAISE EXCEPTION 'This order is already paid'; END IF;
+  -- NEFT and RTGS: the UTR must come within the 1 hour.
+  IF by_bank AND o.order_status = 'Awaiting Payment' AND o.payment_hold_until < now()
+     AND NOT EXISTS (SELECT 1 FROM public.upi_payment_submissions WHERE order_id = o.id AND status = 'submitted') THEN
+    RAISE EXCEPTION 'The 1 hour to enter the UTR is over. If money left your account, call us with this UTR.';
+  END IF;
+  -- Once only, however the same transfer is written: see private.same_utr. The lock is on how it ends, which is the same for every way of writing it.
+  ref_key := right(private.utr_form(ref), 12);
+  PERFORM pg_advisory_xact_lock(hashtextextended('upi-utr:' || ref_key, 0));
+  -- A transfer we refunded cannot pay for anything any more.
+  IF EXISTS (SELECT 1 FROM public.upi_payment_submissions WHERE private.same_utr(utr, ref) AND status = 'rejected' AND note = 'refunded by our team') THEN
+    RAISE EXCEPTION 'This UTR was refunded to you. Please pay again for this order.';
+  END IF;
+  -- Sent again after its checkout lapsed unchecked: it only covers an order of the same amount.
+  SELECT amount INTO earlier FROM public.upi_payment_submissions
+    WHERE private.same_utr(utr, ref) AND status = 'rejected' AND note = 'we could not check your UTR in time' AND order_id <> o.id LIMIT 1;
+  IF earlier IS NOT NULL AND earlier <> o.total - o.paid_amount THEN
+    RAISE EXCEPTION 'Your transfer with this UTR was for Rs %, but this order comes to Rs %. Please call us.',
+      to_char(earlier, 'FM99999990.00'), to_char(o.total - o.paid_amount, 'FM99999990.00');
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.upi_payment_submissions WHERE private.same_utr(utr, ref) AND status <> 'rejected' AND order_id <> o.id)
+     OR EXISTS (SELECT 1 FROM public.payments WHERE private.same_utr(txn_ref, ref) AND status = 'Paid')
+     OR EXISTS (SELECT 1 FROM public.bank_credits WHERE private.same_utr(utr, ref) AND status IN ('matched', 'settled') AND order_id IS DISTINCT FROM o.id) THEN
+    RAISE EXCEPTION 'This UTR was already used for another payment';
+  END IF;
+  SELECT * INTO existing FROM public.upi_payment_submissions WHERE order_id = o.id FOR UPDATE;
+  IF FOUND AND existing.status = 'confirmed' THEN RAISE EXCEPTION 'This order''s payment is already confirmed'; END IF;
+  -- A UTR stays as sent until it is checked: swapping it could move a real UTR to a second order. Sending it again changes nothing.
+  IF FOUND AND existing.status = 'submitted' THEN
+    IF private.same_utr(existing.utr, ref) THEN RETURN existing; END IF;
+    RAISE EXCEPTION 'We are already checking UTR % for this order. If it was wrong, call us.', existing.utr;
+  END IF;
+  INSERT INTO public.upi_payment_submissions (order_id, order_no, user_id, customer_name, amount, utr, status, note, submitted_at, reviewed_at, reviewed_by)
+  VALUES (o.id, o.order_no, o.user_id, left(COALESCE(o.customer_name, ''), 60), o.total - o.paid_amount, ref, 'submitted', NULL, now(), NULL, NULL)
+  ON CONFLICT (order_id) DO UPDATE SET utr = EXCLUDED.utr, amount = EXCLUDED.amount, status = 'submitted', note = NULL,
+    submitted_at = now(), reviewed_at = NULL, reviewed_by = NULL
+  RETURNING * INTO result;
+
+  -- The bank alert came first: it gets the same answer it would have got coming second, and a person hears about it.
+  SELECT * INTO credit FROM public.bank_credits WHERE private.same_utr(utr, ref) AND status IN ('unmatched', 'ambiguous') LIMIT 1 FOR UPDATE;
+  IF FOUND THEN
+    PERFORM private.match_bank_credit(credit.id);
+    SELECT * INTO result FROM public.upi_payment_submissions WHERE order_id = o.id;
+    IF result.status = 'confirmed' THEN RETURN result; END IF;
+  END IF;
+
+  -- NEFT and RTGS always go to an admin to check.
+  IF by_bank THEN
+    INSERT INTO public.notifications (order_no, order_id, recipient_id, recipient_role, title, message, status)
+    SELECT o.order_no, o.id, ur.user_id, 'admin', 'Bank transfer to check',
+      format('%s UTR %s for %s (Rs %s). Match it in the bank account, then confirm in Admin > UPI & Bank Payments. Customer: %s.',
+        o.payment_method, ref, o.order_no, to_char(result.amount, 'FM99999990.00'), left(COALESCE(NULLIF(o.customer_name, ''), 'not given'), 60)),
+      'payment'
+    FROM public.user_roles ur WHERE ur.role = 'admin';
+    RETURN result;
+  END IF;
+  -- Older orders (placed before pay-first) still go to an admin to check.
+  IF o.order_status <> 'Awaiting Payment' THEN
+    INSERT INTO public.notifications (order_no, order_id, recipient_id, recipient_role, title, message, status)
+    SELECT o.order_no, o.id, ur.user_id, 'admin', 'UPI payment to check',
+      format('UTR %s for %s (Rs %s). Match it in the bank account, then confirm in Admin > UPI & Bank Payments. Customer: %s.',
+        ref, o.order_no, to_char(result.amount, 'FM99999990.00'), left(COALESCE(NULLIF(o.customer_name, ''), 'not given'), 60)),
+      'payment'
+    FROM public.user_roles ur WHERE ur.role = 'admin';
+  END IF;
+  RETURN result;
 END;
 $function$;
 

@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 
 const { PGlite } = await import(process.env.PGLITE_PATH ?? "@electric-sql/pglite");
 const MIGRATIONS = new URL("../supabase/migrations/", import.meta.url);
-const FIX = "20261103233000_payment_record_fixes.sql";
+const FIX = "20261104090000_payment_record_fixes.sql";
 const WITHOUT_FIX = Boolean(process.env.WITHOUT_FIX);
 
 const db = new PGlite();
@@ -364,6 +364,12 @@ await test("a UTR typed in Kannada or other digits is the same number", async ()
   assert.equal((await one(`SELECT txn_ref FROM public.payments WHERE order_id = (SELECT id FROM public.orders WHERE order_no = $1)`, [a])).txn_ref, ref, "stored in plain digits");
   await refused(() => confirm(b, 2500, ref), /already been recorded/);
   await refused(() => confirm(c, 2500, fullWidth), /already been recorded/);
+  // Every Indian script's digits: one order and the same transfer in plain digits on the next.
+  for (const zero of [0x0966, 0x0C66, 0x0BE6, 0x09E6, 0x0AE6, 0x0A66, 0x0D66, 0x0B66, 0x0660, 0x06F0]) {
+    const first = await checkout(), second = await checkout(), number = utr();
+    await confirm(first, 2500, [...number].map((digit) => String.fromCodePoint(zero + Number(digit))).join(""));
+    await refused(() => confirm(second, 2500, number), /already been recorded/, zero.toString(16));
+  }
 });
 await test("a reference longer than Zoho takes is refused here", async () => {
   const no = await checkout();
@@ -447,6 +453,51 @@ await test("two orders sent one transfer under different letters: a person choos
   assert.equal((await sms(ref, 12000)).status, "ambiguous");
   assert.equal(await received(a) + await received(b), 0);
   assert.ok((await alerts(ref)).some((text) => /more than one order sent this UTR/.test(text)));
+});
+await test("a UTR rejected and replaced still counts: its late SMS pays no other order", async () => {
+  const a = await checkout([{ product_id: "PA", qty: 23 }]), b = await checkout([{ product_id: "PA", qty: 23 }]), x = utr(), y = utr();
+  await submit(a, x);
+  await review(a, x, "rejected", "not found");
+  await submit(a, y);
+  const out = await sms(x, 23000);
+  assert.equal(out.status, "mismatch");
+  assert.equal(out.order_no, a);
+  assert.equal(await received(b), 0);
+  assert.equal(await received(a), 0);
+  assert.ok((await alerts(x)).some((text) => /was not accepted/.test(text)));
+  assert.equal((await one(`SELECT earlier_utrs FROM public.upi_payment_submissions WHERE order_no = $1`, [a])).earlier_utrs[0], x);
+});
+await test("another customer's placed order owing the same amount stops payment by amount", async () => {
+  const a = await placed({ total: 2600, balance_due: 2600 }), ref = utr();
+  await confirm(a, 1600, utr());
+  const b = await checkout([{ product_id: "PA", qty: 1 }]);
+  const before = await received(b);
+  await force(b, { total: 1000 });
+  assert.equal((await sms(ref, 1000)).status, "ambiguous");
+  assert.equal(await received(b), before);
+  assert.equal(await received(a), 1600);
+});
+await test("whichever comes first, SMS or UTR, a person hears about a disagreement", async () => {
+  const a = await checkout([{ product_id: "PA", qty: 24 }]), ref = utr();
+  assert.equal((await sms(ref, 24500)).status, "unmatched");
+  await submit(a, ref);
+  assert.equal((await credit(ref)).status, "mismatch");
+  assert.ok((await alerts(ref)).some((text) => /Refund it or call the customer/.test(text)));
+  const b = await placed(), ref2 = utr();
+  await sms(ref2, 2500);
+  await submit(b, ref2);
+  assert.equal((await credit(ref2)).status, "balance", "the exact amount, UTR second, is a balance to confirm");
+  const d = await checkout([{ product_id: "PA", qty: 25 }], "NEFT"), ref4 = utr();
+  assert.equal((await sms(ref4, 25000)).status, "ambiguous", "a NEFT order's UTR decides, not its amount");
+  await submit(d, ref4);
+  assert.equal((await orderRow(d)).payment_status, "Paid", "the UTR then confirms it, as when the SMS comes second");
+  assert.equal((await credit(ref4)).status, "matched");
+});
+await test("money for a checkout that was ended, with no UTR, reaches a person", async () => {
+  const a = await checkout([{ product_id: "PA", qty: 26 }]), ref = utr();
+  await one(`SELECT public.admin_end_payment_hold($1) AS r`, [a]);
+  assert.equal((await sms(ref, 26000)).status, "late");
+  assert.ok((await alerts(ref)).some((text) => /Refund it or place the order/.test(text)));
 });
 await test("a rejected UTR's money pays no other order by its amount", async () => {
   const a = await checkout([{ product_id: "PA", qty: 15 }]), b = await checkout([{ product_id: "PA", qty: 15 }]), ref = utr();

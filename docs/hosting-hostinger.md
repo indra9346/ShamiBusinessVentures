@@ -9,7 +9,7 @@ Supabase (project `ppziinqjxqpxpmudinfd`); only the web server moves.
 - **A Node.js server.** This is a TanStack Start app with server code (sign-in actions, admin
   actions, Zoho sync, Zoho webhook, OAuth callback). Use **Hostinger Node.js web app hosting or a
   VPS**. Shared or "website" hosting with only PHP or static files will not work.
-- **Node 22** (tested with 22.19). Node 20 is the minimum.
+- **Node 22** (tested with 22.19). Node 20.16 is the minimum: below that the server refuses to send orders to Zoho, because it can't hold an order's claim.
 - About 1 GB of RAM for `npm run build`. On a small plan, build locally or in CI and upload
   `.output/`.
 

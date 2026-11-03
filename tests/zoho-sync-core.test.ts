@@ -1,13 +1,19 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  asksAboutUnansweredCreate,
   reconcileOrders,
   websiteOrderNoOf,
   shouldRetryZohoCall,
+  unansweredCreateQuestion,
   webhookKeyMatches,
   zohoLogLine,
+  zohoOrderIsFor,
   zohoOrderNumber,
+  zohoPostKind,
   zohoRetryDelayMs,
+  zohoStatusOutcome,
+  zohoThrownOutcome,
   verifyZohoSignature,
   type GbOrderForReconcile,
 } from "../src/lib/zoho-sync-core.ts";
@@ -153,6 +159,26 @@ test("Zoho sales order -> website order: Reference# for godown-series numbers, G
   assert.equal(websiteOrderNoOf({ salesorder_number: "SO-00031" }), null);
 });
 
+test("the sales order for one website order: exact number only, whatever the godown code", () => {
+  const no = "CLK-577522-271026-103512";
+  assert.equal(zohoOrderIsFor({ salesorder_number: "CLK-SO-00012", reference_number: no }, no), true);
+  assert.equal(zohoOrderIsFor({ salesorder_number: "CLK-SO-00012", reference_number: ` ${no} ` }, no), true);
+  assert.equal(zohoOrderIsFor({ salesorder_number: "GB-ORD-26102686593", reference_number: "" }, "ORD-26102686593"), true);
+  // Zoho's search is "contains", so these come back from a search for the number and must not match.
+  assert.equal(zohoOrderIsFor({ salesorder_number: "CLK-SO-00013", reference_number: `${no}-2` }, no), false);
+  assert.equal(zohoOrderIsFor({ salesorder_number: `GB-${no}-2`, reference_number: "" }, no), false);
+  assert.equal(zohoOrderIsFor({ salesorder_number: "SO-00031", reference_number: "" }, no), false);
+  assert.equal(zohoOrderIsFor({ salesorder_number: "SO-00031" }, no), false);
+  // An older GB- order belongs to its own number, whatever someone typed in its Reference#.
+  assert.equal(zohoOrderIsFor({ salesorder_number: "GB-ORD-1", reference_number: no }, no), false);
+  // Codes the admin page allows and the website-number pattern doesn't: a lost reply must still be found.
+  for (const code of ["BLR2", "HUBBALLI", "K"]) {
+    const own = `${code}-577522-271026-103512`;
+    assert.equal(websiteOrderNoOf({ salesorder_number: "SO-00032", reference_number: own }), null);
+    assert.equal(zohoOrderIsFor({ salesorder_number: "SO-00032", reference_number: own }, own), true);
+  }
+});
+
 test("reconcile: orders numbered in the godown series match by Reference#", () => {
   const no = "CLK-577522-271026-103512";
   const zoho = (id: string, extra = {}) => ({ salesorder_id: id, salesorder_number: "CLK-SO-0001", reference_number: no, status: "confirmed", total: 500, ...extra });
@@ -162,4 +188,41 @@ test("reconcile: orders numbered in the godown series match by Reference#", () =
   const orphan = reconcileOrders([], [zoho("c9", { salesorder_number: "CLK-SO-0009" })]);
   assert.equal(orphan.issues[0]?.issue, "zoho_without_grain_bazar_order");
   assert.equal(orphan.issues[0]?.orderNo, "CLK-SO-0009");
+});
+
+test("a write Zoho clearly refused can be sent again; any other failure may have made the record", () => {
+  for (const status of [400, 401, 404, 409, 429, 503]) assert.equal(zohoStatusOutcome(status), "refused", String(status));
+  for (const status of [301, 408, 500, 502, 504]) assert.equal(zohoStatusOutcome(status), "unclear", String(status));
+  for (const status of [200, 201]) assert.equal(zohoStatusOutcome(status), "done", String(status));
+});
+
+test("a connection that never opened reached nothing; a timeout or a dropped one may have", () => {
+  const failed = (code: string) => Object.assign(new TypeError("fetch failed"), { cause: { code } });
+  for (const code of ["ENOTFOUND", "EAI_AGAIN", "ECONNREFUSED", "ENETUNREACH", "EHOSTUNREACH", "UND_ERR_CONNECT_TIMEOUT"])
+    assert.equal(zohoThrownOutcome(failed(code)), "refused", code);
+  for (const code of ["ECONNRESET", "ETIMEDOUT", "UND_ERR_SOCKET", "UND_ERR_HEADERS_TIMEOUT"])
+    assert.equal(zohoThrownOutcome(failed(code)), "unclear", code);
+  assert.equal(zohoThrownOutcome(new DOMException("The operation was aborted due to timeout", "TimeoutError")), "unclear");
+  assert.equal(zohoThrownOutcome(new TypeError("fetch failed")), "unclear");
+  assert.equal(zohoThrownOutcome(undefined), "unclear");
+});
+
+test("which POSTs to Zoho may be repeated without care", () => {
+  const api = "https://www.zohoapis.in";
+  assert.equal(zohoPostKind(`${api}/inventory/v1/salesorders?organization_id=1`), "order_create");
+  assert.equal(zohoPostKind(`${api}/inventory/v1/salesorders?organization_id=1&ignore_auto_number_generation=true`), "order_create");
+  assert.equal(zohoPostKind(`${api}/books/v3/salesorders/5/email?organization_id=1`), "repeatable");
+  assert.equal(zohoPostKind("https://accounts.zoho.in/oauth/v2/token"), "repeatable");
+  for (const resource of ["inventory/v1/salesorders/5/status/confirmed", "books/v3/invoices/fromsalesorder", "books/v3/customerpayments", "books/v3/invoices/5/writeoff", "inventory/v1/packages", "inventory/v1/shipmentorders", "inventory/v1/contacts"])
+    assert.equal(zohoPostKind(`${api}/${resource}?organization_id=1`), "other", resource);
+});
+
+test("only the question about an unanswered create counts as asking it", () => {
+  assert.equal(asksAboutUnansweredCreate(unansweredCreateQuestion("CLK-577522-261026-143215")), true);
+  assert.match(unansweredCreateQuestion("CLK-577522-261026-143215"), /CLK-577522-261026-143215/);
+  // A cancelled order's question is the same question, and doesn't promise a sales order.
+  assert.equal(asksAboutUnansweredCreate(unansweredCreateQuestion("CLK-577522-261026-143215", true)), true);
+  assert.doesNotMatch(unansweredCreateQuestion("CLK-577522-261026-143215", true), /is created/);
+  for (const other of ["Order has no line items", "Zoho did not answer when order X was sent, and it may still be making the sales order.", "", null, undefined])
+    assert.equal(asksAboutUnansweredCreate(other), false, String(other));
 });
