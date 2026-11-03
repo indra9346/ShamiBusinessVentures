@@ -303,6 +303,85 @@ test("Zoho's limit reply is recognised, other refusals are not", () => {
   assert.equal(isZohoTokenLimit(200, { access_token: "x", expires_in: 3600 }), false);
 });
 
+test("a token is renewed half an hour early, so a sync run starts with plenty of time left", async () => {
+  const { cache, ask, advance } = rig();
+  await cache.get("A", ask("A"));
+  advance(29 * MINUTE);
+  assert.equal(await cache.get("A", ask("A")), "A-token-1");
+  advance(2 * MINUTE);
+  assert.equal(await cache.get("A", ask("A")), "A-token-2");
+  assert.equal(ZOHO_TOKEN_RENEW_EARLY_MS, 30 * MINUTE);
+});
+
+test("a 401 on a token 5 minutes old drops it", async () => {
+  const { cache, ask, advance } = rig();
+  const token = await cache.get("A", ask("A"));
+  advance(5 * MINUTE);
+  cache.refused(token);
+  assert.equal(await cache.get("A", ask("A")), "A-token-2");
+  assert.equal(ZOHO_TOKEN_KEEP_AFTER_REFUSAL_MS, 5 * MINUTE);
+});
+
+test("the failed-renewal fallback goes by the life Zoho gave, not a full hour", async () => {
+  const { cache, ask, advance } = rig({ expiresIn: 40 * 60 });
+  const refuse = async () => {
+    throw new Error("refused");
+  };
+  await cache.get("A", ask("A"));
+  advance(39 * MINUTE);
+  assert.equal(await cache.get("A", refuse), "A-token-1", "still inside its 40 minutes");
+  advance(2 * MINUTE);
+  await assert.rejects(cache.get("A", refuse), { message: "refused" });
+});
+
+test("the fallback's life is counted from before the request too", async () => {
+  let clock = 0;
+  const cache = createZohoTokenCache(() => clock);
+  await cache.get("A", async () => {
+    clock += 20_000; // the longest a token call can take
+    return { token: "slow", expiresIn: 3600 };
+  });
+  clock = 60 * MINUTE + 5_000;
+  await assert.rejects(
+    cache.get("A", async () => {
+      throw new Error("refused");
+    }),
+    { message: "refused" },
+  );
+});
+
+test("a token that ends while the renewal is failing isn't handed out", async () => {
+  let clock = 0;
+  const cache = createZohoTokenCache(() => clock);
+  await cache.get("A", async () => ({ token: "ending", expiresIn: 3600 }));
+  clock = 60 * MINUTE - 1_000;
+  await assert.rejects(
+    cache.get("A", async () => {
+      clock += 20_000;
+      throw new Error("refused");
+    }),
+    { message: "refused" },
+  );
+});
+
+test("a shared renewal that fails hands every waiter the kept token", async () => {
+  const { cache, ask, advance } = rig();
+  let asks = 0;
+  const failing = async () => {
+    asks += 1;
+    throw new Error("refused");
+  };
+  await cache.get("A", ask("A"));
+  advance(31 * MINUTE);
+  const tokens = await Promise.all([
+    cache.get("A", failing),
+    cache.get("A", failing),
+    cache.get("A", failing),
+  ]);
+  assert.deepEqual(tokens, ["A-token-1", "A-token-1", "A-token-1"]);
+  assert.equal(asks, 1);
+});
+
 test("the limit message doesn't send anyone to Reauthorize or into the daily-limit pause", () => {
   // Copied from zohoPermissionHint, which lives in zoho-commerce.functions.ts and can't load here.
   assert.doesNotMatch(
