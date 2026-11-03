@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { indiaDate, invoicePaymentReview, orderNeedsZohoInvoice, paymentsGoneFromInvoice, paymentsToNoteAsPushed, paymentsToRecord, roundingWriteOff, sameReference, zohoPaymentMode } from "../src/lib/zoho-sync-core.ts";
+import { indiaDate, invoicePaidOf, invoicePaymentReview, orderNeedsZohoInvoice, paymentsGoneFromInvoice, paymentsToNoteAsPushed, paymentsToRecord, roundingWriteOff, sameReference, zohoPaymentMode } from "../src/lib/zoho-sync-core.ts";
 
 test("only admin-confirmed, live orders get a Zoho Books invoice", () => {
   for (const status of ["Payment Confirmed", "Accepted", "Packed", "Dispatched", "Out for Delivery", "Delivered"])
@@ -87,7 +87,7 @@ test("a payment Zoho shows but the website has no note of gets the note, with Zo
 });
 
 test("references are compared the way the database reads a UTR", () => {
-  for (const [a, b] of [["849320392376", "SBIN849320392376"], ["8493-2039-2376", "849320392376"], ["8493 2039 2376", "849320392376"], ["UTR: 849320392376", "SBIN849320392376"], ["849320392376 RAHUL", "849320392376"], ["sbin849320392376", "SBIN849320392376"], ["SBINO49320392376", "SBIN049320392376"], ["rcpt 1", "RCPT1"]]) {
+  for (const [a, b] of [["849320392376", "SBIN849320392376"], ["8493-2039-2376", "849320392376"], ["8493 2039 2376", "849320392376"], ["UTR: 849320392376", "SBIN849320392376"], ["849320392376 RAHUL", "849320392376"], ["A/c 501001234567 UTR 849320392376", "849320392376"], ["849320392375 + 849320392376", "SBIN849320392376"], ["sbin849320392376", "SBIN849320392376"], ["SBINO49320392376", "SBIN049320392376"], ["rcpt 1", "RCPT1"]]) {
     assert.equal(sameReference(a!, b!), true, `${a} and ${b}`);
   }
   for (const [a, b] of [["RCPT1", "RCPTI"], ["RCPT0", "RCPTO"], ["SBIN849320392376", "HDFC849320392376"], ["849320392376", "849320392377"], ["", ""]]) {
@@ -96,25 +96,37 @@ test("references are compared the way the database reads a UTR", () => {
 });
 
 test("what a person must look at after the payments are on the invoice", () => {
+  // Arguments: pushed payments missing, website paid, order total, invoice total, money on the invoice, balance.
   // Nothing wrong.
-  assert.equal(invoicePaymentReview(0, 2500, 2500, 2500, 0), null);
-  assert.equal(invoicePaymentReview(0, 1000, 2500, 2500, 1500), null, "part paid, in step");
-  assert.equal(invoicePaymentReview(0, 2500, 2500, 2500.01, 0.01), null, "a paisa of GST rounding");
-  assert.equal(invoicePaymentReview(0, 2500, 2500, 2501, 1), null, "up to the write-off limit");
+  assert.equal(invoicePaymentReview(0, 2500, 2500, 2500, 2500, 0), null);
+  assert.equal(invoicePaymentReview(0, 1000, 2500, 2500, 1000, 1500), null, "part paid, in step");
+  assert.equal(invoicePaymentReview(0, 2500, 2500, 2500.01, 2500, 0.01), null, "a paisa of GST rounding");
+  assert.equal(invoicePaymentReview(0, 2500, 2500, 2501, 2500, 1), null, "up to the write-off limit");
+  assert.equal(invoicePaymentReview(0, 2500, 2500, 2498.5, 2498.5, 0), null, "an invoice for less holds no more than its total");
   // A pushed payment missing, and the money with it.
-  assert.equal(invoicePaymentReview(1, 2500, 2500, 2500, 2500), "gone");
-  assert.equal(invoicePaymentReview(1, 1000, 2500, 2500, 2500), "gone", "part paid");
-  assert.equal(invoicePaymentReview(1, 1, 1, 1, 1), "gone", "even under the write-off limit");
+  assert.equal(invoicePaymentReview(1, 2500, 2500, 2500, 0, 2500), "gone");
+  assert.equal(invoicePaymentReview(1, 1000, 2500, 2500, 0, 2500), "gone", "part paid");
+  assert.equal(invoicePaymentReview(1, 1, 1, 1, 0, 1), "gone", "even under the write-off limit");
+  assert.equal(invoicePaymentReview(1, 2500, 2500, 2500, 0, 0), "gone", "a credit note closed it after the payment was deleted");
   // Re-entered under the bank's own reference: the money is there.
-  assert.equal(invoicePaymentReview(1, 2500, 2500, 2500, 0), null);
-  // Put back for the wrong amount.
-  assert.equal(invoicePaymentReview(0, 2500, 2500, 2500, 2475), "short");
+  assert.equal(invoicePaymentReview(1, 2500, 2500, 2500, 2500, 0), null);
+  // Put back for the wrong amount, or closed without money.
+  assert.equal(invoicePaymentReview(0, 2500, 2500, 2500, 25, 2475), "short");
+  assert.equal(invoicePaymentReview(0, 2500, 2500, 2500, 0, 0), "short", "a credit note closed it before the first push");
+  assert.equal(invoicePaymentReview(0, 2500, 2500, 2500, 1000, 0), "short", "part paid in Books, the rest a credit note");
   // Zoho's total ₹1.01 to ₹2 above the website.
-  assert.equal(invoicePaymentReview(0, 2500, 2500, 2501.01, 1.01), "above");
-  assert.equal(invoicePaymentReview(0, 2500, 2500, 2502, 2), "above");
-  assert.equal(invoicePaymentReview(0, 1000, 2500, 2502, 1502), null, "not yet paid in full");
+  assert.equal(invoicePaymentReview(0, 2500, 2500, 2501.01, 2500, 1.01), "above");
+  assert.equal(invoicePaymentReview(0, 2500, 2500, 2502, 2500, 2), "above");
+  assert.equal(invoicePaymentReview(0, 1000, 2500, 2502, 1000, 1502), null, "not yet paid in full");
   // Nothing to compare.
-  assert.equal(invoicePaymentReview(1, 2500, 2500, Number.NaN, Number.NaN), null);
+  assert.equal(invoicePaymentReview(1, 2500, 2500, Number.NaN, 0, Number.NaN), null);
+});
+
+test("the money on an invoice is what Zoho calls payments, not what is no longer due", () => {
+  assert.equal(invoicePaidOf({ total: 2500, balance: 0, payment_made: 0 }), 0);
+  assert.equal(invoicePaidOf({ total: 2500, balance: 1500, payment_made: 1000 }), 1000);
+  assert.equal(invoicePaidOf({ total: 2500, balance: 1500 }), 1000, "Zoho did not say");
+  assert.equal(invoicePaidOf({ total: 2500, balance: 1500, payment_made: null }), 1000, "Zoho did not say");
 });
 
 test("a paisa left by Zoho's CGST/SGST rounding is written off when the order is paid in full", () => {

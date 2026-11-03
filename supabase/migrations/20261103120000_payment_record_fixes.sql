@@ -20,6 +20,24 @@ RETURNS text LANGUAGE sql IMMUTABLE AS $function$
 $function$;
 REVOKE ALL ON FUNCTION private.utr_form(text) FROM PUBLIC, anon, authenticated;
 
+-- Every 12-digit number standing alone in what was typed: an account number can come first, or two transfers can be named.
+CREATE OR REPLACE FUNCTION private.utr_numbers(_text text)
+RETURNS text[] LANGUAGE sql IMMUTABLE AS $function$
+  SELECT COALESCE(array_agg(m[1]), ARRAY[]::text[])
+  FROM regexp_matches(COALESCE(_text, ''), '(?:^|[^0-9A-Za-z])([0-9]{12})(?=$|[^0-9A-Za-z])', 'g') AS m
+$function$;
+REVOKE ALL ON FUNCTION private.utr_numbers(text) FROM PUBLIC, anon, authenticated;
+
+-- As before, plus any standing number shared, or one standing in the first that is how the second ends. Two that both
+-- carry letters and differ in them, with no number standing alone, are still different transfers.
+CREATE OR REPLACE FUNCTION private.same_utr(_a text, _b text)
+RETURNS boolean LANGUAGE sql IMMUTABLE AS $function$
+  SELECT a <> '' AND (a = b OR (a ~ '^[0-9]{12}$' AND right(b, 12) = a) OR (b ~ '^[0-9]{12}$' AND right(a, 12) = b)
+    OR numbers_a && numbers_b OR right(b, 12) = ANY (numbers_a) OR right(a, 12) = ANY (numbers_b))
+  FROM (SELECT private.utr_form(_a) AS a, private.utr_form(_b) AS b, private.utr_numbers(_a) AS numbers_a, private.utr_numbers(_b) AS numbers_b) forms
+$function$;
+REVOKE ALL ON FUNCTION private.same_utr(text, text) FROM PUBLIC, anon, authenticated;
+
 -- References an admin types can be anything. As long as a bank's UTR they are one payment when they are one transfer
 -- (private.same_utr). Shorter ones are no UTR, so O and 0, I and 1 stay apart: RCPT1 and RCPTI are different money,
 -- while rcpt 1 and RCPT1 are one reference.
@@ -94,21 +112,25 @@ BEGIN
     IF credit.status = 'settled' THEN
       RAISE EXCEPTION 'The bank alert for UTR % was marked settled (%), so it cannot pay an order. If that was a mistake, reopen it first.', credit.utr, COALESCE(credit.note, 'no note');
     END IF;
-    -- This alert's money was already recorded, whatever bank letters that reference or this one carries.
+    -- This alert's money went back, or was already recorded, whatever bank letters that reference or this one carries.
+    IF EXISTS (SELECT 1 FROM public.payments WHERE private.same_utr(txn_ref, credit.utr) AND status = 'Refunded')
+       OR EXISTS (SELECT 1 FROM public.upi_payment_submissions WHERE private.same_utr(utr, credit.utr) AND status = 'rejected' AND note = 'refunded by our team') THEN
+      RAISE EXCEPTION 'This UTR was refunded. It cannot pay for anything any more.';
+    END IF;
     SELECT o2.order_no INTO other_order FROM public.payments p JOIN public.orders o2 ON o2.id = p.order_id
       WHERE private.same_utr(p.txn_ref, credit.utr) AND p.status = 'Paid' LIMIT 1;
     IF other_order IS NOT NULL OR credit.status = 'matched' THEN
       RAISE EXCEPTION 'This UTR was already used for order %', COALESCE(other_order, credit.order_no, 'another order');
     END IF;
-    -- More than a rupee short is refused. Paise short (a customer who typed Rs 677 for Rs 677.25) can be recorded: the alert stays open for a person.
-    IF credit.amount + 1 < _amount THEN
+    -- Refused, except up to a rupee short when this clears the balance (a customer who typed Rs 677 for Rs 677.25): that is recorded and the alert stays open for a person.
+    IF credit.amount < _amount AND (credit.amount + 1 < _amount OR _amount < target.total - target.paid_amount) THEN
       IF target.order_status = 'Awaiting Payment' THEN
         RAISE EXCEPTION 'The bank alert for UTR % shows Rs %, not Rs %. Reject this UTR, or refund it and mark the alert settled: a checkout is placed only when its full amount is paid.',
           credit.utr, to_char(credit.amount, 'FM99999990.00'), to_char(_amount, 'FM99999990.00');
       END IF;
       RAISE EXCEPTION 'The bank alert for UTR % shows Rs %, not Rs %. Record Rs % as a part payment (Admin > Payments, % percent of the order), then ask the customer for the rest.',
         credit.utr, to_char(credit.amount, 'FM99999990.00'), to_char(_amount, 'FM99999990.00'), to_char(credit.amount, 'FM99999990.00'),
-        to_char(round(credit.amount * 100 / NULLIF(target.total, 0), 4), 'FM990.0999');
+        to_char(round(credit.amount * 100 / NULLIF(target.total, 0), 6), 'FM990.099999');
     END IF;
   END IF;
   applied := target.paid_amount + _amount;
@@ -130,6 +152,14 @@ BEGIN
     UPDATE public.upi_payment_submissions SET amount = target.total - applied WHERE order_id = target.id AND status = 'submitted';
   END IF;
   PERFORM private.close_lapsed_utr(reference, target.id, target.order_no);
+  IF earlier IS NOT NULL AND earlier > _amount THEN
+    INSERT INTO public.notifications (order_no, order_id, recipient_id, recipient_role, title, message, status)
+    SELECT target.order_no, target.id, ur.user_id, 'admin', 'Payment needs you',
+      format('UTR %s was sent for ₹%s on a checkout that lapsed, and ₹%s of it was recorded for %s. Refund the rest or call the customer.',
+        reference, to_char(earlier, 'FM99999990.00'), to_char(_amount, 'FM99999990.00'), target.order_no),
+      'payment'
+    FROM public.user_roles ur WHERE ur.role = 'admin';
+  END IF;
   -- The alert is answered, unless the amounts differ: then what is left stays open for a person.
   IF credit.id IS NOT NULL THEN
     IF credit.amount = _amount THEN
@@ -234,6 +264,8 @@ DECLARE
   bank_named boolean;
   paid_order uuid;
   recorded numeric;
+  orders_paid integer;
+  sent integer;
 BEGIN
   SELECT * INTO c FROM public.bank_credits WHERE id = _credit_id FOR UPDATE;
   IF NOT FOUND OR c.status NOT IN ('unmatched', 'ambiguous') THEN
@@ -244,6 +276,10 @@ BEGIN
   -- A transfer recorded as refunded pays for nothing, not even by its amount or a UTR sent again: a person looks.
   SELECT p.order_id INTO paid_order FROM public.payments p
     WHERE private.same_utr(p.txn_ref, c.utr) AND p.status = 'Refunded' ORDER BY p.created_at LIMIT 1;
+  IF paid_order IS NULL THEN
+    SELECT s.order_id INTO paid_order FROM public.upi_payment_submissions s
+      WHERE private.same_utr(s.utr, c.utr) AND s.status = 'rejected' AND s.note = 'refunded by our team' LIMIT 1;
+  END IF;
   IF paid_order IS NOT NULL THEN
     SELECT * INTO o FROM public.orders WHERE id = paid_order;
     UPDATE public.bank_credits SET status = 'mismatch', order_id = o.id, order_no = o.order_no,
@@ -252,6 +288,58 @@ BEGIN
     PERFORM private.alert_admins_about_credit(c, 'Payment needs you',
       format('₹%s (UTR %s) came in, but this transfer was recorded as refunded on %s. Check the bank account, then mark it settled.', amount_text, c.utr, o.order_no));
     RETURN jsonb_build_object('status', 'mismatch', 'order_no', o.order_no);
+  END IF;
+
+  -- This UTR already paid an order (an admin confirmed it before the SMS came): that money is accounted for, if the bank agrees.
+  -- The same transfer can sit on more than one row, written with different bank letters: all of it counts against this alert.
+  SELECT (array_agg(p.order_id ORDER BY p.created_at))[1], sum(p.amount), count(DISTINCT p.order_id) INTO paid_order, recorded, orders_paid FROM public.payments p
+    WHERE private.same_utr(p.txn_ref, c.utr) AND p.status = 'Paid';
+  IF paid_order IS NOT NULL THEN
+    SELECT * INTO o FROM public.orders WHERE id = paid_order;
+    IF c.amount = recorded AND orders_paid = 1 THEN
+      UPDATE public.bank_credits SET status = 'matched', order_id = o.id, order_no = o.order_no, note = 'Already confirmed by an admin' WHERE id = c.id;
+      RETURN jsonb_build_object('status', 'matched', 'order_no', o.order_no);
+    END IF;
+    UPDATE public.bank_credits SET status = 'mismatch', order_id = o.id, order_no = o.order_no,
+      note = format('Bank amount ₹%s, recorded as ₹%s', amount_text, to_char(recorded, 'FM99999990.00'))
+      WHERE id = c.id RETURNING * INTO c;
+    IF orders_paid > 1 THEN
+      PERFORM private.alert_admins_about_credit(c, 'Payment needs you',
+        format('The bank shows ₹%s for UTR %s, and that one transfer is recorded on more than one order, first %s. Check the bank account and correct it, then mark it settled.',
+          amount_text, c.utr, o.order_no));
+    ELSIF c.amount < recorded THEN
+      PERFORM private.alert_admins_about_credit(c, 'Payment needs you',
+        format('The bank shows ₹%s for UTR %s, but ₹%s was recorded for %s. Check the bank account, collect the difference or tell the office, then mark it settled.',
+          amount_text, c.utr, to_char(recorded, 'FM99999990.00'), o.order_no));
+    ELSE
+      PERFORM private.alert_admins_about_credit(c, 'Payment needs you',
+        format('The bank shows ₹%s for UTR %s, but only ₹%s was recorded for %s. Refund the extra or call the customer, then mark it settled.',
+          amount_text, c.utr, to_char(recorded, 'FM99999990.00'), o.order_no));
+    END IF;
+    RETURN jsonb_build_object('status', 'mismatch', 'order_no', o.order_no);
+  END IF;
+
+  -- The customer's UTR was closed when an admin recorded that order's payment under another reference. This may be
+  -- that same money or a second payment: only a person can tell.
+  SELECT s.order_id INTO paid_order FROM public.upi_payment_submissions s
+    WHERE private.same_utr(s.utr, c.utr) AND s.status = 'confirmed' ORDER BY s.reviewed_at DESC LIMIT 1;
+  IF paid_order IS NOT NULL THEN
+    SELECT * INTO o FROM public.orders WHERE id = paid_order;
+    UPDATE public.bank_credits SET status = 'mismatch', order_id = o.id, order_no = o.order_no,
+      note = format('The customer sent this UTR for %s, and its payment was recorded under another reference', o.order_no)
+      WHERE id = c.id RETURNING * INTO c;
+    PERFORM private.alert_admins_about_credit(c, 'Payment needs you',
+      format('₹%s (UTR %s) came in. The customer sent this UTR for %s, and its payment was recorded under another reference. If this is a second payment, refund it. Then mark it settled.', amount_text, c.utr, o.order_no));
+    RETURN jsonb_build_object('status', 'mismatch', 'order_no', o.order_no);
+  END IF;
+
+  -- Two orders sent this transfer, with different bank letters: its amount can't choose between them.
+  SELECT count(*) INTO sent FROM public.upi_payment_submissions s WHERE private.same_utr(s.utr, c.utr) AND s.status = 'submitted';
+  IF sent > 1 THEN
+    UPDATE public.bank_credits SET status = 'ambiguous', note = format('%s orders sent this UTR with different bank letters', sent) WHERE id = c.id RETURNING * INTO c;
+    PERFORM private.alert_admins_about_credit(c, 'Payment needs you',
+      format('₹%s (UTR %s) came in and more than one order sent this UTR with different bank letters. Check which it is, confirm that order and reject the other.', amount_text, c.utr));
+    RETURN jsonb_build_object('status', 'ambiguous');
   END IF;
 
   -- 1. The customer already told us this UTR, however they wrote it.
@@ -288,36 +376,6 @@ BEGIN
         format('₹%s (UTR %s) for %s: %s. Refund it or call the customer.', amount_text, c.utr, o.order_no, c.note));
     END IF;
     RETURN jsonb_build_object('status', c.status, 'order_no', o.order_no);
-  END IF;
-
-  -- This UTR already paid an order (an admin confirmed it before the SMS came): that money is accounted for, if the bank agrees.
-  -- The same transfer can sit on more than one row, written with different bank letters: all of it counts against this alert.
-  SELECT (array_agg(p.order_id ORDER BY p.created_at))[1], sum(p.amount) INTO paid_order, recorded FROM public.payments p
-    WHERE private.same_utr(p.txn_ref, c.utr) AND p.status = 'Paid';
-  -- Or the customer's UTR was closed when an admin recorded that order's payment under another reference.
-  IF paid_order IS NULL THEN
-    SELECT s.order_id, s.amount INTO paid_order, recorded FROM public.upi_payment_submissions s
-      WHERE private.same_utr(s.utr, c.utr) AND s.status = 'confirmed' ORDER BY s.reviewed_at DESC LIMIT 1;
-  END IF;
-  IF paid_order IS NOT NULL THEN
-    SELECT * INTO o FROM public.orders WHERE id = paid_order;
-    IF c.amount = recorded THEN
-      UPDATE public.bank_credits SET status = 'matched', order_id = o.id, order_no = o.order_no, note = 'Already confirmed by an admin' WHERE id = c.id;
-      RETURN jsonb_build_object('status', 'matched', 'order_no', o.order_no);
-    END IF;
-    UPDATE public.bank_credits SET status = 'mismatch', order_id = o.id, order_no = o.order_no,
-      note = format('Bank amount ₹%s, recorded as ₹%s', amount_text, to_char(recorded, 'FM99999990.00'))
-      WHERE id = c.id RETURNING * INTO c;
-    IF c.amount < recorded THEN
-      PERFORM private.alert_admins_about_credit(c, 'Payment needs you',
-        format('The bank shows ₹%s for UTR %s, but ₹%s was recorded for %s. Check the bank account, collect the difference or tell the office, then mark it settled.',
-          amount_text, c.utr, to_char(recorded, 'FM99999990.00'), o.order_no));
-    ELSE
-      PERFORM private.alert_admins_about_credit(c, 'Payment needs you',
-        format('The bank shows ₹%s for UTR %s, but only ₹%s was recorded for %s. Refund the extra or call the customer, then mark it settled.',
-          amount_text, c.utr, to_char(recorded, 'FM99999990.00'), o.order_no));
-    END IF;
-    RETURN jsonb_build_object('status', 'mismatch', 'order_no', o.order_no);
   END IF;
 
   -- A waiting NEFT or RTGS order of this amount could be the real payer: its UTR decides, not the amount.
@@ -411,7 +469,8 @@ BEGIN
 END;
 $function$;
 
--- A settled alert pays for nothing, so one settled by mistake needs a way back. Every admin is told.
+-- A settled alert pays for nothing, so one settled by mistake needs a way back. Every admin is told. It reopens to a
+-- status a customer's UTR can't confirm by itself: a person records it.
 CREATE OR REPLACE FUNCTION public.reopen_bank_credit(_credit_id uuid)
 RETURNS public.bank_credits LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public' AS $function$
 DECLARE
@@ -421,7 +480,7 @@ BEGIN
   IF auth.uid() IS NULL OR NOT public.has_role(auth.uid(), 'admin') THEN RAISE EXCEPTION 'Only administrators can reopen a bank credit'; END IF;
   SELECT note INTO was FROM public.bank_credits WHERE id = _credit_id AND status = 'settled' FOR UPDATE;
   IF NOT FOUND THEN RAISE EXCEPTION 'Only a settled credit can be reopened'; END IF;
-  UPDATE public.bank_credits SET status = CASE WHEN order_id IS NULL THEN 'unmatched' ELSE 'mismatch' END,
+  UPDATE public.bank_credits SET status = 'mismatch',
     note = format('Reopened. It was settled: %s', COALESCE(was, 'no note'))
     WHERE id = _credit_id RETURNING * INTO result;
   PERFORM private.alert_admins_about_credit(result, 'Payment needs you',
@@ -432,12 +491,16 @@ $function$;
 REVOKE ALL ON FUNCTION public.reopen_bank_credit(uuid) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.reopen_bank_credit(uuid) TO authenticated;
 
--- Payments the sync has already posted, as far as the website can tell: paid before the invoice was last saved, and the
--- invoice shows money on it. Wrongly noted, one goes to review at the next sync, which is the safe way to be wrong.
-UPDATE public.payments p SET zoho_invoice_id = i.zoho_invoice_id, zoho_pushed_at = i.updated_at
-  FROM public.zoho_order_invoices i
-  WHERE i.order_id = p.order_id AND p.status = 'Paid' AND p.zoho_pushed_at IS NULL AND i.zoho_invoice_id IS NOT NULL
-    AND i.balance < i.total AND p.created_at <= i.updated_at;
+-- Payments the sync has already posted, as far as the website can tell: oldest first, as many as the money on the
+-- invoice covers. Wrongly noted, one goes to review at the next sync, which is the safe way to be wrong.
+WITH running AS (
+  SELECT p.id, i.zoho_invoice_id, i.updated_at, i.total - i.balance AS on_invoice,
+    sum(p.amount) OVER (PARTITION BY p.order_id ORDER BY p.created_at, p.id) AS so_far
+  FROM public.payments p JOIN public.zoho_order_invoices i ON i.order_id = p.order_id
+  WHERE p.status = 'Paid' AND p.zoho_pushed_at IS NULL AND i.zoho_invoice_id IS NOT NULL
+)
+UPDATE public.payments p SET zoho_invoice_id = r.zoho_invoice_id, zoho_pushed_at = r.updated_at
+  FROM running r WHERE r.id = p.id AND r.so_far <= r.on_invoice + 1;
 
 -- A short alert marked matched before this fix could never be settled: it goes back to a person.
 WITH recorded AS (

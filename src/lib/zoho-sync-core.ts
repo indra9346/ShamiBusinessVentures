@@ -503,12 +503,16 @@ export type InvoicePayment = { paymentId: string; reference: string };
  * is the transfer, O and 0, I and 1, L and 1 are alike, and one that is exactly 12 digits matches a longer one ending in
  * it. Below a bank UTR's 12 characters only the same text counts: RCPT1 and RCPTI are different money.
  */
+function standingNumbers(reference: string) {
+  return [...reference.matchAll(/(?:^|[^0-9A-Za-z])([0-9]{12})(?=$|[^0-9A-Za-z])/g)].map((match) => match[1]!);
+}
 function referenceForm(reference: string) {
-  const standing = /(?:^|[^0-9A-Za-z])([0-9]{12})(?:$|[^0-9A-Za-z])/.exec(reference)?.[1];
-  return (standing ?? reference.replace(/[^0-9A-Za-z]/g, "")).toUpperCase().replace(/O/g, "0").replace(/[IL]/g, "1");
+  return (standingNumbers(reference)[0] ?? reference.replace(/[^0-9A-Za-z]/g, "")).toUpperCase().replace(/O/g, "0").replace(/[IL]/g, "1");
 }
 export function sameReference(a: string, b: string) {
   const [x, y] = [referenceForm(a), referenceForm(b)];
+  const [numbersA, numbersB] = [standingNumbers(a), standingNumbers(b)];
+  if (numbersA.some((number) => numbersB.includes(number) || y.endsWith(number)) || numbersB.some((number) => x.endsWith(number))) return true;
   const twelve = /^[0-9]{12}$/;
   if (x.length >= 12 && y.length >= 12) return x === y || (twelve.test(x) && y.endsWith(x)) || (twelve.test(y) && x.endsWith(y));
   const plain = (text: string) => text.replace(/\s/g, "").toUpperCase();
@@ -571,15 +575,24 @@ export function paymentsToNoteAsPushed<T extends WebsitePayment>(payments: T[], 
 export type InvoicePaymentReview = "gone" | "short" | "above" | null;
 
 /**
+ * The money on a Books invoice: its `payment_made`, because "paid" can also mean a credit note or a write-off. Total
+ * less balance only when Zoho does not say.
+ */
+export function invoicePaidOf(invoice: { total?: number | null; balance?: number | null; payment_made?: number | null }) {
+  return invoice.payment_made != null && Number.isFinite(Number(invoice.payment_made)) ? Number(invoice.payment_made) : Number(invoice.total) - Number(invoice.balance);
+}
+
+/**
  * What a person must look at once the payments are on the invoice, in paise so floats can't decide it. "gone": a pushed
  * payment is missing and the invoice really is short of it (re-entered under another reference, nothing is missing).
- * "short": Books shows more than ₹1 less paid than the website, with no missing payment to blame. "above": paid in
- * full here, but the invoice's own total leaves more than ₹1 due: Re-sync can't clear that.
+ * "short": Books holds more than ₹1 less money than the website recorded, with no missing payment to blame. An invoice
+ * for less than the website can hold no more than its total. "above": paid in full here, but the invoice's own total
+ * leaves more than ₹1 due: Re-sync can't clear that.
  */
-export function invoicePaymentReview(goneCount: number, websitePaid: number, orderTotal: number, invoiceTotal: number, invoiceBalance: number): InvoicePaymentReview {
-  if (![websitePaid, orderTotal, invoiceTotal, invoiceBalance].every(Number.isFinite)) return null;
+export function invoicePaymentReview(goneCount: number, websitePaid: number, orderTotal: number, invoiceTotal: number, invoicePaid: number, invoiceBalance: number): InvoicePaymentReview {
+  if (![websitePaid, orderTotal, invoiceTotal, invoicePaid, invoiceBalance].every(Number.isFinite)) return null;
   const paise = (value: number) => Math.round(value * 100);
-  const missing = paise(websitePaid) - (paise(invoiceTotal) - paise(invoiceBalance));
+  const missing = Math.min(paise(websitePaid), paise(invoiceTotal)) - paise(invoicePaid);
   const limit = paise(ROUNDING_WRITE_OFF_LIMIT);
   if (goneCount > 0 && missing > 0) return "gone";
   if (missing > limit) return "short";

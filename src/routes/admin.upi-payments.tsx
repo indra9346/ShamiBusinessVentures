@@ -546,7 +546,7 @@ function BankAlertsPanel({ credits, checkingOrders, onDemoMatch }: { credits: Ba
                   <td className="px-2 py-2 text-xs">{credit.payer ?? credit.sender ?? "—"}</td>
                   <td className="px-2 py-2 font-mono text-xs">{credit.orderNo ?? "—"}</td>
                   <td className={cn("px-2 py-2 text-xs font-semibold", CREDIT_STATUS[credit.status].tone)}>
-                    {CREDIT_STATUS[credit.status].label}{credit.note ? <> · <span>{credit.note}</span></> : null}
+                    {credit.status === "balance" && !checkingOrders.includes(credit.orderNo ?? "") ? "The exact balance: its UTR is not waiting for a check" : CREDIT_STATUS[credit.status].label}{credit.note ? <> · <span>{credit.note}</span></> : null}
                   </td>
                   <td className="px-2 py-2">
                     {/* While its UTR waits, a balance is answered by Confirm paid or Reject above: settling it would make Confirm refuse. */}
