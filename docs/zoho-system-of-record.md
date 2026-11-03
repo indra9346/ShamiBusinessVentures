@@ -121,8 +121,10 @@ re-authorizes Zoho).
   blanks their address ids and clears the contact's landmark; a full sales order update keeps it;
   later contact edits don't touch it. **The invoice does not follow:** `invoices/fromsalesorder`
   copies the contact's address at that moment and keeps that copy, so an order to a non-default
-  address still gets a Zoho invoice with the customer's saved address. Zoho also closes a sales
-  order as soon as it is invoiced, with nothing shipped.
+  address still gets a Zoho invoice with the customer's saved address. Books `PUT invoices/{id}/
+  address/shipping` answered 401, code 57 "not authorized" with today's permissions, so writing the
+  invoice's address needs `ZohoBooks.invoices.UPDATE` and a Reauthorize; the call itself is unproven.
+  Zoho also closes a sales order as soon as it is invoiced, with nothing shipped.
 - Optional official notification: Books "Email a sales order" for each new website order to
   configured staff addresses; off by default; failures logged, never block the sync. Zoho marks a
   draft sales order Open when it is emailed (observed live), so enabling this confirms new website
