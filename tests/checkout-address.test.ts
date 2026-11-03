@@ -131,6 +131,14 @@ test("a locked address says why, in the words that fit its state", () => {
   assert.match(addressLockReason({ paid: true, checking: false, godown: "Hubli" }), /order is placed/);
 });
 
+test("a locked address gives the customer care number", () => {
+  for (const state of [{ paid: true, checking: false }, { paid: false, checking: true }, { paid: false, checking: false }]) {
+    const message = addressLockReason({ ...state, godown: "Hubli" });
+    assert.ok(message.includes("+91 98459 66288"), message);
+    assert.ok(translateText(message, "kn").includes("+91 98459 66288"), "Kannada keeps the number");
+  }
+});
+
 test("every message reads in Kannada, with its values in place", () => {
   const latin = /[A-Za-z]{3,}/;
   const named = (text: string) => text.replace(/\b(Rice|Hubli|PIN|Sample|Reorder)\b/g, "");
