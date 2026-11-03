@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  adMediaProblem, bannerFromRow, bannerStatus, bannerToRow, bannersByPlacement, isBannerLive, normaliseBannerLink,
+  adMediaProblem, bannerFromRow, bannerStatus, bannerToRow, bannersByPlacement, flickStep, isBannerLive, normaliseBannerLink, stripCopies, wrapStrip,
   type AdBanner,
 } from "../src/lib/ad-banner-rules.ts";
 
@@ -67,4 +67,42 @@ test("ad banners: only pictures and short videos can be uploaded", () => {
   assert.equal(adMediaProblem(file("video/mp4", 30 * 1024 * 1024)), null);
   assert.match(adMediaProblem(file("image/svg+xml", 1000))!, /Choose a JPG/);
   assert.match(adMediaProblem(file("video/mp4", 51 * 1024 * 1024))!, /50 MB/);
+});
+
+test("phone strip: enough copies to fill the strip anywhere in the loop", () => {
+  assert.equal(stripCopies(343, 922.5), 2); // 5 tiles on a phone
+  assert.equal(stripCopies(343, 369), 2); // 2 tiles on a phone
+  assert.equal(stripCopies(975, 536), 3); // 2 tiles on a wide tablet
+  assert.equal(stripCopies(536, 536), 2); // exactly one loop wide
+  for (const [strip, loop] of [[320, 120], [975, 268], [343, 369]] as const) {
+    // At the end of the loop the next tile starts at or beyond the strip's right edge.
+    assert.ok(stripCopies(strip, loop) * loop - loop >= strip, `${strip}/${loop}`);
+  }
+});
+
+test("phone strip: a position stays inside the loop either way", () => {
+  assert.equal(wrapStrip(0, 100), 0);
+  assert.equal(wrapStrip(100, 100), 0);
+  assert.equal(wrapStrip(130, 100), 30);
+  assert.equal(wrapStrip(-30, 100), 70);
+  assert.equal(wrapStrip(-230, 100), 70);
+});
+
+test("phone strip: a flick slows down and goes as far at any frame rate", () => {
+  const travel = (frameMs: number) => {
+    let velocity = 2;
+    let distance = 0;
+    for (let t = 0; t < 2000; t += frameMs) {
+      const step = flickStep(velocity, frameMs, 325);
+      distance += step.distance;
+      assert.ok(Math.abs(step.velocity) < Math.abs(velocity));
+      velocity = step.velocity;
+    }
+    return distance;
+  };
+  assert.ok(Math.abs(travel(1000 / 60) - travel(1000 / 120)) < 1);
+  assert.ok(Math.abs(travel(100) - travel(1000 / 120)) < 1); // a stalled frame does not overshoot
+  assert.ok(travel(1000 / 60) > 600 && travel(1000 / 60) < 650); // 2 px/ms carries about 650 px
+  assert.ok(flickStep(-2, 16, 325).distance < 0); // the other way
+  assert.deepEqual(flickStep(2, -5, 325), { distance: 0, velocity: 2 }); // a frame stamped before the flick began
 });
