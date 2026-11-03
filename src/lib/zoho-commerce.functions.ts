@@ -20,8 +20,10 @@ import {
   DAILY_LIMIT_PAUSE_MINUTES, inboundPollDue, isZohoDailyLimitError, zohoPaused,
   indiaDate, nextZohoFulfilmentStep, zohoFulfilmentStatus, zohoPackagesOf, zohoStatusMovesForward,
   einvoiceProblems,
+  sameZohoPlace, zohoAddressesFromContact, zohoAddressesToUpdate, zohoOrderAddress, zohoOrderAddressOpen, zohoOrderFinished, ZOHO_PLACE_CODES,
   zohoGstFields,
 } from "@/lib/zoho-sync-core";
+import { gstStateCodeOf } from "@/lib/gstin";
 import {
   ZOHO_CALL_DEFAULT_PURPOSE, ZOHO_CALL_LOG_SETTING, describeZohoCall, mergeZohoCalls, type ZohoCall, type ZohoCallLog,
 } from "@/lib/zoho-call-log";
@@ -992,27 +994,12 @@ function inventoryApi(region: Region, resource: string, organizationId: string, 
   return url;
 }
 
-async function inventoryRequest<T>(
-  region: Region,
-  organizationId: string,
-  token: string,
-  resource: string,
-  method: "GET" | "POST" | "PUT",
-  body?: Record<string, unknown>,
-  query: Record<string, string> = {},
-): Promise<T> {
-  const send = () => fetch(inventoryApi(region, resource, organizationId, query), {
-    method,
-    headers: {
-      Authorization: `Zoho-oauthtoken ${token}`,
-      ...(body ? { "content-type": "application/json" } : {}),
-    },
-    ...(body ? { body: JSON.stringify(body) } : {}),
-    signal: AbortSignal.timeout(20_000),
-  });
-  // Up to 2 retries with backoff: 429 for any method (Zoho did not process it); 5xx and network
-  // errors only for GET/PUT. A POST is never resent blindly; order creation looks the order up by
-  // its Reference# (the website order number) on the next attempt instead (see syncZohoOrder).
+/**
+ * Up to 2 retries with backoff: 429 for any method (Zoho did not process it); 5xx and network
+ * errors only for GET/PUT. A POST is never resent blindly; order creation looks the order up by
+ * its Reference# (the website order number) on the next attempt instead (see syncZohoOrder).
+ */
+async function fetchWithZohoRetry(send: () => Promise<Response>, resource: string, method: "GET" | "POST" | "PUT") {
   const MAX_RETRIES = 2;
   let response: Response | null = null;
   for (let retry = 0; ; retry += 1) {
@@ -1031,6 +1018,28 @@ async function inventoryRequest<T>(
     console.warn(zohoLogLine("zoho_call_retry", { resource: resource.split("/")[0], method, status: String(status), retry: retry + 1, waitMs }));
     await new Promise((resolve) => setTimeout(resolve, waitMs));
   }
+  return response;
+}
+
+async function inventoryRequest<T>(
+  region: Region,
+  organizationId: string,
+  token: string,
+  resource: string,
+  method: "GET" | "POST" | "PUT",
+  body?: Record<string, unknown>,
+  query: Record<string, string> = {},
+): Promise<T> {
+  const send = () => fetch(inventoryApi(region, resource, organizationId, query), {
+    method,
+    headers: {
+      Authorization: `Zoho-oauthtoken ${token}`,
+      ...(body ? { "content-type": "application/json" } : {}),
+    },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+    signal: AbortSignal.timeout(20_000),
+  });
+  const response = await fetchWithZohoRetry(send, resource, method);
   if (!response) throw new Error(`Zoho Inventory ${resource} could not be reached`);
   const data = (await response.json().catch(() => ({}))) as T & { code?: number; message?: string };
   if (!response.ok || data.code !== 0)
@@ -1053,7 +1062,7 @@ async function commerceRequest<T>(
   method: "GET" | "POST" | "PUT",
   body?: Record<string, unknown>,
 ): Promise<T> {
-  const response = await fetch(`${REGIONS[region][1]}/store/api/v1/${resource}`, {
+  const send = () => fetch(`${REGIONS[region][1]}/store/api/v1/${resource}`, {
     method,
     headers: {
       Authorization: `Zoho-oauthtoken ${token}`,
@@ -1063,6 +1072,8 @@ async function commerceRequest<T>(
     ...(body ? { body: JSON.stringify(body) } : {}),
     signal: AbortSignal.timeout(20_000),
   });
+  const response = await fetchWithZohoRetry(send, resource, method);
+  if (!response) throw new Error(`Zoho Commerce ${resource} could not be reached`);
   const data = (await response.json().catch(() => ({}))) as T & { code?: number; message?: string };
   if (!response.ok || data.code !== 0)
     throw zohoApiError(data.message ?? `Zoho Commerce ${resource} failed (${response.status})`);
@@ -2130,6 +2141,80 @@ const ZOHO_CLOSED_ORDER_STATES = ["void", "cancelled"];
 const ZOHO_FINISHED_ORDER_STATES = ["closed", "fulfilled"];
 
 /**
+ * A sales order is created with no address, so Zoho gives it the contact's. This writes the website
+ * order's own copy onto the sales order only (Commerce "update address"; the contact stays as it is).
+ * Never throws: a sales order with the contact's address is still a sales order, so the push goes on
+ * and reports the problem when it has finished. Stops at the first refusal, so a Zoho that hangs
+ * delays the push by one call; a retry writes whatever is still missing.
+ */
+async function writeZohoOrderAddress(
+  region: Region,
+  organizationId: string,
+  token: string,
+  order: Database["public"]["Tables"]["orders"]["Row"],
+  salesOrderId: string,
+  salesOrderNumber: string,
+  types: readonly ("shipping" | "billing")[],
+) {
+  const address = zohoOrderAddress(order.shipping_address);
+  const outcome = { written: 0, problem: null as string | null };
+  if (!address) return outcome;
+  for (const type of types) {
+    try {
+      await commerceRequest(region, organizationId, token, `salesorders/${encodeURIComponent(salesOrderId)}/address/${type}`, "PUT", address);
+      outcome.written += 1;
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "unknown error";
+      console.warn(zohoLogLine("zoho_order_address_failed", { order: order.order_no, zohoId: salesOrderId, type, error: message.slice(0, 200) }));
+      outcome.problem = `Zoho sales order ${salesOrderNumber} is in place, but it does not show the address of Grain Bazar order ${order.order_no}: Zoho refused its ${type} address: ${message}.${zohoPermissionHint(message)}`;
+      break;
+    }
+  }
+  if (outcome.written) console.info(zohoLogLine("zoho_order_address_set", { order: order.order_no, zohoId: salesOrderId, written: outcome.written }));
+  return outcome;
+}
+
+/**
+ * A later push finishes an address that never reached a sales order, which still shows its contact's
+ * address. One that differs from the contact's was set in Zoho or Admin > Zoho, so it is left alone.
+ * Only a still-open sales order just found by its Reference# (`newlyFound`) skips that check. Once
+ * invoiced or shipped it is too late to write, so every push reports a delivery that shows the wrong
+ * place, until a person corrects it or the sales order closes. A pickup has nothing to deliver.
+ */
+async function finishZohoOrderAddress(
+  region: Region,
+  organizationId: string,
+  token: string,
+  order: Database["public"]["Tables"]["orders"]["Row"],
+  zoho: Record<string, unknown>,
+  newlyFound: boolean,
+) {
+  const address = zohoOrderAddress(order.shipping_address);
+  const missing = address && order.order_status !== "Cancelled" && !zohoOrderFinished(zoho) ? zohoAddressesToUpdate(zoho, address) : [];
+  if (!missing.length) return { written: 0, problem: null };
+  const number = str(zoho["salesorder_number"]) || order.order_no;
+  const open = zohoOrderAddressOpen(zoho);
+  let types = missing;
+  if (!newlyFound || !open) {
+    try {
+      const { contact } = await inventoryRequest<{ contact?: Record<string, unknown> }>(region, organizationId, token, `contacts/${encodeURIComponent(str(zoho["customer_id"]))}`, "GET");
+      types = zohoAddressesFromContact(zoho, contact ?? {}, missing);
+    } catch (cause) {
+      // Nothing to write once invoiced or shipped, so nothing to retry: the next push checks again.
+      if (!open) return { written: 0, problem: null };
+      const message = cause instanceof Error ? cause.message : "unknown error";
+      return { written: 0, problem: `Zoho sales order ${number} is in place, but the address of Grain Bazar order ${order.order_no} could not be checked against its contact: ${message}.${zohoPermissionHint(message)}` };
+    }
+  }
+  if (!types.length) return { written: 0, problem: null };
+  if (!open) {
+    const wrongPlace = !/^pickup/i.test(str(order.shipping_method)) && types.some((type) => !sameZohoPlace(zoho[`${type}_address`], address));
+    return { written: 0, problem: wrongPlace ? `Zoho sales order ${number} was invoiced or shipped with the customer's saved address, not the address of Grain Bazar order ${order.order_no}.` : null };
+  }
+  return writeZohoOrderAddress(region, organizationId, token, order, str(zoho["salesorder_id"]), number, types);
+}
+
+/**
  * Grain Bazar -> Zoho for an order already in Zoho: a Grain Bazar cancellation voids the Zoho
  * order, a confirmed payment confirms a Zoho draft, and edited items/totals are written to Zoho.
  * A Zoho order that was voided or closed in Zoho is never reopened from here.
@@ -2141,6 +2226,7 @@ async function syncLinkedZohoOrder(
   token: string,
   order: Database["public"]["Tables"]["orders"]["Row"],
   items: GrainBazarOrderItem[],
+  options: { newlyFound?: boolean; addressProblem?: string | null } = {},
 ) {
   const zohoId = order.zoho_salesorder_id!;
   const path = `salesorders/${encodeURIComponent(zohoId)}`;
@@ -2205,6 +2291,12 @@ async function syncLinkedZohoOrder(
       zoho = await load();
     }
   }
+  // After any edit above, which may take the contact's address again; before the invoice, which
+  // is made from the sales order. One try per push: `addressProblem` is this push's earlier refusal.
+  const orderAddress = options.addressProblem
+    ? { written: 0, problem: options.addressProblem }
+    : await finishZohoOrderAddress(region, organizationId, token, order, zoho, options.newlyFound ?? false);
+  if (orderAddress.written) zoho = await load();
   // Confirmed by the admin: the Zoho Books invoice, with the verified payments recorded on it.
   if (orderNeedsZohoInvoice(order.order_status) && !["draft", ...ZOHO_CLOSED_ORDER_STATES].includes(zohoStatus())) {
     if (await syncZohoOrderInvoice(db, region, organizationId, token, order, zoho)) zoho = await load();
@@ -2219,6 +2311,12 @@ async function syncLinkedZohoOrder(
   const finalTotal = Number(zoho["total"]);
   if (order.order_status !== "Cancelled" && Number.isFinite(finalTotal) && Math.abs(finalTotal - Number(order.total)) > 2)
     throw new NeedsReviewError(`Zoho sales order ${str(zoho["salesorder_number"])} totals ₹${finalTotal.toFixed(2)}; Grain Bazar order ${order.order_no} totals ₹${Number(order.total).toFixed(2)}. Review taxes, discount and shipping.`);
+  // Everything else is done, so a retry repeats only the address. Once invoiced a retry can't reach
+  // the invoice, so that one waits for a person.
+  if (orderAddress.problem) {
+    if (zohoOrderAddressOpen(zoho)) throw new Error(orderAddress.problem);
+    throw new NeedsReviewError(`${orderAddress.problem} Correct the sales order and its invoice in Zoho, then Retry.`);
+  }
 }
 
 /**
@@ -3079,7 +3177,7 @@ async function linkAndSyncZohoOrder(
 ) {
   const { error } = await db.from("orders").update({ zoho_salesorder_id: salesOrderId }).eq("id", order.id).is("zoho_salesorder_id", null);
   if (error) throw new Error("Existing Zoho order found but its ID could not be recorded");
-  await syncLinkedZohoOrder(db, region, organizationId, token, { ...order, zoho_salesorder_id: salesOrderId }, items);
+  await syncLinkedZohoOrder(db, region, organizationId, token, { ...order, zoho_salesorder_id: salesOrderId }, items, { newlyFound: true });
 }
 
 async function syncZohoOrder(db: Awaited<ReturnType<typeof dbAdmin>>, region: Region, organizationId: string, token: string, job: ZohoSyncJob) {
@@ -3204,7 +3302,13 @@ async function syncZohoOrder(db: Awaited<ReturnType<typeof dbAdmin>>, region: Re
   const { data: partner } = branchId
     ? await db.from("channel_partners").select("name").eq("branch_id", branchId).eq("status", "active").maybeSingle()
     : { data: null };
+  // Without one Zoho takes the contact's place of supply. Delivered goods are supplied where they
+  // are delivered (as on the website invoice); a GSTIN's own state, from zohoGstFields below, wins.
+  const deliveryPlace = /^pickup/i.test(str(order.shipping_method))
+    ? undefined
+    : ZOHO_PLACE_CODES[gstStateCodeOf(str(plainObject(order.shipping_address)["state"])) ?? ""];
   const payload: Record<string, unknown> = {
+    ...(deliveryPlace ? { place_of_supply: deliveryPlace } : {}),
     ...(locationId ? { location_id: locationId } : {}),
     ...(partner?.name ? { salesperson_name: partner.name } : {}),
     // No salesorder_number: Zoho numbers the order in the godown location's own transaction series
@@ -3235,6 +3339,10 @@ async function syncZohoOrder(db: Awaited<ReturnType<typeof dbAdmin>>, region: Re
     }
   }
   await saveZohoZohoState(db, order.id, created.salesorder ?? {});
+  // Before the email, which shows the address.
+  const orderAddress = zohoOrderAddress(order.shipping_address);
+  const addressWrite = await writeZohoOrderAddress(region, organizationId, token, order, salesOrderId, safeNumber,
+    orderAddress ? zohoAddressesToUpdate(created.salesorder ?? {}, orderAddress) : []);
   // Official Zoho notification: Zoho Books "Email a sales order" (Books workflow email alerts do
   // not fire for orders created through the API). Never blocks or fails the order sync.
   try {
@@ -3255,7 +3363,9 @@ async function syncZohoOrder(db: Awaited<ReturnType<typeof dbAdmin>>, region: Re
   // Already paid when it reached Zoho (confirmed by the bank alert or an admin): confirm it, invoice it and
   // record the payment now, or they wait until someone next moves the order.
   if (!["Placed", "Awaiting Payment"].includes(order.order_status)) {
-    await syncLinkedZohoOrder(db, region, organizationId, token, { ...order, zoho_salesorder_id: salesOrderId }, items);
+    await syncLinkedZohoOrder(db, region, organizationId, token, { ...order, zoho_salesorder_id: salesOrderId }, items, { addressProblem: addressWrite.problem });
+  } else if (addressWrite.problem) {
+    throw new Error(addressWrite.problem);
   }
 }
 
@@ -3273,15 +3383,28 @@ const isCustomFieldError = (cause: unknown) => /custom ?field|cf_|api_name|inval
 
 /** Creates the sales order with the channel field; if the field does not exist in Zoho yet, without it. */
 async function createSalesOrderWithChannel(region: Region, organizationId: string, token: string, payload: Record<string, unknown>, orderNo: string) {
-  if (!payload["salesperson_name"]) return createSalesOrderNumbered(region, organizationId, token, payload, orderNo);
+  if (!payload["salesperson_name"]) return createSalesOrderWithPlace(region, organizationId, token, payload, orderNo);
   try {
-    return await createSalesOrderNumbered(region, organizationId, token, payload, orderNo);
+    return await createSalesOrderWithPlace(region, organizationId, token, payload, orderNo);
   } catch (cause) {
     // A salesperson Zoho will not take never blocks the order: create it without one.
     if (!/sales ?person/i.test(cause instanceof Error ? cause.message : String(cause))) throw cause;
     console.warn(zohoLogLine("zoho_salesperson_skipped", { error: cause instanceof Error ? cause.message.slice(0, 200) : "unknown" }));
     const { salesperson_name: _skipped, ...withoutSalesperson } = payload;
-    return createSalesOrderNumbered(region, organizationId, token, withoutSalesperson, orderNo);
+    return createSalesOrderWithPlace(region, organizationId, token, withoutSalesperson, orderNo);
+  }
+}
+
+/** A delivery place Zoho will not take never blocks the order: it then uses the contact's. A GSTIN's place stays required. */
+async function createSalesOrderWithPlace(region: Region, organizationId: string, token: string, payload: Record<string, unknown>, orderNo: string) {
+  if (!payload["place_of_supply"] || payload["gst_treatment"] === "business_gst") return createSalesOrderNumbered(region, organizationId, token, payload, orderNo);
+  try {
+    return await createSalesOrderNumbered(region, organizationId, token, payload, orderNo);
+  } catch (cause) {
+    if (!/place.?of.?supply/i.test(cause instanceof Error ? cause.message : String(cause))) throw cause;
+    console.warn(zohoLogLine("zoho_delivery_place_skipped", { order: orderNo, error: cause instanceof Error ? cause.message.slice(0, 200) : "unknown" }));
+    const { place_of_supply: _skipped, ...withoutPlace } = payload;
+    return createSalesOrderNumbered(region, organizationId, token, withoutPlace, orderNo);
   }
 }
 

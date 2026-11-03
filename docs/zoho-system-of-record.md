@@ -103,6 +103,22 @@ re-authorizes Zoho).
 - Product sync: refuses (needs review) when another Grain Bazar product has the same SKU or the
   matched Zoho item is linked to another product, so stock never flips between duplicates.
 - HSN on order lines: from the Grain Bazar product, else the Zoho item record.
+- Order address: a sales order is created with no address, so Zoho copies the contact's. When that
+  differs from the order's own copy (`orders.shipping_address`), the site writes the order's copy
+  as the sales order's shipping and billing address through Commerce "update address", before the
+  order email and the invoice. A failed write never stops the push: everything else finishes, then
+  the queue entry shows Zoho's refusal and later pushes retry while the sales order still shows its
+  contact's address. Once a delivered order is invoiced or shipped showing another place, each push
+  asks a person to correct it, until the sales order closes. An address that differs from the
+  contact's counts as set by a person (in Zoho or Admin > Zoho) and is left alone, with two
+  exceptions: one set back to exactly the contact's cannot be told apart and is rewritten, and a
+  retry that just found the sales order by its Reference# writes the order's address without
+  checking. If the contact's address changes before a failed write is retried, the sales order
+  looks hand-set and keeps the old address. Delivered orders without a GSTIN also send
+  `place_of_supply` from the delivery state, as on the website invoice (a GSTIN's state wins; pickup
+  keeps Zoho's default, the contact's place, where the website invoice uses the godown's state).
+  Unproven against real Zoho until the live test: whether an invoice made from a sales order copies
+  its address, and whether a full sales order update keeps it.
 - Optional official notification: Books "Email a sales order" for each new website order to
   configured staff addresses; off by default; failures logged, never block the sync. Zoho marks a
   draft sales order Open when it is emailed (observed live), so enabling this confirms new website
