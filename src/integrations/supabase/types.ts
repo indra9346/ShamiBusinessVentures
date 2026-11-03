@@ -87,9 +87,15 @@ export type Database = {
         Relationships: []
       }
       zoho_sync_outbox: {
-        Row: { id: string; entity_type: string; entity_id: string; event_type: string; status: string; attempts: number; available_at: string; locked_until: string | null; last_error: string | null; created_at: string; updated_at: string }
-        Insert: { id?: string; entity_type: string; entity_id: string; event_type: string; status?: string; attempts?: number; available_at?: string; locked_until?: string | null; last_error?: string | null; created_at?: string; updated_at?: string }
-        Update: { id?: string; entity_type?: string; entity_id?: string; event_type?: string; status?: string; attempts?: number; available_at?: string; locked_until?: string | null; last_error?: string | null; created_at?: string; updated_at?: string }
+        Row: { id: string; entity_type: string; entity_id: string; event_type: string; status: string; attempts: number; available_at: string; locked_until: string | null; last_error: string | null; created_at: string; updated_at: string; push_holder: string | null }
+        Insert: { id?: string; entity_type: string; entity_id: string; event_type: string; status?: string; attempts?: number; available_at?: string; locked_until?: string | null; last_error?: string | null; created_at?: string; updated_at?: string; push_holder?: string | null }
+        Update: { id?: string; entity_type?: string; entity_id?: string; event_type?: string; status?: string; attempts?: number; available_at?: string; locked_until?: string | null; last_error?: string | null; created_at?: string; updated_at?: string; push_holder?: string | null }
+        Relationships: []
+      }
+      zoho_order_push_claims: {
+        Row: { order_id: string; holder: string | null; locked_until: string | null; create_attempted_at: string | null; write_unanswered_at: string | null; updated_at: string }
+        Insert: { order_id: string; holder?: string | null; locked_until?: string | null; create_attempted_at?: string | null; write_unanswered_at?: string | null; updated_at?: string }
+        Update: { order_id?: string; holder?: string | null; locked_until?: string | null; create_attempted_at?: string | null; write_unanswered_at?: string | null; updated_at?: string }
         Relationships: []
       }
       zoho_commerce_sync_state: {
@@ -1220,6 +1226,13 @@ export type Database = {
       claim_zoho_sync_jobs: { Args: { _limit?: number }; Returns: Database["public"]["Tables"]["zoho_sync_outbox"]["Row"][] }
       apply_zoho_contact_update: { Args: { _user_id: string; _contact_type: string; _full_name: string | null; _phone: string | null; _company: string | null; _gstin: string | null; _address?: Json | null }; Returns: undefined }
       retry_zoho_sync_job: { Args: { _id: string }; Returns: undefined }
+      retry_zoho_sync_job_checked: { Args: { _id: string }; Returns: undefined }
+      defer_zoho_sync_job: { Args: { _id: string; _seconds?: number; _message?: string | null }; Returns: undefined }
+      claim_zoho_order_push: { Args: { _order_id: string; _holder: string }; Returns: { claimed: boolean; create_attempted_at: string | null; create_wait_over: boolean; writes_held_back: boolean }[] }
+      renew_zoho_order_push: { Args: { _order_id: string; _holder: string }; Returns: boolean }
+      note_zoho_order_create: { Args: { _order_id: string; _holder: string; _sent: boolean }; Returns: boolean }
+      note_zoho_order_write_unanswered: { Args: { _order_id: string; _holder: string }; Returns: undefined }
+      release_zoho_order_push: { Args: { _order_id: string; _holder: string }; Returns: undefined }
       apply_zoho_order_fulfillment: { Args: { _order_id: string; _status: string }; Returns: undefined }
       apply_zoho_order_cancellation: { Args: { _order_id: string }; Returns: string }
       branch_product_price: { Args: { _branch_id: string; _product_id: string }; Returns: number | null }

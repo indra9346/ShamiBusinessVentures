@@ -27,6 +27,45 @@ export function shouldRetryZohoCall(method: HttpMethod, status: number | "networ
   return status === "network" || (status >= 500 && status <= 599);
 }
 
+/**
+ * What a reply says about a write to Zoho. "refused": nothing was made, so it can be sent again. "unclear":
+ * Zoho may have made it, or be making it still. A 503 says the service didn't take the request; any other 5xx,
+ * or a 408, may come from something that had already passed it on.
+ */
+export type ZohoWriteOutcome = "done" | "refused" | "unclear";
+export function zohoStatusOutcome(status: number): ZohoWriteOutcome {
+  if (status >= 200 && status <= 299) return "done";
+  return status === 503 || (status >= 400 && status <= 499 && status !== 408) ? "refused" : "unclear";
+}
+
+/** A connection that never opened reached nothing. A timeout or a dropped connection may have. */
+const NEVER_REACHED_ZOHO = ["ENOTFOUND", "EAI_AGAIN", "ECONNREFUSED", "ENETUNREACH", "EHOSTUNREACH", "UND_ERR_CONNECT_TIMEOUT"];
+export function zohoThrownOutcome(cause: unknown): ZohoWriteOutcome {
+  const code = (cause as { cause?: { code?: unknown } } | null | undefined)?.cause?.code;
+  return typeof code === "string" && NEVER_REACHED_ZOHO.includes(code) ? "refused" : "unclear";
+}
+
+/**
+ * A POST to Zoho makes something, so one with no clear answer isn't sent again straight away. A sales
+ * order has its own rule, because the push has to search for it. An email or a sign-in can just be repeated.
+ */
+export function zohoPostKind(url: string): "order_create" | "repeatable" | "other" {
+  const { pathname } = new URL(url);
+  if (pathname.endsWith("/inventory/v1/salesorders")) return "order_create";
+  return pathname.endsWith("/email") || pathname.includes("/oauth/") ? "repeatable" : "other";
+}
+
+const UNANSWERED_CREATE_QUESTION = "Please check Zoho.";
+/** What a person is asked when a create got no clear answer and Zoho's search still can't find the sales order. */
+export function unansweredCreateQuestion(orderNo: string, cancelled = false) {
+  if (cancelled)
+    return `${UNANSWERED_CREATE_QUESTION} Order ${orderNo} is cancelled, but Zoho did not answer when it was sent, so a sales order may exist. Press Retry on this order's entry in Admin > Zoho: that never creates one, and it voids one if Zoho's search finds it. If you can see one in Zoho that stays open, void it there.`;
+  return `${UNANSWERED_CREATE_QUESTION} It did not answer when order ${orderNo} was sent, and its search still finds no sales order with that Reference#. In Zoho Inventory > Sales Orders, look for Reference# ${orderNo}. If it is not there, press Retry on this order's entry in Admin > Zoho, and the sales order is created. If it is there, do not press Retry: open the order in Admin > Orders and press Push to Zoho, which links it once Zoho's search can find it and never makes a second one.`;
+}
+export function asksAboutUnansweredCreate(lastError: string | null | undefined) {
+  return (lastError ?? "").startsWith(UNANSWERED_CREATE_QUESTION);
+}
+
 /** Wait before retry number `retry` (1-based): Retry-After when Zoho sends one, else 1s, 2s, 4s... capped. */
 export function zohoRetryDelayMs(retry: number, retryAfterHeader: string | null, capMs = 10_000) {
   const header = Number(retryAfterHeader);
@@ -115,6 +154,16 @@ export function websiteOrderNoOf(zoho: { salesorder_number: string; reference_nu
   if (zoho.salesorder_number.startsWith("GB-")) return zoho.salesorder_number.slice(3);
   const reference = (zoho.reference_number ?? "").trim();
   return WEBSITE_ORDER_NUMBER.test(reference) ? reference : null;
+}
+
+/**
+ * Whether this Zoho sales order is the one for this website order. Exact, because Zoho's search is
+ * "contains". Reference# is compared as it is: the pattern above doesn't know every godown code the
+ * admin can set (BLR2, HUBBALLI), and here the order's own number is known.
+ */
+export function zohoOrderIsFor(zoho: { salesorder_number: string; reference_number?: string }, orderNo: string) {
+  if (zoho.salesorder_number.startsWith("GB-")) return zoho.salesorder_number === zohoOrderNumber(orderNo);
+  return (zoho.reference_number ?? "").trim() === orderNo;
 }
 export type ReconcileIssue =
   | "missing_in_zoho"
