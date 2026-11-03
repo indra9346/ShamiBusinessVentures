@@ -38,7 +38,7 @@ export function PartPaymentNotice({ orderNo, total, paid, paymentStatus, orderSt
       <div className="mb-6 rounded-lg border border-amber-300 bg-amber-50 p-4 text-left text-sm text-amber-900">
         <p className="font-bold">Please call us about this order's payment</p>
         <p className="mt-1">Our payment records for this order need checking. Please do not pay again before speaking to us.</p>
-        <a href="tel:+919538500840" className="mt-2 inline-flex items-center gap-1 font-semibold underline"><Phone className="h-3.5 w-3.5" /> +91 95385 00840</a>
+        <a href="tel:+919845966288" className="mt-2 inline-flex items-center gap-1 font-semibold underline"><Phone className="h-3.5 w-3.5" /> +91 98459 66288</a>
       </div>
     );
   }
@@ -52,7 +52,7 @@ export function PartPaymentNotice({ orderNo, total, paid, paymentStatus, orderSt
             <div><dt className="text-xs">Balance due</dt><dd className="text-lg font-extrabold">{inrPrecise(notice.balance)}</dd></div>
           </dl>
           <p className="mt-2">Please complete the payment. We can issue your delivery note and release your order only after the full invoice amount is paid.</p>
-          <a href="tel:+919538500840" className="mt-2 inline-flex items-center gap-1 font-semibold underline"><Phone className="h-3.5 w-3.5" /> Need help? Call +91 95385 00840</a>
+          <a href="tel:+919845966288" className="mt-2 inline-flex items-center gap-1 font-semibold underline"><Phone className="h-3.5 w-3.5" /> Need help? Call +91 98459 66288</a>
         </div>
       )}
       {loaded && children}

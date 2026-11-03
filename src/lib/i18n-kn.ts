@@ -3093,7 +3093,7 @@ export const kn: Record<string, string> = {
   "Please complete the payment. We can issue your delivery note and release your order only after the full invoice amount is paid.": "ದಯವಿಟ್ಟು ಪಾವತಿಯನ್ನು ಪೂರ್ಣಗೊಳಿಸಿ. ಇನ್‌ವಾಯ್ಸ್‌ನ ಪೂರ್ಣ ಮೊತ್ತ ಪಾವತಿಯಾದ ನಂತರವೇ ನಾವು ನಿಮ್ಮ ಡೆಲಿವರಿ ನೋಟ್ ನೀಡಿ ಆರ್ಡರ್ ಬಿಡುಗಡೆ ಮಾಡಬಹುದು.",
   "Please call us about this order's payment": "ಈ ಆರ್ಡರ್‌ನ ಪಾವತಿ ಬಗ್ಗೆ ದಯವಿಟ್ಟು ನಮಗೆ ಕರೆ ಮಾಡಿ",
   "Our payment records for this order need checking. Please do not pay again before speaking to us.": "ಈ ಆರ್ಡರ್‌ನ ಪಾವತಿ ದಾಖಲೆಗಳನ್ನು ಪರಿಶೀಲಿಸಬೇಕಾಗಿದೆ. ನಮ್ಮೊಂದಿಗೆ ಮಾತನಾಡುವ ಮೊದಲು ದಯವಿಟ್ಟು ಮತ್ತೆ ಪಾವತಿಸಬೇಡಿ.",
-  "Need help? Call +91 95385 00840": "ಸಹಾಯ ಬೇಕೇ? +91 95385 00840 ಗೆ ಕರೆ ಮಾಡಿ",
+  "Need help? Call +91 98459 66288": "ಸಹಾಯ ಬೇಕೇ? +91 98459 66288 ಗೆ ಕರೆ ಮಾಡಿ",
   "Delivery Notes": "ಡೆಲಿವರಿ ನೋಟ್‌ಗಳು",
   "Delivery note and slips": "ಡೆಲಿವರಿ ನೋಟ್ ಮತ್ತು ಸ್ಲಿಪ್‌ಗಳು",
   "Stop delivery": "ಡೆಲಿವರಿ ನಿಲ್ಲಿಸಿ",
