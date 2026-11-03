@@ -22,6 +22,16 @@ import {
   setStorefrontDisplay,
   type StorefrontDisplay,
 } from "@/lib/storefront-display";
+import { setSiteDetails } from "@/lib/site-details";
+import {
+  DEFAULT_SITE_DETAILS,
+  SITE_DETAILS_KEY,
+  cleanSiteDetails,
+  parseSiteDetails,
+  siteDetailsProblem,
+  type SiteDetailField,
+  type SiteDetails,
+} from "@/lib/site-details-rules";
 
 export const Route = createFileRoute("/admin/settings")({
   head: () => ({
@@ -134,8 +144,9 @@ function AdminSettings() {
       </div>
 
       <Tabs id="settings-tabs" value={tab} onValueChange={setTab} className="scroll-mt-36">
-        <TabsList className="mb-4 flex-wrap">
+        <TabsList className="mb-4 h-auto flex-wrap justify-start">
           <TabsTrigger value="business">Business</TabsTrigger>
+          <TabsTrigger value="website">Website details</TabsTrigger>
           <TabsTrigger value="tax">Tax & Invoicing</TabsTrigger>
           <TabsTrigger value="commerce">Commerce Rules</TabsTrigger>
           <TabsTrigger value="security">Security</TabsTrigger>
@@ -163,6 +174,7 @@ function AdminSettings() {
               <div className="grid gap-1.5 sm:col-span-2">
                 <Label>Registered address</Label>
                 <Textarea rows={3} value={business.address} onChange={(e) => setBusiness((b) => ({ ...b, address: e.target.value }))} />
+                <p className="text-xs text-slate">Printed on an invoice only when its godown has no address. The Website details tab sets what customers see on the site.</p>
               </div>
               <Button
                 className="bg-navy text-white hover:bg-navy/90 sm:w-fit"
@@ -178,6 +190,10 @@ function AdminSettings() {
               </Button>
             </div>
           </Panel>
+        </TabsContent>
+
+        <TabsContent value="website">
+          <SiteDetailsPanel />
         </TabsContent>
 
         <TabsContent value="tax">
@@ -293,6 +309,93 @@ const storefrontOptions: { key: keyof StorefrontDisplay; title: string; hint: st
     hint: "Star ratings and review counts on product cards and the product page, plus the shop's rating filter.",
   },
 ];
+
+const siteDetailRows: { key: SiteDetailField; title: string; hint: string }[] = [
+  { key: "address", title: "Head office address", hint: "Footer, Contact and About pages." },
+  { key: "phone", title: "Head office and customer care number", hint: "Footer, Contact page and customer account pages." },
+  { key: "hours", title: "Phone hours", hint: "Contact page, next to the phone number." },
+  { key: "whatsapp", title: "WhatsApp number", hint: "Contact page." },
+  { key: "email", title: "Email address", hint: "Footer and Contact page. Send it a test mail first, to be sure it receives mail." },
+  { key: "gstin", title: "GSTIN", hint: "Footer and About page." },
+  { key: "fssai", title: "FSSAI licence number", hint: "Footer and About page." },
+];
+
+/** Admin text and switches for the company details customers see; saved as a public setting. */
+function SiteDetailsPanel() {
+  const [value, setValue] = useState<SiteDetails>(DEFAULT_SITE_DETAILS);
+  const [loaded, setLoaded] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    void supabase.from("settings").select("value").eq("key", SITE_DETAILS_KEY).maybeSingle().then(({ data, error }) => {
+      if (!active) return;
+      if (error) {
+        toast.error("Could not load website details", { description: error.message });
+        return;
+      }
+      setValue(parseSiteDetails(data?.value));
+      setLoaded(true);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const change = (key: SiteDetailField, patch: Partial<SiteDetails[SiteDetailField]>) =>
+    setValue((current) => ({ ...current, [key]: { ...current[key], ...patch } }));
+
+  const save = async () => {
+    const problem = siteDetailsProblem(value);
+    if (problem) {
+      toast.error(problem);
+      return;
+    }
+    const clean = cleanSiteDetails(value);
+    setSaving(true);
+    const { error } = await supabase
+      .from("settings")
+      .upsert([{ key: SITE_DETAILS_KEY, value: JSON.parse(JSON.stringify(clean)) as Json, is_public: true }], { onConflict: "key" });
+    setSaving(false);
+    if (error) {
+      toast.error("Could not save website details", { description: error.message });
+      return;
+    }
+    setValue(clean);
+    setSiteDetails(clean);
+    toast.success("Website details saved");
+  };
+
+  return (
+    <Panel title="Details on the website">
+      <div className="grid gap-4 xl:max-w-3xl">
+        <p className="text-sm text-slate">Choose what customers see in the footer and on the Contact and About pages. Switch a detail off to hide it.</p>
+        <p className="text-xs text-slate">Invoices don't use these. They print the Business tab's details and each godown's own address from Branches.</p>
+        {siteDetailRows.map((row) => (
+          <div key={row.key} className="grid gap-2 rounded-md border border-border p-4">
+            <div className="flex items-center justify-between gap-4">
+              <Label htmlFor={`site-detail-${row.key}`} className="text-sm font-bold text-navy">{row.title}</Label>
+              <Switch
+                checked={value[row.key].show}
+                onCheckedChange={(show) => change(row.key, { show })}
+                aria-label={`Show ${row.title} on the website`}
+              />
+            </div>
+            {row.key === "address" ? (
+              <Textarea id={`site-detail-${row.key}`} rows={3} value={value[row.key].value} onChange={(e) => change(row.key, { value: e.target.value })} />
+            ) : (
+              <Input id={`site-detail-${row.key}`} value={value[row.key].value} onChange={(e) => change(row.key, { value: e.target.value })} />
+            )}
+            <p className="text-xs text-slate">{row.hint}</p>
+          </div>
+        ))}
+        <Button className="bg-navy text-white hover:bg-navy/90 sm:w-fit" disabled={saving || !loaded} onClick={() => void save()}>
+          <Save className="mr-1 h-4 w-4" /> {saving ? "Saving…" : "Save Website Details"}
+        </Button>
+      </div>
+    </Panel>
+  );
+}
 
 /** Admin switches for what customers see on product cards; saved as a public setting. */
 function StorefrontDisplayPanel() {

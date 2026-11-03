@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { createClient } from "@supabase/supabase-js";
 import type { Database } from "@/integrations/supabase/types";
 import { sitemapXml, type SitemapEntry } from "@/lib/seo";
+import { storeCategorySlug } from "@/lib/category-slug";
 
 /*
  * /sitemap.xml for search engines: the public pages, every enabled category and every product
@@ -15,8 +16,6 @@ const STATIC_PAGES: SitemapEntry[] = [
   { path: "/about", changefreq: "monthly", priority: 0.5 },
   { path: "/contact", changefreq: "monthly", priority: 0.5 },
 ];
-
-const categorySlug = (name: string) => (name.toLowerCase() === "cooking oil" ? "oil" : name.toLowerCase().replace(/[^a-z0-9]+/g, "-"));
 
 export const Route = createFileRoute("/sitemap.xml")({
   server: {
@@ -34,7 +33,7 @@ export const Route = createFileRoute("/sitemap.xml")({
           ]);
           for (const row of categories.data ?? []) {
             if ((row.payload as { enabled?: boolean } | null)?.enabled === false) continue;
-            entries.push({ path: `/categories/${categorySlug(row.name)}`, changefreq: "daily", priority: 0.8 });
+            entries.push({ path: `/categories/${storeCategorySlug(row.name)}`, changefreq: "daily", priority: 0.8 });
           }
           for (const row of products.data ?? [])
             entries.push({ path: `/product/${encodeURIComponent(row.id)}`, lastmod: row.updated_at, changefreq: "daily", priority: 0.7 });

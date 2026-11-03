@@ -2,6 +2,7 @@ import { Link } from "@tanstack/react-router";
 import { Facebook, Instagram, Mail, MapPin, Phone, Youtube } from "lucide-react";
 import { Logo } from "@/components/brand/Logo";
 import { storefrontCategories } from "@/lib/data";
+import { useSiteDetails } from "@/lib/site-details";
 import webHostingBabaLogo from "@/assets/web-hosting-baba-logo.png";
 
 const socials = [
@@ -11,6 +12,8 @@ const socials = [
 ];
 
 export function SiteFooter() {
+  const details = useSiteDetails();
+  const registrations = [details.gstin && `GSTIN ${details.gstin}`, details.fssai && `FSSAI ${details.fssai}`].filter(Boolean).join(" · ");
   return (
     <footer className="bg-midnight text-white/70">
       <div className="mx-auto max-w-7xl px-6 py-14">
@@ -66,28 +69,37 @@ export function SiteFooter() {
             </ul>
           </div>
 
-          <div>
-            <h3 className="text-sm font-semibold tracking-widest text-gold uppercase">Get in touch</h3>
-            <ul className="mt-5 space-y-4 text-sm">
-              <li className="flex gap-3">
-                <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-gold" />
-                Shami House, Industrial Estate, Belagavi, Karnataka 590010
-              </li>
-              <li className="flex gap-3">
-                <Phone className="h-4 w-4 shrink-0 text-gold" /> +91 95385 00840
-              </li>
-              <li className="flex gap-3">
-                <Mail className="h-4 w-4 shrink-0 text-gold" /> care@shamiventures.in
-              </li>
-            </ul>
-          </div>
+          {(details.address || details.phone || details.email) && (
+            <div>
+              <h3 className="text-sm font-semibold tracking-widest text-gold uppercase">Get in touch</h3>
+              <ul className="mt-5 space-y-4 text-sm">
+                {details.address && (
+                  <li className="flex gap-3">
+                    <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-gold" />
+                    <span className="min-w-0">{details.address}</span>
+                  </li>
+                )}
+                {details.phone && (
+                  <li className="flex gap-3">
+                    <Phone className="h-4 w-4 shrink-0 text-gold" /> {details.phone}
+                  </li>
+                )}
+                {details.email && (
+                  <li className="flex gap-3">
+                    <Mail className="h-4 w-4 shrink-0 text-gold" />
+                    <span data-no-translate className="min-w-0 [overflow-wrap:anywhere]">{details.email}</span>
+                  </li>
+                )}
+              </ul>
+            </div>
+          )}
         </div>
 
         <div className="hairline-gold mt-12" />
         <div className="flex flex-col gap-4 pt-6 text-xs sm:flex-row sm:items-center sm:justify-between">
           <div>
             <p>© 2026 Shami Business Ventures Pvt. Ltd. All rights reserved.</p>
-            <p className="mt-0.5 text-white/50">GSTIN 29ABCDE1234F1Z5 · FSSAI 10023456789012</p>
+            {registrations && <p data-no-translate className="mt-0.5 text-white/50">{registrations}</p>}
           </div>
 
           <div className="flex flex-wrap items-center gap-1.5 text-white/75 text-xs sm:text-[13px]">

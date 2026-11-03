@@ -3,6 +3,7 @@ import { pageHead, SITE_NAME } from "@/lib/seo";
 import { Building2, Factory, Globe2, Users } from "lucide-react";
 import { SiteLayout, Breadcrumbs, SectionHeading } from "@/components/site/SiteLayout";
 import { LogoMark } from "@/components/brand/Logo";
+import { useSiteDetails } from "@/lib/site-details";
 
 export const Route = createFileRoute("/about")({
   head: () => pageHead({
@@ -14,6 +15,7 @@ export const Route = createFileRoute("/about")({
 });
 
 function About() {
+  const details = useSiteDetails();
   return (
     <SiteLayout>
       <div className="border-b border-border bg-ivory">
@@ -62,11 +64,11 @@ function About() {
           <dl className="space-y-4 text-sm">
             {[
               ["Registered name", "Shami Business Ventures Pvt. Ltd."],
-              ["GSTIN", "29ABCDE1234F1Z5"],
-              ["FSSAI", "10023456789012"],
-              ["Head office", "Belagavi, Karnataka"],
+              ["GSTIN", details.gstin],
+              ["FSSAI", details.fssai],
+              ["Head office", details.address],
               ["Categories", "Sugar · Rice · Oils · Pulses"],
-            ].map(([k, v]) => (
+            ].filter(([, v]) => v).map(([k, v]) => (
               <div key={k}>
                 <dt className="text-[11px] font-semibold tracking-wider text-slate uppercase">{k}</dt>
                 <dd className="font-medium text-navy">{v}</dd>

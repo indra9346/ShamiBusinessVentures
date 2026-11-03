@@ -79,6 +79,8 @@ export type Product = {
   unit?: string | undefined;
   /** HSN/SAC code. */
   hsn?: string | undefined;
+  /** Code from Admin → Product Codes, e.g. RS01. Separate from the SKU, which is what Zoho matches items by. */
+  productCode?: string | undefined;
 };
 
 /* ---------- trade-rate pricing (QTL, kg, litre) ---------- */

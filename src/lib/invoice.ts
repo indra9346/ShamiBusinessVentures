@@ -11,6 +11,7 @@ import {
   type PickupSettings,
 } from "@/lib/pickup-points";
 import { DEMO_BRANCH, branchFromRow, defaultBranchOf, type Branch } from "@/lib/branches";
+import { sellerAddressLines } from "@/lib/invoice-seller";
 
 /**
  * Grain Bazar tax invoice (A4, vector PDF). Layout follows the company's Zoho tax invoice
@@ -312,7 +313,7 @@ export async function buildInvoicePdf(order: Order, options: InvoiceOptions = {}
     ? [pickupPoint.name, pickupPoint.address, pickupPoint.phone ? `Phone ${pickupPoint.phone}` : "", pickupPoint.instructions]
     : [order.customer, order.address, addressHasCity ? "" : cityLine, order.phone ? `Phone ${order.phone}` : ""];
   const cards: { title: string; rows: string[] }[] = [
-    { title: "Sold by", rows: [company.legalName, company.brand, ...company.addressLines, `GSTIN ${company.gstin}`, `Phone ${godownPhone}`] },
+    { title: "Sold by", rows: [company.legalName, company.brand, ...sellerAddressLines(orderBranch?.address, company.addressLines), `GSTIN ${company.gstin}`, `Phone ${godownPhone}`] },
     {
       title: "Bill to",
       rows: [

@@ -3,6 +3,8 @@ import { CheckCircle2, Handshake, MapPinned, Phone, Send } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useBranches } from "@/lib/branches";
+import { useSiteDetails } from "@/lib/site-details";
+import { telHref } from "@/lib/site-details-rules";
 import { OPEN_PIN_DIALOG_EVENT } from "@/lib/godown-rules";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { useApp } from "@/lib/store";
@@ -21,6 +23,7 @@ type RequestKind = "service" | "partner";
  */
 export function NotInYourArea({ pin, compact = false, className }: { pin: string; compact?: boolean; className?: string }) {
   const { branches } = useBranches();
+  const details = useSiteDetails();
   const { user } = useApp();
   const [kind, setKind] = useState<RequestKind | null>(null);
   const [form, setForm] = useState({ name: "", phone: "", email: "", locality: "", note: "" });
@@ -54,7 +57,7 @@ export function NotInYourArea({ pin, compact = false, className }: { pin: string
       setSent(kind);
       setKind(null);
     } catch {
-      toast.error("Could not send your request", { description: "Please try again, or call us on +91 95385 00840." });
+      toast.error("Could not send your request", { description: details.phone ? `Please try again, or call us on ${details.phone}.` : "Please try again." });
     } finally {
       setSending(false);
     }
@@ -110,7 +113,7 @@ export function NotInYourArea({ pin, compact = false, className }: { pin: string
             <button type="button" onClick={() => window.dispatchEvent(new Event(OPEN_PIN_DIALOG_EVENT))} className="font-semibold text-gold hover:underline">
               Try another PIN code
             </button>
-            <a href="tel:+919538500840" className="inline-flex items-center gap-1 font-semibold text-slate hover:text-navy"><Phone className="h-3.5 w-3.5" /> +91 95385 00840</a>
+            {details.phone && <a href={telHref(details.phone)} className="inline-flex items-center gap-1 font-semibold text-slate hover:text-navy"><Phone className="h-3.5 w-3.5" /> {details.phone}</a>}
           </div>
         </div>
       </div>
