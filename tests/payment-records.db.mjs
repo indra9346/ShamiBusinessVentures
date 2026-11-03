@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 
 const { PGlite } = await import(process.env.PGLITE_PATH ?? "@electric-sql/pglite");
 const MIGRATIONS = new URL("../supabase/migrations/", import.meta.url);
-const FIX = "20261103120000_payment_record_fixes.sql";
+const FIX = "20261103233000_payment_record_fixes.sql";
 const WITHOUT_FIX = Boolean(process.env.WITHOUT_FIX);
 
 const db = new PGlite();
