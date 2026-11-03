@@ -21,6 +21,7 @@ import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { FESTIVE_HEAD_SCRIPT } from "@/lib/festive";
 import { StorefrontSnapshotContext } from "@/lib/storefront-snapshot";
 import { getStorefrontSnapshot } from "@/lib/storefront-snapshot.functions";
+import { useGoogleAnalytics } from "@/lib/analytics";
 
 // Pictures and the storefront data come from Supabase: open the connections while the page loads.
 const SUPABASE_ORIGIN = (() => {
@@ -161,6 +162,7 @@ function RootShell({ children }: { children: ReactNode }) {
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
   const snapshot = Route.useLoaderData() ?? null;
+  useGoogleAnalytics();
   // After a new deployment, an open tab may ask for page files that no longer exist; reload
   // once to pick up the new version instead of showing an error.
   useEffect(() => {

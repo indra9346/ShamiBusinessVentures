@@ -180,6 +180,8 @@ type AppState = {
   products: Product[];
   addProduct: (p: Product) => Promise<boolean>;
   updateProduct: (id: string, patch: Partial<Product>) => Promise<boolean>;
+  /** Puts a code on a product or takes it off. Nothing else about the product changes (admin only). */
+  setProductCode: (id: string, code: string | undefined) => Promise<boolean>;
   deleteProduct: (id: string) => Promise<boolean>;
 
   batches: PurchaseBatch[];
@@ -254,6 +256,8 @@ type AppState = {
   addresses: Address[];
   addAddress: (a: Address) => Promise<boolean>;
   updateAddress: (id: string, patch: Partial<Address>) => Promise<boolean>;
+  /** A product's name from the whole catalogue, including items the shopper's godown does not sell. */
+  productNameOf: (id: string) => string;
   deleteAddress: (id: string) => Promise<boolean>;
   setDefaultAddress: (id: string) => Promise<boolean>;
 };
@@ -359,6 +363,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [coupons, setCoupons] = useState<Coupon[]>(STATIC_DATA_MODE ? seedCoupons : []);
   const [notifications, setNotifications] = useState<Notif[]>(STATIC_DATA_MODE ? seedNotifications : []);
   const [addresses, setAddresses] = useState<Address[]>([]);
+  // Counts address saves, so a background read that started before one cannot undo it on screen.
+  const addressWrites = useRef(0);
   const [addressesByUser, setAddressesByUser] = useState<Record<string, Address[]>>({});
   const [hydrated, setHydrated] = useState(false);
   const [authReady, setAuthReady] = useState(STATIC_DATA_MODE);
@@ -680,12 +686,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (user.role === "customer") {
           const { data: { user: authUser } } = await supabase.auth.getUser();
           if (authUser) {
+            const writesBefore = addressWrites.current;
             const { data: addressRows, error: addressError } = await supabase.from("addresses")
               .select("*").eq("user_id", authUser.id).order("created_at", { ascending: true });
             if (!active || revision !== loadRevision) return;
             if (addressError) {
               console.error("Could not load saved addresses", addressError);
-            } else {
+            } else if (addressWrites.current === writesBefore) {
+              // (A save that finished during this read is newer than what was read, so the read is dropped.)
               const ownerKey = user.addressKey ?? addressOwnerKey(user);
               const saved = (addressRows ?? []).map((row) => ({
                 id: row.id, label: row.label, name: row.name, phone: row.phone, line: row.line,
@@ -830,7 +838,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     });
     if (error) {
       console.error("Catalog save failed", error);
-      const description = error.code === "42501" && user?.role === "vendor"
+      const description = error.code === "42501" && user?.role === "vendor" && !/product's code/.test(error.message)
         ? "Your vendor account may need approved KYC documents before catalog changes. Open Store Profile → KYC Documents, submit the required files, and wait for admin review."
         : error.message;
       toast.error("Could not save this product", { description });
@@ -1081,6 +1089,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return view;
   }, [isShopper, branchState, shopperGodown, products]);
 
+  const wholeCatalogue = products;
   const value = useMemo<AppState>(() => {
     // Everything below reads the shopper's godown view (the full catalogue for admins and vendors).
     const products = viewProducts;
@@ -1400,13 +1409,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
         // The save writes the whole payload, and stock and sales counts change with every order.
         // Take them from the database rather than this page's copy, so saving another field never
         // undoes an order's stock deduction (the stock trigger would book it as a stock movement).
-        const live: Partial<Pick<Product, "stock" | "sold" | "reserved">> = {};
+        const live: Partial<Pick<Product, "stock" | "sold" | "reserved" | "productCode">> = {};
         if (!STATIC_DATA_MODE) {
           const { data: row } = await supabase.from("catalog_products").select("payload").eq("id", id).maybeSingle();
           const payload = (row?.payload ?? {}) as Record<string, unknown>;
           for (const key of ["stock", "sold", "reserved"] as const) {
             if (typeof payload[key] === "number") live[key] = payload[key];
           }
+          // The same for its code, which another tab may have just changed.
+          if (row) live.productCode = typeof payload["productCode"] === "string" ? payload["productCode"] : undefined;
         }
         const updated = { ...existing, ...live, ...patch, updated: today() };
         setProducts((list) => list.map((p) => (p.id === id ? updated : p)));
@@ -1414,6 +1425,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (!ok) setProducts((list) => list.map((item) => item.id === id ? existing : item));
         else pushProductsToZohoInBackground([id]);
         return ok;
+      },
+      setProductCode: async (id, code) => {
+        if (!STATIC_DATA_MODE) {
+          const { data: done, error } = await supabase.rpc("admin_set_product_code", { _product_id: id, _code: code ?? "" });
+          if (error || !done) {
+            toast.error("Could not change this product's code", { description: error?.message ?? "This product no longer exists." });
+            return false;
+          }
+        }
+        setProducts((list) => list.map((p) => (p.id === id ? { ...p, productCode: code } : p)));
+        return true;
       },
       deleteProduct: async (id) => {
         const existing = products.find((product) => product.id === id);
@@ -2074,16 +2096,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
             toast.error("Could not save this address", { description: error.message });
             return false;
           }
+          addressWrites.current += 1;
         }
         setAddresses((list) => [...list, a]);
         return true;
       },
+      productNameOf: (id) => wholeCatalogue.find((product) => product.id === id)?.name ?? "",
       updateAddress: async (id, patch) => {
         const existing = addresses.find((address) => address.id === id);
-        if (!existing) return false;
+        if (!existing) {
+          toast.error("Could not update this address", { description: "Please refresh the page and try again." });
+          return false;
+        }
         const updated = { ...existing, ...patch } as Address;
         if (!STATIC_DATA_MODE) {
-          const { error } = await supabase.from("addresses").update({
+          const { data, error } = await supabase.from("addresses").update({
             ...(patch.label !== undefined ? { label: patch.label } : {}),
             ...(patch.name !== undefined ? { name: patch.name } : {}),
             ...(patch.phone !== undefined ? { phone: patch.phone } : {}),
@@ -2092,9 +2119,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
             ...(patch.state !== undefined ? { state: patch.state } : {}),
             ...(patch.pin !== undefined ? { pin: patch.pin } : {}),
             ...(patch.landmark !== undefined ? { landmark: patch.landmark || null } : {}),
-            ...(patch.latitude !== undefined ? { latitude: patch.latitude, longitude: patch.longitude ?? null, location_accuracy_m: patch.locationAccuracy ?? null, located_at: patch.locatedAt ?? null } : {}),
-          }).eq("id", id).eq("user_id", user?.id ?? "");
+            // A point of undefined removes the saved one (the PIN was typed over with another place's).
+            ...("latitude" in patch ? { latitude: patch.latitude ?? null, longitude: patch.longitude ?? null, location_accuracy_m: patch.locationAccuracy ?? null, located_at: patch.locatedAt ?? null } : {}),
+          }).eq("id", id).eq("user_id", user?.id ?? "").select("id");
           if (error) { toast.error("Could not update this address", { description: error.message }); return false; }
+          // No error and no row: the address was removed elsewhere, or this account can no longer change it.
+          if (!data?.length) { toast.error("Could not update this address", { description: "Please refresh the page and try again." }); return false; }
+          addressWrites.current += 1;
         }
         setAddresses((list) => list.map((address) => address.id === id ? updated : address));
         return true;
@@ -2105,6 +2136,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (!STATIC_DATA_MODE) {
           const { error } = await supabase.from("addresses").delete().eq("id", id).eq("user_id", user?.id ?? "");
           if (error) { toast.error("Could not delete this address", { description: error.message }); return false; }
+          addressWrites.current += 1;
         }
         setAddresses((list) => list.filter((address) => address.id !== id));
         return true;
@@ -2114,6 +2146,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (!STATIC_DATA_MODE) {
           const { data, error } = await supabase.rpc("customer_set_default_address", { _id: id });
           if (error || !data) { toast.error("Could not change your default address", { description: error?.message ?? "Address not found." }); return false; }
+          addressWrites.current += 1;
         }
         setAddresses((list) => list.map((address) => ({ ...address, default: address.id === id })));
         return true;

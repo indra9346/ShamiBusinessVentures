@@ -1,6 +1,9 @@
 import riceImg from "@/assets/p-rice.jpg";
 import oilImg from "@/assets/p-oil.jpg";
 import sugarImg from "@/assets/p-sugar.jpg";
+import { ownEntry } from "@/lib/category-slug";
+
+export { categorySlug, storeCategorySlug } from "@/lib/category-slug";
 
 export type Tile = {
   /** Card label */
@@ -21,9 +24,6 @@ export type CategoryNode = {
   tiles: Tile[];
   children?: Record<string, { name: string; tagline: string; tiles: Tile[] }>;
 };
-
-export const categorySlug = (name: string) =>
-  name.toLowerCase().replace(/&/g, "and").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 
 const riceVariety = (code: string, kind: string): Tile => ({
   label: code,
@@ -93,4 +93,9 @@ export const categoryTree: Record<string, CategoryNode> = {
   },
 };
 
-export const getCategoryNode = (slug: string) => categoryTree[slug];
+export const getCategoryNode = (slug: string) => ownEntry(categoryTree, slug);
+
+export const getCategoryChild = (slug: string, child: string) => {
+  const children = getCategoryNode(slug)?.children;
+  return children && ownEntry(children, child);
+};

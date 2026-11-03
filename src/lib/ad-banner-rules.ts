@@ -106,6 +106,26 @@ export function bannersByPlacement(list: AdBanner[], now = Date.now()) {
   return { main: live.filter((b) => b.placement === "main"), side: live.filter((b) => b.placement === "side") };
 }
 
+/** How many times the phone strip repeats its tiles so they fill it wherever it is in the loop. */
+export function stripCopies(stripWidth: number, loopWidth: number) {
+  return Math.max(2, Math.ceil(stripWidth / loopWidth) + 1);
+}
+
+/** A strip position kept inside one loop, whichever way and however far it has been swiped. */
+export function wrapStrip(position: number, loopWidth: number) {
+  return ((position % loopWidth) + loopWidth) % loopWidth;
+}
+
+/**
+ * One step of a flick slowing down, speeds in pixels per millisecond. Worked out exactly rather
+ * than frame by frame, so a flick goes as far on a 120 Hz phone as on a 60 Hz one. A frame's clock
+ * can read just before the moment the flick began; time never runs backwards here.
+ */
+export function flickStep(velocity: number, ms: number, decayMs: number) {
+  const remaining = Math.exp(-Math.max(0, ms) / decayMs);
+  return { distance: velocity * decayMs * (1 - remaining), velocity: velocity * remaining };
+}
+
 export function adMediaProblem(file: File): string | null {
   if (![...AD_IMAGE_TYPES, ...AD_VIDEO_TYPES].includes(file.type)) return "Choose a JPG, PNG, WebP, GIF or AVIF picture, or an MP4 / WebM video";
   if (file.size > AD_MEDIA_MAX_BYTES) return "The file must be 50 MB or smaller";
