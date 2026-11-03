@@ -213,6 +213,48 @@ await test("a UTR from a lapsed checkout covers only that amount, and is then cl
   await confirm(same, 2500, `SBIN${ref}`);
   assert.equal((await one(`SELECT note FROM public.upi_payment_submissions WHERE order_no = $1`, [a])).note, `Placed again as ${same}`);
 });
+// The shape of the one refund set by hand on live: the payment row and the order both marked Refunded.
+const refundByHand = async (no) => {
+  await db.exec(`SET session_replication_role = replica`);
+  await db.query(`UPDATE public.orders SET payment_status = 'Refunded', paid_amount = 0, balance_due = 0, order_status = 'Cancelled' WHERE order_no = $1`, [no]);
+  await db.query(`UPDATE public.payments SET status = 'Refunded' WHERE order_id = (SELECT id FROM public.orders WHERE order_no = $1)`, [no]);
+  await db.exec(`SET session_replication_role = origin`);
+};
+await test("a payment marked refunded cannot pay another order, however it is written", async () => {
+  const a = await checkout(), ref = utr();
+  await confirm(a, 2500, ref);
+  await refundByHand(a);
+  const b = await checkout();
+  await refused(() => confirm(b, 2500, ref), /refunded/);
+  await refused(() => confirm(b, 2500, `SBIN${ref}`), /refunded/);
+  assert.equal(await received(b), 0);
+  const c = await checkout(), d = await checkout();
+  await confirm(c, 2500, "RCPT90");
+  await refundByHand(c);
+  await refused(() => confirm(d, 2500, "rcpt 90"), /refunded/);
+  await confirm(d, 2500, "RCPT9O");
+});
+await test("a bank alert for refunded money pays no waiting order, by amount or by UTR", async () => {
+  const gone = await checkout([{ product_id: "PA", qty: 21 }]), ref = utr();
+  await confirm(gone, 21000, ref);
+  await refundByHand(gone);
+  const waiting = await checkout([{ product_id: "PA", qty: 21 }]);
+  const out = await sms(ref, 21000);
+  assert.equal(out.status, "mismatch");
+  assert.equal(out.order_no, gone);
+  assert.equal(await received(waiting), 0);
+  assert.equal((await orderRow(waiting)).order_status, "Awaiting Payment");
+  assert.ok((await alerts(ref)).some((text) => /recorded as refunded/.test(text)));
+  assert.equal((await settle(ref, "old SMS, money is gone")).status, "settled");
+  const gone2 = await checkout([{ product_id: "PA", qty: 22 }]), ref2 = utr();
+  await confirm(gone2, 22000, ref2);
+  await refundByHand(gone2);
+  const sent = await checkout([{ product_id: "PA", qty: 22 }]);
+  await submit(sent, ref2);
+  assert.equal((await sms(ref2, 22000)).status, "mismatch");
+  assert.equal((await orderRow(sent)).order_status, "Awaiting Payment");
+  await refused(() => review(sent, ref2), /refunded/);
+});
 await test("a checkout that ended takes no money", async () => {
   const no = await checkout([{ product_id: "PA", qty: 3 }]);
   await db.exec(`UPDATE public.orders SET payment_hold_until = now() - interval '2 hours' WHERE order_no = '${no}'`);

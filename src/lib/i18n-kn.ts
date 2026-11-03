@@ -3633,6 +3633,8 @@ export const kn: Record<string, string> = {
   "This UTR was refunded. It cannot pay for anything any more.": "ಈ UTR ಅನ್ನು ಮರುಪಾವತಿಸಲಾಗಿದೆ. ಇದು ಇನ್ನು ಯಾವುದಕ್ಕೂ ಪಾವತಿಯಾಗಲು ಸಾಧ್ಯವಿಲ್ಲ.",
   "This UTR was sent for Rs {0} on a checkout that lapsed, so it only covers a payment of that amount.": "ಅವಧಿ ಮುಗಿದ ಚೆಕ್‌ಔಟ್‌ನಲ್ಲಿ ಈ UTR ಅನ್ನು Rs {0} ಗಾಗಿ ಕಳುಹಿಸಲಾಗಿತ್ತು, ಆದ್ದರಿಂದ ಇದು ಅಷ್ಟೇ ಮೊತ್ತದ ಪಾವತಿಗೆ ಮಾತ್ರ ಸಲ್ಲುತ್ತದೆ.",
   "This transfer reference has already been recorded": "ಈ ವರ್ಗಾವಣೆ ಉಲ್ಲೇಖವನ್ನು ಈಗಾಗಲೇ ದಾಖಲಿಸಲಾಗಿದೆ",
+  "This transfer was recorded as refunded on {0}": "ಈ ವರ್ಗಾವಣೆಯನ್ನು {0} ನಲ್ಲಿ ಮರುಪಾವತಿಯಾಗಿದೆ ಎಂದು ದಾಖಲಿಸಲಾಗಿದೆ",
+  "₹{0} (UTR {1}) came in, but this transfer was recorded as refunded on {2}. Check the bank account, then mark it settled.": "₹{0} (UTR {1}) ಬಂದಿದೆ, ಆದರೆ ಈ ವರ್ಗಾವಣೆಯನ್ನು {2} ನಲ್ಲಿ ಮರುಪಾವತಿಯಾಗಿದೆ ಎಂದು ದಾಖಲಿಸಲಾಗಿದೆ. ಬ್ಯಾಂಕ್ ಖಾತೆ ಪರಿಶೀಲಿಸಿ, ನಂತರ ಇತ್ಯರ್ಥವಾಗಿದೆ ಎಂದು ಗುರುತಿಸಿ.",
   "This checkout has ended. Place the order again, then record the payment on the new order.": "ಈ ಚೆಕ್‌ಔಟ್ ಮುಗಿದಿದೆ. ಆರ್ಡರ್ ಅನ್ನು ಮತ್ತೆ ಮಾಡಿ, ನಂತರ ಹೊಸ ಆರ್ಡರ್‌ನಲ್ಲಿ ಪಾವತಿಯನ್ನು ದಾಖಲಿಸಿ.",
   "you cancelled before paying": "ಪಾವತಿಸುವ ಮೊದಲು ನೀವು ರದ್ದುಮಾಡಿದಿರಿ",
   "Your order is placed as soon as our bank shows this payment.": "ನಮ್ಮ ಬ್ಯಾಂಕ್‌ನಲ್ಲಿ ಈ ಪಾವತಿ ಕಂಡ ತಕ್ಷಣ ನಿಮ್ಮ ಆರ್ಡರ್ ಆಗುತ್ತದೆ.",

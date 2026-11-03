@@ -63,6 +63,10 @@ BEGIN
   IF EXISTS (SELECT 1 FROM public.payments WHERE private.same_payment_ref(txn_ref, reference) AND status = 'Paid') THEN
     RAISE EXCEPTION 'This transfer reference has already been recorded';
   END IF;
+  -- Money that went back pays for nothing, and a payment row marked Refunded has no customer's UTR to catch it by.
+  IF EXISTS (SELECT 1 FROM public.payments WHERE private.same_payment_ref(txn_ref, reference) AND status = 'Refunded') THEN
+    RAISE EXCEPTION 'This UTR was refunded. It cannot pay for anything any more.';
+  END IF;
   SELECT * INTO target FROM public.orders WHERE order_no = _order_no FOR UPDATE;
   IF NOT FOUND THEN RAISE EXCEPTION 'Order not found'; END IF;
   IF target.order_status = 'Cancelled' THEN RAISE EXCEPTION 'Cancelled orders cannot receive payment'; END IF;
@@ -221,6 +225,19 @@ BEGIN
     RETURN jsonb_build_object('status', COALESCE(c.status, 'missing'), 'order_no', c.order_no);
   END IF;
   amount_text := to_char(c.amount, 'FM99999990.00');
+
+  -- A transfer recorded as refunded pays for nothing, not even by its amount or a UTR sent again: a person looks.
+  SELECT p.order_id INTO paid_order FROM public.payments p
+    WHERE private.same_utr(p.txn_ref, c.utr) AND p.status = 'Refunded' ORDER BY p.created_at LIMIT 1;
+  IF paid_order IS NOT NULL THEN
+    SELECT * INTO o FROM public.orders WHERE id = paid_order;
+    UPDATE public.bank_credits SET status = 'mismatch', order_id = o.id, order_no = o.order_no,
+      note = format('This transfer was recorded as refunded on %s', o.order_no)
+      WHERE id = c.id RETURNING * INTO c;
+    PERFORM private.alert_admins_about_credit(c, 'Payment needs you',
+      format('₹%s (UTR %s) came in, but this transfer was recorded as refunded on %s. Check the bank account, then mark it settled.', amount_text, c.utr, o.order_no));
+    RETURN jsonb_build_object('status', 'mismatch', 'order_no', o.order_no);
+  END IF;
 
   -- 1. The customer already told us this UTR.
   SELECT o2.* INTO o FROM public.upi_payment_submissions s JOIN public.orders o2 ON o2.id = s.order_id
