@@ -52,12 +52,14 @@ test("the reason a product is hidden", () => {
   assert.equal(hiddenReason({ status: "approved", active: true, vendorId: "zoho:1" }), "Zoho copy");
 });
 
-test("website details: before an admin saves, customers see what the owner confirmed and no email", () => {
+test("website details: before an admin saves, customers see what the owner gave", () => {
   const visible = visibleSiteDetails(parseSiteDetails(undefined));
   assert.equal(visible.address, "179, 5th Main Rd, BCC Layout, Chandra Layout, Bengaluru, Karnataka 560040");
   assert.equal(visible.gstin, "29ABJCS7870F1ZR");
-  assert.equal(visible.phone, "+91 95385 00840");
-  assert.equal(visible.email, "");
+  assert.equal(visible.phone, "+91 98459 66288");
+  assert.equal(visible.hours, "Mon–Sat, 9am–6pm");
+  assert.equal(visible.whatsapp, "+91 93532 95398");
+  assert.equal(visible.email, "headoffice@shamibusiness.com");
   assert.equal(siteDetailsProblem(DEFAULT_SITE_DETAILS), null);
 });
 
@@ -97,6 +99,8 @@ test("website details: what stops the admin saving", () => {
   assert.equal(withDetail("fssai", "1234 5678 9012 34"), null);
   assert.match(withDetail("phone", "12345") ?? "", /phone/);
   assert.match(withDetail("whatsapp", "12345") ?? "", /WhatsApp/);
+  assert.match(withDetail("hours", "") ?? "", /hours/);
+  assert.equal(withDetail("hours", "", false), null);
   assert.match(withDetail("address", "Short") ?? "", /address/);
 });
 
@@ -114,7 +118,7 @@ test("the dead email domains and the old office are gone from what customers see
   const files = ["src/components/site/SiteFooter.tsx", "src/routes/contact.tsx", "src/routes/about.tsx", "src/components/site/NotInYourArea.tsx", "src/lib/i18n-kn.ts"];
   for (const file of files) {
     const source = readFileSync(file, "utf8");
-    for (const old of ["shamiventures.in", "shamibusiness.in", "Shami House", "590010"]) assert.ok(!source.includes(old), `${old} is still in ${file}`);
+    for (const old of ["shamiventures.in", "shamibusiness.in", "Shami House", "590010", "95385", "9538500840"]) assert.ok(!source.includes(old), `${old} is still in ${file}`);
   }
   for (const file of ["src/components/site/SiteFooter.tsx", "src/routes/about.tsx"]) {
     assert.ok(!readFileSync(file, "utf8").includes("29ABCDE1234F1Z5"), `the sample GSTIN is still in ${file}`);
@@ -128,4 +132,6 @@ test("the company details read in Kannada", async () => {
   assert.equal(translateText("Chat on WhatsApp (+91 95385 00840)", "kn"), kn["Chat on WhatsApp ({0})"]!.replace("{0}", "+91 95385 00840"));
   assert.equal(translateText("Please try again, or call us on +91 83100 84308.", "kn"), kn["Please try again, or call us on {0}."]!.replace("{0}", "+91 83100 84308"));
   assert.ok(kn["Email Desk ("]);
+  assert.equal(translateText("+91 98459 66288 (Mon–Sat, 9am–6pm)", "kn"), kn["{0} (Mon–Sat, 9am–6pm)"]!.replace("{0}", "+91 98459 66288"));
+  assert.equal(translateText("Head office and customer care:", "kn"), kn["Head office and customer care:"]);
 });

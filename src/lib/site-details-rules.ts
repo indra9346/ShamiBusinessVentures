@@ -7,7 +7,7 @@ import { GSTIN_REGEX, normaliseGstin } from "./gstin.ts";
 
 export const SITE_DETAILS_KEY = "site_details";
 
-export const SITE_DETAIL_FIELDS = ["address", "phone", "whatsapp", "email", "gstin", "fssai"] as const;
+export const SITE_DETAIL_FIELDS = ["address", "phone", "hours", "whatsapp", "email", "gstin", "fssai"] as const;
 export type SiteDetailField = (typeof SITE_DETAIL_FIELDS)[number];
 export type SiteDetails = Record<SiteDetailField, { value: string; show: boolean }>;
 /** What a page may show: the text, or "" when it is hidden or empty. */
@@ -16,15 +16,15 @@ export type VisibleSiteDetails = Record<SiteDetailField, string>;
 export const HEAD_OFFICE_ADDRESS = "179, 5th Main Rd, BCC Layout, Chandra Layout, Bengaluru, Karnataka 560040";
 
 /**
- * Used until an admin saves the panel. The owner confirmed the head office and GSTIN on 3 Nov 2026.
- * There is no email until the owner chooses one. The FSSAI number is still the old sample, kept at
- * the owner's request until they send the real one.
+ * Used until an admin saves the panel. The owner gave these on 3 Nov 2026, except the FSSAI number:
+ * that is still the old sample, kept at the owner's request until they send the real one.
  */
 export const DEFAULT_SITE_DETAILS: SiteDetails = {
   address: { value: HEAD_OFFICE_ADDRESS, show: true },
-  phone: { value: "+91 95385 00840", show: true },
-  whatsapp: { value: "+91 95385 00840", show: true },
-  email: { value: "", show: false },
+  phone: { value: "+91 98459 66288", show: true },
+  hours: { value: "Mon–Sat, 9am–6pm", show: true },
+  whatsapp: { value: "+91 93532 95398", show: true },
+  email: { value: "headoffice@shamibusiness.com", show: true },
   gstin: { value: "29ABJCS7870F1ZR", show: true },
   fssai: { value: "10023456789012", show: true },
 };
@@ -47,7 +47,7 @@ export function visibleSiteDetails(details: SiteDetails): VisibleSiteDetails {
   return visible;
 }
 
-/** Digits with the country code and no leading zero: "095385 00840" -> "919538500840". */
+/** Digits with the country code and no leading zero: "098459 66288" -> "919845966288". */
 function phoneDigits(phone: string) {
   const digits = phone.replace(/\D/g, "").replace(/^0+/, "");
   return digits.length === 10 ? `91${digits}` : digits;
@@ -73,6 +73,7 @@ const validPhone = (text: string) => phoneDigits(text).length === 12;
 const FIELD_RULES: Record<SiteDetailField, { valid: (text: string) => boolean; problem: string }> = {
   address: { valid: (text) => text.length >= 8, problem: "Enter the full head office address, or switch it off" },
   phone: { valid: validPhone, problem: "Enter a valid phone number, or switch it off" },
+  hours: { valid: (text) => text.length >= 3, problem: "Enter the phone hours, or switch them off" },
   whatsapp: { valid: validPhone, problem: "Enter a valid WhatsApp number, or switch it off" },
   email: { valid: (text) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text), problem: "Enter a valid email address, or switch it off" },
   gstin: {

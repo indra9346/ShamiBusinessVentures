@@ -15,6 +15,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { adminActivityKey, clearAdminIdleClock } from "@/lib/admin-idle";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { AdminBranchSelect } from "@/components/panel/AdminBranchSelect";
+import { CustomerCareLine } from "@/components/panel/CustomerCareLine";
 import { useBranches } from "@/lib/branches";
 
 export type NavItem = {
@@ -749,6 +750,7 @@ export function PanelLayout({
               <p className="mt-2 text-sm text-slate">Grain Bazar is currently selling its own products only. Your vendor account is kept; this panel opens again when Grain Bazar starts the marketplace.</p>
             </div>
           ) : children}
+          {tone === "customer" && <CustomerCareLine />}
         </main>
       </div>
     </div>

@@ -312,7 +312,8 @@ const storefrontOptions: { key: keyof StorefrontDisplay; title: string; hint: st
 
 const siteDetailRows: { key: SiteDetailField; title: string; hint: string }[] = [
   { key: "address", title: "Head office address", hint: "Footer, Contact and About pages." },
-  { key: "phone", title: "Phone number", hint: "Footer and Contact page." },
+  { key: "phone", title: "Head office and customer care number", hint: "Footer, Contact page and customer account pages." },
+  { key: "hours", title: "Phone hours", hint: "Contact page, next to the phone number." },
   { key: "whatsapp", title: "WhatsApp number", hint: "Contact page." },
   { key: "email", title: "Email address", hint: "Footer and Contact page. Send it a test mail first, to be sure it receives mail." },
   { key: "gstin", title: "GSTIN", hint: "Footer and About page." },

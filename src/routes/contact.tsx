@@ -420,8 +420,8 @@ function Contact() {
             },
             {
               icon: Phone,
-              title: "Supply desk",
-              detail: details.phone && `${details.phone} (Mon–Sat, 9am–7pm)`,
+              title: "Head office and customer care",
+              detail: details.phone && (details.hours ? `${details.phone} (${details.hours})` : details.phone),
               href: telHref(details.phone),
             },
             {
