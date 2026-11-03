@@ -56,6 +56,7 @@ import { Route as AdminProductsRouteImport } from './routes/admin.products'
 import { Route as AdminReportsRouteImport } from './routes/admin.reports'
 import { Route as AdminReturnsRouteImport } from './routes/admin.returns'
 import { Route as AdminReviewsRouteImport } from './routes/admin.reviews'
+import { Route as AdminRiceSamplesRouteImport } from './routes/admin.rice-samples'
 import { Route as AdminSettingsRouteImport } from './routes/admin.settings'
 import { Route as AdminStockCountsRouteImport } from './routes/admin.stock-counts'
 import { Route as AdminUpiPaymentsRouteImport } from './routes/admin.upi-payments'
@@ -335,6 +336,11 @@ const AdminReviewsRoute = AdminReviewsRouteImport.update({
   path: '/admin/reviews',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdminRiceSamplesRoute = AdminRiceSamplesRouteImport.update({
+  id: '/admin/rice-samples',
+  path: '/admin/rice-samples',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AdminSettingsRoute = AdminSettingsRouteImport.update({
   id: '/admin/settings',
   path: '/admin/settings',
@@ -598,6 +604,7 @@ export interface FileRoutesByFullPath {
   '/admin/reports': typeof AdminReportsRoute
   '/admin/returns': typeof AdminReturnsRoute
   '/admin/reviews': typeof AdminReviewsRoute
+  '/admin/rice-samples': typeof AdminRiceSamplesRoute
   '/admin/settings': typeof AdminSettingsRoute
   '/admin/stock-counts': typeof AdminStockCountsRoute
   '/admin/upi-payments': typeof AdminUpiPaymentsRoute
@@ -689,6 +696,7 @@ export interface FileRoutesByTo {
   '/admin/reports': typeof AdminReportsRoute
   '/admin/returns': typeof AdminReturnsRoute
   '/admin/reviews': typeof AdminReviewsRoute
+  '/admin/rice-samples': typeof AdminRiceSamplesRoute
   '/admin/settings': typeof AdminSettingsRoute
   '/admin/stock-counts': typeof AdminStockCountsRoute
   '/admin/upi-payments': typeof AdminUpiPaymentsRoute
@@ -782,6 +790,7 @@ export interface FileRoutesById {
   '/admin/reports': typeof AdminReportsRoute
   '/admin/returns': typeof AdminReturnsRoute
   '/admin/reviews': typeof AdminReviewsRoute
+  '/admin/rice-samples': typeof AdminRiceSamplesRoute
   '/admin/settings': typeof AdminSettingsRoute
   '/admin/stock-counts': typeof AdminStockCountsRoute
   '/admin/upi-payments': typeof AdminUpiPaymentsRoute
@@ -876,6 +885,7 @@ export interface FileRouteTypes {
     | '/admin/reports'
     | '/admin/returns'
     | '/admin/reviews'
+    | '/admin/rice-samples'
     | '/admin/settings'
     | '/admin/stock-counts'
     | '/admin/upi-payments'
@@ -967,6 +977,7 @@ export interface FileRouteTypes {
     | '/admin/reports'
     | '/admin/returns'
     | '/admin/reviews'
+    | '/admin/rice-samples'
     | '/admin/settings'
     | '/admin/stock-counts'
     | '/admin/upi-payments'
@@ -1059,6 +1070,7 @@ export interface FileRouteTypes {
     | '/admin/reports'
     | '/admin/returns'
     | '/admin/reviews'
+    | '/admin/rice-samples'
     | '/admin/settings'
     | '/admin/stock-counts'
     | '/admin/upi-payments'
@@ -1144,6 +1156,7 @@ export interface RootRouteChildren {
   AdminReportsRoute: typeof AdminReportsRoute
   AdminReturnsRoute: typeof AdminReturnsRoute
   AdminReviewsRoute: typeof AdminReviewsRoute
+  AdminRiceSamplesRoute: typeof AdminRiceSamplesRoute
   AdminSettingsRoute: typeof AdminSettingsRoute
   AdminStockCountsRoute: typeof AdminStockCountsRoute
   AdminUpiPaymentsRoute: typeof AdminUpiPaymentsRoute
@@ -1508,6 +1521,13 @@ declare module '@tanstack/react-router' {
       path: '/admin/reviews'
       fullPath: '/admin/reviews'
       preLoaderRoute: typeof AdminReviewsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/rice-samples': {
+      id: '/admin/rice-samples'
+      path: '/admin/rice-samples'
+      fullPath: '/admin/rice-samples'
+      preLoaderRoute: typeof AdminRiceSamplesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/admin/settings': {
@@ -2000,6 +2020,7 @@ const rootRouteChildren: RootRouteChildren = {
   AdminReportsRoute: AdminReportsRoute,
   AdminReturnsRoute: AdminReturnsRoute,
   AdminReviewsRoute: AdminReviewsRoute,
+  AdminRiceSamplesRoute: AdminRiceSamplesRoute,
   AdminSettingsRoute: AdminSettingsRoute,
   AdminStockCountsRoute: AdminStockCountsRoute,
   AdminUpiPaymentsRoute: AdminUpiPaymentsRoute,
