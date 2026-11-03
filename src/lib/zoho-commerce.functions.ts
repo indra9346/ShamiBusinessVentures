@@ -28,6 +28,7 @@ import { gstStateCodeOf } from "@/lib/gstin";
 import {
   ZOHO_CALL_DEFAULT_PURPOSE, ZOHO_CALL_LOG_SETTING, describeZohoCall, mergeZohoCalls, type ZohoCall, type ZohoCallLog,
 } from "@/lib/zoho-call-log";
+import { ZOHO_TOKEN_LIMIT_MESSAGE, createZohoTokenCache, isZohoTokenLimit, type ZohoTokenCache, type ZohoTokenReply } from "@/lib/zoho-token-cache";
 
 // ---------------------------------------------------------------- Zoho API call log
 // Every Zoho API call made from this file is noted with what it was for, and saved to
@@ -81,6 +82,7 @@ const fetch: typeof globalThis.fetch = async (input, init) => {
   const method = (init?.method ?? "GET").toUpperCase();
   try {
     const response = await globalThis.fetch(input, init);
+    if (response.status === 401) zohoTokenRefused(init);
     noteZohoCall(url, method, response.ok);
     return response;
   } catch (cause) {
@@ -964,22 +966,44 @@ function mapProduct(p: Record<string, unknown>, organizationId: string) {
     },
   };
 }
+// The build includes this file twice on the server (the server-function chunk and the server entry),
+// so the token lives on globalThis: one kept token per process, whichever copy asks.
+const zohoTokens = ((globalThis as { __grainBazarZohoToken?: ZohoTokenCache }).__grainBazarZohoToken ??= createZohoTokenCache());
+
 async function accessToken(region: Region, refreshToken: string) {
   const [accounts] = REGIONS[region];
-  const response = await fetch(`${accounts}/oauth/v2/token`, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      grant_type: "refresh_token",
-      client_id: reqEnv("ZOHO_CLIENT_ID"),
-      client_secret: reqEnv("ZOHO_CLIENT_SECRET"),
-      refresh_token: refreshToken,
-    }),
+  // Kept under a hash of the refresh token: callers read it from the database each time, so after a
+  // Reauthorize every server process moves to the new connection on its next call.
+  return zohoTokens.get(await stateHash(`${region}:${refreshToken}`), async () => {
+    const response = await fetch(`${accounts}/oauth/v2/token`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        client_id: reqEnv("ZOHO_CLIENT_ID"),
+        client_secret: reqEnv("ZOHO_CLIENT_SECRET"),
+        refresh_token: refreshToken,
+      }),
+      // Calls that arrive meanwhile wait on this one, so it can't be left hanging.
+      signal: AbortSignal.timeout(20_000),
+    });
+    const data = (await response.json().catch(() => ({}))) as ZohoTokenReply;
+    if (isZohoTokenLimit(response.status, data)) {
+      console.warn(zohoLogLine("zoho_token_limit", { status: response.status, error: data.error, description: data.error_description }));
+      throw new Error(ZOHO_TOKEN_LIMIT_MESSAGE);
+    }
+    if (!response.ok || !data.access_token)
+      throw new Error(data.error ?? "Could not refresh Zoho access token");
+    // The call log leaves token requests out, so this is how often each process really asks.
+    console.info(zohoLogLine("zoho_token_new", { expiresIn: String(data.expires_in) }));
+    return { token: data.access_token, expiresIn: data.expires_in };
   });
-  const data = (await response.json()) as { access_token?: string; error?: string };
-  if (!response.ok || !data.access_token)
-    throw new Error(data.error ?? "Could not refresh Zoho access token");
-  return data.access_token;
+}
+
+/** A kept token Zoho no longer accepts must not stay in use for the rest of its hour. */
+function zohoTokenRefused(init: RequestInit | undefined) {
+  const header = (init?.headers as Record<string, string> | undefined)?.["Authorization"];
+  if (header) zohoTokens.refused(header.replace("Zoho-oauthtoken ", ""));
 }
 
 type ZohoSyncJob = {
