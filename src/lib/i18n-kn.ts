@@ -2338,7 +2338,7 @@ export const kn: Record<string, string> = {
   "No customer, vendor, catalogue, or order sync jobs are recorded yet. Queue details appear after the production migration is applied.": "ಇನ್ನೂ ಯಾವುದೇ ಗ್ರಾಹಕ, ಮಾರಾಟಗಾರ, ಕ್ಯಾಟಲಾಗ್ ಅಥವಾ ಆರ್ಡರ್ ಸಿಂಕ್ ಕೆಲಸಗಳು ದಾಖಲಾಗಿಲ್ಲ. ಪ್ರೊಡಕ್ಷನ್ ಮೈಗ್ರೇಶನ್ ಅನ್ವಯಿಸಿದ ನಂತರ ಸರದಿಯ ವಿವರಗಳು ಕಾಣಿಸುತ್ತವೆ.",
   "No matching records": "ಹೊಂದುವ ದಾಖಲೆಗಳಿಲ್ಲ",
   "Nothing is due yet": "ಇನ್ನೂ ಯಾವುದರ ಸಮಯ ಬಂದಿಲ್ಲ",
-  "{0} records wait for their next try.": "{0} ದಾಖಲೆಗಳು ಮುಂದಿನ ಪ್ರಯತ್ನಕ್ಕೆ ಕಾಯುತ್ತಿವೆ.",
+  "{0} records are still open; see the list below.": "{0} ದಾಖಲೆಗಳು ಇನ್ನೂ ಬಾಕಿ ಇವೆ; ಕೆಳಗಿನ ಪಟ್ಟಿಯನ್ನು ನೋಡಿ.",
   "No pending jobs to process": "ಪ್ರಕ್ರಿಯೆಗೊಳಿಸಲು ಬಾಕಿ ಇರುವ ಕೆಲಸಗಳಿಲ್ಲ",
   "No records available": "ಯಾವುದೇ ದಾಖಲೆಗಳು ಲಭ್ಯವಿಲ್ಲ",
   "Not synced": "ಸಿಂಕ್ ಆಗಿಲ್ಲ",

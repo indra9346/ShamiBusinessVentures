@@ -671,10 +671,10 @@ function ZohoCommerceAdmin() {
       const res = await processZohoSyncNow({ data: { limit: 50 } });
       await reloadQueue();
       await reloadMirror();
-      const waiting = Number(syncQueue.counts["pending"] || 0) + Number(syncQueue.counts["failed"] || 0);
-      if (res.processed === 0 && waiting > 0) {
+      const open = ["pending", "processing", "failed", "needs_review"].reduce((sum, status) => sum + Number(syncQueue.counts[status] || 0), 0);
+      if (res.processed === 0 && open > 0) {
         toast.info("Nothing is due yet", {
-          description: `${waiting} records wait for their next try.`,
+          description: `${open} records are still open; see the list below.`,
         });
       } else if (res.processed === 0) {
         toast.info("No pending jobs to process", {

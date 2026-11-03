@@ -26,6 +26,10 @@ ALTER TABLE public.zoho_sync_outbox ADD COLUMN IF NOT EXISTS push_holder uuid;
 CREATE OR REPLACE FUNCTION public.enqueue_zoho_sync(_entity_type text, _entity_id text)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 BEGIN
+  -- Any later route to the queue skips a customer whose login is still being removed (customer data requests).
+  IF _entity_type = 'customer' AND EXISTS (SELECT 1 FROM public.profiles WHERE id::text = _entity_id AND status = 'deleted') THEN
+    RETURN;
+  END IF;
   INSERT INTO public.zoho_sync_outbox (entity_type, entity_id, event_type)
   VALUES (_entity_type, _entity_id, 'upsert')
   ON CONFLICT (entity_type, entity_id, event_type) WHERE status = 'pending'
