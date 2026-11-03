@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { SITE_URL } from "@/lib/seo";
+import { categoryIsMissing } from "@/lib/category-slug";
 import type { StorefrontSnapshot } from "@/lib/storefront-snapshot";
 
 /*
@@ -99,6 +100,13 @@ function refresh(): Promise<Data> {
 const logFailure = (cause: unknown) =>
   console.warn("Storefront data could not be read:", cause instanceof Error ? cause.message : cause);
 
+/** Waits for a read at most FIRST_READ_WAIT_MS; null if it fails or takes longer. */
+const withinWait = (read: Promise<Data>) =>
+  Promise.race([
+    read,
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), FIRST_READ_WAIT_MS)),
+  ]).catch((cause: unknown) => { logFailure(cause); return null; });
+
 /** Reads the storefront data at server start and keeps the app awake (production only). */
 export function startStorefrontBackgroundWork() {
   if (state.started || STATIC_DATA_MODE) return;
@@ -124,10 +132,7 @@ async function storefrontSnapshot(): Promise<StorefrontSnapshot | null> {
     next.catch(logFailure);
     return { ...current, servedAt: Date.now() };
   }
-  const data = await Promise.race([
-    next,
-    new Promise<null>((resolve) => setTimeout(() => resolve(null), FIRST_READ_WAIT_MS)),
-  ]).catch((cause: unknown) => { logFailure(cause); return null; });
+  const data = await withinWait(next);
   // No copy in time: the page loads the data in the browser, as before.
   return data ? { ...data, servedAt: Date.now() } : null;
 }
@@ -135,3 +140,17 @@ async function storefrontSnapshot(): Promise<StorefrontSnapshot | null> {
 export const getStorefrontSnapshot = createServerFn({ method: "GET" }).handler(
   async (): Promise<StorefrontSnapshot | null> => (STATIC_DATA_MODE ? null : storefrontSnapshot()),
 );
+
+/**
+ * Whether /categories/<slug> gets a "not found" answer. In the copy is enough to say no; saying yes
+ * takes a read younger than FRESH_MS, so a category just added still opens. No data in time: no.
+ */
+export const storeCategoryIsMissing = createServerFn({ method: "GET" })
+  .validator((slug: string) => slug)
+  .handler(async ({ data: slug }): Promise<boolean> => {
+    if (STATIC_DATA_MODE) return false;
+    const { current } = state;
+    if (current && !categoryIsMissing(slug, current.categories)) return false;
+    const fresh = current && Date.now() - current.fetchedAt < FRESH_MS ? current : await withinWait(refresh());
+    return categoryIsMissing(slug, fresh?.categories);
+  });
