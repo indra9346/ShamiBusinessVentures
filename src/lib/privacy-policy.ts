@@ -217,12 +217,12 @@ const CHANGES: PolicySection = {
 
 const CONTACT_US: PolicySection = {
   heading: "Contact us",
-  intro: ["For any privacy question or request, use our Contact page, email headoffice@shamibusiness.com, call us on +91 98459 66288 or WhatsApp us on +91 95385 00840."],
+  intro: ["For any privacy question or request, use our Contact page, email headoffice@shamibusiness.com, call us on +91 98459 66288 or WhatsApp us on +91 93532 95398 (Mon–Sat, 9am–6pm)."],
   links: [
     { label: "Open the Contact page", href: "/contact" },
     { label: "Email headoffice@shamibusiness.com", href: "mailto:headoffice@shamibusiness.com" },
     { label: "Call +91 98459 66288", href: "tel:+919845966288" },
-    { label: "WhatsApp +91 95385 00840", href: "https://wa.me/919538500840" },
+    { label: "WhatsApp +91 93532 95398", href: "https://wa.me/919353295398" },
   ],
 };
 
