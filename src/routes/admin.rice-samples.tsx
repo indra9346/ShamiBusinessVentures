@@ -21,6 +21,7 @@ import {
   type BrokenResult, type GrainResult, type PartyRole, type RaiseResult, type RicePo, type RiceSample, type RiceTest, type SampleSort, type SampleStatus, type SwellingResult, type TasteResult, type ZohoItemMatch, type ZohoVendorMatch,
 } from "@/lib/rice-samples";
 import type { RiceDesk, RiceGodown } from "@/lib/rice-samples.functions";
+import { listActiveRiceOptions } from "@/lib/product-codes";
 
 export const Route = createFileRoute("/admin/rice-samples")({
   head: () => ({ meta: [{ title: "Rice Samples | Grain Bazar Admin" }, { name: "robots", content: "noindex" }] }),
@@ -484,8 +485,11 @@ function CompareTable({ samples, tests, pos, onTest, onBuy }: { samples: RiceSam
 
 const dialogClass = "max-h-[92vh] w-[calc(100vw-1.5rem)] max-w-lg overflow-y-auto rounded-lg p-4 sm:p-6";
 
-/** The variety and method choices for the form. Plain text for now; the rice master list plugs in here (see the PR). */
-const loadRiceOptions = async (samples: RiceSample[]) => riceTextOptions(samples);
+/** The variety and method choices for the form: the rice master list, or earlier samples if it can't be read. */
+const loadRiceOptions = async (samples: RiceSample[]) => {
+  const codes = await listActiveRiceOptions().catch(() => []);
+  return riceTextOptions(codes.length ? codes.map((code) => ({ variety: code.varietyName, method: code.methodName })) : samples);
+};
 
 function SampleFormDialog({ form, onForm, samples, onClose, onSaved }: { form: SampleForm; onForm: (form: SampleForm) => void; samples: RiceSample[]; onClose: () => void; onSaved: () => Promise<void> }) {
   const [saving, setSaving] = useState(false);
