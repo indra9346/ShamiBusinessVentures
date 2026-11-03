@@ -3164,16 +3164,15 @@ async function syncZohoOrder(db: Awaited<ReturnType<typeof dbAdmin>>, region: Re
   if (!items?.length) throw new NeedsReviewError("Order has no line items");
 
   const lineItems = await zohoLineItemsForOrder(db, region, organizationId, token, items);
-  // A previous request may have reached Zoho even if the response was lost.
-  // On retries, search Zoho first for a sales order with this website order number.
-  if (job.attempts > 1) {
-    const matches = await findZohoSalesOrdersForOrder(region, organizationId, token, order.order_no);
-    if (matches.length > 1) throw new NeedsReviewError(`More than one Zoho sales order is for ${order.order_no}`);
-    if (matches.length === 1) {
-      // Bring the found sales order up to date too (status, lines), not just link it.
-      await linkAndSyncZohoOrder(db, region, organizationId, token, order, items, str(matches[0]!["salesorder_id"]));
-      return;
-    }
+  // A previous request may have reached Zoho even if the response was lost. The queue's attempt
+  // count can't tell: a direct push doesn't add to it, an admin's Retry resets it and an order change
+  // adds a new row. So every push searches Zoho first for a sales order with this website order number.
+  const matches = await findZohoSalesOrdersForOrder(region, organizationId, token, order.order_no);
+  if (matches.length > 1) throw new NeedsReviewError(`More than one Zoho sales order is for ${order.order_no}`);
+  if (matches.length === 1) {
+    // Bring the found sales order up to date too (status, lines), not just link it.
+    await linkAndSyncZohoOrder(db, region, organizationId, token, order, items, str(matches[0]!["salesorder_id"]));
+    return;
   }
   const orderGstInfo = cleanAndValidateGstin(order.customer_gstin);
   const notesParts = [
@@ -4068,9 +4067,8 @@ async function pushOrderToZohoNow(db: Awaited<ReturnType<typeof dbAdmin>>, order
     .eq("status", "processing").gt("locked_until", new Date().toISOString()).limit(1);
   if (working?.length) throw new Error("Zoho is already processing this order. Check again in a minute.");
   try {
-    // attempts: 2 first looks for an earlier half-finished push by its Reference#.
     await withZohoPurpose("Website → Zoho: order (instant)", () => syncZohoOrder(db, region, connection.organization_id, token, {
-      id: "direct", entity_type: "order", entity_id: orderId, attempts: 2,
+      id: "direct", entity_type: "order", entity_id: orderId, attempts: 0,
     } as ZohoSyncJob));
   } catch (cause) {
     const message = (cause instanceof Error ? cause.message : "Zoho rejected the order").slice(0, 900);
