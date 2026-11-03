@@ -647,6 +647,30 @@ export function zohoInvoicesOf(salesOrder: Record<string, unknown>): ZohoInvoice
   })).filter((invoice) => invoice.invoiceId);
 }
 
+/**
+ * What Zoho Books says about a sales order's invoice, in the form the database's delivery note check
+ * takes (private.delivery_note_gate). `listed` comes from the sales order, `books` from Books' own
+ * invoice record. An amount Zoho left out stays null, so it can never read as zero.
+ */
+export type ZohoInvoiceFacts =
+  | { read: true; live_invoices: number; invoice_id?: string; invoice_number?: string; status?: string; total?: number | null; balance?: number | null; payment_made?: number | null; credits_applied?: number | null; write_off_amount?: number | null }
+  | { read: false; error: string };
+
+export function zohoInvoiceFacts(listed: ZohoInvoiceRef[], books: Record<string, unknown> | null): ZohoInvoiceFacts {
+  const live = listed.filter((invoice) => invoice.status !== "void");
+  if (live.length !== 1) return { read: true, live_invoices: live.length };
+  const invoice = live[0]!;
+  if (!books) return { read: false, error: "Zoho Books did not return the invoice" };
+  if (String(books["invoice_id"] ?? "") !== invoice.invoiceId) return { read: false, error: "Zoho Books returned a different invoice" };
+  return {
+    read: true, live_invoices: 1, invoice_id: invoice.invoiceId,
+    invoice_number: String(books["invoice_number"] ?? "") || invoice.number,
+    status: String(books["status"] ?? "").toLowerCase(),
+    total: amountOrNull(books["total"]), balance: amountOrNull(books["balance"]),
+    payment_made: amountOrNull(books["payment_made"]), credits_applied: amountOrNull(books["credits_applied"]), write_off_amount: amountOrNull(books["write_off_amount"]),
+  };
+}
+
 export type InvoiceDecision =
   | { action: "track"; invoice: ZohoInvoiceRef }
   | { action: "create"; reason: "automatic" | "approved" }

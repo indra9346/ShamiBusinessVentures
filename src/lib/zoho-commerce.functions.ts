@@ -16,7 +16,7 @@ import {
   zohoItemSyncAllows, zohoLogLine,
   zohoOrderNumber, websiteOrderNoOf, WEBSITE_ORDER_NUMBER, zohoRetryDelayMs, type AppProductForParity, type ZohoItemForParity, type ZohoOrderForReconcile,
   orderNeedsZohoInvoice, paymentsToRecord, roundingWriteOff,
-  invoiceDecision, websiteInvoiceStatus, zohoInvoicesOf, type InvoiceRecord,
+  invoiceDecision, websiteInvoiceStatus, zohoInvoiceFacts, zohoInvoicesOf, type InvoiceRecord, type ZohoInvoiceFacts,
   DAILY_LIMIT_PAUSE_MINUTES, inboundPollDue, isZohoDailyLimitError, zohoPaused,
   indiaDate, nextZohoFulfilmentStep, zohoFulfilmentStatus, zohoPackagesOf, zohoStatusMovesForward,
   einvoiceProblems,
@@ -2747,6 +2747,39 @@ export const refreshZohoOrderInvoice = createServerFn({ method: "POST" })
     await flushZohoCallLog();
     return { refreshed: true };
   });
+
+/**
+ * Server-only, read-only towards Zoho: what Zoho Books says about the order's invoice right now, for
+ * the delivery note check. Also keeps the website's copy of the invoice up to date, as opening the
+ * order does. Never throws: when Zoho cannot be read the answer says so, and the database refuses.
+ */
+export async function readOrderInvoiceFacts(orderNo: string): Promise<ZohoInvoiceFacts> {
+  try {
+    const db = await dbAdmin();
+    const { data: order, error } = await db.from("orders").select("id,order_no,order_status,zoho_salesorder_id").eq("order_no", orderNo).maybeSingle();
+    if (error) throw new Error("Could not read the order");
+    if (!order?.zoho_salesorder_id) return { read: true, live_invoices: 0 };
+    const salesOrderId = order.zoho_salesorder_id;
+    const { data: budget } = await db.from("settings").select("value").eq("key", ZOHO_API_BUDGET_SETTING).maybeSingle();
+    if (zohoPaused(str(plainObject(budget?.value)["pausedUntil"]), Date.now())) throw new Error("Zoho's daily API limit was reached; calls resume automatically within the hour");
+    const { region, organizationId, token } = await zohoOrderContext(db);
+    return await withZohoPurpose("Delivery note: payment check", async () => {
+      const response = await inventoryRequest<{ salesorder?: Record<string, unknown> }>(region, organizationId, token, `salesorders/${encodeURIComponent(salesOrderId)}`, "GET");
+      if (!response.salesorder) throw new Error("Zoho returned no sales order");
+      const listed = zohoInvoicesOf(response.salesorder);
+      if (!listed) throw new Error("Zoho's sales order did not list its invoices");
+      await recordZohoInvoiceState(db, order, response.salesorder);
+      const live = listed.filter((invoice) => invoice.status !== "void");
+      if (live.length !== 1) return zohoInvoiceFacts(listed, null);
+      const books = await booksRequest<{ invoice?: Record<string, unknown> }>(region, organizationId, token, `invoices/${encodeURIComponent(live[0]!.invoiceId)}`, "GET");
+      return zohoInvoiceFacts(listed, books.invoice ?? null);
+    });
+  } catch (cause) {
+    return { read: false, error: cause instanceof Error ? cause.message.slice(0, 280) : "Zoho could not be read" };
+  } finally {
+    await flushZohoCallLog();
+  }
+}
 
 /** Pushes products to Zoho now and settles their queued catalog jobs. */
 async function syncCatalogProductsDirect(db: Awaited<ReturnType<typeof dbAdmin>>, productIds: string[]) {

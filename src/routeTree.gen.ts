@@ -41,6 +41,7 @@ import { Route as AdminCommissionsRouteImport } from './routes/admin.commissions
 import { Route as AdminCouponsRouteImport } from './routes/admin.coupons'
 import { Route as AdminCustomersRouteImport } from './routes/admin.customers'
 import { Route as AdminDashboardRouteImport } from './routes/admin.dashboard'
+import { Route as AdminDeliveryNotesRouteImport } from './routes/admin.delivery-notes'
 import { Route as AdminEnquiriesRouteImport } from './routes/admin.enquiries'
 import { Route as AdminGodownReportRouteImport } from './routes/admin.godown-report'
 import { Route as AdminInventoryRouteImport } from './routes/admin.inventory'
@@ -89,6 +90,7 @@ import { Route as VendorReviewsRouteImport } from './routes/vendor.reviews'
 import { Route as VendorSettingsRouteImport } from './routes/vendor.settings'
 import { Route as AccountOrdersIdRouteImport } from './routes/account.orders.$id'
 import { Route as AdminCustomersIdRouteImport } from './routes/admin.customers.$id'
+import { Route as AdminDeliveryNoteOrderNoRouteImport } from './routes/admin.delivery-note.$orderNo'
 import { Route as AdminEnquiriesIdRouteImport } from './routes/admin.enquiries.$id'
 import { Route as AdminOrdersIdRouteImport } from './routes/admin.orders.$id'
 import { Route as AdminProductsIdRouteImport } from './routes/admin.products.$id'
@@ -260,6 +262,11 @@ const AdminCustomersRoute = AdminCustomersRouteImport.update({
 const AdminDashboardRoute = AdminDashboardRouteImport.update({
   id: '/admin/dashboard',
   path: '/admin/dashboard',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminDeliveryNotesRoute = AdminDeliveryNotesRouteImport.update({
+  id: '/admin/delivery-notes',
+  path: '/admin/delivery-notes',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AdminEnquiriesRoute = AdminEnquiriesRouteImport.update({
@@ -502,6 +509,12 @@ const AdminCustomersIdRoute = AdminCustomersIdRouteImport.update({
   path: '/$id',
   getParentRoute: () => AdminCustomersRoute,
 } as any)
+const AdminDeliveryNoteOrderNoRoute =
+  AdminDeliveryNoteOrderNoRouteImport.update({
+    id: '/admin/delivery-note/$orderNo',
+    path: '/admin/delivery-note/$orderNo',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const AdminEnquiriesIdRoute = AdminEnquiriesIdRouteImport.update({
   id: '/$id',
   path: '/$id',
@@ -595,6 +608,7 @@ export interface FileRoutesByFullPath {
   '/admin/coupons': typeof AdminCouponsRoute
   '/admin/customers': typeof AdminCustomersRouteWithChildren
   '/admin/dashboard': typeof AdminDashboardRoute
+  '/admin/delivery-notes': typeof AdminDeliveryNotesRoute
   '/admin/enquiries': typeof AdminEnquiriesRouteWithChildren
   '/admin/godown-report': typeof AdminGodownReportRoute
   '/admin/inventory': typeof AdminInventoryRoute
@@ -644,6 +658,7 @@ export interface FileRoutesByFullPath {
   '/vendor/': typeof VendorIndexRoute
   '/account/orders/$id': typeof AccountOrdersIdRoute
   '/admin/customers/$id': typeof AdminCustomersIdRoute
+  '/admin/delivery-note/$orderNo': typeof AdminDeliveryNoteOrderNoRoute
   '/admin/enquiries/$id': typeof AdminEnquiriesIdRoute
   '/admin/orders/$id': typeof AdminOrdersIdRoute
   '/admin/products/$id': typeof AdminProductsIdRoute
@@ -688,6 +703,7 @@ export interface FileRoutesByTo {
   '/admin/coupons': typeof AdminCouponsRoute
   '/admin/customers': typeof AdminCustomersRouteWithChildren
   '/admin/dashboard': typeof AdminDashboardRoute
+  '/admin/delivery-notes': typeof AdminDeliveryNotesRoute
   '/admin/enquiries': typeof AdminEnquiriesRouteWithChildren
   '/admin/godown-report': typeof AdminGodownReportRoute
   '/admin/inventory': typeof AdminInventoryRoute
@@ -737,6 +753,7 @@ export interface FileRoutesByTo {
   '/vendor': typeof VendorIndexRoute
   '/account/orders/$id': typeof AccountOrdersIdRoute
   '/admin/customers/$id': typeof AdminCustomersIdRoute
+  '/admin/delivery-note/$orderNo': typeof AdminDeliveryNoteOrderNoRoute
   '/admin/enquiries/$id': typeof AdminEnquiriesIdRoute
   '/admin/orders/$id': typeof AdminOrdersIdRoute
   '/admin/products/$id': typeof AdminProductsIdRoute
@@ -783,6 +800,7 @@ export interface FileRoutesById {
   '/admin/coupons': typeof AdminCouponsRoute
   '/admin/customers': typeof AdminCustomersRouteWithChildren
   '/admin/dashboard': typeof AdminDashboardRoute
+  '/admin/delivery-notes': typeof AdminDeliveryNotesRoute
   '/admin/enquiries': typeof AdminEnquiriesRouteWithChildren
   '/admin/godown-report': typeof AdminGodownReportRoute
   '/admin/inventory': typeof AdminInventoryRoute
@@ -832,6 +850,7 @@ export interface FileRoutesById {
   '/vendor/': typeof VendorIndexRoute
   '/account/orders/$id': typeof AccountOrdersIdRoute
   '/admin/customers/$id': typeof AdminCustomersIdRoute
+  '/admin/delivery-note/$orderNo': typeof AdminDeliveryNoteOrderNoRoute
   '/admin/enquiries/$id': typeof AdminEnquiriesIdRoute
   '/admin/orders/$id': typeof AdminOrdersIdRoute
   '/admin/products/$id': typeof AdminProductsIdRoute
@@ -879,6 +898,7 @@ export interface FileRouteTypes {
     | '/admin/coupons'
     | '/admin/customers'
     | '/admin/dashboard'
+    | '/admin/delivery-notes'
     | '/admin/enquiries'
     | '/admin/godown-report'
     | '/admin/inventory'
@@ -928,6 +948,7 @@ export interface FileRouteTypes {
     | '/vendor/'
     | '/account/orders/$id'
     | '/admin/customers/$id'
+    | '/admin/delivery-note/$orderNo'
     | '/admin/enquiries/$id'
     | '/admin/orders/$id'
     | '/admin/products/$id'
@@ -972,6 +993,7 @@ export interface FileRouteTypes {
     | '/admin/coupons'
     | '/admin/customers'
     | '/admin/dashboard'
+    | '/admin/delivery-notes'
     | '/admin/enquiries'
     | '/admin/godown-report'
     | '/admin/inventory'
@@ -1021,6 +1043,7 @@ export interface FileRouteTypes {
     | '/vendor'
     | '/account/orders/$id'
     | '/admin/customers/$id'
+    | '/admin/delivery-note/$orderNo'
     | '/admin/enquiries/$id'
     | '/admin/orders/$id'
     | '/admin/products/$id'
@@ -1066,6 +1089,7 @@ export interface FileRouteTypes {
     | '/admin/coupons'
     | '/admin/customers'
     | '/admin/dashboard'
+    | '/admin/delivery-notes'
     | '/admin/enquiries'
     | '/admin/godown-report'
     | '/admin/inventory'
@@ -1115,6 +1139,7 @@ export interface FileRouteTypes {
     | '/vendor/'
     | '/account/orders/$id'
     | '/admin/customers/$id'
+    | '/admin/delivery-note/$orderNo'
     | '/admin/enquiries/$id'
     | '/admin/orders/$id'
     | '/admin/products/$id'
@@ -1153,6 +1178,7 @@ export interface RootRouteChildren {
   AdminCouponsRoute: typeof AdminCouponsRoute
   AdminCustomersRoute: typeof AdminCustomersRouteWithChildren
   AdminDashboardRoute: typeof AdminDashboardRoute
+  AdminDeliveryNotesRoute: typeof AdminDeliveryNotesRoute
   AdminEnquiriesRoute: typeof AdminEnquiriesRouteWithChildren
   AdminGodownReportRoute: typeof AdminGodownReportRoute
   AdminInventoryRoute: typeof AdminInventoryRoute
@@ -1198,6 +1224,7 @@ export interface RootRouteChildren {
   PartnerIndexRoute: typeof PartnerIndexRoute
   StaffIndexRoute: typeof StaffIndexRoute
   VendorIndexRoute: typeof VendorIndexRoute
+  AdminDeliveryNoteOrderNoRoute: typeof AdminDeliveryNoteOrderNoRoute
   ApiAuthSendSmsRoute: typeof ApiAuthSendSmsRoute
   ApiPaymentsBankAlertRoute: typeof ApiPaymentsBankAlertRoute
   ApiZohoCallbackRoute: typeof ApiZohoCallbackRoute
@@ -1429,6 +1456,13 @@ declare module '@tanstack/react-router' {
       path: '/admin/dashboard'
       fullPath: '/admin/dashboard'
       preLoaderRoute: typeof AdminDashboardRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/delivery-notes': {
+      id: '/admin/delivery-notes'
+      path: '/admin/delivery-notes'
+      fullPath: '/admin/delivery-notes'
+      preLoaderRoute: typeof AdminDeliveryNotesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/admin/enquiries': {
@@ -1767,6 +1801,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminCustomersIdRouteImport
       parentRoute: typeof AdminCustomersRoute
     }
+    '/admin/delivery-note/$orderNo': {
+      id: '/admin/delivery-note/$orderNo'
+      path: '/admin/delivery-note/$orderNo'
+      fullPath: '/admin/delivery-note/$orderNo'
+      preLoaderRoute: typeof AdminDeliveryNoteOrderNoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/admin/enquiries/$id': {
       id: '/admin/enquiries/$id'
       path: '/$id'
@@ -2025,6 +2066,7 @@ const rootRouteChildren: RootRouteChildren = {
   AdminCouponsRoute: AdminCouponsRoute,
   AdminCustomersRoute: AdminCustomersRouteWithChildren,
   AdminDashboardRoute: AdminDashboardRoute,
+  AdminDeliveryNotesRoute: AdminDeliveryNotesRoute,
   AdminEnquiriesRoute: AdminEnquiriesRouteWithChildren,
   AdminGodownReportRoute: AdminGodownReportRoute,
   AdminInventoryRoute: AdminInventoryRoute,
@@ -2070,6 +2112,7 @@ const rootRouteChildren: RootRouteChildren = {
   PartnerIndexRoute: PartnerIndexRoute,
   StaffIndexRoute: StaffIndexRoute,
   VendorIndexRoute: VendorIndexRoute,
+  AdminDeliveryNoteOrderNoRoute: AdminDeliveryNoteOrderNoRoute,
   ApiAuthSendSmsRoute: ApiAuthSendSmsRoute,
   ApiPaymentsBankAlertRoute: ApiPaymentsBankAlertRoute,
   ApiZohoCallbackRoute: ApiZohoCallbackRoute,
