@@ -117,8 +117,12 @@ re-authorizes Zoho).
   looks hand-set and keeps the old address. Delivered orders without a GSTIN also send
   `place_of_supply` from the delivery state, as on the website invoice (a GSTIN's state wins; pickup
   keeps Zoho's default, the contact's place, where the website invoice uses the godown's state).
-  Unproven against real Zoho until the live test: whether an invoice made from a sales order copies
-  its address, and whether a full sales order update keeps it.
+  Live test, 3 Nov 2026, one test order: the write works on these Inventory-created sales orders,
+  blanks their address ids and clears the contact's landmark; a full sales order update keeps it;
+  later contact edits don't touch it. **The invoice does not follow:** `invoices/fromsalesorder`
+  copies the contact's address at that moment and keeps that copy, so an order to a non-default
+  address still gets a Zoho invoice with the customer's saved address. Zoho also closes a sales
+  order as soon as it is invoiced, with nothing shipped.
 - Optional official notification: Books "Email a sales order" for each new website order to
   configured staff addresses; off by default; failures logged, never block the sync. Zoho marks a
   draft sales order Open when it is emailed (observed live), so enabling this confirms new website

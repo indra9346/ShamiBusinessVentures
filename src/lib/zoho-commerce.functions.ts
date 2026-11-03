@@ -2137,7 +2137,7 @@ async function zohoLineItemsForOrder(
 }
 
 const ZOHO_CLOSED_ORDER_STATES = ["void", "cancelled"];
-/** Zoho closes a sales order once it is fully invoiced and shipped: nothing left to edit there. */
+/** Zoho closes a sales order once it is invoiced, even with nothing shipped yet: nothing left to edit there. */
 const ZOHO_FINISHED_ORDER_STATES = ["closed", "fulfilled"];
 
 /**

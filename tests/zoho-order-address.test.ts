@@ -48,11 +48,16 @@ test("only a sales order not yet void, closed, invoiced or shipped takes an addr
   for (const shipped of ["shipped", "partially_shipped", "fulfilled", "delivered"]) assert.ok(!zohoOrderAddressOpen({ order_status: "open", shipped_status: shipped }), shipped);
 });
 
-test("a finished sales order is finished, but one merely invoiced or shipped is not", () => {
-  for (const status of ["void", "cancelled", "closed", "fulfilled"]) assert.ok(zohoOrderFinished({ order_status: status }), status);
+test("a sales order is finished when void, or closed with the goods gone", () => {
+  for (const status of ["void", "cancelled"]) assert.ok(zohoOrderFinished({ order_status: status }), status);
   assert.ok(zohoOrderFinished({ status: "void" }));
+  assert.ok(zohoOrderFinished({ order_status: "closed", invoiced_status: "invoiced", shipped_status: "fulfilled" }));
   assert.ok(!zohoOrderFinished({ order_status: "open", invoiced_status: "invoiced", shipped_status: "fulfilled" }));
   assert.ok(!zohoOrderFinished({ order_status: "draft" }));
+  // Live, 3 Nov 2026: Zoho closes a sales order as soon as it is invoiced, with nothing shipped.
+  const invoicedLive = { status: "confirmed", order_status: "closed", invoiced_status: "invoiced", shipped_status: "pending" };
+  assert.ok(!zohoOrderFinished(invoicedLive));
+  assert.ok(!zohoOrderAddressOpen(invoicedLive));
 });
 
 test("an address still equal to the contact's was never set for the order; any other was", () => {

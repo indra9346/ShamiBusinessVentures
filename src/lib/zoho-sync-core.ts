@@ -766,16 +766,23 @@ export function zohoAddressesFromContact(salesOrder: Record<string, unknown>, co
 
 const zohoOrderValue = (salesOrder: Record<string, unknown>, key: string) => String(salesOrder[key] ?? "").toLowerCase();
 
-/** Void or closed: its address no longer matters, whatever it says. */
+const zohoOrderShipped = (salesOrder: Record<string, unknown>) => /^(partially_)?(shipped|fulfilled|delivered)$/.test(zohoOrderValue(salesOrder, "shipped_status"));
+const zohoOrderStatus = (salesOrder: Record<string, unknown>) => zohoOrderValue(salesOrder, "order_status") || zohoOrderValue(salesOrder, "status");
+
+/**
+ * Void, or closed with the goods gone: its address no longer matters, whatever it says. Closed alone
+ * is not enough, because Zoho closes a sales order as soon as it is invoiced (seen live, 3 Nov 2026).
+ */
 export function zohoOrderFinished(salesOrder: Record<string, unknown>) {
-  return ["void", "cancelled", "closed", "fulfilled"].includes(zohoOrderValue(salesOrder, "order_status") || zohoOrderValue(salesOrder, "status"));
+  const status = zohoOrderStatus(salesOrder);
+  return ["void", "cancelled"].includes(status) || (["closed", "fulfilled"].includes(status) && zohoOrderShipped(salesOrder));
 }
 
-/** Whether a Zoho sales order's address can still be written: not finished, invoiced or shipped. */
+/** Whether a Zoho sales order's address can still be written: not void, closed, invoiced or shipped. */
 export function zohoOrderAddressOpen(salesOrder: Record<string, unknown>) {
-  if (zohoOrderFinished(salesOrder)) return false;
+  if (["void", "cancelled", "closed", "fulfilled"].includes(zohoOrderStatus(salesOrder))) return false;
   if (!["", "null", "not_invoiced"].includes(zohoOrderValue(salesOrder, "invoiced_status"))) return false;
-  return !/^(partially_)?(shipped|fulfilled|delivered)$/.test(zohoOrderValue(salesOrder, "shipped_status"));
+  return !zohoOrderShipped(salesOrder);
 }
 
 export type EinvoiceInput = {
