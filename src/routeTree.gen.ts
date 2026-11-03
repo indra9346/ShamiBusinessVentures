@@ -52,6 +52,7 @@ import { Route as AdminPartnersRouteImport } from './routes/admin.partners'
 import { Route as AdminPaymentsRouteImport } from './routes/admin.payments'
 import { Route as AdminPayoutsRouteImport } from './routes/admin.payouts'
 import { Route as AdminPricingRouteImport } from './routes/admin.pricing'
+import { Route as AdminProductCodesRouteImport } from './routes/admin.product-codes'
 import { Route as AdminProductsRouteImport } from './routes/admin.products'
 import { Route as AdminReportsRouteImport } from './routes/admin.reports'
 import { Route as AdminReturnsRouteImport } from './routes/admin.returns'
@@ -313,6 +314,11 @@ const AdminPayoutsRoute = AdminPayoutsRouteImport.update({
 const AdminPricingRoute = AdminPricingRouteImport.update({
   id: '/admin/pricing',
   path: '/admin/pricing',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminProductCodesRoute = AdminProductCodesRouteImport.update({
+  id: '/admin/product-codes',
+  path: '/admin/product-codes',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AdminProductsRoute = AdminProductsRouteImport.update({
@@ -594,6 +600,7 @@ export interface FileRoutesByFullPath {
   '/admin/payments': typeof AdminPaymentsRoute
   '/admin/payouts': typeof AdminPayoutsRoute
   '/admin/pricing': typeof AdminPricingRoute
+  '/admin/product-codes': typeof AdminProductCodesRoute
   '/admin/products': typeof AdminProductsRouteWithChildren
   '/admin/reports': typeof AdminReportsRoute
   '/admin/returns': typeof AdminReturnsRoute
@@ -685,6 +692,7 @@ export interface FileRoutesByTo {
   '/admin/payments': typeof AdminPaymentsRoute
   '/admin/payouts': typeof AdminPayoutsRoute
   '/admin/pricing': typeof AdminPricingRoute
+  '/admin/product-codes': typeof AdminProductCodesRoute
   '/admin/products': typeof AdminProductsRouteWithChildren
   '/admin/reports': typeof AdminReportsRoute
   '/admin/returns': typeof AdminReturnsRoute
@@ -778,6 +786,7 @@ export interface FileRoutesById {
   '/admin/payments': typeof AdminPaymentsRoute
   '/admin/payouts': typeof AdminPayoutsRoute
   '/admin/pricing': typeof AdminPricingRoute
+  '/admin/product-codes': typeof AdminProductCodesRoute
   '/admin/products': typeof AdminProductsRouteWithChildren
   '/admin/reports': typeof AdminReportsRoute
   '/admin/returns': typeof AdminReturnsRoute
@@ -872,6 +881,7 @@ export interface FileRouteTypes {
     | '/admin/payments'
     | '/admin/payouts'
     | '/admin/pricing'
+    | '/admin/product-codes'
     | '/admin/products'
     | '/admin/reports'
     | '/admin/returns'
@@ -963,6 +973,7 @@ export interface FileRouteTypes {
     | '/admin/payments'
     | '/admin/payouts'
     | '/admin/pricing'
+    | '/admin/product-codes'
     | '/admin/products'
     | '/admin/reports'
     | '/admin/returns'
@@ -1055,6 +1066,7 @@ export interface FileRouteTypes {
     | '/admin/payments'
     | '/admin/payouts'
     | '/admin/pricing'
+    | '/admin/product-codes'
     | '/admin/products'
     | '/admin/reports'
     | '/admin/returns'
@@ -1140,6 +1152,7 @@ export interface RootRouteChildren {
   AdminPaymentsRoute: typeof AdminPaymentsRoute
   AdminPayoutsRoute: typeof AdminPayoutsRoute
   AdminPricingRoute: typeof AdminPricingRoute
+  AdminProductCodesRoute: typeof AdminProductCodesRoute
   AdminProductsRoute: typeof AdminProductsRouteWithChildren
   AdminReportsRoute: typeof AdminReportsRoute
   AdminReturnsRoute: typeof AdminReturnsRoute
@@ -1480,6 +1493,13 @@ declare module '@tanstack/react-router' {
       path: '/admin/pricing'
       fullPath: '/admin/pricing'
       preLoaderRoute: typeof AdminPricingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/product-codes': {
+      id: '/admin/product-codes'
+      path: '/admin/product-codes'
+      fullPath: '/admin/product-codes'
+      preLoaderRoute: typeof AdminProductCodesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/admin/products': {
@@ -1996,6 +2016,7 @@ const rootRouteChildren: RootRouteChildren = {
   AdminPaymentsRoute: AdminPaymentsRoute,
   AdminPayoutsRoute: AdminPayoutsRoute,
   AdminPricingRoute: AdminPricingRoute,
+  AdminProductCodesRoute: AdminProductCodesRoute,
   AdminProductsRoute: AdminProductsRouteWithChildren,
   AdminReportsRoute: AdminReportsRoute,
   AdminReturnsRoute: AdminReturnsRoute,

@@ -180,6 +180,8 @@ type AppState = {
   products: Product[];
   addProduct: (p: Product) => Promise<boolean>;
   updateProduct: (id: string, patch: Partial<Product>) => Promise<boolean>;
+  /** Puts a code on a product or takes it off. Nothing else about the product changes (admin only). */
+  setProductCode: (id: string, code: string | undefined) => Promise<boolean>;
   deleteProduct: (id: string) => Promise<boolean>;
 
   batches: PurchaseBatch[];
@@ -830,7 +832,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     });
     if (error) {
       console.error("Catalog save failed", error);
-      const description = error.code === "42501" && user?.role === "vendor"
+      const description = error.code === "42501" && user?.role === "vendor" && !/product's code/.test(error.message)
         ? "Your vendor account may need approved KYC documents before catalog changes. Open Store Profile → KYC Documents, submit the required files, and wait for admin review."
         : error.message;
       toast.error("Could not save this product", { description });
@@ -1400,13 +1402,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
         // The save writes the whole payload, and stock and sales counts change with every order.
         // Take them from the database rather than this page's copy, so saving another field never
         // undoes an order's stock deduction (the stock trigger would book it as a stock movement).
-        const live: Partial<Pick<Product, "stock" | "sold" | "reserved">> = {};
+        const live: Partial<Pick<Product, "stock" | "sold" | "reserved" | "productCode">> = {};
         if (!STATIC_DATA_MODE) {
           const { data: row } = await supabase.from("catalog_products").select("payload").eq("id", id).maybeSingle();
           const payload = (row?.payload ?? {}) as Record<string, unknown>;
           for (const key of ["stock", "sold", "reserved"] as const) {
             if (typeof payload[key] === "number") live[key] = payload[key];
           }
+          // The same for its code, which another tab may have just changed.
+          if (row) live.productCode = typeof payload["productCode"] === "string" ? payload["productCode"] : undefined;
         }
         const updated = { ...existing, ...live, ...patch, updated: today() };
         setProducts((list) => list.map((p) => (p.id === id ? updated : p)));
@@ -1414,6 +1418,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (!ok) setProducts((list) => list.map((item) => item.id === id ? existing : item));
         else pushProductsToZohoInBackground([id]);
         return ok;
+      },
+      setProductCode: async (id, code) => {
+        if (!STATIC_DATA_MODE) {
+          const { data: done, error } = await supabase.rpc("admin_set_product_code", { _product_id: id, _code: code ?? "" });
+          if (error || !done) {
+            toast.error("Could not change this product's code", { description: error?.message ?? "This product no longer exists." });
+            return false;
+          }
+        }
+        setProducts((list) => list.map((p) => (p.id === id ? { ...p, productCode: code } : p)));
+        return true;
       },
       deleteProduct: async (id) => {
         const existing = products.find((product) => product.id === id);
