@@ -11,6 +11,9 @@
  *   3. If a second one exists all the same, it is found by the same reference and shown to the admin.
  */
 
+import { GST_STATE_CODES, GSTIN_REGEX } from "./gstin.ts";
+import { ZOHO_PLACE_CODES } from "./zoho-sync-core.ts";
+
 /** settings row: { issueOnCreate: boolean }. No row means Draft. */
 export const RICE_PO_SETTINGS_KEY = "rice_po_settings";
 
@@ -233,6 +236,8 @@ export type PoPlan = {
   branchId: string; branchName: string; locationId: string; issueOnCreate: boolean; description: string;
   /** The Zoho company it was raised in. A purchase order from before this was recorded has none. */
   organizationId?: string;
+  /** The tax poTaxFrom worked out. A purchase order raised before this was added has none, and a new one is never sent without it. */
+  taxId?: string; taxName?: string; taxKind?: PoTax["kind"]; sourceOfSupply?: string; destinationOfSupply?: string;
 };
 
 /** The purchase order line's text. The vendor sees it, so it holds nothing internal. */
@@ -246,7 +251,8 @@ export const indiaToday = (nowMs: number) => new Date(nowMs + 330 * 60_000).toIS
  * The request body. Quotes from Zoho's Inventory purchase order API are in docs/rice-samples.md. Both rate and purchase_rate
  * are sent because the published example uses purchase_rate while Zoho's live purchase orders report rate; recordCreated then
  * compares what Zoho saved with what was confirmed. No purchase order number is sent: Zoho numbers it from the client's own
- * series. Nothing internal (scores, tasting notes) goes in here, because the vendor receives this document.
+ * series. Nothing internal (scores, tasting notes) goes in here, because the vendor receives this document. Zoho doesn't apply an
+ * item's tax by itself (the first live purchase order came back with GST 0), so the tax goes on the line, with the two states it depends on.
  */
 export function purchaseOrderBody(plan: PoPlan): Record<string, unknown> {
   return {
@@ -255,6 +261,8 @@ export function purchaseOrderBody(plan: PoPlan): Record<string, unknown> {
     reference_number: plan.reference,
     location_id: plan.locationId,
     is_inclusive_tax: false,
+    ...(plan.sourceOfSupply ? { source_of_supply: plan.sourceOfSupply } : {}),
+    ...(plan.destinationOfSupply ? { destination_of_supply: plan.destinationOfSupply } : {}),
     line_items: [{
       item_id: plan.itemId,
       description: plan.description,
@@ -262,6 +270,7 @@ export function purchaseOrderBody(plan: PoPlan): Record<string, unknown> {
       rate: plan.poRate,
       purchase_rate: plan.poRate,
       location_id: plan.locationId,
+      ...(plan.taxId ? { tax_id: plan.taxId } : {}),
     }],
   };
 }
@@ -292,13 +301,88 @@ export function poDifferences(plan: PoPlan, zohoPo: Record<string, unknown>): st
   }
   const subTotal = numberOr(zohoPo["sub_total"]);
   if (subTotal !== null && Math.abs(subTotal - plan.subTotal) > 0.01) out.push(`Zoho's amount before GST is ₹${subTotal}, not ₹${plan.subTotal}.`);
+  return [...out, ...poTaxDifferences(plan, zohoPo)];
+}
+
+/** The tax part of the comparison. A purchase order from before the tax was recorded has no tax to compare beyond any percentage it showed. */
+export function poTaxDifferences(plan: PoPlan, zohoPo: Record<string, unknown>): string[] {
+  const out: string[] = [];
   const tax = numberOr(zohoPo["tax_total"]);
   if (tax !== null && plan.gstPercent !== null && plan.gstPercent !== undefined) {
     const expected = round2((plan.subTotal * plan.gstPercent) / 100);
     if (Math.abs(tax - expected) > 1) out.push(`Zoho's GST is ₹${tax}, not the ₹${expected} (${plan.gstPercent}%) you were shown.`);
   }
+  if (!plan.taxId) return out;
+  const shown = plan.taxName || "the tax you were shown";
+  if (tax === null) out.push("Zoho's copy doesn't show the GST on this purchase order.");
+  const line = asRecords(zohoPo["line_items"])[0];
+  const lineTax = text(line?.["tax_id"]);
+  if (line && lineTax !== plan.taxId) out.push(lineTax ? `Zoho put ${text(line["tax_name"]) || "another tax"} on this line, not ${shown}.` : `Zoho's line shows no tax, not ${shown}.`);
+  const source = text(zohoPo["source_of_supply"]), destination = text(zohoPo["destination_of_supply"]);
+  if (plan.sourceOfSupply && source !== plan.sourceOfSupply) out.push(`Zoho has the vendor's state as ${source ? placeName(source) : "blank"}, not ${placeName(plan.sourceOfSupply)}.`);
+  if (plan.destinationOfSupply && destination !== plan.destinationOfSupply) out.push(`Zoho has the delivery state as ${destination ? placeName(destination) : "blank"}, not ${placeName(plan.destinationOfSupply)}.`);
   return out;
 }
+
+// ---------------------------------------------------------------- The tax on a purchase order
+
+export type PoTax = {
+  taxId: string; taxName: string; percent: number;
+  /** intra: the vendor and the godown are in the same state, so CGST + SGST. inter: different states, so IGST. */
+  kind: "intra" | "inter";
+  /** The parts as Zoho names them, CGST2.5 and SGST2.5, when Zoho lists them. */
+  parts: string[];
+  /** Zoho's two-letter state codes. */
+  sourceOfSupply: string; destinationOfSupply: string;
+};
+export type PoTaxAnswer = { ok: true; tax: PoTax } | { ok: false; message: string };
+
+const PLACE_NAMES: Record<string, string> = Object.fromEntries(Object.entries(GST_STATE_CODES).map(([name, digits]) => [ZOHO_PLACE_CODES[digits] ?? digits, name.replace(/\b(?!and\b)[a-z]/g, (c) => c.toUpperCase())]));
+/** Other codes for a state than this site's table holds. Zoho's own code for the vendor is what gets sent; these only stop a false alarm against their GSTIN. */
+const OTHER_PLACE_CODES: Record<string, string> = { CG: "CT", OD: "OR", UK: "UT", AP: "AD", DD: "DN" };
+const placeName = (code: string) => PLACE_NAMES[OTHER_PLACE_CODES[code] ?? code] ?? code;
+
+/**
+ * Works out a purchase order's tax from what Zoho holds: the item's own tax for this route, the route from the vendor's state and
+ * the godown's. Each item in Zoho holds two taxes, intra (GST5, a group of CGST and SGST) and inter (IGST5). The rate is the
+ * accountant's, so it is never assumed here. When something needed isn't there, or two things disagree, the answer says what to fix,
+ * so nothing goes out with GST 0 by accident. A 0% tax set on the item itself is an answer, and the confirm screen says so.
+ */
+export function poTaxFrom(item: Record<string, unknown>, vendor: Record<string, unknown>, godown: { name: string; stateCode: string }): PoTaxAnswer {
+  const stop = (message: string): PoTaxAnswer => ({ ok: false, message });
+  const vendorName = text(vendor["contact_name"]) || "This vendor", itemName = text(item["name"]) || "This item";
+  const gstin = text(vendor["gst_no"]).trim().toUpperCase();
+  if (text(vendor["gst_treatment"]) !== "business_gst" || !gstin) return stop(`${vendorName} isn't shown as GST-registered in Zoho, so the website can't tell what tax this purchase order should carry. Add their GSTIN in Zoho if they have one, or ask your accountant.`);
+  const source = text(vendor["place_of_contact"]).trim().toUpperCase();
+  if (!source) return stop(`Zoho has no state for ${vendorName}. Add it in Zoho: it decides between CGST + SGST and IGST.`);
+  if (!GSTIN_REGEX.test(gstin)) return stop(`${vendorName}'s GSTIN in Zoho, ${gstin}, doesn't look right. Correct it in Zoho.`);
+  const gstinPlace = ZOHO_PLACE_CODES[gstin.slice(0, 2)];
+  if (!gstinPlace || gstinPlace !== (OTHER_PLACE_CODES[source] ?? source)) return stop(`${vendorName}'s GSTIN is from ${gstinPlace ? placeName(gstinPlace) : "an unknown state"}, but Zoho has them in ${placeName(source)}. Correct it in Zoho: it decides between CGST + SGST and IGST.`);
+  const destination = ZOHO_PLACE_CODES[godown.stateCode.trim()];
+  if (!destination) return stop(`${godown.name} has no state on record. Add it in Admin > Branches: it decides between CGST + SGST and IGST.`);
+  if (item["is_taxable"] === false) return stop(`${itemName} is marked as not taxable in Zoho, so the website can't tell what tax this purchase order should carry. Ask your accountant.`);
+
+  const kind: PoTax["kind"] = (OTHER_PLACE_CODES[source] ?? source) === destination ? "intra" : "inter";
+  const routeOf = (route: PoTax["kind"]) => (route === "intra" ? "within the state" : "from another state");
+  const taxFor = (route: PoTax["kind"]) => asRecords(item["item_tax_preferences"]).find((row) => text(row["tax_specification"]).toLowerCase() === route);
+  const chosen = taxFor(kind);
+  const taxId = text(chosen?.["tax_id"]), taxName = text(chosen?.["tax_name"]), percent = numberOr(chosen?.["tax_percentage"]);
+  if (!chosen || !taxId || !taxName || percent === null || percent < 0) return stop(`${itemName} has no tax for purchases ${routeOf(kind)} in Zoho. Set it on the item in Zoho. The rate is for your accountant.`);
+  if (/igst/i.test(taxName) !== (kind === "inter")) return stop(`${itemName}'s tax for purchases ${routeOf(kind)} is ${taxName} in Zoho, which doesn't look right for that. Check it on the item in Zoho.`);
+  const otherRoute = kind === "intra" ? "inter" : "intra";
+  const otherPercent = numberOr(taxFor(otherRoute)?.["tax_percentage"]);
+  if (otherPercent !== null && otherPercent !== percent) return stop(`${itemName} is at ${percent}% ${routeOf(kind)} but ${otherPercent}% ${routeOf(otherRoute)} in Zoho, and they should match. Check it on the item in Zoho.`);
+  const groups = asRecords(chosen["tax_groups_details"]);
+  if (groups.length && Math.abs(groups.reduce((sum, part) => sum + (numberOr(part["percentage"]) ?? 0), 0) - percent) > 0.001) return stop(`${itemName}'s tax ${taxName} doesn't add up to ${percent}% in Zoho. Check it on the item in Zoho.`);
+  return { ok: true, tax: { taxId, taxName, percent, kind, parts: groups.map((part) => text(part["text"])).filter(Boolean), sourceOfSupply: source, destinationOfSupply: destination } };
+}
+
+export const poTaxAmount = (subTotal: number, percent: number) => round2((subTotal * percent) / 100);
+/** "GST5 (CGST2.5 + SGST2.5)" for the confirm screen. */
+export const poTaxLabel = (tax: Pick<PoTax, "taxName" | "parts">) => (tax.parts.length ? `${tax.taxName} (${tax.parts.join(" + ")})` : tax.taxName);
+export const poTaxReason = (tax: Pick<PoTax, "kind" | "sourceOfSupply" | "destinationOfSupply">) => (tax.kind === "intra"
+  ? `CGST + SGST, because the vendor and the godown are both in ${placeName(tax.destinationOfSupply)}.`
+  : `IGST, because the vendor is in ${placeName(tax.sourceOfSupply)} and the godown in ${placeName(tax.destinationOfSupply)}.`);
 
 const ZOHO_STATUS_LABELS: Record<string, string> = {
   draft: "Draft", open: "Issued", issued: "Issued", billed: "Billed", partially_billed: "Partly billed", cancelled: "Cancelled", closed: "Closed",
@@ -443,13 +527,14 @@ const elapsedWait = (claimedAt: string, nowMs: number) => Math.max(0, PO_RETRY_S
 const tooSoon = (wait: number): RaiseResult => ({ kind: "uncertain", retryAfterSeconds: wait, message: `Zoho has no purchase order for this sample yet, but it may still be working on the last request. Check again in ${wait} seconds. ${UNCERTAIN_NOTE}` });
 
 /** What differs between the purchase order already raised and what this admin just confirmed. Empty when they agree. */
-export function differsFromRaised(saved: PoPlan, wanted: Pick<PoPlan, "vendorId" | "itemId" | "quantityQntl" | "ratePerQntl" | "branchId">): string[] {
+export function differsFromRaised(saved: PoPlan, wanted: Pick<PoPlan, "vendorId" | "itemId" | "quantityQntl" | "ratePerQntl" | "branchId" | "taxId">): string[] {
   const out: string[] = [];
   if (saved.vendorId !== wanted.vendorId) out.push(`vendor ${saved.vendorName}`);
   if (saved.itemId !== wanted.itemId) out.push(`item ${saved.itemName}`);
   if (Number(saved.quantityQntl) !== wanted.quantityQntl) out.push(`${saved.quantityQntl} quintal`);
   if (Number(saved.ratePerQntl) !== wanted.ratePerQntl) out.push(`Rs ${saved.ratePerQntl} per quintal`);
   if (saved.branchId !== wanted.branchId) out.push(`godown ${saved.branchName}`);
+  if (saved.taxId && wanted.taxId && saved.taxId !== wanted.taxId) out.push(`tax ${saved.taxName || saved.taxId}`);
   return out.length ? [`The purchase order already raised for this sample is not what you just confirmed. It has: ${out.join(", ")}. Check it in Zoho.`] : [];
 }
 
@@ -472,9 +557,11 @@ const duplicateWarning = (reference: string, others: PoFound[]) =>
 
 /** Saves what Zoho holds. If saving fails the purchase order still exists, so the answer says so and Check Zoho will find it. */
 async function saveFound(
-  deps: RaiseDeps, plan: PoPlan, sampleId: string, found: PoFound, zohoCopy: Record<string, unknown> | null, foundBySearch: boolean, actor: PoActor, extra: string[],
+  deps: RaiseDeps, plan: PoPlan, sampleId: string, found: PoFound, zohoCopy: Record<string, unknown> | null, foundBySearch: boolean, actor: PoActor, extra: string[], wanted: PoPlan = plan,
 ): Promise<RaiseResult> {
-  const differences = zohoCopy ? poDifferences(plan, zohoCopy) : [];
+  // wanted is what the admin has just confirmed, when Zoho turned out to hold one from an earlier attempt.
+  const differences = zohoCopy ? [...new Set([...poDifferences(plan, zohoCopy), ...poTaxDifferences(wanted, zohoCopy)])]
+    : plan.taxId || wanted.taxId ? ["Zoho's copy could not be read, so its figures and GST were not compared with what was confirmed."] : [];
   const status = text(zohoCopy?.["status"]) || found.status || "draft";
   const totals = { subTotal: numberOr(zohoCopy?.["sub_total"]), taxTotal: numberOr(zohoCopy?.["tax_total"]), total: numberOr(zohoCopy?.["total"]) };
   let answer: RecordAnswer | null = null;
@@ -509,7 +596,7 @@ async function adoptFromSearch(deps: RaiseDeps, sampleId: string, plan: PoPlan, 
   if (!search.matches.length) return { adopted: null, search };
   const [first, ...others] = search.matches as [PoFound, ...PoFound[]];
   const copy = await fullPo(deps.zoho, first.id);
-  const adopted = await saveFound(deps, plan, sampleId, first, copy, true, actor, [...differsFromRaised(plan, wanted), ...(others.length ? [duplicateWarning(plan.reference, search.matches)] : [])]);
+  const adopted = await saveFound(deps, plan, sampleId, first, copy, true, actor, [...differsFromRaised(plan, wanted), ...(others.length ? [duplicateWarning(plan.reference, search.matches)] : [])], wanted);
   for (const other of others) {
     await deps.store.record({ sampleId, po: other, subTotal: null, taxTotal: null, total: null, differences: [], foundBySearch: true, actor }).catch(() => undefined);
   }
@@ -521,6 +608,8 @@ async function adoptFromSearch(deps: RaiseDeps, sampleId: string, plan: PoPlan, 
  * already checked the figures and read the vendor and item from Zoho.
  */
 export async function raiseRicePo(deps: RaiseDeps, sampleId: string, plan: PoPlan, actor: PoActor): Promise<RaiseResult> {
+  // Without a tax on the line Zoho saves GST 0, so this is the last stop before anything goes out.
+  if (!plan.taxId) return { kind: "rejected", message: "The tax for this purchase order hasn't been worked out, so nothing was sent to Zoho. Review it and confirm again." };
   const attemptId = deps.newId();
   const claim = await deps.store.claim({ sampleId, attemptId, reference: plan.reference, snapshot: plan, actor });
   if (claim.outcome === "already_raised") {
@@ -583,9 +672,10 @@ export async function raiseRicePo(deps: RaiseDeps, sampleId: string, plan: PoPla
     } catch {
       warnings.push("The purchase order is in Zoho, but marking it Issued got no answer. Check it in Zoho and issue it there if it still says Draft.");
     }
-    copy = (await fullPo(deps.zoho, poId)) ?? created;
-    status = text(copy["status"]) || status;
   }
+  // What Zoho saved is what gets compared, not its reply to the request. If it can't be read, the reply is the next best.
+  copy = (await fullPo(deps.zoho, poId)) ?? created;
+  status = text(copy["status"]) || status;
   if (attempts > 1) {
     // A resend: if the first request was processed after all, both now exist. Say so at once.
     const search = await findPurchaseOrdersByReference(deps.zoho, plan.reference);

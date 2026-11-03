@@ -16,9 +16,9 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
-  BROKEN_LABELS, GRAIN_LABELS, PO_DEATH_WORDS, RICE_PO_SETTINGS_KEY, SORT_LABELS, STATUS_LABELS, SWELLING_LABELS, TASTE_LABELS, bestInComparison, canCancelPo, inPlay, poDeathReason, isBulkUnit, isSamplePhone, latestTest, phoneLinks, planPoLine,
+  BROKEN_LABELS, GRAIN_LABELS, PO_DEATH_WORDS, RICE_PO_SETTINGS_KEY, SORT_LABELS, STATUS_LABELS, SWELLING_LABELS, TASTE_LABELS, bestInComparison, canCancelPo, inPlay, poDeathReason, poTaxAmount, poTaxLabel, poTaxReason, isBulkUnit, isSamplePhone, latestTest, phoneLinks, planPoLine,
   poLineProblem, poReference, priceUnitWarning, riceTextOptions, sampleLabel, sortSamples, testsBySample, zohoPoUrl, zohoStatusLabel,
-  type BrokenResult, type GrainResult, type RetiredPo, type PartyRole, type RaiseResult, type RicePo, type RiceSample, type RiceTest, type SampleSort, type SampleStatus, type SwellingResult, type TasteResult, type ZohoItemMatch, type ZohoVendorMatch,
+  type BrokenResult, type GrainResult, type PoTax, type RetiredPo, type PartyRole, type RaiseResult, type RicePo, type RiceSample, type RiceTest, type SampleSort, type SampleStatus, type SwellingResult, type TasteResult, type ZohoItemMatch, type ZohoVendorMatch,
 } from "@/lib/rice-samples";
 import type { RiceDesk, RiceGodown } from "@/lib/rice-samples.functions";
 import { listActiveRiceOptions } from "@/lib/product-codes";
@@ -468,6 +468,7 @@ function PoPanel({ sample, po, zoho, onChanged, onCancel }: { sample: RiceSample
       <p className="flex flex-wrap items-center gap-1.5 text-sm font-bold"><CheckCircle2 className="h-4 w-4 text-success" />{po.zoho_po_number || "Purchase order"}<span className="font-medium text-slate">· {po.zoho_gone ? "Deleted in Zoho" : zohoStatusLabel(po.zoho_po_status)}</span></p>
       <p className="mt-1 break-words text-slate">
         {po.snapshot.vendorName} ({PARTY_LABEL[po.snapshot.vendorRole].toLowerCase()}) · {qty(po.snapshot.quantityQntl)} quintal at {inrPrecise(po.snapshot.ratePerQntl)} · to {po.snapshot.branchName}
+        {po.zoho_tax_total !== null ? ` · GST in Zoho ${inrPrecise(po.zoho_tax_total)}` : ""}
         {po.zoho_total !== null ? ` · total in Zoho ${inrPrecise(po.zoho_total)}` : ""}
       </p>
       <p className="mt-1 text-slate">Raised by {po.raised_by_name || "an admin"}{po.raised_at ? `, ${when(po.raised_at)}` : ""}.{po.zoho_gone ? "" : " Carry on in Zoho; this sample is locked here."}{po.zoho_checked_at ? ` Status checked ${when(po.zoho_checked_at)}.` : ""}</p>
@@ -882,6 +883,9 @@ function BuyDialog({ sample, tests, desk, po, onReload, onClose }: { sample: Ric
   const [sending, setSending] = useState(false);
   const sendingRef = useRef(false);
   const [result, setResult] = useState<RaiseResult | null>(null);
+  const [tax, setTax] = useState<PoTax | null>(null);
+  const [taxProblem, setTaxProblem] = useState("");
+  const [checkingTax, setCheckingTax] = useState(false);
 
   useEffect(() => {
     if (STATIC_DATA_MODE) return;
@@ -895,19 +899,37 @@ function BuyDialog({ sample, tests, desk, po, onReload, onClose }: { sample: Ric
   const problem = !item ? "Choose the Zoho item first." : poLineProblem({ quantityQntl, ratePerQntl, kgPerUnit: kg, availableQntl: Number(sample.quantity_qntl), unit: item.unit, itemName: item.name }) ?? (godown?.locationId ? null : "Choose a godown that is linked to Zoho. Link one in Admin > Branches.");
   const rateWarning = priceUnitWarning(ratePerQntl);
   const line = kg > 0 ? planPoLine({ quantityQntl, ratePerQntl, kgPerUnit: kg }) : null;
-  const gstAmount = item?.gstPercent && line ? Math.round(line.subTotal * item.gstPercent) / 100 : null;
+  const gstAmount = tax && line ? poTaxAmount(line.subTotal, tax.percent) : null;
 
   const chooseItem = (match: ZohoItemMatch) => { setItem(match); setKgPerUnit(match.kgPerUnit ? String(match.kgPerUnit) : ""); };
 
+  // Read from Zoho as it is now, each time, because the vendor, item or godown may have changed. If it can't be worked out, this stays here and says why.
+  const review = async () => {
+    if (!vendor || !item || !godown) return;
+    if (STATIC_DATA_MODE) { setStep("confirm"); return; }
+    setCheckingTax(true);
+    setTaxProblem("");
+    setTax(null);
+    try {
+      const { previewRicePoTax } = await import("@/lib/rice-samples.functions");
+      const answer = await previewRicePoTax({ data: { vendorId: vendor.id, itemId: item.id, branchId: godown.id } });
+      if (answer.ok) { setTax(answer.tax); setStep("confirm"); } else setTaxProblem(answer.message);
+    } catch (cause) {
+      setTaxProblem(`The tax could not be read from Zoho (${errorText(cause)}). Try again.`);
+    } finally {
+      setCheckingTax(false);
+    }
+  };
+
   const raise = async () => {
-    if (sendingRef.current || !vendor || !item || !line || !godown) return;
+    if (sendingRef.current || !vendor || !item || !line || !godown || !tax) return;
     sendingRef.current = true;
     setSending(true);
     try {
       const { raiseRiceSamplePurchaseOrder } = await import("@/lib/rice-samples.functions");
       const answer = await raiseRiceSamplePurchaseOrder({ data: {
         sampleId: sample.id, vendorRole, vendorId: vendor.id, itemId: item.id, kgPerUnit: kg, quantityQntl, ratePerQntl, branchId: godown.id,
-        confirmed: { vendorName: vendor.name, itemName: item.name, itemUnit: item.unit, poQuantity: line.poQuantity, poRate: line.poRate, subTotal: line.subTotal, issueOnCreate: desk.issueOnCreate, sampleUpdatedAt: sample.updated_at },
+        confirmed: { vendorName: vendor.name, itemName: item.name, itemUnit: item.unit, poQuantity: line.poQuantity, poRate: line.poRate, subTotal: line.subTotal, issueOnCreate: desk.issueOnCreate, sampleUpdatedAt: sample.updated_at, taxId: tax.taxId, taxPercent: tax.percent, sourceOfSupply: tax.sourceOfSupply, destinationOfSupply: tax.destinationOfSupply },
       } });
       setResult(answer);
     } catch (cause) {
@@ -976,16 +998,17 @@ function BuyDialog({ sample, tests, desk, po, onReload, onClose }: { sample: Ric
             </div>
             {rateWarning && <p className="rounded-md bg-amber-50 px-2 py-1.5 text-xs font-medium text-amber-800">{rateWarning}</p>}
             <div className="grid gap-1"><Label className="text-xs text-slate">Receiving godown</Label>
-              <select aria-label="Receiving godown" className="h-10 min-w-0 rounded-md border border-input bg-white px-2 text-sm" value={branchId} onChange={(event) => setBranchId(event.target.value)}>
+              <select aria-label="Receiving godown" disabled={checkingTax} className="h-10 min-w-0 rounded-md border border-input bg-white px-2 text-sm" value={branchId} onChange={(event) => { setBranchId(event.target.value); setTaxProblem(""); }}>
                 <option value="">Choose…</option>
                 {desk.godowns.map((entry) => <option key={entry.id} value={entry.id} disabled={!entry.locationId}>{entry.name}{entry.locationId ? "" : " (not linked to Zoho)"}</option>)}
               </select>
             </div>
             {line && !problem && <p className="rounded-md bg-ivory px-3 py-2 text-sm text-navy">{poUnitsSentence(line.poQuantity, unitLabel, kg, item.unit)} at {inrPrecise(line.poRate)} each = <strong>{inrPrecise(line.subTotal)}</strong> before GST</p>}
             {problem && <p className="rounded-md bg-amber-50 px-2 py-1.5 text-xs font-medium text-amber-800">{problem}</p>}
+            {taxProblem && <p className="break-words rounded-md bg-danger/5 px-2 py-1.5 text-xs font-medium text-danger">{taxProblem} Nothing has been sent to Zoho.</p>}
             <div className="flex gap-2">
-              <Button variant="outline" className="h-11 flex-1" onClick={() => setStep("item")}>Back</Button>
-              <Button className="h-11 flex-1 bg-navy text-white hover:bg-navy/90" disabled={Boolean(problem)} onClick={() => setStep("confirm")}>Review</Button>
+              <Button variant="outline" className="h-11 flex-1" disabled={checkingTax} onClick={() => { setTaxProblem(""); setStep("item"); }}>Back</Button>
+              <Button className="h-11 flex-1 bg-navy text-white hover:bg-navy/90" disabled={Boolean(problem) || checkingTax} onClick={() => void review()}>{checkingTax ? "Checking the tax…" : "Review"}</Button>
             </div>
           </div>
         )}
@@ -997,10 +1020,12 @@ function BuyDialog({ sample, tests, desk, po, onReload, onClose }: { sample: Ric
               <ConfirmRow label="Quantity" value={<>{qty(quantityQntl)} quintal<span className="block text-xs font-normal text-slate">{poUnitsSentence(line.poQuantity, unitLabel, kg, item.unit)} in Zoho</span></>} />
               <ConfirmRow label="Rate" value={<>{inrPrecise(ratePerQntl)} per quintal<span className="block text-xs font-normal text-slate">{inrPrecise(line.poRate)} per {unitLabel} in Zoho</span></>} />
               <ConfirmRow label="Total before GST" value={<span className="text-base">{inrPrecise(line.subTotal)}</span>} />
-              <ConfirmRow label="GST" value={<span className="font-normal">{gstAmount !== null ? `About ${inrPrecise(gstAmount)} (${item.gstLabel}), making about ${inrPrecise(line.subTotal + gstAmount)}. Zoho works out the exact GST.` : "Zoho works it out from the item and the vendor."}</span>} />
+              <ConfirmRow label="GST" value={tax && gstAmount !== null ? <>{inrPrecise(gstAmount)}<span className="block text-xs font-normal text-slate">{poTaxLabel(tax)}. {poTaxReason(tax)}</span></> : <span className="font-normal">Not available in this preview.</span>} />
+              {gstAmount !== null && <ConfirmRow label="Total with GST" value={<span className="text-base">{inrPrecise(line.subTotal + gstAmount)}<span className="block text-xs font-normal text-slate">Zoho works out the exact figure. You are told if its figure differs.</span></span>} />}
               <ConfirmRow label="Receiving godown" value={<>{godown.name}<span className="block text-xs font-normal text-slate">Zoho location {godown.locationName || godown.locationId}</span></>} />
               <ConfirmRow label="Created as" value={desk.issueOnCreate ? "Issued" : <>Draft<span className="block text-xs font-normal text-slate">You check it and issue it in Zoho.</span></>} />
             </dl>
+            {tax?.percent === 0 && <p className="rounded-md bg-amber-50 px-2 py-1.5 text-xs font-medium text-amber-800">"{item.name}" is set to {tax.taxName}, 0% tax, in Zoho. If that is wrong, correct the item in Zoho first.</p>}
             {!isBulkUnit(item.unit) && <p className="rounded-md bg-amber-50 px-2 py-1.5 text-xs font-medium text-amber-800">"{item.name}" is counted in {item.unit || "units"}, not by weight. When this is received in Zoho, its stock goes up by {qty(line.poQuantity)} {item.unit || "units"}. Is that what you want?</p>}
             {rateWarning && <p className="rounded-md bg-amber-50 px-2 py-1.5 text-xs font-medium text-amber-800">{rateWarning}</p>}
             {po?.state === "dead" && <p className="rounded-md bg-amber-50 px-2 py-1.5 text-xs font-medium text-amber-800">This makes a new purchase order with its own reference. The earlier {po.retired_pos[po.retired_pos.length - 1]?.number} stays on record as {PO_DEATH_WORDS[po.retired_pos[po.retired_pos.length - 1]?.reason ?? "deleted"]}.</p>}
@@ -1010,7 +1035,7 @@ function BuyDialog({ sample, tests, desk, po, onReload, onClose }: { sample: Ric
             <p className="text-xs text-slate">This goes into the official Zoho books as soon as you press the button.</p>
             <div className="flex gap-2">
               <Button variant="outline" className="h-11 flex-1" disabled={sending} onClick={() => setStep("figures")}>Back</Button>
-              <Button className="h-11 flex-1 bg-gold font-bold text-midnight hover:bg-gold/90" disabled={sending || STATIC_DATA_MODE} onClick={() => void raise()}>{sending ? "Raising…" : "Raise purchase order"}</Button>
+              <Button className="h-11 flex-1 bg-gold font-bold text-midnight hover:bg-gold/90" disabled={sending || STATIC_DATA_MODE || !tax} onClick={() => void raise()}>{sending ? "Raising…" : "Raise purchase order"}</Button>
             </div>
           </div>
         )}
@@ -1044,7 +1069,7 @@ function BuyDialog({ sample, tests, desk, po, onReload, onClose }: { sample: Ric
             )}
             <div className="flex flex-wrap gap-2">
               {(result.kind === "uncertain" || result.kind === "in_progress") && <Button className="h-11 flex-1 bg-navy text-white hover:bg-navy/90" disabled={sending} onClick={() => void check()}>{sending ? "Checking…" : "Check Zoho"}</Button>}
-              {(result.kind === "rejected" || result.kind === "absent") && vendor && item && <Button className="h-11 flex-1 bg-navy text-white hover:bg-navy/90" onClick={() => setStep("confirm")}>Review and try again</Button>}
+              {(result.kind === "rejected" || result.kind === "absent") && vendor && item && <Button className="h-11 flex-1 bg-navy text-white hover:bg-navy/90" onClick={() => { setTax(null); setStep("figures"); }}>Review and try again</Button>}
               <Button variant="outline" className="h-11 flex-1" disabled={sending} onClick={onClose}>Close</Button>
             </div>
           </div>
@@ -1153,6 +1178,7 @@ function VendorStep({ sample, role, onRole, vendor, onVendor, onNext, onCancel }
                   <span className="block font-semibold break-words text-navy">{match.name}</span>
                   <span className="block text-xs break-words text-slate">{[match.company && match.company !== match.name ? match.company : "", match.phone, match.gstNo ? `GSTIN ${match.gstNo}` : "No GSTIN in Zoho"].filter(Boolean).join(" · ")}</span>
                   {match.byPhone && <span className="mt-0.5 block text-xs font-semibold text-success">Same phone number as this sample</span>}
+                  {usable && !match.gstNo && <span className="mt-0.5 block text-xs font-semibold text-amber-700">Without a GSTIN the website can't work out the tax, so this will stop at Review.</span>}
                   {match.contactType !== "vendor" && <span className="mt-0.5 block text-xs font-semibold text-danger">A customer in Zoho, not a vendor: cannot be used</span>}
                   {match.contactType === "vendor" && !match.active && <span className="mt-0.5 block text-xs font-semibold text-danger">Inactive in Zoho</span>}
                 </button>
@@ -1176,7 +1202,9 @@ function VendorStep({ sample, role, onRole, vendor, onVendor, onNext, onCancel }
               </select>
             </div>
           </div>
-          <div className="grid gap-1"><Label className="text-xs text-slate">GSTIN (if registered)</Label><Input className={inputClass} value={gstin} onChange={(event) => { setGstin(event.target.value.toUpperCase()); setConfirmCreate(false); }} /></div>
+          <div className="grid gap-1"><Label className="text-xs text-slate">GSTIN (if registered)</Label><Input className={inputClass} value={gstin} onChange={(event) => { setGstin(event.target.value.toUpperCase()); setConfirmCreate(false); }} />
+            <p className="text-[11px] text-slate">Without a GSTIN the website can't work out the tax, so a purchase order for this vendor will stop at Review.</p>
+          </div>
           {!confirmCreate ? (
             <div className="flex gap-2">
               <Button variant="outline" className="h-10 flex-1" onClick={() => setCreating(false)}>Cancel</Button>
@@ -1311,7 +1339,7 @@ function ItemStep({ sample, item, onItem, kgPerUnit, onKgPerUnit, ratePerQntl, o
           </div>
           <div className="grid gap-1"><Label className="text-xs text-slate">GST</Label>
             <select aria-label="Item GST" className="h-10 min-w-0 rounded-md border border-input bg-white px-2 text-sm" value={gstRate} onChange={(event) => { setGstRate(event.target.value as "" | "5" | "later"); setConfirmCreate(false); }}>
-              <option value="">Choose…</option><option value="5">5%, as your other rice items in Zoho</option><option value="later">Set GST later in Zoho</option>
+              <option value="">Choose…</option><option value="5">5%, as your other rice items in Zoho</option><option value="later">Set GST later in Zoho (a purchase order stops at Review until then)</option>
             </select>
             <p className="text-[11px] text-slate">Bulk rice can be taxed differently from packed rice. If unsure, ask your accountant and set it later in Zoho.</p>
           </div>
