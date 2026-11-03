@@ -20,6 +20,30 @@ export type Database = {
         Update: { id?: string; code?: string; name?: string; address?: string; city?: string; state?: string; state_code?: string; pincode?: string; phone?: string; email?: string; map_url?: string; instructions?: string; gstin?: string; zoho_location_id?: string; zoho_location_name?: string; zoho_pricebook_id?: string; zoho_pricebook_name?: string; serves_pincodes?: string[]; pickup_enabled?: boolean; delivery_enabled?: boolean; delivery_fee?: number; free_delivery_above?: number | null; is_default?: boolean; active?: boolean; sort_order?: number; created_at?: string; updated_at?: string; vendor_id?: string | null; latitude?: number | null; longitude?: number | null; attendance_radius_m?: number; shift_start?: string; late_grace_min?: number; weekly_off?: number | null; shift_end?: string; presence_interval_min?: number }
         Relationships: []
       }
+      rice_samples: {
+        Row: { id: string; sample_no: number; arrival_date: string; variety: string; method: string; price_per_qntl: number; quantity_qntl: number; party_role: string; party_name: string; party_phone: string; seller_name: string; notes: string; status: string; status_reason: string; status_changed_at: string; created_by: string | null; created_by_name: string; created_at: string; updated_at: string }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
+      rice_sample_tests: {
+        Row: { id: string; sample_id: string; tested_at: string; tested_by_name: string; score: number; grain: string; swelling: string; taste: string; broken: string; notes: string; recorded_by: string | null; recorded_at: string }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
+      rice_sample_events: {
+        Row: { id: number; sample_id: string; action: string; from_status: string | null; to_status: string | null; detail: string; actor: string | null; actor_name: string; at: string }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
+      rice_sample_purchase_orders: {
+        Row: { sample_id: string; reference: string; state: string; attempt_id: string; attempts: number; snapshot: Json; claimed_by: string | null; claimed_by_name: string; claimed_at: string; last_error: string; last_error_detail: string; zoho_po_id: string; zoho_po_number: string; zoho_po_status: string; zoho_sub_total: number | null; zoho_tax_total: number | null; zoho_total: number | null; differences: string[]; duplicates: Json; zoho_gone: boolean; zoho_checked_at: string | null; raised_at: string | null; raised_by: string | null; raised_by_name: string; updated_at: string }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
       price_lots: {
         Row: { id: string; lot_code: string; purchase_date: string | null; order_folio: string; factory: string; item: string; product_id: string | null; branch_id: string | null; quantity_qntl: number; price: number; commission: number; gst_rate: number; transport: number; amali_transport: number; amali_shami: number; driver_tips: number; unloading: number; margin: number; bag_kg: number; gst: number; landing_price: number; selling_qntl: number; selling_bag: number; applied_price: number | null; applied_branch_id: string | null; applied_at: string | null; notes: string; created_by: string | null; created_at: string; updated_at: string }
         Insert: { id?: string; lot_code?: string; purchase_date?: string | null; order_folio?: string; factory?: string; item?: string; product_id?: string | null; branch_id?: string | null; quantity_qntl?: number; price?: number; commission?: number; gst_rate?: number; transport?: number; amali_transport?: number; amali_shami?: number; driver_tips?: number; unloading?: number; margin?: number; bag_kg?: number; applied_price?: number | null; applied_branch_id?: string | null; applied_at?: string | null; notes?: string; created_by?: string | null; created_at?: string; updated_at?: string }
@@ -1158,6 +1182,18 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      rice_sample_save: { Args: { _id: string | null; _arrival_date: string; _variety: string; _method: string; _price_per_qntl: number; _quantity_qntl: number; _party_role: string; _party_name: string; _party_phone: string; _seller_name: string; _notes: string }; Returns: string }
+      rice_sample_add_test: { Args: { _sample_id: string; _tested_at: string | null; _tested_by_name: string; _score: number; _grain: string; _swelling: string; _taste: string; _broken: string; _notes: string }; Returns: string }
+      rice_sample_set_status: { Args: { _sample_id: string; _action: string; _reason: string }; Returns: string }
+      rice_sample_po_claim: { Args: { _sample_id: string; _attempt_id: string; _reference: string; _snapshot: Json; _user: string; _user_name: string }; Returns: Json }
+      rice_sample_po_takeover: { Args: { _sample_id: string; _expected_attempt: string; _attempt_id: string; _snapshot: Json; _user: string; _user_name: string }; Returns: Json }
+      rice_sample_po_release: { Args: { _sample_id: string; _expected_attempt: string; _user: string; _user_name: string; _by_hand?: boolean }; Returns: Json }
+      rice_sample_po_mark_failed: { Args: { _sample_id: string; _attempt_id: string; _state: string; _message: string; _detail: string; _user: string; _user_name: string }; Returns: undefined }
+      rice_sample_po_record: { Args: { _sample_id: string; _po_id: string; _po_number: string; _po_status: string; _sub_total: number | null; _tax_total: number | null; _total: number | null; _differences: string[]; _found_by_search: boolean; _user: string; _user_name: string }; Returns: Json }
+      rice_sample_po_refresh: { Args: { _sample_id: string; _po_status: string | null; _sub_total: number | null; _tax_total: number | null; _total: number | null; _gone: boolean; _duplicates: Json | null }; Returns: undefined }
+      rice_sample_creation_claim: { Args: { _kind: string; _name_key: string; _display_name: string; _attempt_id: string; _user: string; _user_name: string }; Returns: Json }
+      rice_sample_creation_takeover: { Args: { _kind: string; _name_key: string; _expected_attempt: string; _attempt_id: string; _user: string; _user_name: string }; Returns: Json }
+      rice_sample_creation_finish: { Args: { _kind: string; _name_key: string; _attempt_id: string; _state: string; _zoho_id: string; _message: string }; Returns: undefined }
       enqueue_zoho_sync: { Args: { _entity_type: string; _entity_id: string }; Returns: undefined }
       claim_zoho_sync_jobs: { Args: { _limit?: number }; Returns: Database["public"]["Tables"]["zoho_sync_outbox"]["Row"][] }
       apply_zoho_contact_update: { Args: { _user_id: string; _contact_type: string; _full_name: string | null; _phone: string | null; _company: string | null; _gstin: string | null; _address?: Json | null }; Returns: undefined }
