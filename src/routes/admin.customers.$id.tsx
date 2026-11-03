@@ -7,6 +7,7 @@ import { inr } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { CustomerDataPanel } from "@/components/customers/CustomerDataPanel";
 
 export const Route = createFileRoute("/admin/customers/$id")({
   head: ({ params }) => ({
@@ -127,7 +128,7 @@ function AdminCustomerDetail() {
 
       <Panel
         title="Profile"
-        action={
+        action={customer.status === "deleted" ? undefined : (
           <Button
             variant="outline"
             size="sm"
@@ -138,7 +139,7 @@ function AdminCustomerDetail() {
           >
             {customer.status === "blocked" ? "Unblock Customer" : "Block Customer"}
           </Button>
-        }
+        )}
       >
         <div className="flex flex-wrap items-center gap-4">
           <span className="grid h-14 w-14 shrink-0 place-items-center rounded-full bg-navy/10 text-lg font-bold text-navy">
@@ -182,7 +183,7 @@ function AdminCustomerDetail() {
         </div>
       </Panel>
 
-      <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Panel title="Total Orders">
           <p className="text-2xl font-bold text-navy">{completedOrders.length}</p>
         </Panel>
@@ -197,7 +198,7 @@ function AdminCustomerDetail() {
         </Panel>
       </div>
 
-      <div className="mt-5 grid gap-5 xl:grid-cols-2">
+      <div className="mt-5 grid grid-cols-1 gap-5 xl:grid-cols-2">
         <Panel title="Monthly Purchase Activity">
           {monthlyPerformance.length ? (
             <div className="space-y-3">
@@ -242,7 +243,7 @@ function AdminCustomerDetail() {
 
       <div className="mt-6">
         <Tabs defaultValue="orders">
-          <TabsList>
+          <TabsList className="h-auto flex-wrap justify-start">
             <TabsTrigger value="orders">Orders</TabsTrigger>
             <TabsTrigger value="payments">Payments</TabsTrigger>
             <TabsTrigger value="addresses">Addresses</TabsTrigger>
@@ -353,6 +354,8 @@ function AdminCustomerDetail() {
           </TabsContent>
         </Tabs>
       </div>
+
+      <CustomerDataPanel customerId={customer.id} customerName={customer.name} deleted={customer.status === "deleted"} />
     </PanelLayout>
   );
 }
