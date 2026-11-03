@@ -751,6 +751,78 @@ export function zohoGstFields(rawGstin: string | null | undefined, record: "cont
   };
 }
 
+/** The body of Zoho's "update sales order address" call (Commerce: salesorders/{id}/address/{type}). */
+export type ZohoOrderAddress = { attention: string; address: string; street2: string; city: string; state: string; zip: string; country: string; phone: string };
+
+/**
+ * A website order's own copy of its address (orders.shipping_address) as that body; null when the
+ * copy lacks the street, city, state or PIN. street2 is sent empty because the copy has none:
+ * whatever the contact's address held there (its landmark) belongs to another address.
+ */
+export function zohoOrderAddress(shippingAddress: unknown): ZohoOrderAddress | null {
+  const copy = shippingAddress && typeof shippingAddress === "object" ? shippingAddress as Record<string, unknown> : {};
+  const text = (key: string) => String(copy[key] ?? "").trim();
+  const address = text("line"), city = text("city"), state = text("state"), zip = text("pin");
+  if (!address || !city || !state || !zip) return null;
+  return { attention: text("name"), address, street2: "", city, state, zip, country: "India", phone: text("phone") };
+}
+
+const zohoPlaceKey = (address: Record<string, unknown>) => [address["address"], address["city"], address["state"], address["zip"]]
+  .map((part) => String(part ?? "").replace(/\s+/g, " ").trim().toLowerCase()).join("|");
+const zohoAddressFields = (value: unknown) => (value && typeof value === "object" ? value as Record<string, unknown> : {});
+
+/** The same place: street, city, state and PIN. Phone, street2 and country don't count: the contact's address has no phone. */
+export const sameZohoPlace = (a: unknown, b: unknown) => zohoPlaceKey(zohoAddressFields(a)) === zohoPlaceKey(zohoAddressFields(b));
+
+/** The same person at the same place. */
+export const sameZohoAddress = (a: unknown, b: unknown) => sameZohoPlace(a, b)
+  && String(zohoAddressFields(a)["attention"] ?? "").replace(/\s+/g, " ").trim().toLowerCase() === String(zohoAddressFields(b)["attention"] ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+
+/** Which addresses of a Zoho sales order differ from the order's own. An order to the contact's address needs no write. */
+export function zohoAddressesToUpdate(salesOrder: Record<string, unknown>, address: ZohoOrderAddress) {
+  return (["shipping", "billing"] as const).filter((type) => !sameZohoAddress(salesOrder[`${type}_address`], address));
+}
+
+/** Those of `types` a sales order or invoice still holds as its contact's copy: nobody set them for this order. */
+export function zohoAddressesFromContact(record: Record<string, unknown>, contact: Record<string, unknown>, types: readonly ("shipping" | "billing")[]) {
+  return types.filter((type) => sameZohoAddress(record[`${type}_address`], contact[`${type}_address`]));
+}
+
+/** A Zoho address as the body of its "update address" calls; null when it lacks the street, city, state or PIN. */
+export function zohoAddressBody(value: unknown): ZohoOrderAddress | null {
+  const fields = zohoAddressFields(value);
+  const text = (key: string) => String(fields[key] ?? "").trim();
+  const address = text("address"), city = text("city"), state = text("state"), zip = text("zip");
+  if (!address || !city || !state || !zip) return null;
+  return { attention: text("attention"), address, street2: text("street2"), city, state, zip, country: text("country") || "India", phone: text("phone") };
+}
+
+/** Which addresses to copy from a sales order to its invoice: those it has that the invoice shows differently. */
+export function zohoInvoiceAddressesToCopy(invoice: Record<string, unknown>, salesOrder: Record<string, unknown>) {
+  return (["shipping", "billing"] as const).filter((type) => zohoAddressBody(salesOrder[`${type}_address`]) && !sameZohoAddress(invoice[`${type}_address`], salesOrder[`${type}_address`]));
+}
+
+const zohoOrderValue = (salesOrder: Record<string, unknown>, key: string) => String(salesOrder[key] ?? "").toLowerCase();
+
+const zohoOrderShipped = (salesOrder: Record<string, unknown>) => /^(partially_)?(shipped|fulfilled|delivered)$/.test(zohoOrderValue(salesOrder, "shipped_status"));
+const zohoOrderStatus = (salesOrder: Record<string, unknown>) => zohoOrderValue(salesOrder, "order_status") || zohoOrderValue(salesOrder, "status");
+
+/**
+ * Void, or closed with the goods gone: its address no longer matters, whatever it says. Closed alone
+ * is not enough, because Zoho closes a sales order as soon as it is invoiced (seen live, 3 Nov 2026).
+ */
+export function zohoOrderFinished(salesOrder: Record<string, unknown>) {
+  const status = zohoOrderStatus(salesOrder);
+  return ["void", "cancelled"].includes(status) || (["closed", "fulfilled"].includes(status) && zohoOrderShipped(salesOrder));
+}
+
+/** Whether a Zoho sales order's address can still be written: not void, closed, invoiced or shipped. */
+export function zohoOrderAddressOpen(salesOrder: Record<string, unknown>) {
+  if (["void", "cancelled", "closed", "fulfilled"].includes(zohoOrderStatus(salesOrder))) return false;
+  if (!["", "null", "not_invoiced"].includes(zohoOrderValue(salesOrder, "invoiced_status"))) return false;
+  return !zohoOrderShipped(salesOrder);
+}
+
 export type EinvoiceInput = {
   gstin: string | null | undefined;
   legalName: string | null | undefined;
