@@ -8,6 +8,7 @@ import {
   zohoLogLine,
   zohoOrderIsFor,
   zohoOrderNumber,
+  zohoRefusedWrite,
   zohoRetryDelayMs,
   verifyZohoSignature,
   type GbOrderForReconcile,
@@ -183,4 +184,9 @@ test("reconcile: orders numbered in the godown series match by Reference#", () =
   const orphan = reconcileOrders([], [zoho("c9", { salesorder_number: "CLK-SO-0009" })]);
   assert.equal(orphan.issues[0]?.issue, "zoho_without_grain_bazar_order");
   assert.equal(orphan.issues[0]?.orderNo, "CLK-SO-0009");
+});
+
+test("a create Zoho clearly refused can be sent again; any other outcome may have made the order", () => {
+  for (const status of [400, 401, 404, 429]) assert.equal(zohoRefusedWrite(status), true, String(status));
+  for (const status of [200, 201, 301, 500, 502, 503, null]) assert.equal(zohoRefusedWrite(status), false, String(status));
 });

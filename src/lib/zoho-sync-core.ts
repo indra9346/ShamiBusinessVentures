@@ -27,6 +27,11 @@ export function shouldRetryZohoCall(method: HttpMethod, status: number | "networ
   return status === "network" || (status >= 500 && status <= 599);
 }
 
+/** Zoho answered a write with a clear no, so nothing was made. A 5xx, or no reply at all, says nothing about it. */
+export function zohoRefusedWrite(status: number | null) {
+  return status !== null && status >= 400 && status <= 499;
+}
+
 /** Wait before retry number `retry` (1-based): Retry-After when Zoho sends one, else 1s, 2s, 4s... capped. */
 export function zohoRetryDelayMs(retry: number, retryAfterHeader: string | null, capMs = 10_000) {
   const header = Number(retryAfterHeader);

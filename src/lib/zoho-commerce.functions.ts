@@ -14,6 +14,7 @@ import {
   cleanEmailList, godownPricesFromPricebook, godownStockFromZohoItem, mergeGodownPrices, newOrderEmail, parseZohoItemSyncVendorIds, pendingOrderQty, sameGodownPrices,
   zohoPricebookItemsFor, reconcileCatalog, reconcileCustomers, reconcileOrders, shouldRetryZohoCall,
   zohoItemSyncAllows, zohoLogLine,
+  zohoRefusedWrite,
   zohoOrderIsFor, websiteOrderNoOf, WEBSITE_ORDER_NUMBER, zohoRetryDelayMs, type AppProductForParity, type ZohoItemForParity, type ZohoOrderForReconcile,
   orderNeedsZohoInvoice, paymentsToRecord, roundingWriteOff,
   invoiceDecision, websiteInvoiceStatus, zohoInvoicesOf, type InvoiceRecord,
@@ -30,16 +31,17 @@ import {
 // Every Zoho API call made from this file is noted with what it was for, and saved to
 // settings.zoho_api_calls (Admin > Zoho Commerce > Zoho API calls). Zoho's own API Usage page
 // counts calls per module; this says why. Best effort: logging never blocks or fails a sync.
-type PurposeStore = { run<T>(store: string, fn: () => T): T; getStore(): string | undefined };
-const purposeStore: PurposeStore | null = (() => {
+type ContextStore<S> = { run<T>(store: S, fn: () => T): T; getStore(): S | undefined };
+function newContextStore<S>(): ContextStore<S> | null {
   try {
     const nodeProcess = (globalThis as { process?: { getBuiltinModule?: (id: string) => unknown } }).process;
-    const hooks = nodeProcess?.getBuiltinModule?.("node:async_hooks") as { AsyncLocalStorage?: new () => PurposeStore } | undefined;
+    const hooks = nodeProcess?.getBuiltinModule?.("node:async_hooks") as { AsyncLocalStorage?: new () => ContextStore<S> } | undefined;
     return hooks?.AsyncLocalStorage ? new hooks.AsyncLocalStorage() : null;
   } catch {
     return null;
   }
-})();
+}
+const purposeStore = newContextStore<string>();
 
 /** Runs `fn` with every Zoho call made inside it logged under `purpose`. */
 export function withZohoPurpose<T>(purpose: string, fn: () => Promise<T>): Promise<T> {
@@ -76,15 +78,117 @@ export async function flushZohoCallLog() {
 const fetch: typeof globalThis.fetch = async (input, init) => {
   const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
   const method = (init?.method ?? "GET").toUpperCase();
+  const claim = orderClaims?.getStore();
+  if (claim) await confirmZohoOrderClaim(claim, method !== "GET");
   try {
     const response = await globalThis.fetch(input, init);
     noteZohoCall(url, method, response.ok);
+    if (claim && method !== "GET") claim.lastWriteStatus = response.status;
     return response;
   } catch (cause) {
     noteZohoCall(url, method, false);
+    if (claim && method !== "GET") claim.lastWriteStatus = null;
     throw cause;
   }
 };
+
+// ---------------------------------------------------------------- One push at a time per order
+// Two pushes of one order at once can make two sales orders, or two invoices and two payments. The
+// claim is a row in the database, so it holds across server processes, and a push that dies just stops
+// renewing it. Zoho can't check a claim, so each write to Zoho first confirms and extends it: a push
+// that stalled and lost its claim can't write. A claim lasts 3 minutes and a Zoho call at most 20
+// seconds, so a write under way can't outlive its claim.
+type ZohoOrderClaim = {
+  db: Awaited<ReturnType<typeof dbAdmin>>;
+  orderId: string;
+  holder: string;
+  createAttemptedAt: string | null;
+  createWaitOver: boolean;
+  renewedAt: number;
+  lost: boolean;
+  /** Zoho's HTTP status for the last write; null when no reply came. */
+  lastWriteStatus: number | null;
+};
+const orderClaims = newContextStore<ZohoOrderClaim>();
+
+/** Another push has this order. Nothing was sent: it isn't a failure, and the queue comes back to it. */
+class ZohoOrderBusyError extends Error {
+  constructor() {
+    super("Zoho is already processing this order. Check again in a minute.");
+  }
+}
+
+/** A read only keeps a long push's claim alive; only a write has to stop if the claim is gone. */
+async function confirmZohoOrderClaim(claim: ZohoOrderClaim, writing: boolean) {
+  if (!claim.lost && (writing || Date.now() - claim.renewedAt > 60_000)) {
+    const { data, error } = await claim.db.rpc("renew_zoho_order_push", { _order_id: claim.orderId, _holder: claim.holder });
+    if (error || !data) claim.lost = true;
+    else claim.renewedAt = Date.now();
+  }
+  if (claim.lost && writing) throw new ZohoOrderBusyError();
+}
+
+/**
+ * Runs one push of one order under its claim; throws ZohoOrderBusyError if another push has it. Returns
+ * the holder, which marks the queue entries this push had read when it began.
+ */
+async function withZohoOrderClaim(db: Awaited<ReturnType<typeof dbAdmin>>, orderId: string, push: () => Promise<void>) {
+  if (!orderClaims) throw new Error("This server can't hold a Zoho order claim, so the order was not sent");
+  const holder = crypto.randomUUID();
+  const { data, error } = await db.rpc("claim_zoho_order_push", { _order_id: orderId, _holder: holder });
+  if (error) throw new Error("Could not claim the order for Zoho; apply the one-push-per-order migration");
+  const row = data?.[0];
+  if (!row?.claimed) throw new ZohoOrderBusyError();
+  const claim: ZohoOrderClaim = {
+    db, orderId, holder, createAttemptedAt: row.create_attempted_at, createWaitOver: row.create_wait_over,
+    renewedAt: Date.now(), lost: false, lastWriteStatus: null,
+  };
+  try {
+    await orderClaims.run(claim, push);
+  } catch (cause) {
+    // Whatever a lost claim's refusal turned into on its way up, or whatever followed it, this is what happened.
+    if (claim.lost) throw new ZohoOrderBusyError();
+    throw cause;
+  } finally {
+    // If this fails the claim simply runs out.
+    await db.rpc("release_zoho_order_push", { _order_id: orderId, _holder: holder }).then(() => undefined, () => undefined);
+  }
+  // Some steps carry on past a refused write, so a push can reach here without having done everything.
+  if (claim.lost) throw new ZohoOrderBusyError();
+  return holder;
+}
+
+/**
+ * A search miss doesn't prove there is no sales order if an earlier create got no clear answer: Zoho
+ * may have made it and be slow to show it, or be making it still. So nothing more is sent for 10 minutes
+ * (the queue looks again), and after that a person is asked, because Zoho's search can't be trusted
+ * further than that: Inventory's documents don't list it, and it was never checked against a live create.
+ */
+function refuseIfCreateUnanswered(orderNo: string) {
+  const claim = orderClaims?.getStore();
+  if (!claim?.createAttemptedAt) return;
+  if (!claim.createWaitOver)
+    throw new Error(`Zoho did not answer when order ${orderNo} was sent, and it may still be making the sales order. Looking again shortly; nothing more is sent until then.`);
+  throw new NeedsReviewError(`Zoho did not answer when order ${orderNo} was sent, and its search still finds no sales order with that Reference#. Look in Zoho Inventory > Sales Orders. If it is not there, press Retry on this entry to carry on. If it is there, do not press Retry yet: the hourly check links it, and Retry is safe after that.`);
+}
+
+/** Sends a create with the attempt noted first, so a reply that never comes can't lead to a second one. */
+async function sendZohoOrderCreate<T>(send: () => Promise<T>) {
+  const claim = orderClaims?.getStore();
+  if (!claim) throw new Error("A sales order was about to be created with no claim on the order");
+  const note = (sent: boolean) => claim.db.rpc("note_zoho_order_create", { _order_id: claim.orderId, _holder: claim.holder, _sent: sent });
+  const { data, error } = await note(true);
+  if (error || !data) {
+    claim.lost = true;
+    throw new ZohoOrderBusyError();
+  }
+  try {
+    return await send();
+  } catch (cause) {
+    if (!claim.lost && zohoRefusedWrite(claim.lastWriteStatus)) await note(false).then(() => undefined, () => undefined);
+    throw cause;
+  }
+}
 
 const REGIONS = {
   com: ["https://accounts.zoho.com", "https://commerce.zoho.com", "https://www.zohoapis.com"],
@@ -401,7 +505,7 @@ export const retryZohoSyncJob = createServerFn({ method: "POST" })
   .validator(z.object({ id: z.string().uuid() }))
   .handler(async ({ data, context }) => {
     await ensureAdmin(context.supabase, context.userId);
-    const { error } = await (await dbAdmin()).rpc("retry_zoho_sync_job", { _id: data.id });
+    const { error } = await (await dbAdmin()).rpc("retry_zoho_sync_job_checked", { _id: data.id });
     if (error) throw new Error("Could not requeue the selected Zoho sync job");
   });
 
@@ -3101,6 +3205,7 @@ async function syncZohoOrder(db: Awaited<ReturnType<typeof dbAdmin>>, region: Re
     const matches = await findZohoSalesOrdersForOrder(region, organizationId, token, order.order_no);
     if (matches.length > 1) throw new NeedsReviewError(`More than one Zoho sales order is for ${order.order_no}`);
     if (matches.length === 1) await linkAndSyncZohoOrder(db, region, organizationId, token, order, items ?? [], str(matches[0]!["salesorder_id"]));
+    else refuseIfCreateUnanswered(order.order_no);
     return;
   }
   let customerId = "";
@@ -3173,6 +3278,7 @@ async function syncZohoOrder(db: Awaited<ReturnType<typeof dbAdmin>>, region: Re
     await linkAndSyncZohoOrder(db, region, organizationId, token, order, items, str(matches[0]!["salesorder_id"]));
     return;
   }
+  refuseIfCreateUnanswered(order.order_no);
   const orderGstInfo = cleanAndValidateGstin(order.customer_gstin);
   const notesParts = [
     `Grain Bazar order ${order.order_no}; payment ${order.payment_status}; app total ₹${Number(order.total).toFixed(2)}. Verify tax treatment and total in Zoho before invoicing.`,
@@ -3219,7 +3325,7 @@ async function syncZohoOrder(db: Awaited<ReturnType<typeof dbAdmin>>, region: Re
     notes: notesParts.join(" "),
     ...zohoGstFields(order.customer_gstin, "order", order.business_legal_name),
   };
-  const created = await createSalesOrderWithChannel(region, organizationId, token, payload, order.order_no);
+  const created = await sendZohoOrderCreate(() => createSalesOrderWithChannel(region, organizationId, token, payload, order.order_no));
   const safeNumber = str(created.salesorder?.["salesorder_number"]) || order.order_no;
   const salesOrderId = str(created.salesorder?.["salesorder_id"]);
   if (!salesOrderId) throw new Error("Zoho created a sales order but returned no salesorder_id");
@@ -3642,7 +3748,7 @@ async function processZohoSyncOutboxRun(
   const token = await accessToken(region, await decrypt(connection));
   const { data: jobs, error: claimError } = await db.rpc("claim_zoho_sync_jobs", { _limit: limit });
   if (claimError) throw new Error("Could not claim Zoho sync jobs; apply the outbound sync migration");
-  const summary = { enabled: true, processed: (jobs ?? []).length, complete: 0, failed: 0, needsReview: 0 };
+  const summary = { enabled: true, processed: (jobs ?? []).length, complete: 0, failed: 0, needsReview: 0, deferred: 0 };
   const ctx = newZohoRunContext();
   const runJob = async (job: ZohoSyncJob) => {
     let status: "complete" | "failed" | "needs_review" = "complete";
@@ -3652,10 +3758,17 @@ async function processZohoSyncOutboxRun(
       if (job.entity_type === "customer")
         await withZohoPurpose("Website → Zoho: customer", () => syncZohoCustomer(db, region, connection.organization_id, token, job.entity_id, ctx));
       else if (job.entity_type === "order")
-        await withZohoPurpose("Website → Zoho: order", () => syncZohoOrder(db, region, connection.organization_id, token, job));
+        await withZohoPurpose("Website → Zoho: order", () => withZohoOrderClaim(db, job.entity_id, () => syncZohoOrder(db, region, connection.organization_id, token, job)));
       else
         await withZohoPurpose("Website → Zoho: product", () => syncZohoCatalogItem(db, region, connection.organization_id, token, job.entity_id, ctx));
     } catch (cause) {
+      if (cause instanceof ZohoOrderBusyError) {
+        console.info(zohoLogLine("outbox_job_deferred", { job: job.id, entityId: job.entity_id }));
+        const { error: deferError } = await db.rpc("defer_zoho_sync_job", { _id: job.id });
+        if (deferError) throw new Error(`Zoho job ${job.id} could not go back in line`);
+        summary.deferred += 1;
+        return;
+      }
       errorMessage = (cause instanceof Error ? cause.message : "Unexpected Zoho sync failure").slice(0, 1000);
       const isQuotaLimit =
         errorMessage.toLowerCase().includes("used up your available sales orders") ||
@@ -4032,8 +4145,8 @@ export const syncZohoProducts = createServerFn({ method: "POST" })
  * Pushes one order to Zoho now instead of waiting behind the shared queue, and settles its
  * queue entries: complete on success, needs_review with Zoho's answer on failure (so the
  * error shows in Admin > Zoho). Returns the Zoho sales order ID or throws Zoho's message.
- * One at a time per order: two at once could create two sales orders or two invoices. The later one waits,
- * then brings Zoho up to date with whatever changed meanwhile.
+ * One at a time per order, across processes, by its claim (see withZohoOrderClaim). Within this process the
+ * later one waits, then brings Zoho up to date with whatever changed meanwhile.
  */
 const directPushes = new Map<string, Promise<unknown>>();
 function pushOrderToZohoDirect(db: Awaited<ReturnType<typeof dbAdmin>>, orderId: string) {
@@ -4057,19 +4170,14 @@ async function pushOrderToZohoNow(db: Awaited<ReturnType<typeof dbAdmin>>, order
   const openJobs = () => db.from("zoho_sync_outbox").select("id")
     .eq("entity_type", "order").eq("entity_id", orderId)
     .in("status", ["pending", "failed", "needs_review"]);
-  // The queue worker stays off this order while this push runs.
-  await db.from("zoho_sync_outbox").update({ available_at: new Date(Date.now() + 5 * 60_000).toISOString() })
-    .eq("entity_type", "order").eq("entity_id", orderId).in("status", ["pending", "failed"]);
-  // If it already has this order, leave it: two pushes at once could create two sales orders.
-  const { data: working } = await db.from("zoho_sync_outbox").select("id")
-    .eq("entity_type", "order").eq("entity_id", orderId)
-    .eq("status", "processing").gt("locked_until", new Date().toISOString()).limit(1);
-  if (working?.length) throw new Error("Zoho is already processing this order. Check again in a minute.");
+  let holder: string;
   try {
-    await withZohoPurpose("Website → Zoho: order (instant)", () => syncZohoOrder(db, region, connection.organization_id, token, {
+    holder = await withZohoPurpose("Website → Zoho: order (instant)", () => withZohoOrderClaim(db, orderId, () => syncZohoOrder(db, region, connection.organization_id, token, {
       id: "direct", entity_type: "order", entity_id: orderId, attempts: 0,
-    } as ZohoSyncJob));
+    } as ZohoSyncJob)));
   } catch (cause) {
+    // Not this order's failure: its queue entries stay as they are, for the queue.
+    if (cause instanceof ZohoOrderBusyError) throw cause;
     const message = (cause instanceof Error ? cause.message : "Zoho rejected the order").slice(0, 900);
     // Same split as the queue worker: a timeout or Zoho outage is retried by the next sync run;
     // only a rejection that needs a person goes to review (the worker never claims those).
@@ -4086,12 +4194,11 @@ async function pushOrderToZohoNow(db: Awaited<ReturnType<typeof dbAdmin>>, order
     }
     throw new Error(`${message}${zohoPermissionHint(message)}`);
   }
-  const { data: jobs } = await openJobs();
-  if (jobs?.length) {
-    await db.from("zoho_sync_outbox")
-      .update({ status: "complete", last_error: null, updated_at: new Date().toISOString() })
-      .in("id", jobs.map((job) => job.id));
-  }
+  // Only the entries this push had read when it began. One added or changed since is a change the push may
+  // not have seen, so the queue takes it.
+  await db.from("zoho_sync_outbox")
+    .update({ status: "complete", last_error: null, updated_at: new Date().toISOString() })
+    .eq("entity_type", "order").eq("entity_id", orderId).in("status", ["pending", "failed", "needs_review"]).eq("push_holder", holder);
   const { data: updated } = await db
     .from("orders")
     .select("zoho_salesorder_id")
