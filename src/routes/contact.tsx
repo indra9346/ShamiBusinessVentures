@@ -272,7 +272,7 @@ function Contact() {
             </div>
 
             {/* Instant escalation actions */}
-            <div className="mt-6 flex flex-wrap items-center gap-3">
+            <div data-analytics-off className="mt-6 flex flex-wrap items-center gap-3">
               <a
                 href={whatsappUrl(submitted.phone, submitted.message)}
                 target="_blank"
