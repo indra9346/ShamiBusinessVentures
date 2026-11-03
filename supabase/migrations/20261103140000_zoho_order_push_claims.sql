@@ -33,6 +33,7 @@ BEGIN
 END;
 $$;
 REVOKE ALL ON FUNCTION public.enqueue_zoho_sync(text, text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.enqueue_zoho_sync(text, text) TO service_role;
 
 -- Atomic: of any number of callers, one gets the claim. create_wait_over says the 10 minutes given to
 -- Zoho to finish an unanswered create have passed; writes_held_back, that it may still be finishing another write.
@@ -121,13 +122,14 @@ $$;
 REVOKE ALL ON FUNCTION public.release_zoho_order_push(uuid, uuid) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.release_zoho_order_push(uuid, uuid) TO service_role;
 
--- Another push has this order: not a failure, so the row goes back in line without using up an attempt.
-CREATE OR REPLACE FUNCTION public.defer_zoho_sync_job(_id uuid)
+-- Another push has this order, or Zoho may still be finishing something: not a failure, so the row goes back
+-- in line without using up an attempt. _message says why it is waiting, if there is something to say.
+CREATE OR REPLACE FUNCTION public.defer_zoho_sync_job(_id uuid, _seconds integer DEFAULT 60, _message text DEFAULT NULL)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 BEGIN
   UPDATE public.zoho_sync_outbox
-    SET status = 'pending', attempts = GREATEST(attempts - 1, 0), available_at = now() + interval '1 minute',
-        locked_until = NULL, updated_at = now()
+    SET status = 'pending', attempts = GREATEST(attempts - 1, 0), available_at = now() + make_interval(secs => _seconds),
+        locked_until = NULL, last_error = left(_message, 1000), updated_at = now()
     WHERE id = _id AND status = 'processing';
 EXCEPTION WHEN unique_violation THEN
   -- One pending row per order: a newer one is already queued, and it brings Zoho up to date.
@@ -136,13 +138,13 @@ EXCEPTION WHEN unique_violation THEN
     WHERE id = _id AND status = 'processing';
 END;
 $$;
-REVOKE ALL ON FUNCTION public.defer_zoho_sync_job(uuid) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.defer_zoho_sync_job(uuid) TO service_role;
+REVOKE ALL ON FUNCTION public.defer_zoho_sync_job(uuid, integer, text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.defer_zoho_sync_job(uuid, integer, text) TO service_role;
 
 -- A person who was asked to look for an unanswered create in Zoho pressed Retry on that entry: that
 -- is the go-ahead to create. The server calls this only for the entry that asked (retryZohoSyncJob).
--- "Retry all" and any other entry stay on retry_zoho_sync_job, because nobody looked. Nor does pressing
--- Retry during the 10 minutes skip them: Zoho may still be making it.
+-- "Retry all" and any other entry stay on retry_zoho_sync_job, because nobody looked. The entry must have
+-- been asked after this create's 10 minutes ended, so one asked about an earlier create can't answer a newer one.
 CREATE OR REPLACE FUNCTION public.retry_zoho_sync_job_checked(_id uuid)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
@@ -152,7 +154,7 @@ BEGIN
   IF FOUND AND selected_job.entity_type = 'order' AND selected_job.status = 'needs_review' THEN
     UPDATE public.zoho_order_push_claims
       SET create_attempted_at = NULL, updated_at = now()
-      WHERE order_id = selected_job.entity_id::uuid AND create_attempted_at <= now() - interval '10 minutes';
+      WHERE order_id = selected_job.entity_id::uuid AND create_attempted_at <= selected_job.updated_at - interval '10 minutes';
   END IF;
   PERFORM public.retry_zoho_sync_job(_id);
 END;

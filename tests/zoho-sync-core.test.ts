@@ -220,6 +220,9 @@ test("which POSTs to Zoho may be repeated without care", () => {
 test("only the question about an unanswered create counts as asking it", () => {
   assert.equal(asksAboutUnansweredCreate(unansweredCreateQuestion("CLK-577522-261026-143215")), true);
   assert.match(unansweredCreateQuestion("CLK-577522-261026-143215"), /CLK-577522-261026-143215/);
+  // A cancelled order's question is the same question, and doesn't promise a sales order.
+  assert.equal(asksAboutUnansweredCreate(unansweredCreateQuestion("CLK-577522-261026-143215", true)), true);
+  assert.doesNotMatch(unansweredCreateQuestion("CLK-577522-261026-143215", true), /is created/);
   for (const other of ["Order has no line items", "Zoho did not answer when order X was sent, and it may still be making the sales order.", "", null, undefined])
     assert.equal(asksAboutUnansweredCreate(other), false, String(other));
 });

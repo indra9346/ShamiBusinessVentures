@@ -671,13 +671,20 @@ function ZohoCommerceAdmin() {
       const res = await processZohoSyncNow({ data: { limit: 50 } });
       await reloadQueue();
       await reloadMirror();
-      if (res.processed === 0) {
+      const waiting = Number(syncQueue.counts["pending"] || 0) + Number(syncQueue.counts["failed"] || 0);
+      if (res.processed === 0 && waiting > 0) {
+        toast.info("Nothing is due yet", {
+          description: `${waiting} records wait for their next try.`,
+        });
+      } else if (res.processed === 0) {
         toast.info("No pending jobs to process", {
           description: "All records are up to date in Zoho.",
         });
       } else {
         toast.success(`Processed ${res.processed} records for Zoho`, {
-          description: `${res.complete} completed, ${res.failed} failed, ${res.needsReview} needs review.`,
+          description: res.deferred
+            ? `${res.complete} completed, ${res.failed} failed, ${res.needsReview} needs review, ${res.deferred} waiting for the next run.`
+            : `${res.complete} completed, ${res.failed} failed, ${res.needsReview} needs review.`,
         });
       }
     } catch (error) {
@@ -1197,6 +1204,16 @@ function ZohoCommerceAdmin() {
                 <RotateCw className={`mr-1.5 h-3.5 w-3.5 ${queueBusy ? "animate-spin" : ""}`} />
                 {queueBusy ? "Requeueing…" : `Retry all ${syncQueue.counts["failed"]} records`}
               </Button>
+            </div>
+          )}
+
+          {Number(syncQueue.counts["needs_review"] || 0) > 0 && (
+            <div className="mb-4 flex items-center gap-2.5 rounded-lg border border-rose-300 bg-rose-50 p-4 text-sm text-rose-950">
+              <AlertCircle className="h-5 w-5 shrink-0 text-rose-600" />
+              <div>
+                <p className="font-semibold">{syncQueue.counts["needs_review"]} records need a person</p>
+                <p className="text-xs text-rose-800">Each one below says what to check. The sync does not retry these by itself.</p>
+              </div>
             </div>
           )}
 

@@ -1145,7 +1145,7 @@ export type Database = {
       apply_zoho_contact_update: { Args: { _user_id: string; _contact_type: string; _full_name: string | null; _phone: string | null; _company: string | null; _gstin: string | null; _address?: Json | null }; Returns: undefined }
       retry_zoho_sync_job: { Args: { _id: string }; Returns: undefined }
       retry_zoho_sync_job_checked: { Args: { _id: string }; Returns: undefined }
-      defer_zoho_sync_job: { Args: { _id: string }; Returns: undefined }
+      defer_zoho_sync_job: { Args: { _id: string; _seconds?: number; _message?: string | null }; Returns: undefined }
       claim_zoho_order_push: { Args: { _order_id: string; _holder: string }; Returns: { claimed: boolean; create_attempted_at: string | null; create_wait_over: boolean; writes_held_back: boolean }[] }
       renew_zoho_order_push: { Args: { _order_id: string; _holder: string }; Returns: boolean }
       note_zoho_order_create: { Args: { _order_id: string; _holder: string; _sent: boolean }; Returns: boolean }

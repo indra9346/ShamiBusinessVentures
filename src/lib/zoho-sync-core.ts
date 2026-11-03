@@ -57,8 +57,10 @@ export function zohoPostKind(url: string): "order_create" | "repeatable" | "othe
 
 const UNANSWERED_CREATE_QUESTION = "Please check Zoho.";
 /** What a person is asked when a create got no clear answer and Zoho's search still can't find the sales order. */
-export function unansweredCreateQuestion(orderNo: string) {
-  return `${UNANSWERED_CREATE_QUESTION} It did not answer when order ${orderNo} was sent, and its search still finds no sales order with that Reference#. In Zoho Inventory > Sales Orders, look for Reference# ${orderNo}. If it is not there, press Retry on this order's entry in Admin > Zoho, and the sales order is created. If it is there, do not press Retry, or there will be two: ask for it to be linked to this order.`;
+export function unansweredCreateQuestion(orderNo: string, cancelled = false) {
+  if (cancelled)
+    return `${UNANSWERED_CREATE_QUESTION} Order ${orderNo} is cancelled, but Zoho did not answer when it was sent, so a sales order may exist. Press Retry on this order's entry in Admin > Zoho: that never creates one, and it voids one if Zoho's search finds it. If you can see one in Zoho that stays open, void it there.`;
+  return `${UNANSWERED_CREATE_QUESTION} It did not answer when order ${orderNo} was sent, and its search still finds no sales order with that Reference#. In Zoho Inventory > Sales Orders, look for Reference# ${orderNo}. If it is not there, press Retry on this order's entry in Admin > Zoho, and the sales order is created. If it is there, do not press Retry: open the order in Admin > Orders and press Push to Zoho, which links it and never makes a second one.`;
 }
 export function asksAboutUnansweredCreate(lastError: string | null | undefined) {
   return (lastError ?? "").startsWith(UNANSWERED_CREATE_QUESTION);

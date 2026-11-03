@@ -79,7 +79,12 @@ const fetch: typeof globalThis.fetch = async (input, init) => {
   const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
   const method = (init?.method ?? "GET").toUpperCase();
   const claim = orderClaims?.getStore();
-  if (claim) await beforeZohoCallUnderClaim(claim, url, method);
+  if (claim) {
+    await beforeZohoCallUnderClaim(claim, url, method);
+    // The call's 20 seconds started before the wait for the database. If they are gone, nothing is sent.
+    init?.signal?.throwIfAborted();
+    if (method === "POST" && zohoPostKind(url) === "order_create") claim.createSent = true;
+  }
   try {
     const response = await globalThis.fetch(input, init);
     noteZohoCall(url, method, response.ok);
@@ -111,6 +116,8 @@ type ZohoOrderClaim = {
   renewedAt: number;
   lost: boolean;
   lastWriteOutcome: ZohoWriteOutcome | null;
+  /** A create left this server in this push. */
+  createSent: boolean;
   /** A create in this push got no clear answer. */
   createUnanswered: boolean;
   writesHeldBack: boolean;
@@ -122,10 +129,13 @@ const ZOHO_WRITE_HELD_BACK = "Zoho did not answer an earlier write for this orde
 
 /** Another push has this order. Nothing was sent: it isn't a failure, and the queue comes back to it. */
 class ZohoOrderBusyError extends Error {
-  constructor() {
-    super("Zoho is already processing this order. Check again in a minute.");
+  constructor(message = "Zoho is already processing this order. Check again in a minute.") {
+    super(message);
   }
 }
+
+/** Zoho may still be finishing something, and that has a known end: no attempt is used up waiting for it. */
+class ZohoOrderWaitError extends Error {}
 
 /** A read only keeps a long push's claim alive; only a write has to stop if the claim is gone. */
 async function beforeZohoCallUnderClaim(claim: ZohoOrderClaim, url: string, method: string) {
@@ -157,25 +167,29 @@ async function afterZohoCallUnderClaim(claim: ZohoOrderClaim, url: string, metho
 }
 
 /**
- * Runs one push of one order under its claim; throws ZohoOrderBusyError if another push has it. Returns
- * the holder, which marks the queue entries this push had read when it began.
+ * Runs one push of one order under its claim; throws ZohoOrderBusyError if another push has it. The holder
+ * marks the queue entries this push had read when it began.
  */
-async function withZohoOrderClaim(db: Awaited<ReturnType<typeof dbAdmin>>, orderId: string, push: () => Promise<void>) {
+async function withZohoOrderClaim(db: Awaited<ReturnType<typeof dbAdmin>>, orderId: string, push: () => Promise<void>, holder: string = crypto.randomUUID()) {
   if (!orderClaims) throw new Error("This server can't hold a Zoho order claim, so the order was not sent");
-  const holder = crypto.randomUUID();
   const { data, error } = await db.rpc("claim_zoho_order_push", { _order_id: orderId, _holder: holder });
-  if (error) throw new Error("Could not claim the order for Zoho; apply the one-push-per-order migration");
+  if (error) {
+    if (["PGRST202", "42883"].includes(error.code ?? "")) throw new Error("Could not claim the order for Zoho; apply the one-push-per-order migration");
+    // A passing database error: nothing was sent, so the queue just comes back to it.
+    throw new ZohoOrderBusyError("Could not reach the database to claim this order. It will be tried again.");
+  }
   const row = data?.[0];
   if (!row?.claimed) throw new ZohoOrderBusyError();
   const claim: ZohoOrderClaim = {
     db, orderId, holder, createAttemptedAt: row.create_attempted_at, createWaitOver: row.create_wait_over,
-    renewedAt: Date.now(), lost: false, lastWriteOutcome: null, createUnanswered: false, writesHeldBack: row.writes_held_back, stoppedByHold: false,
+    renewedAt: Date.now(), lost: false, lastWriteOutcome: null, createSent: false, createUnanswered: false, writesHeldBack: row.writes_held_back, stoppedByHold: false,
   };
   try {
     await orderClaims.run(claim, push);
   } catch (cause) {
-    // Whatever a lost claim's refusal turned into on its way up, or whatever followed it, this is what happened.
+    // Whatever a lost claim's refusal or a hold turned into on its way up, or whatever followed it, this is what happened.
     if (claim.lost) throw new ZohoOrderBusyError();
+    if (claim.stoppedByHold) throw new ZohoOrderWaitError(ZOHO_WRITE_HELD_BACK);
     throw cause;
   } finally {
     // If this fails the claim simply runs out.
@@ -183,8 +197,38 @@ async function withZohoOrderClaim(db: Awaited<ReturnType<typeof dbAdmin>>, order
   }
   // Some steps carry on past a refused write, so a push can reach here without having done everything.
   if (claim.lost) throw new ZohoOrderBusyError();
-  if (claim.stoppedByHold) throw new Error(ZOHO_WRITE_HELD_BACK);
-  return holder;
+  if (claim.stoppedByHold) throw new ZohoOrderWaitError(ZOHO_WRITE_HELD_BACK);
+  // A question about an unanswered create would have been raised again if it were still open.
+  const copies = await zohoQuestionCopies(db, orderId);
+  if (copies.length) await closeZohoQuestions(db, copies.map((row) => row.id), null);
+}
+
+async function zohoQuestionCopies(db: Awaited<ReturnType<typeof dbAdmin>>, orderId: string) {
+  const { data } = await db.from("zoho_sync_outbox").select("id,last_error")
+    .eq("entity_type", "order").eq("entity_id", orderId).eq("status", "needs_review").order("updated_at", { ascending: false });
+  return (data ?? []).filter((row) => asksAboutUnansweredCreate(row.last_error));
+}
+
+function closeZohoQuestions(db: Awaited<ReturnType<typeof dbAdmin>>, ids: string[], note: string | null) {
+  return db.from("zoho_sync_outbox").update({ status: "complete", last_error: note, updated_at: new Date().toISOString() }).in("id", ids);
+}
+
+/** One copy of the question per order, and the admins hear of it: a paid order may be waiting on the answer. */
+async function settleZohoQuestion(db: Awaited<ReturnType<typeof dbAdmin>>, orderId: string) {
+  const copies = await zohoQuestionCopies(db, orderId);
+  if (copies.length > 1) await closeZohoQuestions(db, copies.slice(1).map((row) => row.id), "Superseded by a newer copy of this question");
+  const { data: told } = await db.from("notifications").select("id").eq("order_id", orderId).eq("status", "zoho_question").eq("read", false).limit(1);
+  if (told?.length) return;
+  const [{ data: order }, { data: admins }] = await Promise.all([
+    db.from("orders").select("order_no").eq("id", orderId).maybeSingle(),
+    db.from("user_roles").select("user_id").eq("role", "admin"),
+  ]);
+  if (!order || !admins?.length) return;
+  await db.from("notifications").insert(admins.map((admin) => ({
+    order_no: order.order_no, order_id: orderId, recipient_id: admin.user_id, recipient_role: "admin", status: "zoho_question",
+    title: `Zoho needs checking: ${order.order_no}`,
+    message: `Zoho did not answer when order ${order.order_no} was sent. Open Admin > Zoho and read its entry.`,
+  })));
 }
 
 /**
@@ -193,12 +237,12 @@ async function withZohoOrderClaim(db: Awaited<ReturnType<typeof dbAdmin>>, order
  * search finds Reference#, but how soon a new sales order becomes findable was not measured. So nothing
  * more is sent for 10 minutes (the queue looks again), and after that a person is asked, not the search.
  */
-function refuseIfCreateUnanswered(orderNo: string) {
+function refuseIfCreateUnanswered(orderNo: string, cancelled = false) {
   const claim = orderClaims?.getStore();
   if (!claim?.createAttemptedAt) return;
   if (!claim.createWaitOver)
-    throw new Error(`Zoho did not answer when order ${orderNo} was sent, and it may still be making the sales order. Looking again shortly; nothing more is sent until then.`);
-  throw new NeedsReviewError(unansweredCreateQuestion(orderNo));
+    throw new ZohoOrderWaitError(`Zoho did not answer when order ${orderNo} was sent, and it may still be making the sales order. Looking again shortly; nothing more is sent until then.`);
+  throw new NeedsReviewError(unansweredCreateQuestion(orderNo, cancelled));
 }
 
 /** Sends a create with the attempt noted first, so a reply that never comes can't lead to a second one. */
@@ -206,16 +250,20 @@ async function sendZohoOrderCreate<T>(send: () => Promise<T>) {
   const claim = orderClaims?.getStore();
   if (!claim) throw new Error("A sales order was about to be created with no claim on the order");
   const note = (sent: boolean) => claim.db.rpc("note_zoho_order_create", { _order_id: claim.orderId, _holder: claim.holder, _sent: sent });
+  // Taking a note back only works for its holder, so it can't touch another push's note.
+  const takeBack = () => note(false).then(() => undefined, () => undefined);
   const { data, error } = await note(true);
   if (error || !data) {
     claim.lost = true;
+    // The note may have been written even if the reply was lost, and nothing has been sent.
+    await takeBack();
     throw new ZohoOrderBusyError();
   }
   try {
     return await send();
   } catch (cause) {
-    // A clear no: nothing was made, so the next push may create it straight away.
-    if (!claim.lost && !claim.createUnanswered && claim.lastWriteOutcome === "refused") await note(false).then(() => undefined, () => undefined);
+    // Nothing left this server, or Zoho said a clear no: nothing was made, so the next push may create it straight away.
+    if (!claim.createUnanswered && (!claim.createSent || claim.lastWriteOutcome === "refused")) await takeBack();
     throw cause;
   }
 }
@@ -428,22 +476,28 @@ export const getZohoSyncQueueStatus = createServerFn({ method: "GET" })
     await ensureAdmin(context.supabase, context.userId);
     const db = await dbAdmin();
     const statuses = ["pending", "processing", "failed", "needs_review", "complete"] as const;
-    const [jobsResult, ...statusResults] = await Promise.all([
+    const [jobsResult, waitingResult, ...statusResults] = await Promise.all([
       db.from("zoho_sync_outbox")
       .select("id,entity_type,entity_id,status,attempts,last_error,created_at,updated_at")
         .order("updated_at", { ascending: false }).limit(30),
+      // Whatever waits for a person stays on the list, however much else has happened since.
+      db.from("zoho_sync_outbox")
+      .select("id,entity_type,entity_id,status,attempts,last_error,created_at,updated_at")
+        .in("status", ["failed", "needs_review"]).order("updated_at", { ascending: false }).limit(200),
       ...statuses.map((status) => db.from("zoho_sync_outbox")
         .select("id", { count: "exact", head: true })
         .eq("status", status)),
     ]);
-    if (jobsResult.error || statusResults.some((result) => result.error)) {
+    if (jobsResult.error || waitingResult.error || statusResults.some((result) => result.error)) {
       throw new Error("Could not load Zoho sync queue status");
     }
     const counts = Object.fromEntries(
       statuses.map((status, index) => [status, statusResults[index]?.count ?? 0]),
     );
 
-    const rawJobs = jobsResult.data ?? [];
+    const recentJobs = jobsResult.data ?? [];
+    const recentIds = new Set(recentJobs.map((job) => job.id));
+    const rawJobs = [...recentJobs, ...(waitingResult.data ?? []).filter((job) => !recentIds.has(job.id))];
     const customerIds = rawJobs.filter((j) => j.entity_type === "customer").map((j) => j.entity_id);
     const orderIds = rawJobs.filter((j) => j.entity_type === "order").map((j) => j.entity_id);
     const catalogIds = rawJobs.filter((j) => j.entity_type === "catalog").map((j) => j.entity_id);
@@ -2718,7 +2772,11 @@ async function applyZohoSalesOrderToApp(
   if (!order && websiteOrderNo) {
     const byNumber = await db.from("orders").select(columns).eq("order_no", websiteOrderNo).is("zoho_salesorder_id", null).maybeSingle();
     order = byNumber.data;
-    if (order) await db.from("orders").update({ zoho_salesorder_id: zohoId }).eq("id", order.id).is("zoho_salesorder_id", null);
+    if (order) {
+      await db.from("orders").update({ zoho_salesorder_id: zohoId }).eq("id", order.id).is("zoho_salesorder_id", null);
+      // A push may have been waiting to hear of this sales order: the queue confirms and invoices it, or voids it.
+      await db.rpc("enqueue_zoho_sync", { _entity_type: "order", _entity_id: order.id });
+    }
   }
   if (!order) return "not_grain_bazar";
 
@@ -3241,7 +3299,7 @@ async function syncZohoOrder(db: Awaited<ReturnType<typeof dbAdmin>>, region: Re
     const matches = await findZohoSalesOrdersForOrder(region, organizationId, token, order.order_no);
     if (matches.length > 1) throw new NeedsReviewError(`More than one Zoho sales order is for ${order.order_no}`);
     if (matches.length === 1) await linkAndSyncZohoOrder(db, region, organizationId, token, order, items ?? [], str(matches[0]!["salesorder_id"]));
-    else refuseIfCreateUnanswered(order.order_no);
+    else refuseIfCreateUnanswered(order.order_no, true);
     return;
   }
   let customerId = "";
@@ -3754,7 +3812,7 @@ export async function processZohoSyncOutbox(limit = 20, options?: { force?: bool
   const { data: budgetRow } = await db.from("settings").select("value").eq("key", ZOHO_API_BUDGET_SETTING).maybeSingle();
   const budget = plainObject(budgetRow?.value);
   if (zohoPaused(str(budget["pausedUntil"]), Date.now()))
-    return { enabled: true, processed: 0, complete: 0, failed: 0, needsReview: 0, paused: true, pausedUntil: str(budget["pausedUntil"]), reason: "Zoho's daily API limit was reached; the sync resumes automatically." };
+    return { enabled: true, processed: 0, complete: 0, failed: 0, needsReview: 0, deferred: 0, paused: true, pausedUntil: str(budget["pausedUntil"]), reason: "Zoho's daily API limit was reached; the sync resumes automatically." };
   zohoDailyLimitHit = false;
   try {
     return await processZohoSyncOutboxRun(db, limit, options, budget);
@@ -3777,7 +3835,7 @@ async function processZohoSyncOutboxRun(
   budget: Record<string, unknown>,
 ) {
   const writeEnabled = options?.force || (await isZohoWriteSyncActive(db));
-  if (!writeEnabled) return { enabled: false, processed: 0, complete: 0, failed: 0, needsReview: 0 };
+  if (!writeEnabled) return { enabled: false, processed: 0, complete: 0, failed: 0, needsReview: 0, deferred: 0 };
   const { data: connection, error: connectionError } = await db.from("zoho_commerce_connection").select("organization_id,region,refresh_token_ciphertext,token_iv,token_tag").eq("id", true).maybeSingle();
   if (connectionError || !connection) throw new Error("Connect and authorize Zoho Inventory before enabling outbound sync");
   const region = connection.region as Region;
@@ -3798,9 +3856,10 @@ async function processZohoSyncOutboxRun(
       else
         await withZohoPurpose("Website → Zoho: product", () => syncZohoCatalogItem(db, region, connection.organization_id, token, job.entity_id, ctx));
     } catch (cause) {
-      if (cause instanceof ZohoOrderBusyError) {
-        console.info(zohoLogLine("outbox_job_deferred", { job: job.id, entityId: job.entity_id }));
-        const { error: deferError } = await db.rpc("defer_zoho_sync_job", { _id: job.id });
+      if (cause instanceof ZohoOrderBusyError || cause instanceof ZohoOrderWaitError) {
+        const waiting = cause instanceof ZohoOrderWaitError;
+        console.info(zohoLogLine("outbox_job_deferred", { job: job.id, entityId: job.entity_id, waiting }));
+        const { error: deferError } = await db.rpc("defer_zoho_sync_job", { _id: job.id, _seconds: waiting ? 300 : 60, _message: waiting ? cause.message : null });
         if (deferError) throw new Error(`Zoho job ${job.id} could not go back in line`);
         summary.deferred += 1;
         return;
@@ -3815,6 +3874,7 @@ async function processZohoSyncOutboxRun(
     if (status === "complete") console.info(log); else console.warn(log);
     const { error: finishError } = await db.rpc("finish_zoho_sync_job", { _id: job.id, _status: status, _error: errorMessage });
     if (finishError) throw new Error(`Zoho job ${job.id} was processed but its result could not be recorded`);
+    if (job.entity_type === "order" && status === "needs_review" && asksAboutUnansweredCreate(errorMessage)) await settleZohoQuestion(db, job.entity_id);
     if (status === "complete") summary.complete += 1;
     else if (status === "failed") summary.failed += 1;
     else summary.needsReview += 1;
@@ -4203,14 +4263,15 @@ async function pushOrderToZohoNow(db: Awaited<ReturnType<typeof dbAdmin>>, order
   const region = connection.region as Region;
   const token = await accessToken(region, await decrypt(connection));
 
-  const openJobs = () => db.from("zoho_sync_outbox").select("id")
+  const holder = crypto.randomUUID();
+  // The entries this push had read when it began. One added or changed since is a change it may not have seen, so that stays for the queue.
+  const readJobs = () => db.from("zoho_sync_outbox").select("id")
     .eq("entity_type", "order").eq("entity_id", orderId)
-    .in("status", ["pending", "failed", "needs_review"]);
-  let holder: string;
+    .in("status", ["pending", "failed", "needs_review"]).eq("push_holder", holder);
   try {
-    holder = await withZohoPurpose("Website → Zoho: order (instant)", () => withZohoOrderClaim(db, orderId, () => syncZohoOrder(db, region, connection.organization_id, token, {
+    await withZohoPurpose("Website → Zoho: order (instant)", () => withZohoOrderClaim(db, orderId, () => syncZohoOrder(db, region, connection.organization_id, token, {
       id: "direct", entity_type: "order", entity_id: orderId, attempts: 0,
-    } as ZohoSyncJob)));
+    } as ZohoSyncJob), holder));
   } catch (cause) {
     // Not this order's failure: its queue entries stay as they are, for the queue.
     if (cause instanceof ZohoOrderBusyError) throw cause;
@@ -4218,7 +4279,7 @@ async function pushOrderToZohoNow(db: Awaited<ReturnType<typeof dbAdmin>>, order
     // Same split as the queue worker: a timeout or Zoho outage is retried by the next sync run;
     // only a rejection that needs a person goes to review (the worker never claims those).
     const status = cause instanceof NeedsReviewError ? "needs_review" : "failed";
-    const { data: jobs } = await openJobs();
+    const { data: jobs } = await readJobs();
     if (jobs?.length) {
       await db.from("zoho_sync_outbox")
         .update({ status, last_error: message, updated_at: new Date().toISOString() })
@@ -4228,10 +4289,9 @@ async function pushOrderToZohoNow(db: Awaited<ReturnType<typeof dbAdmin>>, order
         entity_type: "order", entity_id: orderId, event_type: "upsert", status, last_error: message,
       });
     }
+    if (status === "needs_review" && asksAboutUnansweredCreate(message)) await settleZohoQuestion(db, orderId);
     throw new Error(`${message}${zohoPermissionHint(message)}`);
   }
-  // Only the entries this push had read when it began. One added or changed since is a change the push may
-  // not have seen, so the queue takes it.
   await db.from("zoho_sync_outbox")
     .update({ status: "complete", last_error: null, updated_at: new Date().toISOString() })
     .eq("entity_type", "order").eq("entity_id", orderId).in("status", ["pending", "failed", "needs_review"]).eq("push_holder", holder);
