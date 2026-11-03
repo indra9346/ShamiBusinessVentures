@@ -65,6 +65,28 @@ After a purchase order exists the server sends nothing more to Zoho for that sam
 
 A new vendor or item has the same protection (`rice_sample_zoho_creations`), an exact-name search just before creating, and an on-screen confirmation first.
 
+## Staying in step with Zoho
+
+Asked for after a live test on 3 Nov 2026, when a draft removed in Zoho left its sample locked.
+
+**How the site finds out.** While the page is on screen it asks every minute, and when the tab comes back into view. The hourly sync does the same, so a sample is right even if nobody has the page open. One list call covers every raised purchase order on the list's first page, and only one that changed or isn't there gets a call of its own, at most 5 each time. No raised purchase orders means no Zoho call at all, and several open pages share one check, so when nothing is changing all open pages together use about 60 calls an hour, and admins are signed out when idle. A hidden tab asks nothing.
+
+Zoho locks the whole site out if it is asked for sign-ins too often, so a check that fails, or leaves something unsettled, makes every open page wait 5 minutes before asking again. Zoho's daily-limit answer pauses these checks as well, the same way it pauses the sync. Today Zoho's list fits on one page. Once it doesn't, a purchase order missing from the first page may just be further down, so those get a call of their own one at a time, each at most every 10 minutes, and a removal there can take 10 minutes or more to show.
+
+A Zoho webhook was not chosen: it needs a new rule in the real Zoho that can't be tried here, and these checks already give about a minute. A signed one could be added later to save calls.
+
+**What counts as dead.** Zoho's statuses `cancelled` and `rejected` (plus the variants `cancelled_by_user`, `cancelled_by_vendor`, `void`) or Zoho's answer that the purchase order does not exist, read from the live API as code 1002, "Purchase Order does not exist." A bare 404 does not count, and any status not on this list counts as alive, so an unknown status never frees a sample. `status` decides; `order_status` counts only while `status` still looks open, never once rice has been received or billed. `rejected` is listed in Zoho's filters but has not been seen on this organisation. Every purchase order records which Zoho company it was raised in, so reconnecting the site to another company can't read as all of them being deleted; one raised before this was recorded has no such check.
+
+**Two answers before a sample is freed.** The purchase order itself must say it is dead, and a complete search by reference must agree: its own row gone or dead too, and no other live purchase order with that reference. If they disagree, or the list can't be read, the sample stays locked and the next check tries again.
+
+**What happens then.** The purchase order, and any duplicate recorded beside it, moves to `retired_pos` on the same row, which only ever grows, and the sample goes back to tested or arrived with its tests and history. The card says what happened.
+
+**A new purchase order after that** gets a new reference, `GBS-<sample id>-2` and so on, because a cancelled purchase order stays in Zoho with the old one and the search would find it. Before sending, the server reads every earlier purchase order again and searches every earlier reference, and if anything is alive under them it refuses. If someone revives an old one after the new one is raised, the status check shows it on the card as a second purchase order. The database refuses a new generation without a new reference.
+
+**Cancel in Zoho** uses Zoho's own `POST /purchaseorders/{id}/status/cancelled`: "Marks a Purchase Order as Cancelled. OAuth Scope : ZohoInventory.purchaseorders.CREATE", which the site already has, so no new Reauthorize. Nothing is ever deleted from Zoho: that would need a scope the site doesn't ask for. It isn't offered once rice has been received or billed. It cancels only the purchase order on the admin's screen: if the sample has moved on to a newer one, nothing is sent. The admin's name and reason go on the history before the request goes out. If Zoho refuses, the site reads the status before saying anything, because a refusal can just mean an earlier press worked. Whether Zoho accepts this on a draft isn't known yet. **Not yet tried on real Zoho.**
+
+**Delete card** hides a card from every list and keeps its tests and history. It can be undone from the Deleted cards view. It is refused while a purchase order is alive in Zoho or on its way there, in the page and in the database.
+
 ## Who can see what
 
 Only admins can read these tables (row security, tested on a full copy of the migrations against anon, customer, vendor, channel partner and godown staff). Nobody writes to them directly: admins go through `rice_sample_save`, `_add_test` and `_set_status`, and the purchase order functions run only as the service role. The tables are not in the realtime publication.
@@ -102,7 +124,7 @@ Nothing internal reaches the vendor: the purchase order carries the rice, quanti
 
 1. **Who is the vendor on the purchase order: the broker or the seller?** The screen makes the admin choose, and says the vendor is who bills you. If it is always the mill, the broker option can go.
 2. **Which Zoho item should rice purchases use?** Zoho's rice items are retail bags. Sugar uses one bulk item per quintal. A similar bulk item per variety would match, and adding one takes a tap and a confirmation here.
-3. **Draft, or issued straight away?** Default is Draft. The owner is being asked. One setting at the bottom of the page changes it. Either way Zoho does not send the purchase order to the vendor by itself: someone sends it from Zoho.
+3. **Draft, or issued straight away?** Answered by the owner on 3 Nov: "Yes, Draft first". A new purchase order starts as Draft. Either way Zoho does not send the purchase order to the vendor by itself: someone sends it from Zoho.
 4. **Which location receives the rice?** Recent live purchase orders are all at Head Office. This page uses the receiving godown's Zoho location. Is that what the accounts expect?
 5. **Is Zoho's own PO numbering right?** It keeps the series unbroken. If the accountant would rather have numbers from the website, Zoho can then refuse duplicates outright.
 6. **Is GST 5% right for bulk rice purchases?** Existing rice items use 5%. A new item here has no default: the admin chooses 5% or "set later in Zoho", because bulk rice may be taxed differently from packed rice. This is for the accountant. A nil rate is set in Zoho, because it needs Zoho's own exemption setting.

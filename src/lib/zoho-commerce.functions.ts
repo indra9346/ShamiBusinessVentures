@@ -3854,15 +3854,19 @@ export async function processZohoSyncOutbox(limit = 20, options?: { force?: bool
     return await processZohoSyncOutboxRun(db, limit, options, budget);
   } finally {
     await flushZohoCallLog();
-    if (zohoDailyLimitHit) {
-      const pausedUntil = new Date(Date.now() + DAILY_LIMIT_PAUSE_MINUTES * 60_000).toISOString();
-      await db.from("settings").upsert({ key: ZOHO_API_BUDGET_SETTING, value: { ...budget, pausedUntil } as Json, is_public: false, updated_at: new Date().toISOString() });
-      console.warn(zohoLogLine("zoho_daily_limit_pause", { pausedUntil }));
-    }
+    if (zohoDailyLimitHit) await pauseZohoForDailyLimit(db);
   }
 }
 
 const ZOHO_API_BUDGET_SETTING = "zoho_api_budget";
+
+/** Zoho's daily budget is used up: everything that checks the pause holds off for an hour. */
+async function pauseZohoForDailyLimit(db: Awaited<ReturnType<typeof dbAdmin>>) {
+  const { data } = await db.from("settings").select("value").eq("key", ZOHO_API_BUDGET_SETTING).maybeSingle();
+  const pausedUntil = new Date(Date.now() + DAILY_LIMIT_PAUSE_MINUTES * 60_000).toISOString();
+  await db.from("settings").upsert({ key: ZOHO_API_BUDGET_SETTING, value: { ...plainObject(data?.value), pausedUntil } as Json, is_public: false, updated_at: new Date().toISOString() });
+  console.warn(zohoLogLine("zoho_daily_limit_pause", { pausedUntil }));
+}
 
 async function processZohoSyncOutboxRun(
   db: Awaited<ReturnType<typeof dbAdmin>>,
@@ -3931,8 +3935,12 @@ async function processZohoSyncOutboxRun(
     .catch((cause: unknown) => ({ godowns: 0, prices: 0, sentToZoho: 0, failed: 1, errors: [cause instanceof Error ? cause.message : String(cause)] }));
   const godownStock = await withZohoPurpose("Hourly check: godown stock", () => syncZohoGodownStock(db, region, connection.organization_id, token))
     .catch((cause: unknown) => ({ enabled: true, items: 0, pulled: 0, sentToZoho: 0, failed: 1, errors: [cause instanceof Error ? cause.message : String(cause)] }));
+  // Rice sample purchase orders cancelled or removed in Zoho, so a sample comes back even if nobody has the page open.
+  const ricePurchaseOrders = await import("@/lib/rice-samples.functions").then((desk) => desk.syncRiceSamplePos())
+    .catch((cause: unknown) => ({ failed: 1, errors: [cause instanceof Error ? cause.message : String(cause)] }));
   return {
     ...summary,
+    ricePurchaseOrders,
     inboundContacts: contacts,
     inboundFulfillment: fulfillment,
     inboundCatalog: catalog,
@@ -5725,7 +5733,8 @@ export const receiveBatchPurchase = createServerFn({ method: "POST" })
  * Goes through this file's fetch, so the call is logged.
  */
 export async function openZohoInventory() {
-  const { region, organizationId, token } = await zohoOrderContext(await dbAdmin());
+  const db = await dbAdmin();
+  const { region, organizationId, token } = await zohoOrderContext(db);
   const send = async (resource: string, method: "GET" | "POST", body?: Record<string, unknown>, query: Record<string, string> = {}) => {
     const response = await fetch(inventoryApi(region, resource, organizationId, query), {
       method,
@@ -5734,7 +5743,9 @@ export async function openZohoInventory() {
       signal: AbortSignal.timeout(20_000),
     });
     const parsed: unknown = await response.json().catch(() => null);
-    return { status: response.status, body: parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null };
+    const answer = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
+    if (isZohoDailyLimitError(str(answer?.["message"]))) await pauseZohoForDailyLimit(db);
+    return { status: response.status, body: answer };
   };
   return { region: region as string, organizationId, send };
 }

@@ -21,7 +21,7 @@ export type Database = {
         Relationships: []
       }
       rice_samples: {
-        Row: { id: string; sample_no: number; arrival_date: string; variety: string; method: string; price_per_qntl: number; quantity_qntl: number; party_role: string; party_name: string; party_phone: string; seller_name: string; notes: string; status: string; status_reason: string; status_changed_at: string; created_by: string | null; created_by_name: string; created_at: string; updated_at: string }
+        Row: { id: string; sample_no: number; arrival_date: string; variety: string; method: string; price_per_qntl: number; quantity_qntl: number; party_role: string; party_name: string; party_phone: string; seller_name: string; notes: string; status: string; status_reason: string; status_changed_at: string; created_by: string | null; created_by_name: string; created_at: string; updated_at: string; deleted_at: string | null; deleted_by: string | null; deleted_by_name: string; deleted_reason: string }
         Insert: never
         Update: never
         Relationships: []
@@ -39,7 +39,7 @@ export type Database = {
         Relationships: []
       }
       rice_sample_purchase_orders: {
-        Row: { sample_id: string; reference: string; state: string; attempt_id: string; attempts: number; snapshot: Json; claimed_by: string | null; claimed_by_name: string; claimed_at: string; last_error: string; last_error_detail: string; zoho_po_id: string; zoho_po_number: string; zoho_po_status: string; zoho_sub_total: number | null; zoho_tax_total: number | null; zoho_total: number | null; differences: string[]; duplicates: Json; zoho_gone: boolean; zoho_checked_at: string | null; raised_at: string | null; raised_by: string | null; raised_by_name: string; updated_at: string }
+        Row: { sample_id: string; reference: string; state: string; generation: number; retired_pos: Json; attempt_id: string; attempts: number; snapshot: Json; claimed_by: string | null; claimed_by_name: string; claimed_at: string; last_error: string; last_error_detail: string; zoho_po_id: string; zoho_po_number: string; zoho_po_status: string; zoho_sub_total: number | null; zoho_tax_total: number | null; zoho_total: number | null; differences: string[]; duplicates: Json; zoho_gone: boolean; zoho_checked_at: string | null; raised_at: string | null; raised_by: string | null; raised_by_name: string; updated_at: string }
         Insert: never
         Update: never
         Relationships: []
@@ -1205,10 +1205,14 @@ export type Database = {
       rice_sample_set_status: { Args: { _sample_id: string; _action: string; _reason: string }; Returns: string }
       rice_sample_po_claim: { Args: { _sample_id: string; _attempt_id: string; _reference: string; _snapshot: Json; _user: string; _user_name: string }; Returns: Json }
       rice_sample_po_takeover: { Args: { _sample_id: string; _expected_attempt: string; _attempt_id: string; _snapshot: Json; _user: string; _user_name: string }; Returns: Json }
+      rice_sample_po_mark_dead: { Args: { _sample_id: string; _po_id: string; _reason: string; _zoho_status: string; _note: string; _user: string | null; _user_name: string }; Returns: Json }
       rice_sample_po_release: { Args: { _sample_id: string; _expected_attempt: string; _user: string; _user_name: string; _by_hand?: boolean }; Returns: Json }
       rice_sample_po_mark_failed: { Args: { _sample_id: string; _attempt_id: string; _state: string; _message: string; _detail: string; _user: string; _user_name: string }; Returns: undefined }
       rice_sample_po_record: { Args: { _sample_id: string; _po_id: string; _po_number: string; _po_status: string; _sub_total: number | null; _tax_total: number | null; _total: number | null; _differences: string[]; _found_by_search: boolean; _user: string; _user_name: string }; Returns: Json }
-      rice_sample_po_refresh: { Args: { _sample_id: string; _po_status: string | null; _sub_total: number | null; _tax_total: number | null; _total: number | null; _gone: boolean; _duplicates: Json | null }; Returns: undefined }
+      rice_sample_po_refresh: { Args: { _sample_id: string; _po_id?: string | null; _po_status: string | null; _sub_total: number | null; _tax_total: number | null; _total: number | null; _gone: boolean; _duplicates: Json | null }; Returns: undefined }
+      rice_sample_po_cancel_asked: { Args: { _sample_id: string; _po_number: string; _reason: string; _user: string; _user_name: string }; Returns: undefined }
+      rice_sample_po_poll_claim: { Args: { _gap_seconds: number }; Returns: boolean }
+      rice_sample_po_poll_hold: { Args: { _seconds: number }; Returns: undefined }
       rice_sample_creation_claim: { Args: { _kind: string; _name_key: string; _display_name: string; _attempt_id: string; _user: string; _user_name: string }; Returns: Json }
       rice_sample_creation_takeover: { Args: { _kind: string; _name_key: string; _expected_attempt: string; _attempt_id: string; _user: string; _user_name: string }; Returns: Json }
       rice_sample_creation_finish: { Args: { _kind: string; _name_key: string; _attempt_id: string; _state: string; _zoho_id: string; _message: string }; Returns: undefined }

@@ -16,9 +16,9 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
-  BROKEN_LABELS, GRAIN_LABELS, RICE_PO_SETTINGS_KEY, SORT_LABELS, STATUS_LABELS, SWELLING_LABELS, TASTE_LABELS, bestInComparison, inPlay, isBulkUnit, isSamplePhone, latestTest, phoneLinks, planPoLine,
+  BROKEN_LABELS, GRAIN_LABELS, PO_DEATH_WORDS, RICE_PO_SETTINGS_KEY, SORT_LABELS, STATUS_LABELS, SWELLING_LABELS, TASTE_LABELS, bestInComparison, canCancelPo, inPlay, poDeathReason, isBulkUnit, isSamplePhone, latestTest, phoneLinks, planPoLine,
   poLineProblem, poReference, priceUnitWarning, riceTextOptions, sampleLabel, sortSamples, testsBySample, zohoPoUrl, zohoStatusLabel,
-  type BrokenResult, type GrainResult, type PartyRole, type RaiseResult, type RicePo, type RiceSample, type RiceTest, type SampleSort, type SampleStatus, type SwellingResult, type TasteResult, type ZohoItemMatch, type ZohoVendorMatch,
+  type BrokenResult, type GrainResult, type RetiredPo, type PartyRole, type RaiseResult, type RicePo, type RiceSample, type RiceTest, type SampleSort, type SampleStatus, type SwellingResult, type TasteResult, type ZohoItemMatch, type ZohoVendorMatch,
 } from "@/lib/rice-samples";
 import type { RiceDesk, RiceGodown } from "@/lib/rice-samples.functions";
 import { listActiveRiceOptions } from "@/lib/product-codes";
@@ -47,6 +47,8 @@ const STATUS_TONE: Record<SampleStatus, string> = {
 };
 const PARTY_LABEL: Record<PartyRole, string> = { broker: "Broker", seller: "Seller" };
 const inputClass = "h-10 bg-white text-base sm:text-sm";
+const PO_CHECK_MS = 60_000;
+type StatusAction = "discard" | "unavailable" | "reopen" | "delete" | "restore";
 /** Forms stay open when someone taps beside them, so typed figures are not lost. */
 const keepOpen = { onInteractOutside: (event: { preventDefault(): void }) => event.preventDefault() };
 
@@ -54,7 +56,7 @@ const keepOpen = { onInteractOutside: (event: { preventDefault(): void }) => eve
 const demoDesk = (): RiceDesk => {
   const sample = (id: string, variety: string, method: string, price: number, quantity: number, role: PartyRole, name: string, arrival: string, status: SampleStatus): RiceSample => ({
     id, sample_no: Number(id.slice(-1)), arrival_date: arrival, variety, method, price_per_qntl: price, quantity_qntl: quantity, party_role: role, party_name: name, party_phone: "9000000001", seller_name: role === "broker" ? "Sample Mills" : "",
-    notes: "", status, status_reason: status === "unavailable" ? "Broker says the lot is sold" : "", status_changed_at: `${arrival}T10:00:00Z`, created_by_name: "Head Office", created_at: `${arrival}T10:00:00Z`, updated_at: `${arrival}T10:00:00Z`,
+    notes: "", status, status_reason: status === "unavailable" ? "Broker says the lot is sold" : "", status_changed_at: `${arrival}T10:00:00Z`, created_by_name: "Head Office", created_at: `${arrival}T10:00:00Z`, updated_at: `${arrival}T10:00:00Z`, deleted_at: null, deleted_by_name: "", deleted_reason: "",
   });
   const test = (sampleId: string, score: number, grain: GrainResult, taste: TasteResult, broken: BrokenResult): RiceTest => ({
     id: `T-${sampleId}`, sample_id: sampleId, tested_at: "2026-11-02T06:00:00Z", tested_by_name: "Godown team", score, grain, swelling: "good", taste, broken, notes: "Good smell, cooked in 15 minutes", recorded_at: "2026-11-02T06:05:00Z",
@@ -73,12 +75,13 @@ const demoDesk = (): RiceDesk => {
   };
 };
 
-type ListFilter = "in_play" | "all" | SampleStatus | "out";
+type ListFilter = "in_play" | "all" | SampleStatus | "out" | "deleted";
 const FILTER_LABELS: Record<ListFilter, string> = {
-  in_play: "In play", all: "All samples", arrived: "Waiting for a cook test", tested: "Tested", selected: "PO raised", discarded: "Discarded", unavailable: "Unavailable", out: "Discarded or unavailable",
+  in_play: "In play", all: "All samples", arrived: "Waiting for a cook test", tested: "Tested", selected: "PO raised", discarded: "Discarded", unavailable: "Unavailable", out: "Discarded or unavailable", deleted: "Deleted cards",
 };
+/** Deleted cards show only under their own filter. */
 const matchesFilter = (status: SampleStatus, filter: ListFilter) =>
-  filter === "all" ? true : filter === "in_play" ? inPlay(status) : filter === "out" ? status === "discarded" || status === "unavailable" : status === filter;
+  filter === "deleted" ? false : filter === "all" ? true : filter === "in_play" ? inPlay(status) : filter === "out" ? status === "discarded" || status === "unavailable" : status === filter;
 
 type SampleForm = {
   id: string | null; arrivalDate: string; variety: string; method: string; price: string; quantity: string;
@@ -99,53 +102,77 @@ function AdminRiceSamples() {
   const [compareIds, setCompareIds] = useState<string[]>([]);
   const [sampleForm, setSampleForm] = useState<SampleForm | null>(null);
   const [testing, setTesting] = useState<RiceSample | null>(null);
-  const [changing, setChanging] = useState<{ sample: RiceSample; action: "discard" | "unavailable" | "reopen" } | null>(null);
+  const [changing, setChanging] = useState<{ sample: RiceSample; action: StatusAction } | null>(null);
+  const [cancelling, setCancelling] = useState<{ sample: RiceSample; po: RicePo } | null>(null);
   const [buying, setBuying] = useState<RiceSample | null>(null);
   const [historyOf, setHistoryOf] = useState<RiceSample | null>(null);
   const [savingMode, setSavingMode] = useState(false);
 
-  const load = useCallback(async () => {
+  const lastLoad = useRef(0);
+  // quiet: a check in the background keeps what is on screen if it fails. Only the newest request's answer shows, or a slow one could bring back a button already gone.
+  const load = useCallback(async (quiet = false) => {
     if (STATIC_DATA_MODE) { setDesk((current) => current ?? demoDesk()); return; }
+    const mine = ++lastLoad.current;
     try {
       const { getRiceSampleDesk } = await import("@/lib/rice-samples.functions");
-      setDesk(await getRiceSampleDesk());
+      const fresh = await getRiceSampleDesk();
+      if (mine !== lastLoad.current) return;
+      setDesk(fresh);
       setLoadError("");
     } catch (cause) {
-      setLoadError(errorText(cause));
+      if (!quiet && mine === lastLoad.current) setLoadError(errorText(cause));
     }
   }, []);
   useEffect(() => { void load(); }, [load]);
 
-  // Purchase orders move on in Zoho. Refresh a few that have not been checked for an hour, once each time the page opens.
-  const refreshedOnce = useRef(false);
+  // Purchase orders move on in Zoho, so while this page is on screen it asks every minute and shows what changed, including changes
+  // other admins made. The server makes no Zoho call when nothing is raised, and several open pages share one check.
   useEffect(() => {
-    if (!desk || refreshedOnce.current || STATIC_DATA_MODE) return;
-    refreshedOnce.current = true;
-    const stale = desk.pos.filter((po) => po.state === "raised" && !po.zoho_gone && (!po.zoho_checked_at || Date.now() - Date.parse(po.zoho_checked_at) > 3_600_000)).slice(0, 5);
-    if (!stale.length) return;
-    void (async () => {
-      const { refreshRiceSamplePoStatus } = await import("@/lib/rice-samples.functions");
-      for (const po of stale) await refreshRiceSamplePoStatus({ data: { sampleId: po.sample_id } }).catch(() => undefined);
-      await load();
-    })();
-  }, [desk, load]);
+    if (STATIC_DATA_MODE) return;
+    let active = true, checking = false;
+    const check = async () => {
+      if (document.visibilityState !== "visible" || checking) return;
+      checking = true;
+      try {
+        const { pollRiceSamplePos } = await import("@/lib/rice-samples.functions");
+        const result = await pollRiceSamplePos();
+        if (!active) return;
+        for (const freed of result.freed) toast.warning(`${freed.number} was ${PO_DEATH_WORDS[freed.reason]} in Zoho`, { description: "The sample is back in play, with its history." });
+        await load(true);
+      } catch {
+        // The next check tries again.
+      } finally {
+        checking = false;
+      }
+    };
+    void check();
+    const timer = window.setInterval(() => void check(), PO_CHECK_MS);
+    const onVisible = () => { if (document.visibilityState === "visible") void check(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [load]);
 
   const tests = useMemo(() => testsBySample(desk?.tests ?? []), [desk]);
   const pos = useMemo(() => new Map((desk?.pos ?? []).map((po) => [po.sample_id, po])), [desk]);
-  const samples = desk?.samples ?? [];
+  const samples = useMemo(() => desk?.samples ?? [], [desk]);
+  const onCards = useMemo(() => samples.filter((s) => !s.deleted_at), [samples]);
   const counts = useMemo(() => ({
-    inPlay: samples.filter((s) => inPlay(s.status)).length,
-    arrived: samples.filter((s) => s.status === "arrived").length,
-    tested: samples.filter((s) => s.status === "tested").length,
-    selected: samples.filter((s) => s.status === "selected").length,
-    out: samples.filter((s) => s.status === "discarded" || s.status === "unavailable").length,
-  }), [samples]);
+    inPlay: onCards.filter((s) => inPlay(s.status)).length,
+    arrived: onCards.filter((s) => s.status === "arrived").length,
+    tested: onCards.filter((s) => s.status === "tested").length,
+    selected: onCards.filter((s) => s.status === "selected").length,
+    out: onCards.filter((s) => s.status === "discarded" || s.status === "unavailable").length,
+  }), [onCards]);
   const shown = useMemo(() => {
     const term = search.trim().toLowerCase();
-    const list = samples.filter((s) => matchesFilter(s.status, filter) && (!term || `${s.variety} ${s.method} ${s.party_name} ${s.seller_name}`.toLowerCase().includes(term)));
+    const list = samples.filter((s) => (filter === "deleted" ? Boolean(s.deleted_at) : !s.deleted_at && matchesFilter(s.status, filter)) && (!term || `${s.variety} ${s.method} ${s.party_name} ${s.seller_name}`.toLowerCase().includes(term)));
     return sortSamples(list, sort, tests);
   }, [samples, filter, search, sort, tests]);
-  const compared = useMemo(() => compareIds.map((id) => samples.find((s) => s.id === id)).filter((s): s is RiceSample => Boolean(s)), [compareIds, samples]);
+  const compared = useMemo(() => compareIds.map((id) => onCards.find((s) => s.id === id)).filter((s): s is RiceSample => Boolean(s)), [compareIds, onCards]);
   const openList = (next: ListFilter) => { setFilter(next); scrollToSection("rice-sample-list"); };
   // The purchase order screen must see the sample as it is now, not as it was when the screen opened.
   const buyingNow = buying ? samples.find((sample) => sample.id === buying.id) ?? buying : null;
@@ -186,7 +213,7 @@ function AdminRiceSamples() {
         <div className="mb-4 grid gap-2 sm:grid-cols-3">
           <div className="grid gap-1"><Label className="text-[11px] text-slate">Show</Label>
             <select aria-label="Show samples" className="h-10 min-w-0 rounded-md border border-input bg-white px-2 text-sm" value={filter} onChange={(event) => setFilter(event.target.value as ListFilter)}>
-              {(["in_play", "all", "arrived", "tested", "selected", "out", "unavailable", "discarded"] as ListFilter[]).map((key) => <option key={key} value={key}>{FILTER_LABELS[key]}</option>)}
+              {(["in_play", "all", "arrived", "tested", "selected", "out", "unavailable", "discarded", "deleted"] as ListFilter[]).map((key) => <option key={key} value={key}>{FILTER_LABELS[key]}</option>)}
             </select>
           </div>
           <div className="grid gap-1"><Label className="text-[11px] text-slate">Sort</Label>
@@ -204,7 +231,7 @@ function AdminRiceSamples() {
         ) : !desk ? (
           <p className="text-sm text-slate">Loading…</p>
         ) : shown.length === 0 ? (
-          <p className="text-sm text-slate">{samples.length === 0 ? "No samples yet. Add the first one when a sample arrives." : "No samples match this view."}</p>
+          <p className="text-sm text-slate">{onCards.length === 0 && filter !== "deleted" ? "No samples yet. Add the first one when a sample arrives." : "No samples match this view."}</p>
         ) : (
           <div className="grid gap-4 lg:grid-cols-2">
             {shown.map((sample) => (
@@ -222,6 +249,7 @@ function AdminRiceSamples() {
                 onSimilar={() => setSampleForm(formFromSample(sample, false))}
                 onStatus={(action) => setChanging({ sample, action })}
                 onHistory={() => setHistoryOf(sample)}
+                onCancelPo={(po) => setCancelling({ sample, po })}
                 onChanged={load}
               />
             ))}
@@ -244,6 +272,7 @@ function AdminRiceSamples() {
       {sampleForm && desk && <SampleFormDialog form={sampleForm} onForm={setSampleForm} samples={samples} onClose={() => setSampleForm(null)} onSaved={load} />}
       {testing && desk && <TestDialog sample={testing} adminName={desk.adminName} onClose={() => setTesting(null)} onSaved={load} />}
       {changing && <StatusDialog sample={changing.sample} action={changing.action} onClose={() => setChanging(null)} onSaved={load} />}
+      {cancelling && <CancelPoDialog sample={cancelling.sample} po={cancelling.po} onClose={() => setCancelling(null)} onDone={load} />}
       {buyingNow && desk && <BuyDialog sample={buyingNow} tests={tests.get(buyingNow.id) ?? []} desk={desk} po={pos.get(buyingNow.id) ?? null} onReload={load} onClose={() => { setBuying(null); void load(); }} />}
       {compared.length >= 2 && (
         <button type="button" className="fixed inset-x-4 bottom-4 z-40 h-12 rounded-lg bg-navy text-sm font-bold text-white shadow-lg sm:inset-x-auto sm:right-6 sm:px-6" onClick={() => scrollToSection("rice-compare")}>
@@ -269,13 +298,16 @@ const SampleBadge = ({ status }: { status: SampleStatus }) => (
   <span className={cn("inline-flex shrink-0 items-center rounded-full border px-2.5 py-0.5 text-[11px] font-semibold", STATUS_TONE[status])}>{STATUS_LABELS[status]}</span>
 );
 
-function SampleCard({ sample, tests, po, zoho, compared, onCompare, onTest, onBuy, onEdit, onSimilar, onStatus, onHistory, onChanged }: {
+function SampleCard({ sample, tests, po, zoho, compared, onCompare, onTest, onBuy, onEdit, onSimilar, onStatus, onHistory, onCancelPo, onChanged }: {
   sample: RiceSample; tests: RiceTest[]; po: RicePo | null; zoho: RiceDesk["zoho"]; compared: boolean; onCompare: () => void; onTest: () => void; onBuy: () => void; onEdit: () => void; onSimilar: () => void;
-  onStatus: (action: "discard" | "unavailable" | "reopen") => void; onHistory: () => void; onChanged: () => Promise<void>;
+  onStatus: (action: StatusAction) => void; onHistory: () => void; onCancelPo: (po: RicePo) => void; onChanged: () => Promise<void>;
 }) {
   const latest = latestTest(tests);
   const pending = po?.state === "sending" || po?.state === "uncertain";
-  const open = inPlay(sample.status) && !pending;
+  const deleted = Boolean(sample.deleted_at);
+  const open = inPlay(sample.status) && !pending && !deleted;
+  // A live or on-its-way purchase order keeps the card: the database refuses too.
+  const canDelete = !deleted && !pending && sample.status !== "selected";
   return (
     <article className="min-w-0 rounded-lg border border-border bg-white p-4">
       <header className="flex items-start justify-between gap-2">
@@ -324,27 +356,34 @@ function SampleCard({ sample, tests, po, zoho, compared, onCompare, onTest, onBu
         <p className="mt-2 break-words rounded-md bg-danger/5 px-2 py-1.5 text-xs text-danger">{STATUS_LABELS[sample.status]}{sample.status_reason ? `: ${sample.status_reason}` : ""} ({when(sample.status_changed_at)})</p>
       )}
 
-      {po && <PoPanel key={po.attempt_id} sample={sample} po={po} zoho={zoho} onChanged={onChanged} />}
+      {deleted && (
+        <p className="mt-2 break-words rounded-md bg-slate/10 px-2 py-1.5 text-xs text-navy">
+          <strong>Deleted</strong> by {sample.deleted_by_name || "an admin"}{sample.deleted_reason ? `: ${sample.deleted_reason}` : ""}. It shows nowhere else, and its history is kept.
+        </p>
+      )}
+      {po && <PoPanel key={po.attempt_id} sample={sample} po={po} zoho={zoho} onChanged={onChanged} onCancel={() => onCancelPo(po)} />}
 
       <div className="mt-3 flex flex-wrap gap-2">
         {open && <Button className="h-10 flex-1 bg-navy text-white hover:bg-navy/90" onClick={onTest}><FlaskConical className="mr-1 h-4 w-4" />Add cook test</Button>}
         {open && <Button className="h-10 flex-1 bg-gold text-midnight hover:bg-gold/90" onClick={onBuy}><ShoppingCart className="mr-1 h-4 w-4" />Buy this</Button>}
-        {(sample.status === "discarded" || sample.status === "unavailable") && <Button variant="outline" className="h-10" onClick={() => onStatus("reopen")}>Reopen</Button>}
+        {!deleted && (sample.status === "discarded" || sample.status === "unavailable") && <Button variant="outline" className="h-10" onClick={() => onStatus("reopen")}>Reopen</Button>}
+        {deleted && <Button variant="outline" className="h-10" onClick={() => onStatus("restore")}>Restore card</Button>}
       </div>
       <div className="mt-1 flex flex-wrap items-center gap-x-3 text-xs font-semibold">
-        <label className="inline-flex min-h-11 items-center gap-1.5 text-navy"><input type="checkbox" className="h-5 w-5" checked={compared} onChange={onCompare} />Compare</label>
+        {!deleted && <label className="inline-flex min-h-11 items-center gap-1.5 text-navy"><input type="checkbox" className="h-5 w-5" checked={compared} onChange={onCompare} />Compare</label>}
         <button type="button" className="inline-flex min-h-11 items-center gap-1 text-navy hover:underline" onClick={onHistory}><History className="h-3.5 w-3.5" />History</button>
         {open && <button type="button" className="min-h-11 text-navy hover:underline" onClick={onEdit}>Edit</button>}
         <button type="button" className="min-h-11 text-navy hover:underline" onClick={onSimilar}>Add similar</button>
         {open && <button type="button" className="min-h-11 text-amber-700 hover:underline" onClick={() => onStatus("unavailable")}>Mark unavailable</button>}
         {open && <button type="button" className="min-h-11 text-danger hover:underline" onClick={() => onStatus("discard")}>Discard</button>}
+        {canDelete && <button type="button" className="min-h-11 text-danger hover:underline" onClick={() => onStatus("delete")}>Delete card</button>}
       </div>
     </article>
   );
 }
 
 /** What the desk knows about the sample's purchase order. Once raised it is read-only: Zoho is in control. */
-function PoPanel({ sample, po, zoho, onChanged }: { sample: RiceSample; po: RicePo; zoho: RiceDesk["zoho"]; onChanged: () => Promise<void> }) {
+function PoPanel({ sample, po, zoho, onChanged, onCancel }: { sample: RiceSample; po: RicePo; zoho: RiceDesk["zoho"]; onChanged: () => Promise<void>; onCancel: () => void }) {
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<RaiseResult | null>(null);
   const [handCheck, setHandCheck] = useState(false);
@@ -379,6 +418,7 @@ function PoPanel({ sample, po, zoho, onChanged }: { sample: RiceSample; po: Rice
       const { refreshRiceSamplePoStatus } = await import("@/lib/rice-samples.functions");
       const result = await refreshRiceSamplePoStatus({ data: { sampleId: sample.id } });
       if (!result.ok) toast.error(result.message);
+      else if (result.message) toast.warning(result.message);
       await onChanged();
     } catch (cause) {
       toast.error("Could not check Zoho", { description: errorText(cause) });
@@ -387,8 +427,14 @@ function PoPanel({ sample, po, zoho, onChanged }: { sample: RiceSample; po: Rice
     }
   };
 
+  if (po.state === "dead") return <RetiredList po={po} prominent={!sample.deleted_at && inPlay(sample.status)} />;
   if (po.state === "rejected") {
-    return <p className="mt-3 break-words rounded-md bg-danger/5 px-2 py-1.5 text-xs text-danger"><strong>The last attempt did not create a purchase order.</strong> {po.last_error}</p>;
+    return (
+      <>
+        <p className="mt-3 break-words rounded-md bg-danger/5 px-2 py-1.5 text-xs text-danger"><strong>The last attempt did not create a purchase order.</strong> {po.last_error}</p>
+        <RetiredList po={po} />
+      </>
+    );
   }
   if (po.state === "sending" || po.state === "uncertain") {
     return (
@@ -425,14 +471,79 @@ function PoPanel({ sample, po, zoho, onChanged }: { sample: RiceSample; po: Rice
         {po.zoho_total !== null ? ` · total in Zoho ${inrPrecise(po.zoho_total)}` : ""}
       </p>
       <p className="mt-1 text-slate">Raised by {po.raised_by_name || "an admin"}{po.raised_at ? `, ${when(po.raised_at)}` : ""}.{po.zoho_gone ? "" : " Carry on in Zoho; this sample is locked here."}{po.zoho_checked_at ? ` Status checked ${when(po.zoho_checked_at)}.` : ""}</p>
-      {po.zoho_gone && <p className="mt-1 font-semibold text-danger">Zoho no longer has this purchase order. To buy this rice, use "Add similar" for a new sample: this one stays on record.</p>}
+      {po.zoho_gone && <p className="mt-1 font-semibold text-danger">Zoho no longer has this purchase order. This updates by itself once Zoho has been checked.</p>}
       {po.differences.map((difference) => <p key={difference} className="mt-1 font-semibold text-danger">{difference} Check it in Zoho.</p>)}
       {po.duplicates.length > 0 && <p className="mt-1 font-semibold text-danger">Zoho also has {po.duplicates.map((other) => other.number || other.id).join(", ")} with this sample's reference. Open Zoho and delete the extra one.</p>}
       <div className="mt-2 flex flex-wrap gap-2">
         {url && <a href={url} target="_blank" rel="noreferrer" className="inline-flex h-10 items-center gap-1 rounded-md bg-navy px-3 text-xs font-semibold text-white hover:bg-navy/90"><ExternalLink className="h-3.5 w-3.5" />Open in Zoho</a>}
         <Button variant="outline" className="h-10" disabled={busy} onClick={() => void refresh()}>{busy ? "Checking…" : "Refresh status"}</Button>
+        {canCancelPo(po.zoho_po_status) && !po.zoho_gone && <Button variant="outline" className="h-10 text-danger" onClick={onCancel}>Cancel in Zoho</Button>}
       </div>
+      <p className="mt-2 text-slate">{canCancelPo(po.zoho_po_status) ? "To delete this card or raise another, cancel or remove this purchase order first: the card updates by itself." : poDeathReason(po.zoho_po_status) ? "The card frees itself once Zoho has been checked and nothing else alive holds this reference." : "Rice has been received or billed on this purchase order, so the card stays while Zoho holds it."}</p>
+      <RetiredList po={po} />
     </div>
+  );
+}
+
+/** The sample's earlier purchase orders, each dead in Zoho. Prominent straight after one died, when the sample has just come back into play. */
+function RetiredList({ po, prominent = false }: { po: RicePo; prominent?: boolean }) {
+  const retired = [...po.retired_pos].reverse();
+  if (!retired.length) return null;
+  const line = (old: RetiredPo) => old.reason === "duplicate" ? `${old.number || old.id} was a duplicate of it` : `${old.number || old.id} was ${PO_DEATH_WORDS[old.reason] ?? old.reason} in Zoho${old.retired_at ? `, seen ${when(old.retired_at)}` : ""}`;
+  if (!prominent) return <p className="mt-2 break-words text-xs text-slate">Earlier: {retired.map(line).join("; ")}.</p>;
+  const [latest, ...older] = retired as [RetiredPo, ...RetiredPo[]];
+  return (
+    <div className="mt-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
+      <p className="flex items-start gap-1.5 font-semibold"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />{line(latest)}.</p>
+      {latest.note && <p className="mt-1 break-words">{latest.note}</p>}
+      <p className="mt-1">This sample is back in play. You can raise a new purchase order, which gets its own reference, or discard, mark unavailable or delete the card.</p>
+      {older.length > 0 && <p className="mt-1 break-words text-slate">Before that: {older.map(line).join("; ")}.</p>}
+    </div>
+  );
+}
+
+/** Zoho's own Mark as Cancelled. Nothing is deleted from Zoho, and the sample is only freed once Zoho shows it as cancelled. */
+function CancelPoDialog({ sample, po, onClose, onDone }: { sample: RiceSample; po: RicePo; onClose: () => void; onDone: () => Promise<void> }) {
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const cancel = async () => {
+    if (reason.trim().length < 3) { toast.error("Enter why this purchase order is cancelled"); return; }
+    setBusy(true);
+    setMessage("");
+    try {
+      const { cancelRiceSamplePurchaseOrder } = await import("@/lib/rice-samples.functions");
+      const result = await cancelRiceSamplePurchaseOrder({ data: { sampleId: sample.id, poId: po.zoho_po_id, reason: reason.trim(), confirmed: true } });
+      if (result.kind === "cancelled") {
+        toast.success(`${result.number} cancelled in Zoho`, { description: "The sample is back in play." });
+        onClose();
+      } else {
+        setMessage(result.message);
+      }
+      await onDone();
+    } catch (cause) {
+      setMessage(`Zoho may or may not have taken this (${errorText(cause)}). This page shows the answer once Zoho has been checked.`);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Dialog open onOpenChange={(open) => { if (!open && !busy) onClose(); }}>
+      <DialogContent className={dialogClass} {...keepOpen}>
+        <DialogHeader>
+          <DialogTitle>Cancel {po.zoho_po_number}?</DialogTitle>
+          <DialogDescription>{sampleLabel(sample.sample_no)}: {sample.variety}{sample.method ? ` · ${sample.method}` : ""}. This marks it Cancelled in the official Zoho books. Nothing is deleted from Zoho, and it stays there on record.</DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-1"><Label className="text-xs text-slate">Why (kept on this sample's history, not sent to Zoho)</Label>
+          <Textarea rows={2} className="bg-white text-base sm:text-sm" value={reason} onChange={(event) => setReason(event.target.value)} />
+        </div>
+        {message && <p className="break-words rounded-md bg-amber-50 px-2 py-1.5 text-xs font-medium text-amber-800">{message}</p>}
+        <div className="flex gap-2">
+          <Button variant="outline" className="h-11 flex-1" disabled={busy} onClick={onClose}>Keep it</Button>
+          <Button className="h-11 flex-1 bg-danger text-white hover:bg-danger/90" disabled={busy} onClick={() => void cancel()}>{busy ? "Cancelling…" : "Cancel in Zoho"}</Button>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -665,13 +776,15 @@ function TestDialog({ sample, adminName, onClose, onSaved }: { sample: RiceSampl
   );
 }
 
-function StatusDialog({ sample, action, onClose, onSaved }: { sample: RiceSample; action: "discard" | "unavailable" | "reopen"; onClose: () => void; onSaved: () => Promise<void> }) {
+function StatusDialog({ sample, action, onClose, onSaved }: { sample: RiceSample; action: StatusAction; onClose: () => void; onSaved: () => Promise<void> }) {
   const [reason, setReason] = useState("");
   const [saving, setSaving] = useState(false);
   const copy = {
     discard: { title: "Discard this sample", help: "Why is it out? This stays on the sample's history.", label: "Reason (required)", button: "Discard sample", done: "Sample discarded" },
     unavailable: { title: "Mark unavailable", help: `Use this when the ${sample.party_role} says the rice is gone. You can reopen it if it comes back.`, label: "What they said (optional)", button: "Mark unavailable", done: "Marked unavailable" },
     reopen: { title: "Reopen this sample", help: "It goes back in play, with its tests.", label: "Note (optional)", button: "Reopen sample", done: "Sample reopened" },
+    delete: { title: "Delete this card", help: "It disappears from every list. Its tests and history are kept, and you can restore it from Deleted cards.", label: "Why (optional)", button: "Delete card", done: "Card deleted" },
+    restore: { title: "Restore this card", help: "It goes back to the lists as it was.", label: "Note (optional)", button: "Restore card", done: "Card restored" },
   }[action];
   const save = async () => {
     if (action === "discard" && reason.trim().length < 3) { toast.error("Enter why this sample is discarded"); return; }
@@ -747,7 +860,7 @@ function HistoryDialog({ sample, tests, events, po, onClose }: { sample: RiceSam
 
 const eventLabel = (action: string) => ({
   arrived: "Sample recorded", edited: "Edited", tested: "Cook test", discard: "Discarded", unavailable: "Marked unavailable", reopen: "Reopened",
-  po_started: "Purchase order started", po_retry: "Purchase order sent again", po_rejected: "Zoho refused the purchase order", po_uncertain: "No clear answer from Zoho", po_released: "Zoho has no purchase order: sample freed",
+  po_cancel_asked: "Asked Zoho to cancel", po_started: "Purchase order started", po_retry: "Purchase order sent again", po_rejected: "Zoho refused the purchase order", po_uncertain: "No clear answer from Zoho", po_released: "Zoho has no purchase order: sample freed", po_dead: "Purchase order ended in Zoho", deleted: "Card deleted", restored: "Card restored",
   po_raised: "Purchase order raised", po_duplicate: "Second purchase order found", po_status: "Zoho status",
 }[action] ?? action);
 
@@ -890,6 +1003,7 @@ function BuyDialog({ sample, tests, desk, po, onReload, onClose }: { sample: Ric
             </dl>
             {!isBulkUnit(item.unit) && <p className="rounded-md bg-amber-50 px-2 py-1.5 text-xs font-medium text-amber-800">"{item.name}" is counted in {item.unit || "units"}, not by weight. When this is received in Zoho, its stock goes up by {qty(line.poQuantity)} {item.unit || "units"}. Is that what you want?</p>}
             {rateWarning && <p className="rounded-md bg-amber-50 px-2 py-1.5 text-xs font-medium text-amber-800">{rateWarning}</p>}
+            {po?.state === "dead" && <p className="rounded-md bg-amber-50 px-2 py-1.5 text-xs font-medium text-amber-800">This makes a new purchase order with its own reference. The earlier {po.retired_pos[po.retired_pos.length - 1]?.number} stays on record as {PO_DEATH_WORDS[po.retired_pos[po.retired_pos.length - 1]?.reason ?? "deleted"]}.</p>}
             {tests.length === 0 && <p className="rounded-md bg-amber-50 px-2 py-1.5 text-xs font-medium text-amber-800">This sample has no cook test on record.</p>}
             {tests[0]?.taste === "off" && <p className="rounded-md bg-amber-50 px-2 py-1.5 text-xs font-medium text-amber-800">The latest test found the taste or smell off.</p>}
             {po?.state === "rejected" && <p className="break-words rounded-md bg-danger/5 px-2 py-1.5 text-xs text-danger">Last attempt: {po.last_error}</p>}
