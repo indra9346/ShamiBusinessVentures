@@ -1,10 +1,13 @@
-import { createFileRoute, Link, Outlet, useMatch, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, notFound, Outlet, useMatch, useNavigate } from "@tanstack/react-router";
 import { pageHead, jsonLdScript, breadcrumbJsonLd, SITE_NAME } from "@/lib/seo";
 import { ProductCard } from "@/components/site/ProductCard";
 import { LayoutGrid } from "lucide-react";
 import { SiteLayout } from "@/components/site/SiteLayout";
 import { FlipkartCategoryBar } from "@/components/site/FlipkartCategoryBar";
 import { getCategoryNode, categorySlug, type Tile } from "@/lib/category-tree";
+import { findStoreCategory } from "@/lib/category-slug";
+import type { StorefrontSnapshot } from "@/lib/storefront-snapshot";
+import { storeCategoryIsMissing } from "@/lib/storefront-snapshot.functions";
 import { cn } from "@/lib/utils";
 import { isStorefrontProduct, type Product } from "@/lib/data";
 import { availableProductBrands, normalizeFacetValue, productMatchesBrand } from "@/lib/search";
@@ -26,22 +29,54 @@ export const Route = createFileRoute("/categories/$slug")({
       ...(brand ? { brand } : {}),
     };
   },
-  head: ({ params }) => {
-    const node = getCategoryNode(params.slug);
-    const name = node?.name ?? "Category";
+  loader: async ({ params }) => {
+    // The server gives an address that is no category a real 404. In the browser the store's live
+    // list decides (see CategoryLevel), so a category added since the page opened still opens.
+    if (typeof window !== "undefined" || getCategoryNode(params.slug)) return;
+    if (await storeCategoryIsMissing({ data: params.slug })) throw notFound();
+  },
+  head: ({ params, match, matches }) => {
+    const notFoundAnswer = match.status === "notFound";
+    const snapshot = matches[0]?.loaderData as StorefrontSnapshot | null | undefined;
+    const stored = findStoreCategory(params.slug, snapshot?.categories) as { name: string; image?: string } | undefined;
+    const node = notFoundAnswer ? undefined : (getCategoryNode(params.slug) ?? stored);
+    // Not a page search engines should keep: not found, or the server could not tell yet.
+    if (!node) {
+      return {
+        meta: [
+          { title: `${notFoundAnswer ? "Category not found" : "Categories"} | ${SITE_NAME}` },
+          { name: "robots", content: "noindex" },
+        ],
+      };
+    }
+    const { name } = node;
     const path = `/categories/${params.slug}`;
     return {
       ...pageHead({
         title: `Buy ${name} Online at Godown Price | ${SITE_NAME}`,
         description: `Buy ${name.toLowerCase()} online at Grain Bazar: every grade and pack size with today's godown price and stock, GST invoice, pickup or delivery from Challakere and Hubli.`,
         path,
-        ...(node?.image ? { image: node.image } : {}),
+        ...(node.image ? { image: node.image } : {}),
       }),
       scripts: [jsonLdScript(breadcrumbJsonLd([{ name: "Home", path: "/" }, { name: "Categories", path: "/categories" }, { name, path }]))],
     };
   },
   component: CategoryLevel,
+  notFoundComponent: CategoryNotFound,
 });
+
+function CategoryNotFound() {
+  return (
+    <SiteLayout>
+      <div className="mx-auto max-w-7xl px-4 py-16 text-center sm:px-6">
+        <h1 className="text-2xl font-bold text-navy">Category not found</h1>
+        <Link to="/categories" className="mt-4 inline-block text-sm font-semibold text-gold">
+          Back to categories
+        </Link>
+      </div>
+    </SiteLayout>
+  );
+}
 
 function CategoryLevel() {
   const { slug } = Route.useParams();
@@ -49,9 +84,7 @@ function CategoryLevel() {
   const navigate = useNavigate();
   const { categories, products, productCatalogStatus, categoryCatalogStatus } = useApp();
   const node = getCategoryNode(slug);
-  const category = categories.find(
-    (item) => categorySlug(item.name === "Cooking Oil" ? "Oil" : item.name) === slug,
-  );
+  const category = findStoreCategory(slug, categories);
   const displayName = node?.name ?? category?.name;
   const catalogCategory =
     category?.name === "Cooking Oil"

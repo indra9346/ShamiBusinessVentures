@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { businessDetailsProblem, gstStateCodeOf, normaliseGstin } from "../src/lib/gstin.ts";
 import { einvoiceProblems, zohoGstFields } from "../src/lib/zoho-sync-core.ts";
+import { sellerAddressLines } from "../src/lib/invoice-seller.ts";
 
 test("checkout: company details are checked like the database checks them", () => {
   assert.equal(businessDetailsProblem("29ABCDE1234F1Z5", "Kiran Traders", "Karnataka"), null);
@@ -63,4 +64,11 @@ test("IRP e-invoice readiness: GSTIN, legal name, full address with 6-digit PIN,
     'HSN of Oil 15L Tin must be 6 or 8 digits (now "1512")',
     'HSN of Rice must be 6 or 8 digits (now "none")',
   ]);
+});
+
+test("invoice: Sold by prints the order's godown address, else the company's", () => {
+  const company = ["Company line 1", "Company line 2"];
+  assert.deepEqual(sellerAddressLines("Pavagada Road, Challakere, Karnataka 577522", company), ["Pavagada Road, Challakere, Karnataka 577522"]);
+  assert.deepEqual(sellerAddressLines(" Line one \n\n Line two ", company), ["Line one", "Line two"]);
+  for (const none of ["", "   ", null, undefined]) assert.deepEqual(sellerAddressLines(none, company), company);
 });

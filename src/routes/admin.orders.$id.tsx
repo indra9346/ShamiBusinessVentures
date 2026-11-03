@@ -27,6 +27,7 @@ import { canCancelOrder, inr, orderStages, type OrderStatus } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { useBranches, zohoLocationLabel } from "@/lib/branches";
 import { ZohoInvoiceStatus } from "@/components/panel/ZohoInvoiceStatus";
+import { DeliveryNotePanel } from "@/components/panel/DeliveryNotePanel";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { syncSingleOrderToZoho } from "@/lib/zoho-commerce.functions";
 import { PickupPointCard } from "@/components/site/PickupPointCard";
@@ -403,6 +404,8 @@ function AdminOrderDetail() {
           </Link>
         </div>
       </div>
+
+      <DeliveryNotePanel orderNo={order.id} className="mb-5" />
 
       {/* Zoho ERP Style 4-Stage Horizontal Progression Tracker */}
       <Panel title="Order Stage Progression" className="mb-5">
