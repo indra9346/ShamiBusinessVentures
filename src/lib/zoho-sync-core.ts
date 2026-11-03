@@ -116,6 +116,16 @@ export function websiteOrderNoOf(zoho: { salesorder_number: string; reference_nu
   const reference = (zoho.reference_number ?? "").trim();
   return WEBSITE_ORDER_NUMBER.test(reference) ? reference : null;
 }
+
+/**
+ * Whether this Zoho sales order is the one for this website order. Exact, because Zoho's search is
+ * "contains". Reference# is compared as it is: the pattern above doesn't know every godown code the
+ * admin can set (BLR2, HUBBALLI), and here the order's own number is known.
+ */
+export function zohoOrderIsFor(zoho: { salesorder_number: string; reference_number?: string }, orderNo: string) {
+  if (zoho.salesorder_number.startsWith("GB-")) return zoho.salesorder_number === zohoOrderNumber(orderNo);
+  return (zoho.reference_number ?? "").trim() === orderNo;
+}
 export type ReconcileIssue =
   | "missing_in_zoho"
   | "linked_but_not_listed"

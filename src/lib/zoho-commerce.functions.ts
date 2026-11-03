@@ -14,7 +14,7 @@ import {
   cleanEmailList, godownPricesFromPricebook, godownStockFromZohoItem, mergeGodownPrices, newOrderEmail, parseZohoItemSyncVendorIds, pendingOrderQty, sameGodownPrices,
   zohoPricebookItemsFor, reconcileCatalog, reconcileCustomers, reconcileOrders, shouldRetryZohoCall,
   zohoItemSyncAllows, zohoLogLine,
-  zohoOrderNumber, websiteOrderNoOf, WEBSITE_ORDER_NUMBER, zohoRetryDelayMs, type AppProductForParity, type ZohoItemForParity, type ZohoOrderForReconcile,
+  zohoOrderIsFor, websiteOrderNoOf, WEBSITE_ORDER_NUMBER, zohoRetryDelayMs, type AppProductForParity, type ZohoItemForParity, type ZohoOrderForReconcile,
   orderNeedsZohoInvoice, paymentsToRecord, roundingWriteOff,
   invoiceDecision, websiteInvoiceStatus, zohoInvoicesOf, type InvoiceRecord,
   DAILY_LIMIT_PAUSE_MINUTES, inboundPollDue, isZohoDailyLimitError, zohoPaused,
@@ -3052,9 +3052,8 @@ async function findZohoSalesOrdersForOrder(region: Region, organizationId: strin
     region, organizationId, token, "salesorders", "GET", undefined,
     { search_text: orderNo, per_page: "200" },
   );
-  const key = websiteOrderNoOf({ salesorder_number: zohoOrderNumber(orderNo) }) ?? orderNo;
   return (result.salesorders ?? []).filter((row) =>
-    websiteOrderNoOf({ salesorder_number: str(row["salesorder_number"]), reference_number: str(row["reference_number"]) }) === key);
+    zohoOrderIsFor({ salesorder_number: str(row["salesorder_number"]), reference_number: str(row["reference_number"]) }, orderNo));
 }
 
 /** Inventory and Commerce share one organization; a pushed order must also be listed in Commerce > Orders. */

@@ -6,6 +6,7 @@ import {
   shouldRetryZohoCall,
   webhookKeyMatches,
   zohoLogLine,
+  zohoOrderIsFor,
   zohoOrderNumber,
   zohoRetryDelayMs,
   verifyZohoSignature,
@@ -151,6 +152,26 @@ test("Zoho sales order -> website order: Reference# for godown-series numbers, G
   assert.equal(websiteOrderNoOf({ salesorder_number: "GB-ORD-26102686593", reference_number: "ORD-26102686593" }), "ORD-26102686593");
   assert.equal(websiteOrderNoOf({ salesorder_number: "SO-00031", reference_number: "PO 4471 from walk-in" }), null);
   assert.equal(websiteOrderNoOf({ salesorder_number: "SO-00031" }), null);
+});
+
+test("the sales order for one website order: exact number only, whatever the godown code", () => {
+  const no = "CLK-577522-271026-103512";
+  assert.equal(zohoOrderIsFor({ salesorder_number: "CLK-SO-00012", reference_number: no }, no), true);
+  assert.equal(zohoOrderIsFor({ salesorder_number: "CLK-SO-00012", reference_number: ` ${no} ` }, no), true);
+  assert.equal(zohoOrderIsFor({ salesorder_number: "GB-ORD-26102686593", reference_number: "" }, "ORD-26102686593"), true);
+  // Zoho's search is "contains", so these come back from a search for the number and must not match.
+  assert.equal(zohoOrderIsFor({ salesorder_number: "CLK-SO-00013", reference_number: `${no}-2` }, no), false);
+  assert.equal(zohoOrderIsFor({ salesorder_number: `GB-${no}-2`, reference_number: "" }, no), false);
+  assert.equal(zohoOrderIsFor({ salesorder_number: "SO-00031", reference_number: "" }, no), false);
+  assert.equal(zohoOrderIsFor({ salesorder_number: "SO-00031" }, no), false);
+  // An older GB- order belongs to its own number, whatever someone typed in its Reference#.
+  assert.equal(zohoOrderIsFor({ salesorder_number: "GB-ORD-1", reference_number: no }, no), false);
+  // Codes the admin page allows and the website-number pattern doesn't: a lost reply must still be found.
+  for (const code of ["BLR2", "HUBBALLI", "K"]) {
+    const own = `${code}-577522-271026-103512`;
+    assert.equal(websiteOrderNoOf({ salesorder_number: "SO-00032", reference_number: own }), null);
+    assert.equal(zohoOrderIsFor({ salesorder_number: "SO-00032", reference_number: own }, own), true);
+  }
 });
 
 test("reconcile: orders numbered in the godown series match by Reference#", () => {
