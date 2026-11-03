@@ -1,9 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  bestInComparison, checkRicePo, createInZohoOnce, findPurchaseOrdersByReference, gstPreferencesFrom, itemBody, itemMatchFrom, kgPerZohoUnit, latestTest, nameKey, phoneLinks, planPoLine, plainZohoRefusal,
-  differsFromRaised, poDifferences, poLineProblem, poReference, priceUnitWarning, purchaseOrderBody, raiseRicePo, readPoStatus, riceTextOptions, sortSamples, testsBySample, vendorBody, vendorMatchesFrom, zohoPoUrl, zohoStatusLabel, zohoVerdict,
-  type ClaimAnswer, type CreationStore, type PoActor, type PoFound, type PoPlan, type PoStore, type RecordAnswer, type RicePo, type RiceSample, type RiceTest, type ZohoRaw, type ZohoSend,
+  bestInComparison, canCancelPo, cancelRicePo, checkRicePo, createInZohoOnce, findPurchaseOrdersByReference, gstPreferencesFrom, itemBody, itemMatchFrom, kgPerZohoUnit, latestTest, nameKey, phoneLinks, planPoLine, plainZohoRefusal,
+  differsFromRaised, OFF_LIST_CHECK_MS, poDeathReason, poDifferences, poLineProblem, poReference, retiredPoProblem, settleRaisedPo, syncRaisedPos, zohoSaysNoSuchPo, priceUnitWarning, purchaseOrderBody, raiseRicePo, readPoStatus, riceTextOptions, sortSamples, testsBySample, vendorBody, vendorMatchesFrom, zohoPoUrl, zohoStatusLabel, zohoVerdict,
+  type ClaimAnswer, type CreationStore, type PoActor, type PoFound, type PoLifeStore, type PoPlan, type PoStore, type RaisedPo, type RecordAnswer, type RicePo, type RiceSample, type RiceTest, type ZohoRaw, type ZohoSend,
 } from "../src/lib/rice-samples.ts";
 
 const SAMPLE = "11111111-1111-4111-8111-111111111111";
@@ -23,7 +23,7 @@ function memoryStore(startedAgoSeconds = 0) {
   clockNow = () => state.clock;
   const state = { row: null as null | { state: string; attempt: string; attempts: number; claimedAt: number; snapshot: PoPlan; po?: RicePo; duplicates: PoFound[] }, clock: Date.now() };
   const poRow = (found: PoFound, totals: { total: number | null }): RicePo => ({
-    sample_id: SAMPLE, reference: REF, state: "raised", attempt_id: state.row!.attempt, attempts: state.row!.attempts, snapshot: state.row!.snapshot, claimed_by_name: ACTOR.name,
+    sample_id: SAMPLE, reference: REF, state: "raised", generation: 1, retired_pos: [], attempt_id: state.row!.attempt, attempts: state.row!.attempts, snapshot: state.row!.snapshot, claimed_by_name: ACTOR.name,
     claimed_at: new Date(state.row!.claimedAt).toISOString(), last_error: "", zoho_po_id: found.id, zoho_po_number: found.number, zoho_po_status: found.status, zoho_sub_total: null, zoho_tax_total: null,
     zoho_total: totals.total, differences: [], duplicates: [], zoho_gone: false, zoho_checked_at: null, raised_at: null, raised_by_name: ACTOR.name,
   });
@@ -519,13 +519,13 @@ test("Zoho's GST is compared with what the admin was shown", () => {
 
 test("a deleted purchase order is told apart from a Zoho that could not be asked", async () => {
   const gone: ZohoSend = async () => ({ status: 404, body: { code: 1002, message: "Purchase order does not exist" } });
-  assert.deepEqual(await readPoStatus(gone, "1"), { gone: true, status: "", subTotal: null, taxTotal: null, total: null });
+  assert.deepEqual(await readPoStatus(gone, "1"), { gone: true, status: "", deathReason: null, subTotal: null, taxTotal: null, total: null });
   const down: ZohoSend = async () => { throw new Error("network"); };
   assert.equal(await readPoStatus(down, "1"), null);
   const busy: ZohoSend = async () => ({ status: 503, body: null });
   assert.equal(await readPoStatus(busy, "1"), null);
   const live: ZohoSend = async () => ({ status: 200, body: { code: 0, purchaseorder: { status: "open", sub_total: 10, tax_total: 1, total: 11 } } });
-  assert.deepEqual(await readPoStatus(live, "1"), { gone: false, status: "open", subTotal: 10, taxTotal: 1, total: 11 });
+  assert.deepEqual(await readPoStatus(live, "1"), { gone: false, status: "open", deathReason: null, subTotal: 10, taxTotal: 1, total: 11 });
 });
 
 test("Zoho's status names read plainly: open means issued", () => {
@@ -597,7 +597,7 @@ test("a price in the wrong unit is caught while typing", () => {
 
 const sample = (id: string, price: number, arrival: string): RiceSample => ({
   id, sample_no: 1, arrival_date: arrival, variety: "Sona", method: "", price_per_qntl: price, quantity_qntl: 10, party_role: "broker", party_name: "B", party_phone: "9000000000", seller_name: "", notes: "",
-  status: "tested", status_reason: "", status_changed_at: "", created_by_name: "", created_at: "", updated_at: "",
+  status: "tested", status_reason: "", status_changed_at: "", created_by_name: "", created_at: "", updated_at: "", deleted_at: null, deleted_by_name: "", deleted_reason: "",
 });
 const cooked = (sampleId: string, score: number, at: string): RiceTest => ({ id: `${sampleId}-${at}`, sample_id: sampleId, tested_at: at, tested_by_name: "T", score, grain: "separate", swelling: "good", taste: "good", broken: "few", notes: "", recorded_at: at });
 
@@ -793,3 +793,388 @@ test("creating refused by Zoho: plain words, and it can be tried again", async (
   const ok: ZohoSend = async () => ({ status: 201, body: { code: 0, contact: { contact_id: "C9" } } });
   assert.equal((await createInZohoOnce({ store, zoho: ok, newId: () => `n${ids += 1}` }, "vendor", creating(async () => null), ACTOR)).kind, "created");
 });
+
+// ---------------------------------------------------------------- After raising: staying in step with Zoho
+
+/** A small Zoho: purchase orders by ID, as the live list and read answered on 3 Nov 2026. */
+function liveZoho(orders: Record<string, Record<string, unknown>>, options: { listFails?: boolean; readFails?: boolean; cancel?: "ok" | "refuse" | "lost" | "ignored" } = {}) {
+  const calls: string[] = [];
+  const send: ZohoSend = async (resource, method, _body, query = {}) => {
+    calls.push(`${method} ${resource}`);
+    const cancel = /^purchaseorders\/([^/]+)\/status\/cancelled$/.exec(resource);
+    if (cancel) {
+      if (options.cancel === "refuse") return { status: 400, body: { code: 36, message: "A draft cannot be marked as cancelled." } };
+      if (options.cancel === "lost") { orders[cancel[1]!]!["status"] = "cancelled"; throw new Error("timed out"); }
+      if (options.cancel !== "ignored") orders[cancel[1]!]!["status"] = "cancelled";
+      return { status: 200, body: { code: 0, message: "The purchase order has been marked as cancelled." } };
+    }
+    const one = /^purchaseorders\/([^/]+)$/.exec(resource);
+    if (one) {
+      if (options.readFails) return { status: 503, body: null };
+      const order = orders[one[1]!];
+      return order ? { status: 200, body: { code: 0, purchaseorder: { purchaseorder_id: one[1], ...order } } } : { status: 404, body: { code: 1002, message: "Purchase Order does not exist." } };
+    }
+    if (options.listFails) return { status: 502, body: null };
+    const rows = Object.entries(orders).map(([id, order]) => ({ purchaseorder_id: id, ...order }));
+    const wanted = query["reference_number"];
+    return { status: 200, body: { code: 0, purchaseorders: wanted ? rows.filter((row) => row["reference_number"] === wanted) : rows, page_context: { has_more_page: false } } };
+  };
+  return { send, calls };
+}
+const raised = (patch: Partial<RaisedPo> = {}): RaisedPo => ({ sample_id: SAMPLE, reference: REF, zoho_po_id: "P1", zoho_po_number: "CLK-PO-1", zoho_po_status: "draft", duplicates: [], retired_pos: [], ...patch });
+function lifeStore() {
+  const refreshed: Parameters<PoLifeStore["refresh"]>[0][] = [];
+  const dead: Parameters<PoLifeStore["markDead"]>[0][] = [];
+  const asked: Parameters<PoLifeStore["cancelAsked"]>[0][] = [];
+  const store: PoLifeStore = {
+    refresh: async (args) => { refreshed.push(args); },
+    markDead: async (args) => { dead.push(args); return { outcome: dead.length === 1 ? "freed" : "changed" }; },
+    cancelAsked: async (args) => { asked.push(args); },
+  };
+  return { store, refreshed, dead, asked };
+}
+
+test("Zoho's dead statuses, and only those, mean dead", () => {
+  for (const status of ["cancelled", "Cancelled", "canceled", "cancelled_by_user", "cancelled_by_vendor", "void", "voided"]) assert.equal(poDeathReason(status), "cancelled", status);
+  assert.equal(poDeathReason("rejected"), "rejected");
+  assert.equal(poDeathReason("open", "cancelled"), "cancelled");
+  assert.equal(poDeathReason("draft", "rejected"), "rejected");
+  // Rice received or billed outranks whatever order_status says.
+  for (const status of ["billed", "partially_billed", "received", "closed"]) assert.equal(poDeathReason(status, "cancelled"), null, status);
+  // Live statuses and anything unknown keep the lock.
+  for (const status of ["draft", "open", "issued", "billed", "closed", "pending_approval", "approved", "partially_received", "received", "", "something_new", null, undefined]) assert.equal(poDeathReason(status), null, String(status));
+});
+
+test("only Zoho's own words mean a purchase order is gone, never a bare 404", () => {
+  assert.equal(zohoSaysNoSuchPo({ status: 404, body: { code: 1002, message: "Purchase Order does not exist." } }), true);
+  assert.equal(zohoSaysNoSuchPo({ status: 400, body: { code: 1002, message: "x" } }), true);
+  assert.equal(zohoSaysNoSuchPo({ status: 404, body: { code: 5, message: "Invalid URL Passed" } }), false);
+  assert.equal(zohoSaysNoSuchPo({ status: 404, body: null }), false);
+  assert.equal(zohoSaysNoSuchPo({ status: 502, body: null }), false);
+  assert.equal(zohoSaysNoSuchPo({ status: 401, body: { code: 57, message: "You are not authorized" } }), false);
+  assert.equal(zohoSaysNoSuchPo({ status: 400, body: { code: 9, message: "Purchase order does not exist" } }), true);
+  // Something else not existing says nothing about this purchase order.
+  assert.equal(zohoSaysNoSuchPo({ status: 400, body: { code: 9, message: "The organization does not exist." } }), false);
+});
+
+test("a new purchase order after a dead one gets a reference of its own", () => {
+  assert.equal(poReference(SAMPLE), `GBS-${SAMPLE}`);
+  assert.equal(poReference(SAMPLE, 1), `GBS-${SAMPLE}`);
+  assert.equal(poReference(SAMPLE, 2), `GBS-${SAMPLE}-2`);
+  assert.equal(poReference(SAMPLE, 3), `GBS-${SAMPLE}-3`);
+});
+
+test("alive in Zoho: the status is noted and nothing is freed", async () => {
+  const { store, refreshed, dead } = lifeStore();
+  const zoho = liveZoho({ P1: { status: "open", reference_number: REF, sub_total: 10, tax_total: 1, total: 11 } });
+  assert.deepEqual(await settleRaisedPo({ store, zoho: zoho.send }, raised(), null), { kind: "alive", status: "open" });
+  assert.equal(refreshed[0]!.status, "open");
+  assert.equal(refreshed[0]!.total, 11);
+  assert.equal(dead.length, 0);
+});
+
+test("cancelled in Zoho: confirmed by the search, then freed", async () => {
+  const { store, dead } = lifeStore();
+  const zoho = liveZoho({ P1: { status: "cancelled", reference_number: REF } });
+  assert.deepEqual(await settleRaisedPo({ store, zoho: zoho.send }, raised(), null), { kind: "freed", reason: "cancelled", number: "CLK-PO-1" });
+  assert.deepEqual(dead[0], { sampleId: SAMPLE, poId: "P1", reason: "cancelled", status: "cancelled", note: "", actor: null });
+});
+
+test("rejected in Zoho is freed too", async () => {
+  const { store, dead } = lifeStore();
+  await settleRaisedPo({ store, zoho: liveZoho({ P1: { status: "rejected", reference_number: REF } }).send }, raised(), null);
+  assert.equal(dead[0]!.reason, "rejected");
+});
+
+test("removed in Zoho: needs the full list to agree before it is freed", async () => {
+  const { store, dead } = lifeStore();
+  const zoho = liveZoho({ OTHER: { status: "open", reference_number: "" } });
+  assert.deepEqual(await settleRaisedPo({ store, zoho: zoho.send }, raised(), null), { kind: "freed", reason: "deleted", number: "CLK-PO-1" });
+  assert.equal(dead[0]!.reason, "deleted");
+  assert.ok(zoho.calls.includes("GET purchaseorders"));
+});
+
+test("removed in Zoho but the list can't be read: stays locked", async () => {
+  const { store, dead } = lifeStore();
+  const result = await settleRaisedPo({ store, zoho: liveZoho({}, { listFails: true }).send }, raised(), null);
+  assert.equal(result.kind, "unknown");
+  assert.equal(dead.length, 0);
+});
+
+test("Zoho can't be asked: stays locked and nothing is written", async () => {
+  const { store, dead, refreshed } = lifeStore();
+  assert.equal((await settleRaisedPo({ store, zoho: liveZoho({}, { readFails: true }).send }, raised(), null)).kind, "unknown");
+  const down: ZohoSend = async () => { throw new Error("network"); };
+  assert.equal((await settleRaisedPo({ store, zoho: down }, raised(), null)).kind, "unknown");
+  assert.equal(dead.length + refreshed.length, 0);
+});
+
+test("the read says gone but the list still shows it: stays locked", async () => {
+  const { store, dead } = lifeStore();
+  const orders: Record<string, Record<string, unknown>> = { P1: { status: "open", reference_number: REF } };
+  const zoho = liveZoho(orders);
+  const odd: ZohoSend = async (resource, method, body, query) => (resource === "purchaseorders/P1" ? { status: 404, body: { code: 1002, message: "Purchase Order does not exist." } } : zoho.send(resource, method, body, query));
+  assert.equal((await settleRaisedPo({ store, zoho: odd }, raised(), null)).kind, "unknown");
+  assert.equal(dead.length, 0);
+});
+
+test("dead, but another live purchase order has this reference: stays locked and says which", async () => {
+  const { store, dead, refreshed } = lifeStore();
+  const zoho = liveZoho({ P1: { status: "cancelled", reference_number: REF }, P2: { status: "draft", purchaseorder_number: "CLK-PO-2", reference_number: REF } });
+  const result = await settleRaisedPo({ store, zoho: zoho.send }, raised(), null);
+  assert.equal(result.kind, "blocked");
+  if (result.kind === "blocked") assert.match(result.message, /CLK-PO-2/);
+  assert.equal(dead.length, 0);
+  assert.deepEqual(refreshed[0]!.duplicates!.map((po) => po.id), ["P2"]);
+});
+
+test("another dead purchase order with this reference doesn't block", async () => {
+  const { store, dead } = lifeStore();
+  await settleRaisedPo({ store, zoho: liveZoho({ P1: { status: "cancelled", reference_number: REF }, P2: { status: "cancelled", reference_number: REF } }).send }, raised(), null);
+  assert.equal(dead.length, 1);
+});
+
+test("reconnected to another Zoho company: nothing is asked and nothing is freed", async () => {
+  const { store, dead } = lifeStore();
+  const zoho = liveZoho({});
+  const elsewhere = raised({ snapshot: { organizationId: "ORG-A" } as RaisedPo["snapshot"] });
+  const result = await settleRaisedPo({ store, zoho: zoho.send, organizationId: "ORG-B" }, elsewhere, null);
+  assert.equal(result.kind, "unknown");
+  if (result.kind === "unknown") assert.match(result.message, /another Zoho company/);
+  assert.equal(zoho.calls.length + dead.length, 0);
+});
+
+test("same company, or a purchase order from before this was recorded: carries on as usual", async () => {
+  for (const row of [raised({ snapshot: { organizationId: "ORG-A" } as RaisedPo["snapshot"] }), raised({ snapshot: {} as RaisedPo["snapshot"] }), raised()]) {
+    const { store, dead } = lifeStore();
+    assert.equal((await settleRaisedPo({ store, zoho: liveZoho({}).send, organizationId: "ORG-A" }, row, null)).kind, "freed");
+    assert.equal(dead.length, 1);
+  }
+});
+
+test("the read says cancelled but the list still shows it alive: stays locked", async () => {
+  const { store, dead } = lifeStore();
+  const zoho = liveZoho({ P1: { status: "open", reference_number: REF } });
+  const odd: ZohoSend = async (resource, method, body, query) => (resource === "purchaseorders/P1" ? { status: 200, body: { code: 0, purchaseorder: { purchaseorder_id: "P1", status: "cancelled" } } } : zoho.send(resource, method, body, query));
+  assert.equal((await settleRaisedPo({ store, zoho: odd }, raised(), null)).kind, "unknown");
+  assert.equal(dead.length, 0);
+});
+
+test("rejected shown only in order_status, in the read and the list alike: freed", async () => {
+  const { store, dead } = lifeStore();
+  assert.equal((await settleRaisedPo({ store, zoho: liveZoho({ P1: { status: "draft", order_status: "rejected", reference_number: REF } }).send }, raised(), null)).kind, "freed");
+  assert.equal(dead[0]!.reason, "rejected");
+});
+
+test("a search hit on a page that goes on is not the whole answer: a second one further down still stops it", async () => {
+  const { store, dead, refreshed } = lifeStore();
+  const hit = { purchaseorder_id: "P1", purchaseorder_number: "CLK-PO-1", status: "cancelled", reference_number: REF };
+  const second = { purchaseorder_id: "P2", purchaseorder_number: "CLK-PO-2", status: "draft", reference_number: REF };
+  const zoho: ZohoSend = async (resource, _method, _body, query = {}) => {
+    if (resource === "purchaseorders/P1") return { status: 200, body: { code: 0, purchaseorder: hit } };
+    if (query["page"] === "2") return { status: 200, body: { code: 0, purchaseorders: [second], page_context: { has_more_page: false } } };
+    return { status: 200, body: { code: 0, purchaseorders: [hit], page_context: { has_more_page: true } } };
+  };
+  assert.equal((await settleRaisedPo({ store, zoho }, raised(), null)).kind, "blocked");
+  assert.equal(dead.length, 0);
+  assert.deepEqual(refreshed[0]!.duplicates!.map((po) => po.id), ["P2"]);
+});
+
+test("every write about a purchase order names which one, so a slow check can't land on a newer one", async () => {
+  const { store, refreshed } = lifeStore();
+  await settleRaisedPo({ store, zoho: liveZoho({ P1: { status: "open", reference_number: REF } }).send }, raised(), null);
+  await syncRaisedPos({ store, zoho: liveZoho({ P1: { status: "draft" } }).send }, [raised()]);
+  await settleRaisedPo({ store, zoho: liveZoho({ P1: { status: "cancelled", reference_number: REF }, P2: { status: "draft", reference_number: REF } }).send }, raised(), null);
+  assert.deepEqual(refreshed.map((row) => row.poId), ["P1", "P1", "P1"]);
+});
+
+test("two checks at once: the second is told it changed", async () => {
+  const { store } = lifeStore();
+  const zoho = liveZoho({ P1: { status: "cancelled", reference_number: REF } });
+  const [first, second] = await Promise.all([settleRaisedPo({ store, zoho: zoho.send }, raised(), null), settleRaisedPo({ store, zoho: zoho.send }, raised(), null)]);
+  assert.deepEqual([first.kind, second.kind].sort(), ["changed", "freed"]);
+});
+
+test("the regular check: one list call when nothing changed, however many purchase orders", async () => {
+  const { store, refreshed, dead } = lifeStore();
+  const orders = Object.fromEntries(Array.from({ length: 20 }, (_, i) => [`P${i}`, { status: "draft", total: 10 }]));
+  const zoho = liveZoho(orders);
+  const rows = Object.keys(orders).map((id) => raised({ sample_id: id, zoho_po_id: id, reference: `R${id}` }));
+  const result = await syncRaisedPos({ store, zoho: zoho.send }, rows);
+  assert.equal(zoho.calls.length, 1);
+  assert.equal(result.checked, 20);
+  assert.equal(refreshed.length, 20);
+  assert.equal(dead.length, 0);
+});
+
+test("the regular check: nothing raised means no Zoho call at all", async () => {
+  const { store } = lifeStore();
+  const zoho = liveZoho({});
+  assert.deepEqual(await syncRaisedPos({ store, zoho: zoho.send }, []), { checked: 0, freed: [], unknown: 0, listRead: false });
+  assert.equal(zoho.calls.length, 0);
+});
+
+test("the regular check: frees what Zoho removed or cancelled, and notices a new status", async () => {
+  const { store, dead, refreshed } = lifeStore();
+  const zoho = liveZoho({ P2: { status: "cancelled", reference_number: "R2" }, P3: { status: "open", reference_number: "R3" } });
+  const rows = [raised({ sample_id: "S1", zoho_po_id: "P1", reference: "R1" }), raised({ sample_id: "S2", zoho_po_id: "P2", reference: "R2", zoho_po_number: "CLK-PO-2" }), raised({ sample_id: "S3", zoho_po_id: "P3", reference: "R3" })];
+  // markDead answers "freed" only once in this stand-in, so the count of freed is what is checked here.
+  const result = await syncRaisedPos({ store, zoho: zoho.send }, rows);
+  assert.deepEqual(dead.map((row) => [row.sampleId, row.reason]), [["S1", "deleted"], ["S2", "cancelled"]]);
+  assert.equal(result.freed[0]!.sampleId, "S1");
+  assert.equal(refreshed.find((row) => row.sampleId === "S3")!.status, "open");
+});
+
+test("the regular check: a failed list call changes nothing and reads nothing else", async () => {
+  const { store, refreshed, dead } = lifeStore();
+  const zoho = liveZoho({}, { listFails: true });
+  const result = await syncRaisedPos({ store, zoho: zoho.send }, [raised()]);
+  assert.equal(result.listRead, false);
+  assert.equal(zoho.calls.length, 1);
+  assert.equal(refreshed.length + dead.length, 0);
+});
+
+test("the regular check: reads of its own are capped, and the rest wait for the next check", async () => {
+  const { store } = lifeStore();
+  const zoho = liveZoho({ K: { status: "draft" } });
+  const orders = Array.from({ length: 12 }, (_, i) => raised({ sample_id: `S${i}`, zoho_po_id: `GONE${i}`, reference: `R${i}` }));
+  await syncRaisedPos({ store, zoho: zoho.send }, orders, { maxReads: 3 });
+  assert.equal(zoho.calls.filter((call) => call.startsWith("GET purchaseorders/")).length, 3);
+});
+
+test("the regular check: an old purchase order brought back to life is shown as a second one", async () => {
+  const { store, refreshed } = lifeStore();
+  const zoho = liveZoho({ P2: { status: "draft", purchaseorder_number: "CLK-PO-2" }, P1: { status: "open", purchaseorder_number: "CLK-PO-1" } });
+  await syncRaisedPos({ store, zoho: zoho.send }, [raised({ zoho_po_id: "P2", zoho_po_number: "CLK-PO-2", retired_pos: [{ id: "P1", number: "CLK-PO-1" } as RaisedPo["retired_pos"][number]] })]);
+  assert.deepEqual(refreshed[0]!.duplicates!.map((po) => po.number), ["CLK-PO-1"]);
+});
+
+/** A Zoho with more purchase orders than one page of its list. */
+const longListZoho = (orders: Record<string, Record<string, unknown>>) => {
+  const calls: string[] = [];
+  const send: ZohoSend = async (resource) => {
+    calls.push(resource);
+    const one = /^purchaseorders\/([^/]+)$/.exec(resource);
+    if (one) return { status: 200, body: { code: 0, purchaseorder: { purchaseorder_id: one[1], status: "draft" } } };
+    return { status: 200, body: { code: 0, purchaseorders: Object.entries(orders).map(([id, order]) => ({ purchaseorder_id: id, ...order })), page_context: { has_more_page: true } } };
+  };
+  return { send, calls };
+};
+
+test("the regular check: off the first page of a long list, checked one at a time and not every minute", async () => {
+  const { store } = lifeStore();
+  const now = Date.parse("2026-11-03T12:00:00Z");
+  const zoho = longListZoho({ K: { status: "draft" } });
+  const stale = new Date(now - OFF_LIST_CHECK_MS - 1000).toISOString();
+  const fresh = new Date(now - 60_000).toISOString();
+  const rows = [
+    raised({ sample_id: "S1", zoho_po_id: "A", zoho_checked_at: fresh }),
+    raised({ sample_id: "S2", zoho_po_id: "B", zoho_checked_at: stale }),
+    raised({ sample_id: "S3", zoho_po_id: "C", zoho_checked_at: stale }),
+  ];
+  await syncRaisedPos({ store, zoho: zoho.send }, rows, { now });
+  // One list and one read, of the first one due. A minute later the next one's turn comes.
+  assert.deepEqual(zoho.calls, ["purchaseorders", "purchaseorders/B"]);
+});
+
+test("the regular check: a short list that doesn't show it means ask right away", async () => {
+  const { store, dead } = lifeStore();
+  const now = Date.parse("2026-11-03T12:00:00Z");
+  const zoho = liveZoho({ K: { status: "draft" } });
+  await syncRaisedPos({ store, zoho: zoho.send }, [raised({ zoho_checked_at: new Date(now - 60_000).toISOString() })], { now });
+  assert.equal(dead.length, 1);
+});
+
+test("the regular check: something left unsettled counts, so the caller waits longer before asking again", async () => {
+  const { store } = lifeStore();
+  const blocked = liveZoho({ P1: { status: "cancelled", reference_number: REF }, P2: { status: "draft", reference_number: REF } });
+  assert.equal((await syncRaisedPos({ store, zoho: blocked.send }, [raised()])).unknown, 1);
+  const unread = liveZoho({ P1: { status: "cancelled", reference_number: REF } }, { readFails: true });
+  assert.equal((await syncRaisedPos({ store, zoho: unread.send }, [raised()])).unknown, 1);
+});
+
+test("cancel: uses Zoho's own Cancelled status, frees only when Zoho shows it, and never deletes", async () => {
+  const { store, dead } = lifeStore();
+  const zoho = liveZoho({ P1: { status: "draft", reference_number: REF } });
+  const result = await cancelRicePo({ store, zoho: zoho.send }, raised(), ACTOR, "wrong vendor");
+  assert.deepEqual(result, { kind: "cancelled", number: "CLK-PO-1" });
+  assert.ok(zoho.calls.includes("POST purchaseorders/P1/status/cancelled"));
+  assert.equal(dead[0]!.actor, ACTOR);
+  assert.match(dead[0]!.note, /wrong vendor/);
+  assert.equal(zoho.calls.some((call) => call.startsWith("DELETE")), false);
+});
+
+test("cancel: Zoho refuses, in plain words, and the sample stays as it is", async () => {
+  const { store, dead } = lifeStore();
+  const result = await cancelRicePo({ store, zoho: liveZoho({ P1: { status: "draft" } }, { cancel: "refuse" }).send }, raised(), ACTOR, "x");
+  assert.equal(result.kind, "refused");
+  if (result.kind === "refused") assert.match(result.message, /draft cannot be marked/);
+  assert.equal(dead.length, 0);
+});
+
+test("cancel: the answer is lost but Zoho did it, so the read frees the sample", async () => {
+  const { store, dead } = lifeStore();
+  const result = await cancelRicePo({ store, zoho: liveZoho({ P1: { status: "draft", reference_number: REF } }, { cancel: "lost" }).send }, raised(), ACTOR, "x");
+  assert.equal(result.kind, "cancelled");
+  assert.equal(dead.length, 1);
+});
+
+test("cancel: Zoho says yes but still shows it alive, so the sample isn't freed", async () => {
+  const { store, dead } = lifeStore();
+  const result = await cancelRicePo({ store, zoho: liveZoho({ P1: { status: "open", reference_number: REF } }, { cancel: "ignored" }).send }, raised(), ACTOR, "x");
+  assert.equal(result.kind, "unclear");
+  assert.equal(dead.length, 0);
+});
+
+test("cancel: asked twice, the second refused because the first worked, is reported as cancelled", async () => {
+  const { store, dead } = lifeStore();
+  // The first press worked but its read failed. This second press is refused, and Zoho's status shows why.
+  const result = await cancelRicePo({ store, zoho: liveZoho({ P1: { status: "cancelled", reference_number: REF } }, { cancel: "refuse" }).send }, raised(), ACTOR, "wrong vendor");
+  assert.deepEqual(result, { kind: "cancelled", number: "CLK-PO-1" });
+  assert.match(dead[0]!.note, /Already cancelled when asked from the website: wrong vendor/);
+});
+
+test("cancel: refused and Zoho can't be read: says it isn't clear, not that nothing changed", async () => {
+  const { store, dead } = lifeStore();
+  const result = await cancelRicePo({ store, zoho: liveZoho({ P1: { status: "draft" } }, { cancel: "refuse", readFails: true }).send }, raised(), ACTOR, "x");
+  assert.equal(result.kind, "unclear");
+  if (result.kind === "unclear") assert.doesNotMatch(result.message, /Nothing changed/);
+  assert.equal(dead.length, 0);
+});
+
+test("cancel: who asked and why is on the history before the request goes out, whatever Zoho answers", async () => {
+  const { store, asked } = lifeStore();
+  const zoho = liveZoho({ P1: { status: "draft" } }, { readFails: true, cancel: "lost" });
+  let askedFirst = false;
+  const first: PoLifeStore = { ...store, cancelAsked: async (args) => { askedFirst = zoho.calls.length === 0; await store.cancelAsked(args); } };
+  await cancelRicePo({ store: first, zoho: zoho.send }, raised(), ACTOR, "wrong vendor");
+  assert.equal(askedFirst, true);
+  assert.deepEqual(asked, [{ sampleId: SAMPLE, number: "CLK-PO-1", reason: "wrong vendor", actor: ACTOR }]);
+});
+
+test("cancel: not offered once rice is received or billed", () => {
+  for (const status of ["draft", "open", "issued", "pending_approval", "approved"]) assert.equal(canCancelPo(status), true, status);
+  for (const status of ["billed", "partially_billed", "closed", "received", "partially_received", "cancelled", "rejected"]) assert.equal(canCancelPo(status), false, status);
+});
+
+test("before a new purchase order: every earlier one must still be dead", async () => {
+  const old = [{ id: "P1", number: "CLK-PO-1" }, { id: "P2", number: "CLK-PO-2" }];
+  assert.equal(await retiredPoProblem(liveZoho({ P2: { status: "cancelled" } }).send, old), null); // P1 is gone, P2 cancelled.
+  assert.match((await retiredPoProblem(liveZoho({ P1: { status: "open" } }).send, old))!, /CLK-PO-1 is alive in Zoho again/);
+  assert.match((await retiredPoProblem(liveZoho({}, { readFails: true }).send, old))!, /could not be asked/);
+  const quiet = liveZoho({});
+  assert.equal(await retiredPoProblem(quiet.send, []), null);
+  assert.equal(quiet.calls.length, 0);
+});
+
+test("before a new purchase order: nothing alive may carry an earlier reference", async () => {
+  const old = [{ id: "P1", number: "CLK-PO-1", reference: REF }];
+  assert.equal(await retiredPoProblem(liveZoho({ P1: { status: "cancelled", reference_number: REF } }).send, old), null);
+  assert.equal(await retiredPoProblem(liveZoho({}).send, old), null);
+  // A copy made in Zoho, say: dead original, live copy with the same reference.
+  const copied = await retiredPoProblem(liveZoho({ P1: { status: "cancelled", reference_number: REF }, P9: { status: "draft", purchaseorder_number: "CLK-PO-9", reference_number: REF } }).send, old);
+  assert.match(copied!, /CLK-PO-9/);
+  assert.match(copied!, /Nothing was sent/);
+  assert.match((await retiredPoProblem(liveZoho({}, { listFails: true }).send, old))!, /could not be read in full/);
+});
+

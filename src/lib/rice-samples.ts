@@ -27,6 +27,7 @@ export type RiceSample = {
   id: string; sample_no: number; arrival_date: string; variety: string; method: string; price_per_qntl: number; quantity_qntl: number;
   party_role: PartyRole; party_name: string; party_phone: string; seller_name: string; notes: string;
   status: SampleStatus; status_reason: string; status_changed_at: string; created_by_name: string; created_at: string; updated_at: string;
+  deleted_at: string | null; deleted_by_name: string; deleted_reason: string;
 };
 export type RiceTest = {
   id: string; sample_id: string; tested_at: string; tested_by_name: string; score: number;
@@ -36,9 +37,15 @@ export type RiceEvent = {
   id: number; sample_id: string; action: string; from_status: string | null; to_status: string | null;
   detail: string; actor_name: string; at: string;
 };
-export type PoState = "sending" | "uncertain" | "rejected" | "raised";
+export type PoState = "sending" | "uncertain" | "rejected" | "raised" | "dead";
+export type PoDeathReason = "cancelled" | "rejected" | "deleted";
+/** A purchase order this sample once had, now dead in Zoho, or a duplicate that went with it. Kept for good. */
+export type RetiredPo = {
+  generation: number; reference: string; id: string; number: string; status: string; reason: PoDeathReason | "duplicate"; total: number | null; vendor_name: string | null;
+  quantity_qntl: number | null; rate_per_qntl: number | null; raised_at: string | null; raised_by_name: string; retired_at: string; retired_by: string; note: string;
+};
 export type RicePo = {
-  sample_id: string; reference: string; state: PoState; attempt_id: string; attempts: number; snapshot: PoPlan;
+  sample_id: string; reference: string; state: PoState; generation: number; retired_pos: RetiredPo[]; attempt_id: string; attempts: number; snapshot: PoPlan;
   claimed_by_name: string; claimed_at: string; last_error: string; zoho_po_id: string; zoho_po_number: string; zoho_po_status: string;
   zoho_sub_total: number | null; zoho_tax_total: number | null; zoho_total: number | null; differences: string[];
   duplicates: PoFound[]; zoho_gone: boolean; zoho_checked_at: string | null; raised_at: string | null; raised_by_name: string;
@@ -158,8 +165,11 @@ const round = (value: number, places: number) => {
 export const round2 = (value: number) => round(value, 2);
 export const round3 = (value: number) => round(value, 3);
 
-/** "GBS-<sample id>": what goes into Zoho's Reference# field. One sample, one reference. */
-export const poReference = (sampleId: string) => `GBS-${sampleId}`;
+/**
+ * What goes into Zoho's Reference# field: "GBS-<sample id>", then "GBS-<sample id>-2" and so on for each new purchase order after
+ * one died. A cancelled purchase order stays in Zoho with its reference, so reusing it would make the search find that one.
+ */
+export const poReference = (sampleId: string, generation = 1) => (generation > 1 ? `GBS-${sampleId}-${generation}` : `GBS-${sampleId}`);
 
 const BULK_UNITS: Record<string, number> = {
   kg: 1, kgs: 1, kilogram: 1, kilograms: 1,
@@ -221,6 +231,8 @@ export type PoPlan = {
   reference: string; date: string; vendorRole: PartyRole; vendorId: string; vendorName: string; itemId: string; itemName: string; itemUnit: string;
   kgPerUnit: number; quantityQntl: number; ratePerQntl: number; poQuantity: number; poRate: number; subTotal: number; gstPercent: number | null;
   branchId: string; branchName: string; locationId: string; issueOnCreate: boolean; description: string;
+  /** The Zoho company it was raised in. A purchase order from before this was recorded has none. */
+  organizationId?: string;
 };
 
 /** The purchase order line's text. The vendor sees it, so it holds nothing internal. */
@@ -338,7 +350,12 @@ export function plainZohoRefusal(raw: ZohoRaw): string {
 // ---------------------------------------------------------------- Finding a purchase order again
 
 export type PoFound = { id: string; number: string; status: string };
-const poFoundFrom = (row: Record<string, unknown>): PoFound => ({ id: text(row["purchaseorder_id"]), number: text(row["purchaseorder_number"]), status: text(row["status"]) });
+const poFoundFrom = (row: Record<string, unknown>): PoFound => ({ id: text(row["purchaseorder_id"]), number: text(row["purchaseorder_number"]), status: poDeathReason(row["status"], row["order_status"]) && !poDeathReason(row["status"]) ? text(row["order_status"]) : text(row["status"]) });
+/** Zoho's list may go on past this page. Its published example has no page_context, so a full page without one counts as maybe. */
+const pageMayContinue = (listed: Record<string, unknown>, rows: unknown[]) => {
+  const more = asRecord(listed["page_context"])["has_more_page"];
+  return more === true || (more !== false && rows.length >= Number(PO_PAGE_SIZE));
+};
 
 /** 5,000 purchase orders. Zoho holds about 150 today. */
 export const PO_SEARCH_MAX_PAGES = 25;
@@ -363,8 +380,10 @@ export async function findPurchaseOrdersByReference(zoho: ZohoSend, reference: s
     return asRecord(raw.body);
   };
   try {
-    take(asRecords((await read({ reference_number: reference, per_page: PO_PAGE_SIZE }))["purchaseorders"]));
-    if (seen.size) return { matches: [...seen.values()], complete: true, problem: "" };
+    const filtered = await read({ reference_number: reference, per_page: PO_PAGE_SIZE });
+    const rows = asRecords(filtered["purchaseorders"]);
+    take(rows);
+    if (seen.size && !pageMayContinue(filtered, rows)) return { matches: [...seen.values()], complete: true, problem: "" };
   } catch {
     // The walk below decides.
   }
@@ -373,9 +392,7 @@ export async function findPurchaseOrdersByReference(zoho: ZohoSend, reference: s
       const listed = await read({ page: String(page), per_page: PO_PAGE_SIZE });
       const rows = asRecords(listed["purchaseorders"]);
       take(rows);
-      // Zoho's published list example has no page_context, so a full page without one means there may be more.
-      const more = asRecord(listed["page_context"])["has_more_page"];
-      if (more === false || (more !== true && rows.length < Number(PO_PAGE_SIZE))) return { matches: [...seen.values()], complete: true, problem: "" };
+      if (!pageMayContinue(listed, rows)) return { matches: [...seen.values()], complete: true, problem: "" };
     }
     return { matches: [...seen.values()], complete: false, problem: `Zoho holds more purchase orders than this search reads (${PO_SEARCH_MAX_PAGES} pages).` };
   } catch (cause) {
@@ -617,20 +634,193 @@ export async function checkRicePo(deps: RaiseDeps, sampleId: string, po: Pick<Ri
   return { kind: "absent", message: "Zoho has no purchase order for this sample, after a full search. You can raise it again, or discard the sample or mark it unavailable." };
 }
 
-/** Zoho's current view of a raised purchase order, for showing read-only. Null: Zoho could not be asked. */
-export async function readPoStatus(zoho: ZohoSend, poId: string): Promise<{ gone: boolean; status: string; subTotal: number | null; taxTotal: number | null; total: number | null } | null> {
+// ---------------------------------------------------------------- After raising: Zoho in control
+
+/** Zoho's statuses that mean this purchase order will not go ahead. Anything not listed counts as alive, so an unknown status never frees a sample. */
+const DEATH_BY_STATUS: Record<string, PoDeathReason> = {
+  cancelled: "cancelled", canceled: "cancelled", cancelled_by_user: "cancelled", cancelled_by_vendor: "cancelled", void: "cancelled", voided: "cancelled", rejected: "rejected",
+};
+const NOT_CANCELLABLE = new Set(["billed", "partially_billed", "closed", "received", "partially_received", "manually_received", "billed_not_received", "received_not_billed", "drop_shipped"]);
+/** status decides. order_status counts only while status still looks open, never once rice has been received or billed. */
+export function poDeathReason(status: unknown, orderStatus?: unknown): PoDeathReason | null {
+  const main = text(status).trim().toLowerCase();
+  return DEATH_BY_STATUS[main] ?? (NOT_CANCELLABLE.has(main) ? null : DEATH_BY_STATUS[text(orderStatus).trim().toLowerCase()] ?? null);
+}
+/** Whether to offer Cancel: not once rice has been received or billed against it, which belongs in Zoho. */
+export const canCancelPo = (status: string) => !NOT_CANCELLABLE.has(status.trim().toLowerCase()) && !poDeathReason(status);
+export const PO_DEATH_WORDS: Record<RetiredPo["reason"], string> = { cancelled: "cancelled", rejected: "rejected", deleted: "deleted", duplicate: "a duplicate" };
+
+/**
+ * Zoho's own answer that this purchase order does not exist, as read from the live API: code 1002, "Purchase Order does not exist."
+ * A bare 404 is not enough: Zoho answers an address it doesn't know with 404 too, and that must never free a sample.
+ */
+export const zohoSaysNoSuchPo = (raw: ZohoRaw) => zohoVerdict(raw) === "rejected" && (raw.body?.["code"] === 1002 || /purchase ?order does not exist/i.test(zohoMessage(raw)));
+
+export type PoNow = { gone: boolean; status: string; deathReason: PoDeathReason | null; subTotal: number | null; taxTotal: number | null; total: number | null };
+/** Zoho's current view of a purchase order. Null: Zoho could not be asked. */
+export async function readPoStatus(zoho: ZohoSend, poId: string): Promise<PoNow | null> {
   let raw: ZohoRaw;
   try {
     raw = await zoho(`purchaseorders/${encodeURIComponent(poId)}`, "GET");
   } catch {
     return null;
   }
-  if (raw.status === 404 || (zohoVerdict(raw) === "rejected" && /does not exist|not found|no longer|invalid.*(id|purchase)/i.test(zohoMessage(raw)))) {
-    return { gone: true, status: "", subTotal: null, taxTotal: null, total: null };
-  }
+  if (zohoSaysNoSuchPo(raw)) return { gone: true, status: "", deathReason: null, subTotal: null, taxTotal: null, total: null };
   if (zohoVerdict(raw) !== "ok") return null;
   const po = asRecord(raw.body?.["purchaseorder"] ?? raw.body?.["purchase_order"]);
-  return { gone: false, status: text(po["status"]), subTotal: numberOr(po["sub_total"]), taxTotal: numberOr(po["tax_total"]), total: numberOr(po["total"]) };
+  if (!text(po["status"])) return null;
+  return { gone: false, status: text(po["status"]), deathReason: poDeathReason(po["status"], po["order_status"]), subTotal: numberOr(po["sub_total"]), taxTotal: numberOr(po["tax_total"]), total: numberOr(po["total"]) };
+}
+
+export type RaisedPo = Pick<RicePo, "sample_id" | "reference" | "zoho_po_id" | "zoho_po_number" | "zoho_po_status" | "duplicates" | "retired_pos"> & Partial<Pick<RicePo, "zoho_checked_at" | "snapshot">>;
+/** The database functions rice_sample_po_refresh, rice_sample_po_mark_dead and rice_sample_po_cancel_asked. */
+export type PoLifeStore = {
+  refresh(args: { sampleId: string; poId: string; status: string | null; subTotal: number | null; taxTotal: number | null; total: number | null; gone: boolean; duplicates: PoFound[] | null }): Promise<void>;
+  markDead(args: { sampleId: string; poId: string; reason: PoDeathReason; status: string; note: string; actor: PoActor | null }): Promise<{ outcome: "freed" | "changed" }>;
+  cancelAsked(args: { sampleId: string; number: string; reason: string; actor: PoActor }): Promise<void>;
+};
+/** organizationId: the Zoho company the website is connected to now. */
+export type PoLifeDeps = { store: PoLifeStore; zoho: ZohoSend; organizationId?: string };
+export type SettleResult =
+  | { kind: "alive"; status: string }
+  /** Dead in Zoho, confirmed twice: the sample is back in play. */
+  | { kind: "freed"; reason: PoDeathReason; number: string }
+  /** Dead, but Zoho holds another purchase order with this reference, so freeing the sample could make a third. */
+  | { kind: "blocked"; message: string }
+  | { kind: "unknown"; message: string }
+  /** Someone else settled it first. */
+  | { kind: "changed" };
+
+/**
+ * Asks Zoho about one raised purchase order and acts on the answer. Freeing a sample needs two separate answers, so one odd reply
+ * cannot lead to a second purchase order: the purchase order itself says it is dead, and a complete search by reference agrees.
+ */
+export async function settleRaisedPo(deps: PoLifeDeps, po: RaisedPo, actor: PoActor | null, note = ""): Promise<SettleResult> {
+  // Another company's books have none of this company's purchase orders, which would read exactly like every one being deleted.
+  if (deps.organizationId && po.snapshot?.organizationId && po.snapshot.organizationId !== deps.organizationId) {
+    return { kind: "unknown", message: `${po.zoho_po_number} was raised in another Zoho company than the one connected now, so the sample stays locked. Check Admin > Zoho Commerce.` };
+  }
+  const now = await readPoStatus(deps.zoho, po.zoho_po_id);
+  if (!now) return { kind: "unknown", message: "Zoho could not be asked just now. The status shown is from the last check." };
+  const reason: PoDeathReason | null = now.gone ? "deleted" : now.deathReason;
+  if (!reason) {
+    await deps.store.refresh({ sampleId: po.sample_id, poId: po.zoho_po_id, status: now.status, subTotal: now.subTotal, taxTotal: now.taxTotal, total: now.total, gone: false, duplicates: null });
+    return { kind: "alive", status: now.status };
+  }
+  const search = await findPurchaseOrdersByReference(deps.zoho, po.reference);
+  if (!search.complete) return { kind: "unknown", message: `Zoho shows ${po.zoho_po_number} as ${PO_DEATH_WORDS[reason]}, but its list could not be read in full, so the sample stays locked for now. ${search.problem}` };
+  // Its own row in the search must agree: not listed at all if deleted, listed as dead if cancelled or rejected.
+  const own = search.matches.find((match) => match.id === po.zoho_po_id);
+  if (own && (now.gone || !poDeathReason(own.status))) {
+    return { kind: "unknown", message: `Zoho's answers about ${po.zoho_po_number} disagree, so the sample stays locked. Check it in Zoho.` };
+  }
+  const others = search.matches.filter((match) => match.id !== po.zoho_po_id && !poDeathReason(match.status));
+  if (others.length) {
+    await deps.store.refresh({ sampleId: po.sample_id, poId: po.zoho_po_id, status: now.gone ? null : now.status, subTotal: null, taxTotal: null, total: null, gone: now.gone, duplicates: others });
+    return { kind: "blocked", message: `${po.zoho_po_number} is ${PO_DEATH_WORDS[reason]} in Zoho, but Zoho also holds ${others.map((other) => other.number || other.id).join(", ")} with this reference. Delete or cancel that one in Zoho and this sample frees itself.` };
+  }
+  const answer = await deps.store.markDead({ sampleId: po.sample_id, poId: po.zoho_po_id, reason, status: now.status, note, actor });
+  return answer.outcome === "freed" ? { kind: "freed", reason, number: po.zoho_po_number } : { kind: "changed" };
+}
+
+export type PoSyncResult = { checked: number; freed: { sampleId: string; number: string; reason: PoDeathReason }[]; unknown: number; listRead: boolean };
+/** A purchase order that may just be further down Zoho's list gets a call of its own this often, and only one such call each time. */
+export const OFF_LIST_CHECK_MS = 10 * 60_000;
+/**
+ * Keeps raised purchase orders in step with Zoho for few API calls: one list call covers every purchase order on its first page, and
+ * only one that changed or isn't there gets a call of its own, at most maxReads each time. A failed list call changes nothing.
+ * unknown counts every purchase order left unsettled, which is the caller's sign to wait longer before asking again.
+ */
+export async function syncRaisedPos(deps: PoLifeDeps, rows: RaisedPo[], options: { maxReads?: number; now?: number } = {}): Promise<PoSyncResult> {
+  const result: PoSyncResult = { checked: 0, freed: [], unknown: 0, listRead: false };
+  if (!rows.length) return result;
+  let raw: ZohoRaw;
+  try {
+    raw = await deps.zoho("purchaseorders", "GET", undefined, { per_page: PO_PAGE_SIZE });
+  } catch {
+    return result;
+  }
+  if (zohoVerdict(raw) !== "ok") return result;
+  result.listRead = true;
+  const listRows = asRecords(raw.body?.["purchaseorders"]);
+  const listed = new Map(listRows.map((row) => [text(row["purchaseorder_id"]), row]));
+  const partOfList = pageMayContinue(asRecord(raw.body), listRows);
+  const now = options.now ?? Date.now();
+  let reads = 0, offListReads = 0;
+  for (const row of rows) {
+    const hit = listed.get(row.zoho_po_id);
+    if (hit && !poDeathReason(hit["status"], hit["order_status"]) && text(hit["status"]) === row.zoho_po_status) {
+      // An earlier purchase order of this sample that someone brought back to life in Zoho is a second live one: say so.
+      const liveAgain = row.retired_pos.flatMap((old) => {
+        const seen = listed.get(old.id);
+        return seen && !poDeathReason(seen["status"], seen["order_status"]) && !row.duplicates.some((dup) => dup.id === old.id) ? [poFoundFrom(seen)] : [];
+      });
+      await deps.store.refresh({ sampleId: row.sample_id, poId: row.zoho_po_id, status: text(hit["status"]), subTotal: null, taxTotal: null, total: numberOr(hit["total"]), gone: false, duplicates: liveAgain.length ? [...row.duplicates, ...liveAgain] : null });
+      result.checked += 1;
+      continue;
+    }
+    if (!hit && partOfList) {
+      // Not on this page proves nothing when Zoho's list goes on, and asking about each one every minute would use up the budget.
+      if (offListReads >= 1 || now - (Date.parse(row.zoho_checked_at ?? "") || 0) < OFF_LIST_CHECK_MS) continue;
+      offListReads += 1;
+    } else {
+      if (reads >= (options.maxReads ?? 5)) continue;
+      reads += 1;
+    }
+    const settled = await settleRaisedPo(deps, row, null);
+    if (settled.kind === "unknown" || settled.kind === "blocked") result.unknown += 1;
+    else result.checked += 1;
+    if (settled.kind === "freed") result.freed.push({ sampleId: row.sample_id, number: settled.number, reason: settled.reason });
+  }
+  return result;
+}
+
+export type CancelResult =
+  | { kind: "cancelled"; number: string }
+  /** Zoho refused, and still shows it alive. Nothing changed. */
+  | { kind: "refused"; message: string }
+  /** No clear answer, or Zoho doesn't show it as cancelled yet. The next status check sorts it out. */
+  | { kind: "unclear"; message: string };
+
+/**
+ * Cancels a purchase order in Zoho from the website, using Zoho's own "Mark as Cancelled". It never deletes anything in Zoho. Asking
+ * twice is harmless, so there is no lock here: the sample is only freed once Zoho itself shows the purchase order as dead.
+ */
+export async function cancelRicePo(deps: PoLifeDeps, po: RaisedPo, actor: PoActor, reason: string): Promise<CancelResult> {
+  await deps.store.cancelAsked({ sampleId: po.sample_id, number: po.zoho_po_number, reason, actor });
+  let raw: ZohoRaw | null = null;
+  try {
+    raw = await deps.zoho(`purchaseorders/${encodeURIComponent(po.zoho_po_id)}/status/cancelled`, "POST");
+  } catch {
+    // No answer: it may have worked, and the read below tells.
+  }
+  // A refusal may only mean an earlier press already worked, so Zoho's status decides what to say, not the refusal.
+  const refused = raw !== null && zohoVerdict(raw) === "rejected" && !zohoSaysNoSuchPo(raw);
+  const settled = await settleRaisedPo(deps, po, actor, `${refused ? "Already cancelled when asked from the website" : "Cancelled from the website"}: ${reason}`);
+  if (settled.kind === "freed") return { kind: "cancelled", number: settled.number };
+  if (settled.kind === "changed") return { kind: "cancelled", number: po.zoho_po_number };
+  if (refused && raw && settled.kind === "alive") return { kind: "refused", message: `Zoho would not cancel ${po.zoho_po_number}. ${plainZohoRefusal(raw)} Nothing changed. You can deal with it in Zoho.` };
+  if (settled.kind === "alive") return { kind: "unclear", message: `Zoho still shows ${po.zoho_po_number} as ${zohoStatusLabel(settled.status)}. Check it in Zoho. This page updates by itself once Zoho changes.` };
+  return { kind: "unclear", message: settled.message };
+}
+
+/**
+ * Before a new purchase order: every earlier one must still be dead, and nothing alive may carry an earlier reference (a copy made in
+ * Zoho, say), or the new one would be a second live order. Null when clear.
+ */
+export async function retiredPoProblem(zoho: ZohoSend, retired: (Pick<RetiredPo, "id" | "number"> & Partial<Pick<RetiredPo, "reference">>)[]): Promise<string | null> {
+  for (const old of retired) {
+    const now = await readPoStatus(zoho, old.id);
+    if (!now) return `Zoho could not be asked about the earlier purchase order ${old.number}. Nothing was sent. Try again in a moment.`;
+    if (!now.gone && !now.deathReason) return `The earlier purchase order ${old.number} is alive in Zoho again (${zohoStatusLabel(now.status)}). A new one would make two. Cancel it in Zoho, or carry on with that one. Nothing was sent.`;
+  }
+  for (const reference of new Set(retired.map((old) => old.reference ?? "").filter(Boolean))) {
+    const search = await findPurchaseOrdersByReference(zoho, reference);
+    if (!search.complete) return `Zoho's list could not be read in full, so nothing was sent. Try again in a moment. ${search.problem}`;
+    const alive = search.matches.find((match) => !poDeathReason(match.status));
+    if (alive) return `Zoho holds ${alive.number || alive.id} (${zohoStatusLabel(alive.status)}) with this sample's earlier reference ${reference}. A new one would make two. Cancel it in Zoho, or carry on with that one. Nothing was sent.`;
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------- Vendors and items in Zoho
