@@ -8,6 +8,8 @@ import { SiteLayout, Breadcrumbs } from "@/components/site/SiteLayout";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { supabase } from "@/integrations/supabase/client";
+import { useSiteDetails } from "@/lib/site-details";
+import { telHref, whatsappHref } from "@/lib/site-details-rules";
 
 export const Route = createFileRoute("/contact")({
   validateSearch: (search: Record<string, unknown>) => ({
@@ -76,6 +78,7 @@ function getEnquirySaveError(error: unknown) {
 }
 
 function Contact() {
+  const details = useSiteDetails();
   const search = Route.useSearch();
   const configurationRequest = search.request === "product-configuration";
   const requestedPackSize = search.packSize ?? (search.weight ? `${search.weight} kg` : undefined);
@@ -109,7 +112,6 @@ function Contact() {
       email: form.email.trim(),
       phone: form.phone.trim(),
       message: form.message.trim(),
-      recipient_email: "care@shamiventures.in",
       status: "new",
       metadata: configurationRequest
         ? {
@@ -177,12 +179,12 @@ function Contact() {
   };
 
   const whatsappUrl = (phoneVal: string, msgVal: string) =>
-    `https://wa.me/919538500840?text=${encodeURIComponent(
+    `${whatsappHref(details.whatsapp)}?text=${encodeURIComponent(
       `Hello Shami Business Desk, I have a wholesale enquiry.\nName: ${form.name || "Customer"}\nPhone: ${phoneVal || "N/A"}\nMessage: ${msgVal}`,
     )}`;
 
   const emailUrl = (item: SubmittedData) =>
-    `mailto:care@shamiventures.in?subject=${encodeURIComponent(
+    `mailto:${details.email}?subject=${encodeURIComponent(
       `Enquiry ${item.id} from ${item.name}`,
     )}&body=${encodeURIComponent(
       `Name: ${item.name}\nEmail: ${item.email}\nPhone: ${item.phone || "Not provided"}\nRequest ID: ${item.id}\nRequirement: ${item.message}`,
@@ -227,10 +229,10 @@ function Contact() {
                   ) : (
                     <>
                       Your request is saved in the admin enquiry inbox. The email provider{" "}
-                      {submitted.emailSent
-                        ? "accepted the message for care@shamiventures.in"
-                        : "did not confirm acceptance"}
-                      ; use the email link below if you need to contact the desk directly.
+                      {submitted.emailSent ? "accepted the message" : "did not confirm acceptance"}
+                      {details.email
+                        ? "; use the email link below if you need to contact the desk directly."
+                        : "; you can contact the desk directly below."}
                     </>
                   )}
                 </p>
@@ -258,8 +260,8 @@ function Contact() {
                 <div>
                   <dt className="text-xs text-slate">Destination</dt>
                   <dd className="font-semibold text-gold">
-                    {submitted.emailSent ? "Provider accepted" : "Not confirmed"} ·
-                    care@shamiventures.in
+                    {submitted.emailSent ? "Provider accepted" : "Not confirmed"}
+                    {details.email && <span data-no-translate className="[overflow-wrap:anywhere]"> · {details.email}</span>}
                   </dd>
                 </div>
                 <div className="sm:col-span-2">
@@ -273,22 +275,28 @@ function Contact() {
 
             {/* Instant escalation actions */}
             <div data-analytics-off className="mt-6 flex flex-wrap items-center gap-3">
-              <a
-                href={whatsappUrl(submitted.phone, submitted.message)}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-xs font-bold text-white transition-colors hover:bg-emerald-700 shadow-xs"
-              >
-                <MessageSquare className="h-4 w-4" />
-                Chat on WhatsApp (+91 95385 00840)
-              </a>
-              <a
-                href={emailUrl(submitted)}
-                className="inline-flex items-center gap-2 rounded-lg border border-navy/20 bg-navy/5 px-4 py-2.5 text-xs font-bold text-navy transition-colors hover:bg-navy/10"
-              >
-                <Mail className="h-4 w-4" />
-                Email Desk (care@shamiventures.in)
-              </a>
+              {details.whatsapp && (
+                <a
+                  href={whatsappUrl(submitted.phone, submitted.message)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-xs font-bold text-white transition-colors hover:bg-emerald-700 shadow-xs"
+                >
+                  <MessageSquare className="h-4 w-4" />
+                  {`Chat on WhatsApp (${details.whatsapp})`}
+                </a>
+              )}
+              {details.email && (
+                <a
+                  href={emailUrl(submitted)}
+                  className="inline-flex min-w-0 items-center gap-2 rounded-lg border border-navy/20 bg-navy/5 px-4 py-2.5 text-xs font-bold text-navy transition-colors hover:bg-navy/10"
+                >
+                  <Mail className="h-4 w-4 shrink-0" />
+                  <span className="min-w-0 [overflow-wrap:anywhere]">
+                    Email Desk (<span data-no-translate>{details.email}</span>)
+                  </span>
+                </a>
+              )}
               <button
                 type="button"
                 onClick={() => setSubmitted(null)}
@@ -308,9 +316,15 @@ function Contact() {
               <div>
                 <h2 className="text-lg font-bold text-navy">Send an enquiry</h2>
                 <p className="mt-0.5 text-xs text-slate">
-                  Bulk quotes, vendor onboarding or order support are saved for review and emailed
-                  when delivery is configured to{" "}
-                  <strong className="text-gold">care@shamiventures.in</strong>.
+                  {details.email ? (
+                    <>
+                      Bulk quotes, vendor onboarding or order support are saved for review and emailed
+                      when delivery is configured to{" "}
+                      <strong data-no-translate className="text-gold [overflow-wrap:anywhere]">{details.email}</strong>.
+                    </>
+                  ) : (
+                    "Bulk quotes, vendor onboarding or order support are saved for review."
+                  )}
                 </p>
               </div>
               <span className="hidden sm:inline-flex items-center gap-1.5 rounded-full bg-gold/10 px-2.5 py-1 text-xs font-semibold text-gold">
@@ -401,28 +415,28 @@ function Contact() {
           {[
             {
               icon: MapPin,
-              title: "Registered office",
-              detail: "Shami House, Industrial Estate, Belagavi, Karnataka 590010",
+              title: "Head office",
+              detail: details.address,
             },
             {
               icon: Phone,
-              title: "Supply desk",
-              detail: "+91 95385 00840 (Mon–Sat, 9am–7pm)",
-              href: "tel:+919538500840",
+              title: "Head office and customer care",
+              detail: details.phone && (details.hours ? `${details.phone} (${details.hours})` : details.phone),
+              href: telHref(details.phone),
             },
             {
               icon: Mail,
               title: "Official Email Desk",
-              detail: "care@shamiventures.in",
-              href: "mailto:care@shamiventures.in",
+              detail: details.email,
+              href: `mailto:${details.email}`,
             },
             {
               icon: MessageSquare,
               title: "WhatsApp Support",
-              detail: "+91 95385 00840",
-              href: "https://wa.me/919538500840",
+              detail: details.whatsapp,
+              href: whatsappHref(details.whatsapp),
             },
-          ].map((item) => {
+          ].filter((item) => item.detail).map((item) => {
             const I = item.icon;
             const content = (
               <div
@@ -434,7 +448,7 @@ function Contact() {
                 </span>
                 <div className="min-w-0">
                   <p className="font-semibold text-navy">{item.title}</p>
-                  <p className="text-sm text-slate">{item.detail}</p>
+                  <p data-no-translate={item.icon === Mail || undefined} className="text-sm text-slate [overflow-wrap:anywhere]">{item.detail}</p>
                 </div>
               </div>
             );

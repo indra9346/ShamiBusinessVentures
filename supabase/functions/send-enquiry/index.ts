@@ -57,8 +57,8 @@ serve(async (req: Request) => {
     }
 
     const resendApiKey = Deno.env.get("RESEND_API_KEY");
-    const recipientEmail = "care@shamiventures.in";
-    if (!resendApiKey) {
+    const fromAddress = Deno.env.get("ENQUIRY_FROM_EMAIL");
+    if (!resendApiKey || !fromAddress) {
       return new Response(
         JSON.stringify({
           success: false,
@@ -90,6 +90,18 @@ serve(async (req: Request) => {
     const adminClient = createClient(supabaseUrl, serviceRoleKey, {
       auth: { persistSession: false },
     });
+    // The address saved in Admin > Settings > Website details, whether or not it is shown on the site.
+    const { data: detailsRow } = await adminClient.from("settings").select("value").eq("key", "site_details").maybeSingle();
+    const recipientEmail = String((detailsRow?.value as { email?: { value?: unknown } } | null)?.email?.value ?? "").trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipientEmail)) {
+      return new Response(
+        JSON.stringify({ success: false, emailSent: false, error: "No enquiry email address is saved." }),
+        {
+          status: 503,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        },
+      );
+    }
     const { data: enquiry, error: lookupError } = await adminClient
       .from("contact_enquiries")
       .select("id,name,email,phone,message,metadata,email_sent,email_delivery_status")
@@ -203,8 +215,7 @@ serve(async (req: Request) => {
           </div>
 
           <div style="margin-top: 32px; border-top: 1px solid #e2e8f0; padding-top: 16px; color: #94a3b8; font-size: 12px; line-height: 1.5;">
-            <p style="margin: 0;"><strong>Shami Business Ventures Pvt. Ltd.</strong> · Industrial Estate, Belagavi, Karnataka 590010</p>
-            <p style="margin: 4px 0 0 0;">Dedicated support line: care@shamiventures.in | +91 95385 00840</p>
+            <p style="margin: 0;"><strong>Shami Business Ventures Pvt. Ltd.</strong></p>
           </div>
         </div>
       `;
@@ -216,7 +227,7 @@ serve(async (req: Request) => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          from: "Shami Marketplace <orders@shamibusiness.in>",
+          from: `Shami Marketplace <${fromAddress}>`,
           to: [recipientEmail],
           reply_to: email,
           subject: `New Enquiry ${enquiryId} from ${name} [${phone || email}]`,

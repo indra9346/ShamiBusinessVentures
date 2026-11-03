@@ -62,7 +62,7 @@ async function readStorefront(): Promise<Data> {
     rest<StorefrontSnapshot["branchStock"]>("branch_stock?select=branch_id,product_id,stock"),
     rest<StorefrontSnapshot["branchPrices"]>("branch_prices?select=branch_id,product_id,price,listed,pending"),
     rest<{ key: string; value: StorefrontSnapshot["settings"][string] }[]>(
-      "settings?select=key,value&is_public=eq.true&key=in.(platform_features,storefront_display,festive_theme)",
+      "settings?select=key,value&is_public=eq.true&key=in.(platform_features,storefront_display,festive_theme,site_details)",
     ),
     rest<StorefrontSnapshot["adBanners"]>("ad_banners?select=*&order=sort_order.asc,created_at.asc"),
   ]);
