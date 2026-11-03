@@ -23,7 +23,7 @@ export const POLICY_INTRO =
 
 const WHO_WE_ARE: PolicySection = {
   heading: "Who we are",
-  intro: [`Grain Bazar is the online store of ${LEGAL_NAME}, Shami House, Industrial Estate, Belagavi, Karnataka 590010.`],
+  intro: [`Grain Bazar is the online store of ${LEGAL_NAME}, 179, 5th Main Rd, BCC Layout, Chandra Layout, Bengaluru, Karnataka 560040.`],
 };
 
 const WHAT_WE_COLLECT: PolicySection = {

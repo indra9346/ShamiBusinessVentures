@@ -156,7 +156,7 @@ export const kn: Record<string, string> = {
   "Last updated: 3 November 2026": "ಕೊನೆಯದಾಗಿ ಬದಲಿಸಿದ ದಿನಾಂಕ: 3 ನವೆಂಬರ್ 2026",
   "This page explains what information Grain Bazar collects when you use grainbazar.com, why we collect it, who it goes to, and the choices you have.": "ನೀವು grainbazar.com ಬಳಸುವಾಗ Grain Bazar ಯಾವ ಮಾಹಿತಿಯನ್ನು ಸಂಗ್ರಹಿಸುತ್ತದೆ, ಏಕೆ ಸಂಗ್ರಹಿಸುತ್ತದೆ, ಅದು ಯಾರಿಗೆ ತಲುಪುತ್ತದೆ ಮತ್ತು ನಿಮಗೆ ಯಾವ ಆಯ್ಕೆಗಳಿವೆ ಎಂಬುದನ್ನು ಈ ಪುಟ ವಿವರಿಸುತ್ತದೆ.",
   "Who we are": "ನಾವು ಯಾರು",
-  "Grain Bazar is the online store of Shami Business Ventures Pvt. Ltd., Shami House, Industrial Estate, Belagavi, Karnataka 590010.": "Grain Bazar ಎಂಬುದು Shami Business Ventures Pvt. Ltd. ಕಂಪನಿಯ ಆನ್‌ಲೈನ್ ಅಂಗಡಿ. ವಿಳಾಸ: Shami House, Industrial Estate, Belagavi, Karnataka 590010.",
+  "Grain Bazar is the online store of Shami Business Ventures Pvt. Ltd., 179, 5th Main Rd, BCC Layout, Chandra Layout, Bengaluru, Karnataka 560040.": "Grain Bazar ಎಂಬುದು Shami Business Ventures Pvt. Ltd. ಕಂಪನಿಯ ಆನ್‌ಲೈನ್ ಅಂಗಡಿ. ವಿಳಾಸ: 179, 5ನೇ ಮುಖ್ಯ ರಸ್ತೆ, ಬಿಸಿಸಿ ಲೇಔಟ್, ಚಂದ್ರ ಲೇಔಟ್, ಬೆಂಗಳೂರು, ಕರ್ನಾಟಕ 560040.",
   "What we collect": "ನಾವು ಏನನ್ನು ಸಂಗ್ರಹಿಸುತ್ತೇವೆ",
   "Your account": "ನಿಮ್ಮ ಖಾತೆ",
   "Your name, email address and mobile number.": "ನಿಮ್ಮ ಹೆಸರು, ಇಮೇಲ್ ವಿಳಾಸ ಮತ್ತು ಮೊಬೈಲ್ ಸಂಖ್ಯೆ.",
