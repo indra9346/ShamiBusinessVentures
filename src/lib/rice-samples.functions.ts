@@ -8,7 +8,7 @@ import {
   PO_DEATH_WORDS, planPoLine, plainZohoRefusal, poDescription, poLineProblem, poReference, raiseRicePo, retiredPoProblem, settleRaisedPo, syncRaisedPos, vendorBody, vendorMatchesFrom, zohoVerdict,
   type CancelResult, type ClaimAnswer, type CreationStore, type PoActor, type PoFound, type PoLifeStore, type PoPlan, type PoStore, type PoSyncResult, type RaiseResult, type RecordAnswer, type ReleaseAnswer, type RetiredPo, type RiceEvent, type RicePo, type RiceSample, type RiceTest,
   type TakeoverAnswer, type ZohoItemMatch, type ZohoRaw, type ZohoSend, type ZohoVendorMatch,
-  canCancelPo, zohoStatusLabel,
+  canCancelPo, poTaxFrom, zohoStatusLabel, type PoTaxAnswer,
 } from "@/lib/rice-samples";
 import { GSTIN_REGEX, normaliseGstin } from "@/lib/gstin";
 import { zohoPaused } from "@/lib/zoho-sync-core";
@@ -306,10 +306,27 @@ const raiseInput = z.object({
   branchId: z.string().trim().min(1).max(40),
   // What the admin's confirmation screen showed. The server works these out again and refuses if they differ.
   confirmed: z.object({
-    vendorName: z.string().max(200), itemName: z.string().max(200), itemUnit: z.string().max(40), poQuantity: z.number(), poRate: z.number(), subTotal: z.number(), issueOnCreate: z.boolean(),
+    vendorName: z.string().max(200), itemName: z.string().max(200), itemUnit: z.string().max(40), poQuantity: z.number(), poRate: z.number(), subTotal: z.number(), issueOnCreate: z.boolean(), taxId: z.string().max(40), taxPercent: z.number(), sourceOfSupply: z.string().max(4), destinationOfSupply: z.string().max(4),
     sampleUpdatedAt: z.string().max(60),
   }),
 });
+
+/** The tax to show on the confirm screen, from the vendor, item and godown as they are now. Reads Zoho, changes nothing. */
+export const previewRicePoTax = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator(z.object({ vendorId: raiseInput.shape.vendorId, itemId: raiseInput.shape.itemId, branchId: raiseInput.shape.branchId }))
+  .handler(async ({ data, context }): Promise<PoTaxAnswer> => {
+    await ensureAdmin(context.supabase, context.userId);
+    const { data: branch } = await serviceClient().from("branches").select("name,state_code").eq("id", data.branchId).maybeSingle();
+    if (!branch) return { ok: false, message: "Choose a godown first." };
+    return withZoho(async ({ send }) => {
+      const vendorRaw = await send(`contacts/${encodeURIComponent(data.vendorId)}`, "GET");
+      if (zohoVerdict(vendorRaw) !== "ok") return { ok: false, message: `The vendor could not be read from Zoho. ${plainZohoRefusal(vendorRaw)}` };
+      const itemRaw = await send(`items/${encodeURIComponent(data.itemId)}`, "GET");
+      if (zohoVerdict(itemRaw) !== "ok") return { ok: false, message: `The item could not be read from Zoho. ${plainZohoRefusal(itemRaw)}` };
+      return poTaxFrom(asRecord(itemRaw.body?.["item"]), asRecord(vendorRaw.body?.["contact"]), { name: branch.name, stateCode: text(branch.state_code) });
+    }, "Rice sample desk: tax check");
+  });
 
 /**
  * Raises the sample's purchase order. Works out the figures again, reads the vendor and item fresh from Zoho, and only then
@@ -323,12 +340,12 @@ export const raiseRiceSamplePurchaseOrder = createServerFn({ method: "POST" })
     await ensureAdmin(context.supabase, context.userId);
     const db = serviceClient();
     const existing = await readPo(db, data.sampleId);
-    if (existing?.state === "raised") return { ...raisedResult(existing), warnings: differsFromRaised(existing.snapshot, data) };
+    if (existing?.state === "raised") return { ...raisedResult(existing), warnings: differsFromRaised(existing.snapshot, { ...data, taxId: data.confirmed.taxId }) };
     if (existing && stillSending(existing)) return { kind: "in_progress", message: `${existing.claimed_by_name || "Another admin"} is raising this purchase order right now. It will show here in a moment.` };
 
     const [{ data: sample }, { data: branch }] = await Promise.all([
       db.from("rice_samples").select("*").eq("id", data.sampleId).maybeSingle(),
-      db.from("branches").select("id,name,active,vendor_id,zoho_location_id").eq("id", data.branchId).maybeSingle(),
+      db.from("branches").select("id,name,active,vendor_id,zoho_location_id,state_code").eq("id", data.branchId).maybeSingle(),
     ]);
     if (!sample) return { kind: "rejected", message: "This sample no longer exists." };
     if (sample.deleted_at) return { kind: "rejected", message: "This card is deleted. Restore it first. Nothing was sent to Zoho." };
@@ -370,10 +387,15 @@ export const raiseRiceSamplePurchaseOrder = createServerFn({ method: "POST" })
       if (line.poQuantity !== data.confirmed.poQuantity || line.poRate !== data.confirmed.poRate || line.subTotal !== data.confirmed.subTotal) {
         return { kind: "rejected", message: "The figures on your screen do not match the sample any more. Review and confirm again. Nothing was sent to Zoho." };
       }
+      // The tax as Zoho has it now, which must be what the confirm screen showed.
+      const taxAnswer = poTaxFrom(asRecord(itemRaw.body?.["item"]), vendor, { name: branch.name, stateCode: text(branch.state_code) });
+      if (!taxAnswer.ok) return { kind: "rejected", message: `${taxAnswer.message} Nothing was sent to Zoho.` };
+      const { tax } = taxAnswer;
+      if (tax.taxId !== data.confirmed.taxId || tax.percent !== data.confirmed.taxPercent || tax.sourceOfSupply !== data.confirmed.sourceOfSupply || tax.destinationOfSupply !== data.confirmed.destinationOfSupply) return { kind: "rejected", message: `The tax has changed since this screen opened: it is now ${tax.taxName}. Review and confirm again. Nothing was sent to Zoho.` };
       const plan: PoPlan = {
         reference: existing?.state === "dead" ? poReference(sample.id, existing.generation + 1) : existing?.reference ?? poReference(sample.id), date: indiaToday(Date.now()), vendorRole: data.vendorRole, vendorId: data.vendorId, vendorName: text(vendor["contact_name"]),
         itemId: data.itemId, itemName: item.name, itemUnit: item.unit, kgPerUnit: data.kgPerUnit, quantityQntl: data.quantityQntl, ratePerQntl: data.ratePerQntl,
-        poQuantity: line.poQuantity, poRate: line.poRate, subTotal: line.subTotal, gstPercent: item.gstPercent, branchId: branch.id, branchName: branch.name, locationId: branch.zoho_location_id,
+        poQuantity: line.poQuantity, poRate: line.poRate, subTotal: line.subTotal, gstPercent: tax.percent, taxId: tax.taxId, taxName: tax.taxName, taxKind: tax.kind, sourceOfSupply: tax.sourceOfSupply, destinationOfSupply: tax.destinationOfSupply, branchId: branch.id, branchName: branch.name, locationId: branch.zoho_location_id,
         issueOnCreate: settings.issueOnCreate, description: poDescription(sample.variety, sample.method, data.quantityQntl, data.ratePerQntl), organizationId,
       };
       const actor = await actorOf(db, context.userId);

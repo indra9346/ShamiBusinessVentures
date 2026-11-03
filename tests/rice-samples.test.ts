@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   bestInComparison, canCancelPo, cancelRicePo, checkRicePo, createInZohoOnce, findPurchaseOrdersByReference, gstPreferencesFrom, itemBody, itemMatchFrom, kgPerZohoUnit, latestTest, nameKey, phoneLinks, planPoLine, plainZohoRefusal,
-  differsFromRaised, OFF_LIST_CHECK_MS, poDeathReason, poDifferences, poLineProblem, poReference, retiredPoProblem, settleRaisedPo, syncRaisedPos, zohoSaysNoSuchPo, priceUnitWarning, purchaseOrderBody, raiseRicePo, readPoStatus, riceTextOptions, sortSamples, testsBySample, vendorBody, vendorMatchesFrom, zohoPoUrl, zohoStatusLabel, zohoVerdict,
+  differsFromRaised, OFF_LIST_CHECK_MS, poDeathReason, poTaxAmount, poTaxDifferences, poTaxFrom, poTaxLabel, poTaxReason, poDifferences, poLineProblem, poReference, retiredPoProblem, settleRaisedPo, syncRaisedPos, zohoSaysNoSuchPo, priceUnitWarning, purchaseOrderBody, raiseRicePo, readPoStatus, riceTextOptions, sortSamples, testsBySample, vendorBody, vendorMatchesFrom, zohoPoUrl, zohoStatusLabel, zohoVerdict,
   type ClaimAnswer, type CreationStore, type PoActor, type PoFound, type PoLifeStore, type PoPlan, type PoStore, type RaisedPo, type RecordAnswer, type RicePo, type RiceSample, type RiceTest, type ZohoRaw, type ZohoSend,
 } from "../src/lib/rice-samples.ts";
 
@@ -13,7 +13,7 @@ const ACTOR: PoActor = { userId: "22222222-2222-4222-8222-222222222222", name: "
 const plan = (patch: Partial<PoPlan> = {}): PoPlan => ({
   reference: REF, date: "2026-11-03", vendorRole: "broker", vendorId: "V1", vendorName: "Test Traders", itemId: "I1", itemName: "Rice bulk", itemUnit: "qtl", kgPerUnit: 100,
   quantityQntl: 100, ratePerQntl: 4200, poQuantity: 100, poRate: 4200, subTotal: 420000, gstPercent: null, branchId: "BR-CLK", branchName: "Challakere", locationId: "L1", issueOnCreate: false,
-  description: "Sona Rice, Steam Rice. 100 quintal at Rs 4200 per quintal.", ...patch,
+  description: "Sona Rice, Steam Rice. 100 quintal at Rs 4200 per quintal.", taxId: "T-GST5", taxName: "GST5", taxKind: "intra", sourceOfSupply: "KA", destinationOfSupply: "KA", ...patch,
 });
 
 let clockNow = () => Date.now();
@@ -80,7 +80,8 @@ function fakeZoho(options: { create?: "ok" | "reject" | "no_scope" | "timeout_cr
     const rate = rateOverride ?? Number(line["rate"]), quantity = Number(line["quantity"]);
     const order = {
       purchaseorder_id: `PO${orders.length + 1}`, purchaseorder_number: `PO-03112601${48 + orders.length}`, reference_number: body["reference_number"], status: "draft", vendor_id: body["vendor_id"], location_id: body["location_id"],
-      line_items: [{ item_id: line["item_id"], rate, quantity, unit: "qtl", item_total: rate * quantity }], sub_total: rate * quantity, tax_total: rate * quantity * 0.05, total: rate * quantity * 1.05,
+      source_of_supply: body["source_of_supply"], destination_of_supply: body["destination_of_supply"],
+      line_items: [{ item_id: line["item_id"], rate, quantity, unit: "qtl", item_total: rate * quantity, tax_id: line["tax_id"] }], sub_total: rate * quantity, tax_total: rate * quantity * 0.05, total: rate * quantity * 1.05,
     };
     orders.push(order);
     return order;
@@ -501,15 +502,15 @@ test("a full page with no page details is not the end of the list", async () => 
 });
 
 test("Zoho's copy is compared with what was confirmed", () => {
-  const same = { vendor_id: "V1", location_id: "L1", sub_total: 420000, line_items: [{ item_id: "I1", rate: 4200, quantity: 100 }] };
+  const same = { vendor_id: "V1", location_id: "L1", sub_total: 420000, tax_total: 0, source_of_supply: "KA", destination_of_supply: "KA", line_items: [{ item_id: "I1", rate: 4200, quantity: 100, tax_id: "T-GST5" }] };
   assert.deepEqual(poDifferences(plan(), same), []);
   const moved = poDifferences(plan(), { ...same, location_id: "HO", location_name: "Head Office", vendor_id: "V9", vendor_name: "Other", sub_total: 1, line_items: [{ item_id: "I9", name: "Sugar", rate: 5, quantity: 9 }, {}] });
-  assert.equal(moved.length, 7, moved.join("\n"));
+  assert.equal(moved.length, 8, moved.join("\n"));
   assert.match(moved.join(" "), /Head Office/);
 });
 
 test("Zoho's GST is compared with what the admin was shown", () => {
-  const copy = (tax: number) => ({ tax_total: tax, sub_total: 420000 });
+  const copy = (tax: number) => ({ tax_total: tax, sub_total: 420000, source_of_supply: "KA", destination_of_supply: "KA" });
   assert.deepEqual(poDifferences(plan({ gstPercent: 5 }), copy(21000)), []);
   assert.deepEqual(poDifferences(plan({ gstPercent: 5 }), copy(21000.5)), []);
   assert.match(poDifferences(plan({ gstPercent: 5 }), copy(0))[0]!, /GST is ₹0, not the ₹21000/);
@@ -792,6 +793,209 @@ test("creating refused by Zoho: plain words, and it can be tried again", async (
   if (refused.kind === "rejected") assert.match(refused.message, /already exists/);
   const ok: ZohoSend = async () => ({ status: 201, body: { code: 0, contact: { contact_id: "C9" } } });
   assert.equal((await createInZohoOnce({ store, zoho: ok, newId: () => `n${ids += 1}` }, "vendor", creating(async () => null), ACTOR)).kind, "created");
+});
+
+// ---------------------------------------------------------------- The tax on a purchase order
+
+/** Shaped as the live item and vendors read on 3 Nov 2026, with made-up IDs. */
+const taxItem = (patch: Record<string, unknown> = {}) => ({
+  item_id: "I1", name: "Rice bulk", is_taxable: true,
+  item_tax_preferences: [
+    { tax_specification: "inter", tax_specific_type: "igst", tax_name: "IGST5", tax_percentage: 5, tax_id: "T-IGST5", new_tax_type: "tax", tax_groups_details: [] },
+    { tax_specification: "intra", tax_specific_type: "tax", tax_name: "GST5", tax_percentage: 5, tax_id: "T-GST5", new_tax_type: "tax_group", tax_groups_details: [{ text: "CGST2.5", percentage: 2.5, tax_specific_type: "cgst" }, { text: "SGST2.5", percentage: 2.5, tax_specific_type: "sgst" }] },
+  ], ...patch,
+});
+const taxVendor = (patch: Record<string, unknown> = {}) => ({ contact_id: "V1", contact_name: "Test Traders", gst_treatment: "business_gst", gst_no: "29ABCDE1234F1Z5", place_of_contact: "KA", ...patch });
+const CLK = { name: "Challakere", stateCode: "29" };
+const stops = (answer: ReturnType<typeof poTaxFrom>, pattern: RegExp) => {
+  assert.equal(answer.ok, false, "should have stopped");
+  if (!answer.ok) assert.match(answer.message, pattern);
+};
+
+test("tax: vendor and godown in the same state take the item's CGST + SGST group", () => {
+  assert.deepEqual(poTaxFrom(taxItem(), taxVendor(), CLK), { ok: true, tax: { taxId: "T-GST5", taxName: "GST5", percent: 5, kind: "intra", parts: ["CGST2.5", "SGST2.5"], sourceOfSupply: "KA", destinationOfSupply: "KA" } });
+});
+
+test("tax: a vendor in another state takes the item's IGST", () => {
+  const answer = poTaxFrom(taxItem(), taxVendor({ gst_no: "27ABCDE1234F1Z5", place_of_contact: "MH" }), CLK);
+  assert.deepEqual(answer, { ok: true, tax: { taxId: "T-IGST5", taxName: "IGST5", percent: 5, kind: "inter", parts: [], sourceOfSupply: "MH", destinationOfSupply: "KA" } });
+});
+
+test("tax: the rate is the item's own, whatever it is, never assumed", () => {
+  const eighteen = taxItem({ item_tax_preferences: [{ tax_specification: "intra", tax_name: "GST18", tax_percentage: 18, tax_id: "T-GST18" }, { tax_specification: "inter", tax_name: "IGST18", tax_percentage: 18, tax_id: "T-IGST18" }] });
+  const answer = poTaxFrom(eighteen, taxVendor(), CLK);
+  assert.equal(answer.ok && answer.tax.percent, 18);
+  assert.equal(answer.ok && answer.tax.taxId, "T-GST18");
+});
+
+test("tax: 0% set on the item itself is an answer, so the confirm screen can say so", () => {
+  const nil = taxItem({ item_tax_preferences: [{ tax_specification: "intra", tax_name: "GST0", tax_percentage: 0, tax_id: "T-GST0" }, { tax_specification: "inter", tax_name: "IGST0", tax_percentage: 0, tax_id: "T-IGST0" }] });
+  const answer = poTaxFrom(nil, taxVendor(), CLK);
+  assert.equal(answer.ok && answer.tax.percent, 0);
+  assert.equal(answer.ok && answer.tax.taxId, "T-GST0");
+});
+
+test("tax: stops when the vendor isn't shown as GST-registered", () => {
+  stops(poTaxFrom(taxItem(), taxVendor({ gst_treatment: "business_none", gst_no: "" }), CLK), /isn't shown as GST-registered/);
+  stops(poTaxFrom(taxItem(), taxVendor({ gst_treatment: "business_gst", gst_no: "" }), CLK), /isn't shown as GST-registered/);
+  stops(poTaxFrom(taxItem(), taxVendor({ gst_treatment: "overseas" }), CLK), /isn't shown as GST-registered/);
+  stops(poTaxFrom(taxItem(), taxVendor({ gst_treatment: undefined }), CLK), /isn't shown as GST-registered/);
+});
+
+test("tax: stops when the vendor's state is missing or disagrees with their GSTIN", () => {
+  stops(poTaxFrom(taxItem(), taxVendor({ place_of_contact: "" }), CLK), /no state for Test Traders/);
+  stops(poTaxFrom(taxItem(), taxVendor({ place_of_contact: "MH" }), CLK), /GSTIN is from Karnataka, but Zoho has them in Maharashtra/);
+  stops(poTaxFrom(taxItem(), taxVendor({ gst_no: "99ABCDE1234F1Z5" }), CLK), /GSTIN is from an unknown state/);
+});
+
+test("tax: stops when the godown has no state", () => {
+  stops(poTaxFrom(taxItem(), taxVendor(), { name: "Hubli", stateCode: "" }), /Hubli has no state on record/);
+  stops(poTaxFrom(taxItem(), taxVendor(), { name: "Hubli", stateCode: "99" }), /Hubli has no state on record/);
+});
+
+test("tax: stops when the item's tax for this route isn't there", () => {
+  stops(poTaxFrom(taxItem({ item_tax_preferences: [] }), taxVendor(), CLK), /no tax for purchases within the state/);
+  stops(poTaxFrom(taxItem({ item_tax_preferences: undefined }), taxVendor(), CLK), /no tax for purchases within the state/);
+  const interOnly = taxItem({ item_tax_preferences: [{ tax_specification: "inter", tax_name: "IGST5", tax_percentage: 5, tax_id: "T" }] });
+  stops(poTaxFrom(interOnly, taxVendor(), CLK), /no tax for purchases within the state/);
+  const intraOnly = taxItem({ item_tax_preferences: [{ tax_specification: "intra", tax_name: "GST5", tax_percentage: 5, tax_id: "T" }] });
+  stops(poTaxFrom(intraOnly, taxVendor({ gst_no: "27ABCDE1234F1Z5", place_of_contact: "MH" }), CLK), /no tax for purchases from another state/);
+  for (const broken of [{ tax_id: "" }, { tax_name: "" }, { tax_percentage: "" }, { tax_percentage: null }, { tax_percentage: "five" }, { tax_percentage: -5 }]) {
+    stops(poTaxFrom(taxItem({ item_tax_preferences: [{ tax_specification: "intra", tax_name: "GST5", tax_percentage: 5, tax_id: "T", ...broken }] }), taxVendor(), CLK), /no tax for purchases/);
+  }
+});
+
+test("tax: stops when the item is marked not taxable", () => {
+  stops(poTaxFrom(taxItem({ is_taxable: false }), taxVendor(), CLK), /not taxable/);
+});
+
+test("tax: stops when the item's taxes contradict each other", () => {
+  const swapped = taxItem({ item_tax_preferences: [{ tax_specification: "intra", tax_name: "IGST5", tax_percentage: 5, tax_id: "T1" }, { tax_specification: "inter", tax_name: "GST5", tax_percentage: 5, tax_id: "T2" }] });
+  stops(poTaxFrom(swapped, taxVendor(), CLK), /IGST5 in Zoho, which doesn't look right/);
+  stops(poTaxFrom(swapped, taxVendor({ gst_no: "27ABCDE1234F1Z5", place_of_contact: "MH" }), CLK), /GST5 in Zoho, which doesn't look right/);
+  const differ = taxItem({ item_tax_preferences: [{ tax_specification: "intra", tax_name: "GST5", tax_percentage: 5, tax_id: "T1" }, { tax_specification: "inter", tax_name: "IGST18", tax_percentage: 18, tax_id: "T2" }] });
+  stops(poTaxFrom(differ, taxVendor(), CLK), /5% within the state but 18% from another state/);
+  const parts = taxItem({ item_tax_preferences: [{ tax_specification: "intra", tax_name: "GST5", tax_percentage: 5, tax_id: "T1", tax_groups_details: [{ text: "CGST9", percentage: 9 }, { text: "SGST9", percentage: 9 }] }] });
+  stops(poTaxFrom(parts, taxVendor(), CLK), /doesn't add up to 5%/);
+});
+
+test("tax: the words on the confirm screen", () => {
+  const within = { taxName: "GST5", parts: ["CGST2.5", "SGST2.5"], kind: "intra" as const, sourceOfSupply: "KA", destinationOfSupply: "KA" };
+  assert.equal(poTaxLabel(within), "GST5 (CGST2.5 + SGST2.5)");
+  assert.equal(poTaxReason(within), "CGST + SGST, because the vendor and the godown are both in Karnataka.");
+  const across = { taxName: "IGST5", parts: [], kind: "inter" as const, sourceOfSupply: "MH", destinationOfSupply: "KA" };
+  assert.equal(poTaxLabel(across), "IGST5");
+  assert.equal(poTaxReason(across), "IGST, because the vendor is in Maharashtra and the godown in Karnataka.");
+  assert.equal(poTaxAmount(420000, 5), 21000);
+  assert.equal(poTaxAmount(1255.5, 5), 62.78);
+});
+
+test("tax: the purchase order carries the tax and both states", () => {
+  const body = purchaseOrderBody(plan());
+  assert.equal(body["source_of_supply"], "KA");
+  assert.equal(body["destination_of_supply"], "KA");
+  assert.equal((body["line_items"] as Record<string, unknown>[])[0]!["tax_id"], "T-GST5");
+  const across = purchaseOrderBody(plan({ taxId: "T-IGST5", sourceOfSupply: "MH" }));
+  assert.equal(across["source_of_supply"], "MH");
+  assert.equal((across["line_items"] as Record<string, unknown>[])[0]!["tax_id"], "T-IGST5");
+});
+
+test("tax: a purchase order with no tax worked out is never sent", async () => {
+  let asked = 0;
+  const store = new Proxy({}, { get: () => () => { asked += 1; throw new Error("the lock must not be touched"); } }) as PoStore;
+  const zoho: ZohoSend = async () => { asked += 1; throw new Error("Zoho must not be called"); };
+  const result = await raiseRicePo({ store, zoho, newId: () => "x", now: () => 0 }, SAMPLE, plan({ taxId: undefined }), ACTOR);
+  assert.equal(result.kind, "rejected");
+  if (result.kind === "rejected") assert.match(result.message, /nothing was sent/);
+  assert.equal(asked, 0);
+});
+
+test("tax: says so when Zoho's reply differs from what was shown", () => {
+  const reply = (patch: Record<string, unknown> = {}, line: Record<string, unknown> = {}) => ({ tax_total: 21000, sub_total: 420000, source_of_supply: "KA", destination_of_supply: "KA", line_items: [{ tax_id: "T-GST5", tax_name: "GST5", ...line }], ...patch });
+  const shown = plan({ gstPercent: 5 });
+  assert.deepEqual(poDifferences(shown, reply()), []);
+  // What happened on the first live purchase order.
+  assert.match(poDifferences(shown, reply({ tax_total: 0 }))[0]!, /GST is ₹0, not the ₹21000 \(5%\)/);
+  assert.match(poDifferences(shown, reply({}, { tax_id: "T-IGST5", tax_name: "IGST5" }))[0]!, /Zoho put IGST5 on this line, not GST5/);
+  assert.match(poDifferences(shown, reply({ source_of_supply: "MH" }))[0]!, /vendor's state as Maharashtra, not Karnataka/);
+  assert.match(poDifferences(shown, reply({ destination_of_supply: "GA" }))[0]!, /delivery state as Goa, not Karnataka/);
+  assert.match(poDifferences(shown, reply({ tax_total: undefined }))[0]!, /doesn't show the GST/);
+  assert.match(poDifferences(shown, reply({}, { tax_id: "", tax_name: "" }))[0]!, /line shows no tax, not GST5/);
+  assert.match(poDifferences(shown, reply({ source_of_supply: "" }))[0]!, /vendor's state as blank/);
+  assert.match(poDifferences(shown, reply({ destination_of_supply: undefined }))[0]!, /delivery state as blank/);
+  // The same amount by the wrong route is still wrong.
+  assert.equal(poDifferences(shown, reply({}, { tax_id: "T-IGST5", tax_name: "IGST5" })).length, 1);
+  assert.deepEqual(poTaxDifferences(shown, reply()), []);
+});
+
+test("tax: stops on a GSTIN that isn't one", () => {
+  stops(poTaxFrom(taxItem(), taxVendor({ gst_no: "29" }), CLK), /doesn't look right/);
+  stops(poTaxFrom(taxItem(), taxVendor({ gst_no: "29ABC" }), CLK), /doesn't look right/);
+});
+
+test("tax: Zoho's other code for a state isn't a false alarm, and its own code is what gets sent", () => {
+  const answer = poTaxFrom(taxItem(), taxVendor({ gst_no: "22ABCDE1234F1Z5", place_of_contact: "CG" }), CLK);
+  assert.equal(answer.ok && answer.tax.kind, "inter");
+  assert.equal(answer.ok && answer.tax.sourceOfSupply, "CG");
+  assert.equal(poTaxFrom(taxItem(), taxVendor({ gst_no: "22ABCDE1234F1Z5", place_of_contact: "CT" }), CLK).ok, true);
+  stops(poTaxFrom(taxItem(), taxVendor({ gst_no: "22ABCDE1234F1Z5", place_of_contact: "OD" }), CLK), /Correct it in Zoho/);
+});
+
+test("tax: an already raised purchase order with another tax is called out", () => {
+  const saved = plan({ taxId: "T-IGST5", taxName: "IGST5" });
+  assert.match(differsFromRaised(saved, plan())[0]!, /tax IGST5/);
+  assert.deepEqual(differsFromRaised(plan({ taxId: undefined }), plan()), []);
+});
+
+/** A Zoho that holds one purchase order under this reference, found by a search after an earlier send got no clear answer. */
+function earlierSendZoho(saved: Record<string, unknown> | null) {
+  const row = { purchaseorder_id: "P1", purchaseorder_number: "CLK-PO-1", reference_number: REF, status: "draft" };
+  const send: ZohoSend = async (resource) => {
+    if (resource === "purchaseorders") return { status: 200, body: { code: 0, purchaseorders: [row], page_context: { has_more_page: false } } };
+    return saved ? { status: 200, body: { code: 0, purchaseorder: { ...row, ...saved } } } : { status: 503, body: null };
+  };
+  return send;
+}
+const earlierAttempt = (snapshot: PoPlan, recorded: { differences?: string[] }): PoStore => ({
+  claim: async () => ({ outcome: "verify_first", attempt_id: "A1", claimed_at: new Date(0).toISOString(), snapshot, attempts: 1 }),
+  takeover: async () => { throw new Error("must not send again"); },
+  release: async () => { throw new Error("no"); },
+  markFailed: async () => undefined,
+  record: async ({ po, differences }) => { recorded.differences = differences; return { outcome: "recorded", po: { zoho_po_id: po.id, zoho_po_number: po.number, zoho_po_status: po.status, zoho_total: null } as RicePo }; },
+});
+
+test("tax: a purchase order found from an earlier attempt is held to the tax just confirmed, even if that attempt recorded none", async () => {
+  const recorded: { differences?: string[] } = {};
+  const old = plan({ taxId: undefined, taxName: undefined, sourceOfSupply: undefined, destinationOfSupply: undefined, gstPercent: null });
+  const result = await raiseRicePo({ store: earlierAttempt(old, recorded), zoho: earlierSendZoho({ sub_total: 420000, tax_total: 0, line_items: [{}], source_of_supply: "KA", destination_of_supply: "KA" }), newId: () => "x", now: () => 10 ** 13 }, SAMPLE, plan({ gstPercent: 5 }), ACTOR);
+  assert.equal(result.kind, "raised");
+  assert.match(recorded.differences!.join(" "), /GST is ₹0, not the ₹21000/);
+});
+
+test("tax: when Zoho's copy can't be read, it says the comparison didn't happen", async () => {
+  const recorded: { differences?: string[] } = {};
+  const result = await raiseRicePo({ store: earlierAttempt(plan(), recorded), zoho: earlierSendZoho(null), newId: () => "x", now: () => 10 ** 13 }, SAMPLE, plan(), ACTOR);
+  assert.equal(result.kind, "raised");
+  assert.match(recorded.differences!.join(" "), /could not be read, so its figures and GST were not compared/);
+});
+
+test("tax: a new draft is compared with what Zoho saved, not only with its reply", async () => {
+  const recorded: { differences?: string[] } = {};
+  const store: PoStore = { ...earlierAttempt(plan(), recorded), claim: async () => ({ outcome: "claimed", attempts: 1 }) };
+  const calls: string[] = [];
+  const zoho: ZohoSend = async (resource, method) => {
+    calls.push(`${method} ${resource}`);
+    if (method === "POST") return { status: 201, body: { code: 0, purchase_order: { purchaseorder_id: "P1", purchaseorder_number: "CLK-PO-1", status: "draft", tax_total: 21000, source_of_supply: "KA", destination_of_supply: "KA", line_items: [{ tax_id: "T-GST5" }] } } };
+    return { status: 200, body: { code: 0, purchaseorder: { purchaseorder_id: "P1", purchaseorder_number: "CLK-PO-1", status: "draft", tax_total: 0, source_of_supply: "KA", destination_of_supply: "KA", line_items: [{ tax_id: "" }] } } };
+  };
+  await raiseRicePo({ store, zoho, newId: () => "x", now: () => 0 }, SAMPLE, plan({ gstPercent: 5 }), ACTOR);
+  assert.deepEqual(calls, ["POST purchaseorders", "GET purchaseorders/P1"]);
+  assert.match(recorded.differences!.join(" "), /GST is ₹0/);
+  assert.match(recorded.differences!.join(" "), /line shows no tax/);
+});
+
+test("tax: a purchase order raised before this has no tax on record, and none of this applies to it", () => {
+  assert.deepEqual(poDifferences(plan({ taxId: undefined, taxName: undefined, sourceOfSupply: undefined, destinationOfSupply: undefined }), { sub_total: 420000, source_of_supply: "MH", line_items: [{ tax_id: "T" }] }), []);
 });
 
 // ---------------------------------------------------------------- After raising: staying in step with Zoho
