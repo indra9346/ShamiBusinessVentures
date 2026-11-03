@@ -328,7 +328,7 @@ function AdminBranches() {
                   {STATES.map(([state, code]) => <option key={code} value={state}>{state} ({code})</option>)}
                 </select>
               </div>
-              <div className="grid gap-1.5 sm:col-span-2"><Label>Godown address</Label><Textarea rows={2} value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} /></div>
+              <div className="grid gap-1.5 sm:col-span-2"><Label>Godown address</Label><Textarea rows={2} value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} /><p className="text-xs text-slate">Printed on this godown's invoices.</p></div>
               <div className="grid gap-1.5"><Label>City / town</Label><Input value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} /></div>
               <div className="grid gap-1.5"><Label>Godown PIN code</Label><Input inputMode="numeric" maxLength={6} value={form.pincode} onChange={(e) => setForm({ ...form, pincode: e.target.value.replace(/\D/g, "") })} /></div>
               <div className="grid gap-1.5"><Label>Phone</Label><Input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></div>

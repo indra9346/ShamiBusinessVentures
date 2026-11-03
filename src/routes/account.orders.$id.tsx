@@ -29,6 +29,7 @@ import { InvoicePreviewButton } from "@/components/site/InvoicePreviewDialog";
 import { ResizableTable } from "@/hooks/use-column-resize";
 import { ZohoInvoiceStatus } from "@/components/panel/ZohoInvoiceStatus";
 import { OrderUpiPay } from "@/components/site/UpiPayPanel";
+import { PartPaymentNotice } from "@/components/site/PartPaymentNotice";
 import { HeldCheckoutPay } from "@/components/site/HeldCheckoutPay";
 import { useUpiPayments } from "@/lib/upi-store";
 import { resizedImage } from "@/lib/image-url";
@@ -129,8 +130,10 @@ function AccountOrderDetail() {
       title={order.id}
       subtitle={`Placed on ${order.date}`}
     >
-      <OrderUpiPay orderNo={order.id} status={order.status} payment={order.payment} method={order.method}
-        balance={Math.max(0, order.amount - (order.paidAmount ?? 0))} customer={order.customer} />
+      <PartPaymentNotice orderNo={order.id} total={order.amount} paid={order.paidAmount ?? 0} paymentStatus={order.payment} orderStatus={order.status}>
+        <OrderUpiPay orderNo={order.id} status={order.status} payment={order.payment} method={order.method}
+          balance={Math.max(0, order.amount - (order.paidAmount ?? 0))} customer={order.customer} />
+      </PartPaymentNotice>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <Link to="/account/orders" search={true} className="text-sm font-semibold text-navy hover:text-gold">
           ← Back to Orders

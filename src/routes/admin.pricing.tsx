@@ -207,7 +207,7 @@ function AdminPricing() {
           {field("margin", "Shami margin", { numeric: true })}
           {field("bagKg", "Bag size (kg)", { numeric: true })}
           <div className="grid gap-1 sm:col-span-2"><Label className="text-[11px] text-slate">Website product</Label>
-            <select className="h-8 rounded-md border border-input bg-white px-2 text-sm" value={form.productId} onChange={(event) => setForm({ ...form, productId: event.target.value })}>
+            <select className="h-8 w-full min-w-0 rounded-md border border-input bg-white px-2 text-sm" value={form.productId} onChange={(event) => setForm({ ...form, productId: event.target.value })}>
               <option value="">Choose…</option>
               {products.filter((product) => !product.vendorId.startsWith("zoho:")).map((product) => (
                 <option key={product.id} value={product.id}>{product.name} ({product.weight})</option>

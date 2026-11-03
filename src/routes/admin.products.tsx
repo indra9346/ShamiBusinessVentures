@@ -1,5 +1,5 @@
 import { createFileRoute, Link, Outlet, useRouterState } from "@tanstack/react-router";
-import { useEffect, useMemo, useState, type ChangeEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { toast } from "sonner";
 import {
   AlertTriangle,
@@ -24,11 +24,14 @@ import {
   ProductTradeFields,
   emptyTradeFields,
   productPatchFromFields,
+  ratePricingFromFields,
   tradeFieldsFromProduct,
   validateTradeFields,
   withSellingPrice,
   type TradeFieldsState,
 } from "@/components/panel/ProductTradeFields";
+import { ProductCodePicker, type CodeFill, type CodeFormFields } from "@/components/panel/ProductCodePicker";
+import { duplicatesToConfirm } from "@/lib/product-code-rules";
 import { useApp } from "@/lib/store";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -174,6 +177,7 @@ function AdminProductsPanel() {
     vendors,
     addProduct,
     updateProduct,
+    setProductCode,
     addCategory,
     updateCategory,
     deleteProduct,
@@ -186,6 +190,7 @@ function AdminProductsPanel() {
   const [status, setStatus] = useState("all");
   const [sort, setSort] = useState("created-desc");
   const [showZoho, setShowZoho] = useState(false);
+  const [codeFilter, setCodeFilter] = useState("all");
   const [page, setPage] = useState(1);
   // The stock cards open the catalogue below with just the products they count.
   const [stockBand, setStockBand] = useState("all");
@@ -194,6 +199,7 @@ function AdminProductsPanel() {
     setCategory("all");
     setVendorId("all");
     setStatus("all");
+    setCodeFilter("all");
     setStockBand(band);
     setPage(1);
     scrollToSection("catalogue");
@@ -205,6 +211,16 @@ function AdminProductsPanel() {
   );
   const [trade, setTrade] = useState<TradeFieldsState>(() => emptyTradeFields(categoryChoices[0]?.name ?? "Rice"));
   const [editTrade, setEditTrade] = useState<TradeFieldsState>(() => emptyTradeFields("Rice"));
+  const [formCode, setFormCode] = useState("");
+  const [formCodeBox, setFormCodeBox] = useState("");
+  const [codeDuplicateOk, setCodeDuplicateOk] = useState(false);
+  // What the last code filled in: the next code replaces only that, never what the admin typed.
+  const lastCodeFill = useRef<{ name: string; description: string; image: string } | null>(null);
+  const [editCodeBox, setEditCodeBox] = useState("");
+  const [editCodeDuplicateOk, setEditCodeDuplicateOk] = useState(false);
+  // The edit form as it opened: a save that changed nothing but the code writes only the code.
+  const editOpenedAs = useRef("");
+  const editFingerprint = (fields: object, tradeFields: TradeFieldsState) => JSON.stringify({ ...fields, productCode: "", tradeFields });
   const NEW_CATEGORY = "__new_category__";
   const NEW_SUBCATEGORY = "__new_subcategory__";
   const [newCategory, setNewCategory] = useState<{ name: string; sub: string } | null>(null);
@@ -217,11 +233,20 @@ function AdminProductsPanel() {
     const timer = window.setTimeout(() => document.getElementById(focusRequest.id)?.focus(), 80);
     return () => window.clearTimeout(timer);
   }, [focusRequest]);
-  const chooseCategory = (v: string, sub?: string) => {
+  const chooseCategory = (v: string, sub?: string, keepCode = false) => {
+    // Codes belong to one category: changing it by hand takes the code off, and what it filled in.
+    const leaving = !keepCode && v !== form.category && !!formCode;
+    const filled = leaving ? lastCodeFill.current : null;
+    if (leaving) { setFormCode(""); setCodeDuplicateOk(false); lastCodeFill.current = null; }
     setForm((current) => ({
       ...current,
       category: v,
       subcategory: sub ?? categoryChoices.find((c) => c.name === v)?.subs[0] ?? v,
+      ...(filled ? {
+        name: current.name === filled.name ? "" : current.name,
+        description: current.description === filled.description ? "" : current.description,
+        image: current.image === filled.image ? "" : current.image,
+      } : {}),
     }));
     setTrade((current) => current.basisRate
       ? current
@@ -299,6 +324,31 @@ function AdminProductsPanel() {
       setCreatingCategory(false);
     }
   };
+  const applyCode = (fill: CodeFill) => {
+    const category = categoryChoices.find((c) => c.name.trim().toLowerCase() === fill.category.trim().toLowerCase())?.name ?? fill.category;
+    setFormCode(fill.code);
+    if (category !== form.category) chooseCategory(category, fill.subcategory, true);
+    // The brand the code's set carries, for a product that has none yet.
+    if (fill.brand) setTrade((current) => (current.brand.trim() ? current : { ...current, brand: fill.brand }));
+    const previous = lastCodeFill.current;
+    const image = fill.images[0] ?? "";
+    setForm((current) => ({
+      ...current,
+      subcategory: fill.subcategory,
+      name: !current.name.trim() || current.name === previous?.name ? fill.name : current.name,
+      description: !current.description.trim() || current.description === previous?.description ? fill.description : current.description,
+      image: !current.image.trim() || current.image === previous?.image ? image : current.image,
+    }));
+    lastCodeFill.current = { name: fill.name, description: fill.description, image };
+  };
+  /** A code can bring a subcategory its category doesn't list yet; products need it listed to filter by it. */
+  const ensureSubcategory = async (categoryName: string, subcategory: string) => {
+    const current = categories.find((c) => c.name.trim().toLowerCase() === categoryName.trim().toLowerCase());
+    const sub = subcategory.trim();
+    if (!current || !sub || current.grades.some((g) => g.trim().toLowerCase() === sub.toLowerCase())) return;
+    if (!(await updateCategory(current.id, { grades: [...current.grades, sub] })))
+      toast.warning(`The product is saved, but “${sub}” was not added to ${current.name}`, { description: "Add it under Admin → Categories." });
+  };
   const brandChoices = useMemo(
     () => [...new Set(products.map((p) => p.brand?.trim()).filter((b): b is string => !!b))].sort(),
     [products],
@@ -332,6 +382,8 @@ function AdminProductsPanel() {
     requiredStock: "",
     status: "approved" as "approved" | "pending" | "rejected",
     pricingDisplayMode: DEFAULT_PRICING_DISPLAY_MODE as PricingDisplayMode,
+    subcategory: "",
+    productCode: "",
   });
   const [imageUploading, setImageUploading] = useState(false);
   const [editImageUploading, setEditImageUploading] = useState(false);
@@ -390,12 +442,13 @@ function AdminProductsPanel() {
   const filtered = useMemo(() => {
     let list = scoped.filter((p) => {
       const s = q.trim().toLowerCase();
-      const matchesQ = !s || p.name.toLowerCase().includes(s) || p.sku.toLowerCase().includes(s);
+      const matchesQ = !s || p.name.toLowerCase().includes(s) || p.sku.toLowerCase().includes(s) || (p.productCode ?? "").toLowerCase().includes(s);
       const matchesCat = category === "all" || p.category === category;
       const matchesVendor = vendorId === "all" || p.vendorId === vendorId;
       const matchesStatus = status === "all"
         || (status === "shown" ? shownOnStorefront(p) : status === "hidden" ? !shownOnStorefront(p) : p.status === status);
-      return matchesQ && matchesCat && matchesVendor && matchesStatus && matchesStockBand(p.stock, stockBand);
+      const matchesCode = codeFilter === "all" || (codeFilter === "with") === !!p.productCode;
+      return matchesQ && matchesCat && matchesVendor && matchesStatus && matchesCode && matchesStockBand(p.stock, stockBand);
     });
     list = [...list].sort((a, b) => {
       if (sort === "created-desc") return b.created.localeCompare(a.created);
@@ -405,7 +458,7 @@ function AdminProductsPanel() {
       return 0;
     });
     return list;
-  }, [scoped, q, category, vendorId, status, sort, stockBand]);
+  }, [scoped, q, category, vendorId, status, codeFilter, sort, stockBand]);
 
   const pages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const pageSafe = Math.min(page, pages);
@@ -480,6 +533,10 @@ function AdminProductsPanel() {
   };
 
   const submitAdd = async () => {
+    if (formCodeBox && formCodeBox !== formCode) {
+      toast.error(`“${formCodeBox}” in the code box is not a code you can use`, { description: "Correct it, or clear the box to go on." });
+      return;
+    }
     const tradeError = validateTradeFields(trade);
     if (tradeError) {
       toast.error(tradeError);
@@ -526,6 +583,10 @@ function AdminProductsPanel() {
     }
     const id = `P-${crypto.randomUUID()}`;
     const tradePatch = productPatchFromFields(trade);
+    if (!codeDuplicateOk && duplicatesToConfirm(products, formCode, { weight: form.weight.trim(), ratePricing: tradePatch.ratePricing }).length > 0) {
+      toast.error(`An active product already has code ${formCode} in this pack size`, { description: "Look at the warning under Product code, and tick it if you do want both." });
+      return;
+    }
     const product: Product = {
       id,
       name: form.name,
@@ -559,6 +620,7 @@ function AdminProductsPanel() {
       ...(tradePatch.manufacturer ? { manufacturer: tradePatch.manufacturer } : {}),
       ...(tradePatch.unit ? { unit: tradePatch.unit } : {}),
       ...(tradePatch.hsn ? { hsn: tradePatch.hsn } : {}),
+      ...(formCode ? { productCode: formCode } : {}),
       created: new Date().toLocaleDateString("en-IN", {
         day: "2-digit",
         month: "short",
@@ -571,8 +633,13 @@ function AdminProductsPanel() {
       }),
     };
     if (!(await addProduct(product))) return;
+    await ensureSubcategory(product.category, product.subcategory);
     toast.success(`${product.name} added to catalogue`);
     setAddOpen(false);
+    setFormCode("");
+    setFormCodeBox("");
+    setCodeDuplicateOk(false);
+    lastCodeFill.current = null;
     setForm(emptyForm(categoryChoices[0]?.name, categoryChoices[0]?.subs[0], vendors[0]?.id));
     setTrade(emptyTradeFields(categoryChoices[0]?.name ?? "Rice"));
   };
@@ -584,6 +651,7 @@ function AdminProductsPanel() {
         "Product ID",
         "Product Name",
         "SKU",
+        "Product Code",
         "Category",
         "Subcategory",
         "Vendor",
@@ -600,6 +668,7 @@ function AdminProductsPanel() {
         p.id,
         p.name,
         p.sku,
+        p.productCode ?? "",
         p.category,
         p.subcategory,
         p.vendor,
@@ -644,7 +713,7 @@ function AdminProductsPanel() {
               <Download className="mr-1.5 h-3.5 w-3.5" /> Export CSV
             </Button>
             <Input
-              placeholder="Search name or SKU"
+              placeholder="Search name, SKU or code"
               value={q}
               onChange={(e) => {
                 setQ(e.target.value);
@@ -707,6 +776,22 @@ function AdminProductsPanel() {
                 <SelectItem value="approved">Approved</SelectItem>
                 <SelectItem value="pending">Pending</SelectItem>
                 <SelectItem value="rejected">Rejected</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select
+              value={codeFilter}
+              onValueChange={(v) => {
+                setCodeFilter(v);
+                setPage(1);
+              }}
+            >
+              <SelectTrigger className="h-9 w-40" aria-label="Filter by product code">
+                <SelectValue placeholder="Product code" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Any product code</SelectItem>
+                <SelectItem value="with">With a code</SelectItem>
+                <SelectItem value="without">Without a code</SelectItem>
               </SelectContent>
             </Select>
             {zohoCount > 0 && (
@@ -816,6 +901,27 @@ function AdminProductsPanel() {
                   <DialogTitle>Add Product</DialogTitle>
                 </DialogHeader>
                 <div className="space-y-3">
+                  <ProductCodePicker
+                    mode="add"
+                    category={form.category}
+                    value={formCode}
+                    onSelect={applyCode}
+                    onClear={() => { setFormCode(""); setCodeDuplicateOk(false); }}
+                    onBoxChange={setFormCodeBox}
+                    current={{ name: form.name, description: form.description, subcategory: form.subcategory, image: form.image }}
+                    onUse={(patch: Partial<CodeFormFields>) => {
+                      setForm((current) => ({ ...current, ...patch }));
+                      // What the admin took from the list counts as filled in, so the next code can replace it.
+                      if (lastCodeFill.current) {
+                        const { subcategory: _subcategory, ...taken } = patch;
+                        lastCodeFill.current = { ...lastCodeFill.current, ...taken };
+                      }
+                    }}
+                    pack={{ weight: form.weight, ratePricing: ratePricingFromFields(trade) ?? undefined }}
+                    subcategories={categoryChoices.find((c) => c.name === form.category)?.subs ?? []}
+                    duplicateOk={codeDuplicateOk}
+                    onDuplicateOk={setCodeDuplicateOk}
+                  />
                   <div>
                     <Label>Name</Label>
                     <Input
@@ -927,7 +1033,7 @@ function AdminProductsPanel() {
                         <SelectValue placeholder="Choose subcategory" />
                       </SelectTrigger>
                       <SelectContent>
-                        {(categoryChoices.find((c) => c.name === form.category)?.subs ?? []).map(
+                        {[...new Set([...(categoryChoices.find((c) => c.name === form.category)?.subs ?? []), ...(form.subcategory ? [form.subcategory] : [])])].map(
                           (subcategory) => (
                             <SelectItem key={subcategory} value={subcategory}>
                               {subcategory}
@@ -1149,6 +1255,9 @@ function AdminProductsPanel() {
                   >
                     {p.name}
                   </Link>
+                  {p.productCode && (
+                    <span title="Product code" className="mt-1 inline-block rounded bg-navy px-1.5 py-0.5 font-mono text-[11px] font-bold leading-none text-white">{p.productCode}</span>
+                  )}
                   <p className="mt-0.5 truncate font-mono text-[11px] text-slate">
                     {p.sku}
                     {p.weight && <span className="font-sans"> · {p.weight}</span>}
@@ -1243,7 +1352,8 @@ function AdminProductsPanel() {
                   onClick={() => {
                     setEditing(p);
                     setEditTrade(tradeFieldsFromProduct(p));
-                    setEditForm({
+                    setEditCodeDuplicateOk(false);
+                    const opened = {
                       name: p.name,
                       description: p.description ?? "",
                       mrp: String(p.mrp),
@@ -1258,7 +1368,11 @@ function AdminProductsPanel() {
                       requiredStock: String(p.requiredStock ?? 0),
                       status: p.status,
                       pricingDisplayMode: getPricingDisplayMode(p),
-                    });
+                      subcategory: p.subcategory,
+                      productCode: p.productCode ?? "",
+                    };
+                    setEditForm(opened);
+                    editOpenedAs.current = editFingerprint(opened, tradeFieldsFromProduct(p));
                   }}
                 >
                   <Pencil className="h-3.5 w-3.5" />
@@ -1322,6 +1436,24 @@ function AdminProductsPanel() {
             <DialogTitle className="pr-6 leading-snug">Edit {editing?.name}</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
+            {editing && (
+              <ProductCodePicker
+                mode="edit"
+                category={editing.category}
+                value={editForm.productCode}
+                onSelect={(fill) => setEditForm((current) => ({ ...current, productCode: fill.code }))}
+                onClear={() => { setEditForm((current) => ({ ...current, productCode: "" })); setEditCodeDuplicateOk(false); }}
+                onBoxChange={setEditCodeBox}
+                original={{ code: editing.productCode ?? "", subcategory: editing.subcategory, pack: editing }}
+                current={{ name: editForm.name, description: editForm.description, subcategory: editForm.subcategory, image: editForm.image }}
+                onUse={(patch) => setEditForm((current) => ({ ...current, ...patch }))}
+                pack={{ weight: editForm.weight, ratePricing: ratePricingFromFields(editTrade) ?? undefined }}
+                excludeProductId={editing.id}
+                subcategories={categoryChoices.find((c) => c.name === editing.category)?.subs ?? []}
+                duplicateOk={editCodeDuplicateOk}
+                onDuplicateOk={setEditCodeDuplicateOk}
+              />
+            )}
             <div>
               <Label>Name</Label>
               <Input
@@ -1524,8 +1656,26 @@ function AdminProductsPanel() {
               Cancel
             </Button>
             <Button
+              disabled={editImageUploading}
               onClick={async () => {
                 if (!editing) return;
+                if (editCodeBox && editCodeBox !== editForm.productCode) {
+                  toast.error(`“${editCodeBox}” in the code box is not a code you can use`, { description: "Correct it, or clear the box to go on." });
+                  return;
+                }
+                const originalCode = editing.productCode ?? "";
+                const codeChanged = editForm.productCode !== originalCode;
+                if (!editCodeDuplicateOk && duplicatesToConfirm(products, editForm.productCode, { weight: editForm.weight, ratePricing: ratePricingFromFields(editTrade) ?? undefined }, editing.id, { code: originalCode, pack: editing }).length > 0) {
+                  toast.error(`An active product already has code ${editForm.productCode} in this pack size`, { description: "Look at the warning under Product code, and tick it if you do want both." });
+                  return;
+                }
+                // Only the code changed: write only the code, so no other field moves and Zoho has nothing to do.
+                if (editFingerprint(editForm, editTrade) === editOpenedAs.current) {
+                  if (codeChanged && !(await setProductCode(editing.id, editForm.productCode || undefined))) return;
+                  toast.success(codeChanged ? `${editing.name} updated` : "Nothing to save");
+                  setEditing(null);
+                  return;
+                }
                 const maxPurchaseQuantity = Number(editForm.maxPurchaseQuantity);
                 if (!Number.isSafeInteger(maxPurchaseQuantity) || maxPurchaseQuantity < 1 || maxPurchaseQuantity > 100000) {
                   toast.error("Set the maximum customer purchase quantity to a whole number from 1 to 100,000");
@@ -1564,8 +1714,11 @@ function AdminProductsPanel() {
                   requiredStock: Number(editForm.requiredStock),
                   status: editForm.status,
                   pricingDisplayMode: editForm.pricingDisplayMode,
+                  subcategory: editForm.subcategory,
                 });
                 if (saved) {
+                  if (codeChanged && !(await setProductCode(editing.id, editForm.productCode || undefined))) return;
+                  if (editForm.subcategory !== editing.subcategory) await ensureSubcategory(editing.category, editForm.subcategory);
                   toast.success(`${editForm.name} updated`);
                   setEditing(null);
                 }

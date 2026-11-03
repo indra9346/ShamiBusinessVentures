@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 import { resizedImage } from "@/lib/image-url";
 import { useStorefrontDisplay } from "@/lib/storefront-display";
 import { getSearchAutosuggestions, type SearchSuggestionItem } from "@/lib/search";
-import { categorySlug } from "@/lib/category-tree";
+import { storeCategorySlug } from "@/lib/category-slug";
 
 interface SearchAutosuggestProps {
   value?: string;
@@ -117,7 +117,7 @@ export function SearchAutosuggest({
           navigate({ to: "/product/$id", params: { id: item.product.id } });
         } else if (item.kind === "category") {
           setIsOpen(false);
-          navigate({ to: "/categories/$slug", params: { slug: categorySlug(item.category.name === "Cooking Oil" ? "Oil" : item.category.name) } });
+          navigate({ to: "/categories/$slug", params: { slug: storeCategorySlug(item.category.name) } });
         } else if (item.kind === "subcategory") {
           setIsOpen(false);
           navigate({ to: "/shop", search: { q: item.subcategory } });
@@ -330,7 +330,7 @@ export function SearchAutosuggest({
                   <Link
                     key={`cat-${category.id}`}
                     to="/categories/$slug"
-                    params={{ slug: category.name.toLowerCase() }}
+                    params={{ slug: storeCategorySlug(category.name) }}
                     onClick={() => setIsOpen(false)}
                     className={cn(
                       "flex items-center justify-between px-3.5 py-2 text-sm text-charcoal transition-colors hover:bg-ivory",
