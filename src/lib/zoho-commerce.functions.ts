@@ -2604,7 +2604,7 @@ async function recordZohoInvoiceState(
     const status = websiteInvoiceStatus(invoice.status);
     if (row?.zoho_invoice_id === invoice.invoiceId && row.status === status && Number(row.balance) === invoice.balance) return;
     // More is due than before: a payment was removed in Zoho. A delivered order gets no other sync, so ask for one.
-    if (row?.zoho_invoice_id === invoice.invoiceId && row.balance != null && invoice.balance > Number(row.balance) + 0.005) {
+    if (row?.zoho_invoice_id === invoice.invoiceId && row.balance != null && invoice.balance != null && invoice.balance > Number(row.balance) + 0.005) {
       await db.rpc("enqueue_zoho_sync", { _entity_type: "order", _entity_id: order.id });
     }
     await saveInvoiceRecord(db, order, {
