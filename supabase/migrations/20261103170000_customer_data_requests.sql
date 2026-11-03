@@ -19,9 +19,8 @@ CREATE INDEX IF NOT EXISTS customer_data_requests_customer_idx ON public.custome
 CREATE INDEX IF NOT EXISTS customer_data_requests_created_idx ON public.customer_data_requests (created_at DESC);
 
 ALTER TABLE public.customer_data_requests ENABLE ROW LEVEL SECURITY;
-REVOKE ALL ON public.customer_data_requests FROM PUBLIC, anon, authenticated;
-GRANT SELECT ON public.customer_data_requests TO authenticated;
-GRANT ALL ON public.customer_data_requests TO service_role;
+REVOKE ALL ON public.customer_data_requests FROM PUBLIC, anon, authenticated, service_role;
+GRANT SELECT ON public.customer_data_requests TO authenticated, service_role;
 DROP POLICY IF EXISTS customer_data_requests_admin_read ON public.customer_data_requests;
 CREATE POLICY customer_data_requests_admin_read ON public.customer_data_requests
   FOR SELECT TO authenticated USING (public.has_role(auth.uid(), 'admin'));
@@ -41,19 +40,19 @@ RETURNS text LANGUAGE sql IMMUTABLE SET search_path = public AS $$
 $$;
 REVOKE ALL ON FUNCTION private.customer_data_label(text, text, text) FROM PUBLIC, anon, authenticated;
 
--- An enquiry has no customer id, so it is matched on the customer's email or phone (last 10 digits).
--- The export and the delete both use this, so they always mean the same enquiries. An order's phone is
--- left out: it can be whoever receives the delivery, and their enquiry is not this customer's.
+-- An enquiry has no customer id, so it is matched on what the customer signs in with: their email, or
+-- their phone (last 10 digits). The export and the delete both use this, so they always mean the same
+-- enquiries. A profile phone and an order's contact details are left out: a customer can type anything
+-- there, or the delivery contact's number, and someone else's enquiry must not reach this customer's
+-- file or go with their delete.
 CREATE OR REPLACE FUNCTION private.customer_enquiry_matches(_customer_id uuid)
 RETURNS TABLE (enquiry_id uuid, matched_by text)
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
   WITH emails AS (
     SELECT lower(btrim(email)) AS email FROM public.profiles WHERE id = _customer_id
     UNION SELECT lower(btrim(email)) FROM auth.users WHERE id = _customer_id
-    UNION SELECT lower(btrim(customer_email)) FROM public.orders WHERE user_id = _customer_id
   ), phones AS (
-    SELECT right(regexp_replace(COALESCE(phone, ''), '[^0-9]', '', 'g'), 10) AS phone FROM public.profiles WHERE id = _customer_id
-    UNION SELECT right(regexp_replace(COALESCE(phone, ''), '[^0-9]', '', 'g'), 10) FROM auth.users WHERE id = _customer_id
+    SELECT right(regexp_replace(COALESCE(phone, ''), '[^0-9]', '', 'g'), 10) AS phone FROM auth.users WHERE id = _customer_id
   )
   SELECT e.id,
     CASE WHEN lower(btrim(e.email)) IN (SELECT email FROM emails WHERE email <> '') THEN 'email' ELSE 'phone' END
@@ -62,6 +61,23 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
      OR right(regexp_replace(COALESCE(e.phone, ''), '[^0-9]', '', 'g'), 10) IN (SELECT phone FROM phones WHERE length(phone) = 10);
 $$;
 REVOKE ALL ON FUNCTION private.customer_enquiry_matches(uuid) FROM PUBLIC, anon, authenticated;
+
+-- How many enquiries share only a detail the customer typed themselves. They stay out of the file and the
+-- delete, and the admin is told how many, to check by hand in Admin > Enquiries.
+CREATE OR REPLACE FUNCTION private.customer_unproved_enquiries(_customer_id uuid)
+RETURNS bigint LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  WITH emails AS (
+    SELECT lower(btrim(customer_email)) AS email FROM public.orders WHERE user_id = _customer_id
+  ), phones AS (
+    SELECT right(regexp_replace(COALESCE(phone, ''), '[^0-9]', '', 'g'), 10) AS phone FROM public.profiles WHERE id = _customer_id
+    UNION SELECT right(regexp_replace(COALESCE(customer_phone, ''), '[^0-9]', '', 'g'), 10) FROM public.orders WHERE user_id = _customer_id
+  )
+  SELECT count(*) FROM public.contact_enquiries e
+  WHERE (lower(btrim(e.email)) IN (SELECT email FROM emails WHERE email <> '')
+      OR right(regexp_replace(COALESCE(e.phone, ''), '[^0-9]', '', 'g'), 10) IN (SELECT phone FROM phones WHERE length(phone) = 10))
+    AND e.id NOT IN (SELECT enquiry_id FROM private.customer_enquiry_matches(_customer_id));
+$$;
+REVOKE ALL ON FUNCTION private.customer_unproved_enquiries(uuid) FROM PUBLIC, anon, authenticated;
 
 CREATE OR REPLACE FUNCTION private.require_admin_actor()
 RETURNS public.profiles LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public AS $$
@@ -95,7 +111,8 @@ REVOKE ALL ON FUNCTION private.customer_delivery_notes(uuid[]) FROM PUBLIC, anon
 
 -- Everything the site holds on one customer, as one reply, recorded in the log in the same step.
 -- Left out on purpose: the raw text and sender of the store's own bank SMS, which can show the
--- store's balance, and the ids of staff who reviewed something. Partner commissions and stock
+-- store's balance; the payer on a bank credit tied to their order by amount alone, which can be a
+-- stranger; and the ids of staff who reviewed something. Partner commissions and stock
 -- batches are the store's records about an order, not information about the customer.
 CREATE OR REPLACE FUNCTION public.admin_export_customer_data(_customer_id uuid)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
@@ -137,20 +154,32 @@ BEGIN
     'payments', (SELECT COALESCE(jsonb_agg(to_jsonb(p) - 'user_id' || jsonb_build_object('order_no', o.order_no) ORDER BY p.created_at), '[]')
         FROM public.payments p LEFT JOIN public.orders o ON o.id = p.order_id WHERE p.user_id = _customer_id OR p.order_id = ANY (order_ids)),
     'payment_references', (SELECT COALESCE(jsonb_agg(to_jsonb(s) - 'user_id' - 'reviewed_by' ORDER BY s.submitted_at), '[]') FROM public.upi_payment_submissions s WHERE s.user_id = _customer_id OR s.order_id = ANY (order_ids)),
-    'bank_receipts', (SELECT COALESCE(jsonb_agg(to_jsonb(c) - 'raw' - 'sender' ORDER BY c.received_at), '[]') FROM public.bank_credits c WHERE c.order_id = ANY (order_ids)),
-    'reviews', (SELECT COALESCE(jsonb_agg(to_jsonb(r) - 'customer_id' - 'vendor_id' ORDER BY r.created_at), '[]') FROM public.product_reviews r WHERE r.customer_id = _customer_id),
+    'bank_receipts', (SELECT COALESCE(jsonb_agg(
+          to_jsonb(c) - 'raw' - 'sender' - CASE WHEN c.status = 'matched' OR own.by_utr THEN ARRAY[]::text[] ELSE ARRAY['payer'] END
+          ORDER BY c.received_at), '[]')
+        FROM public.bank_credits c
+        CROSS JOIN LATERAL (SELECT EXISTS (SELECT 1 FROM public.upi_payment_submissions s WHERE s.order_id = ANY (order_ids) AND private.same_utr(s.utr, c.utr)) AS by_utr) own
+        WHERE c.order_id = ANY (order_ids) OR own.by_utr),
+    'reviews', (SELECT COALESCE(jsonb_agg((to_jsonb(r) - 'customer_id' - 'vendor_id') || jsonb_build_object('order_no', o.order_no,
+          'product', (SELECT i.product_name FROM public.order_items i WHERE i.order_id = r.order_id AND i.product_id = r.product_id LIMIT 1)) ORDER BY r.created_at), '[]')
+        FROM public.product_reviews r LEFT JOIN public.orders o ON o.id = r.order_id WHERE r.customer_id = _customer_id),
     'returns', (SELECT COALESCE(jsonb_agg((to_jsonb(r) - 'customer_id' - 'vendor_id') || jsonb_build_object('order_no', o.order_no) ORDER BY r.created_at), '[]')
         FROM public.return_requests r LEFT JOIN public.orders o ON o.id = r.order_id WHERE r.customer_id = _customer_id),
     'enquiries', (SELECT COALESCE(jsonb_agg(to_jsonb(e) || jsonb_build_object('matched_by', m.matched_by) ORDER BY e.created_at), '[]')
         FROM private.customer_enquiry_matches(_customer_id) m JOIN public.contact_enquiries e ON e.id = m.enquiry_id),
+    'unproved_enquiries', private.customer_unproved_enquiries(_customer_id),
     'notifications', (SELECT COALESCE(jsonb_agg(to_jsonb(n) - 'recipient_id' - 'recipient_vendor_id' ORDER BY n.created_at), '[]') FROM public.notifications n WHERE n.recipient_id = _customer_id),
     'policy_acceptance', (SELECT COALESCE(jsonb_agg(to_jsonb(p) - 'user_id' ORDER BY p.accepted_at), '[]') FROM public.policy_acceptance p WHERE p.user_id = _customer_id),
     'admin_notes', (SELECT COALESCE(jsonb_agg(to_jsonb(c) - 'author_id' ORDER BY c.created_at), '[]') FROM public.crm_notes c WHERE c.subject_type = 'customer' AND c.subject_id = _customer_id::text),
     'seller_applications', (SELECT COALESCE(jsonb_agg(to_jsonb(v) - 'applicant_id' - 'reviewed_by' ORDER BY v.created_at), '[]') FROM public.vendor_applications v WHERE v.applicant_id = _customer_id),
     'seller_documents', (SELECT COALESCE(jsonb_agg(to_jsonb(d) - 'user_id' - 'reviewed_by' ORDER BY d.created_at), '[]') FROM public.vendor_kyc_documents d WHERE d.user_id = _customer_id),
     'zoho_contacts', (SELECT COALESCE(jsonb_agg(to_jsonb(z)), '[]') FROM (SELECT contact_type, zoho_contact_id FROM public.zoho_contact_links WHERE user_id = _customer_id) z),
-    -- The site's own copy of Zoho's sales orders: this customer's, by order or by Zoho contact.
-    'zoho_sales_orders', (SELECT COALESCE(jsonb_agg(m.payload ORDER BY m.external_id), '[]') FROM public.zoho_commerce_sync_data m
+    -- The site's own copy of Zoho's sales orders: this customer's, by order or by Zoho contact. Only what
+    -- concerns them: Zoho's record also holds staff and partner names and internal notes.
+    'zoho_sales_orders', (SELECT COALESCE(jsonb_agg(jsonb_strip_nulls(jsonb_build_object(
+          'salesorder_number', m.payload->'salesorder_number', 'reference_number', m.payload->'reference_number', 'date', m.payload->'date',
+          'status', COALESCE(m.payload->'order_status', m.payload->'status'), 'customer_name', m.payload->'customer_name', 'total', m.payload->'total',
+          'billing_address', m.payload->'billing_address', 'shipping_address', m.payload->'shipping_address')) ORDER BY m.external_id), '[]') FROM public.zoho_commerce_sync_data m
         WHERE m.resource = 'sales_orders' AND (
           m.external_id IN (SELECT zoho_salesorder_id FROM public.orders WHERE user_id = _customer_id AND zoho_salesorder_id IS NOT NULL)
           OR m.payload->>'customer_id' IN (SELECT zoho_contact_id FROM public.zoho_contact_links WHERE user_id = _customer_id)))
@@ -195,7 +224,8 @@ RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS
     OR EXISTS (SELECT 1 FROM public.invoices v WHERE v.order_id = _order.id)
     OR EXISTS (SELECT 1 FROM public.zoho_order_invoices z WHERE z.order_id = _order.id AND (z.zoho_invoice_id IS NOT NULL OR z.invoice_number IS NOT NULL))
     OR EXISTS (SELECT 1 FROM public.payments p WHERE p.order_id = _order.id AND p.status NOT IN ('Pending', 'Failed'))
-    OR EXISTS (SELECT 1 FROM public.upi_payment_submissions s WHERE s.order_id = _order.id AND s.status = 'confirmed')
+    OR EXISTS (SELECT 1 FROM public.upi_payment_submissions s WHERE s.order_id = _order.id
+      AND (s.status = 'confirmed' OR (s.status = 'rejected' AND s.note = 'refunded by our team')))
     OR EXISTS (SELECT 1 FROM public.bank_credits c WHERE c.order_id = _order.id)
     OR EXISTS (SELECT 1 FROM public.return_requests r WHERE r.order_id = _order.id);
 $$;
@@ -227,16 +257,28 @@ RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $
       SELECT 5, 'open_return', o.order_no FROM public.return_requests r JOIN public.orders o ON o.id = r.order_id
       WHERE r.customer_id = _customer_id AND r.status <> 'Rejected' AND (r.status <> 'Completed' OR r.refund_status IN ('Pending', 'Processing'))
       UNION ALL
+      -- A UTR nobody checked in time stays open on the payments page until someone closes it: the money may be in the bank.
       SELECT 6, 'unconfirmed_payment', o.order_no FROM public.upi_payment_submissions s JOIN public.orders o ON o.id = s.order_id
-      WHERE o.user_id = _customer_id AND s.status = 'submitted'
+      WHERE o.user_id = _customer_id
+        AND (s.status = 'submitted' OR (s.status = 'rejected' AND s.note = 'we could not check your UTR in time'))
       UNION ALL
-      SELECT 7, 'waiting_for_zoho', o.order_no FROM public.zoho_sync_outbox q JOIN public.orders o ON o.id::text = q.entity_id
+      -- Money the bank says arrived and an admin must still refund or place. Paid amount stays 0 on these.
+      SELECT 7, 'open_bank_money', o.order_no FROM public.bank_credits c JOIN public.orders o ON o.user_id = _customer_id
+        AND (c.order_id = o.id OR EXISTS (SELECT 1 FROM public.upi_payment_submissions s WHERE s.order_id = o.id AND private.same_utr(s.utr, c.utr)))
+      WHERE c.status IN ('ambiguous', 'mismatch', 'late')
+      UNION ALL
+      SELECT 8, 'waiting_for_zoho', o.order_no FROM public.zoho_sync_outbox q JOIN public.orders o ON o.id::text = q.entity_id
       WHERE o.user_id = _customer_id AND q.status IN ('pending', 'processing', 'failed', 'needs_review')
       UNION ALL
+      -- A worker holding this customer's job right now would finish it after the delete.
+      SELECT 9, 'zoho_busy', NULL FROM public.zoho_sync_outbox q
+      WHERE q.entity_type = 'customer' AND q.entity_id = _customer_id::text AND q.status = 'processing' AND q.locked_until > now()
+      UNION ALL
       -- A later change to such an order would look for its Zoho contact using the phone and email this removes.
-      SELECT 8, 'not_in_zoho', o.order_no FROM public.orders o
+      -- Any connection counts: its status turns to 'error' after a partly failed refresh, and pushes still run.
+      SELECT 10, 'not_in_zoho', o.order_no FROM public.orders o
       WHERE o.user_id = _customer_id AND o.order_status = 'Delivered' AND o.zoho_salesorder_id IS NULL
-        AND EXISTS (SELECT 1 FROM public.zoho_commerce_connection c WHERE c.status = 'connected')
+        AND EXISTS (SELECT 1 FROM public.zoho_commerce_connection)
     ) reasons
     GROUP BY code
   ) grouped;
@@ -269,8 +311,12 @@ RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $
       'payment_references', (SELECT count(*) FROM public.upi_payment_submissions WHERE user_id = _customer_id OR order_id IN (SELECT id FROM mine)),
       'returns', (SELECT count(*) FROM public.return_requests WHERE customer_id = _customer_id),
       'partner_commissions', (SELECT count(*) FROM public.partner_commissions WHERE order_id IN (SELECT id FROM mine)),
+      'bank_receipts', (SELECT count(*) FROM public.bank_credits WHERE order_id IN (SELECT id FROM mine)),
+      'zoho_invoices', (SELECT count(*) FROM public.zoho_order_invoices WHERE order_id IN (SELECT id FROM mine) AND (zoho_invoice_id IS NOT NULL OR invoice_number IS NOT NULL)),
+      'terms_accepted', (SELECT count(*) FROM public.policy_acceptance WHERE user_id = _customer_id AND order_id IN (SELECT id FROM mine WHERE is_sale)),
       'delivery_notes', (SELECT jsonb_array_length(private.customer_delivery_notes(COALESCE(array_agg(id), '{}'))) FROM mine)
     ),
+    'unproved_enquiries', private.customer_unproved_enquiries(_customer_id),
     'kept_orders', (SELECT COALESCE(jsonb_agg(order_no ORDER BY order_no) FILTER (WHERE is_sale), '[]'::jsonb) FROM mine),
     'cleared_orders', (SELECT COALESCE(jsonb_agg(order_no ORDER BY order_no) FILTER (WHERE NOT is_sale), '[]'::jsonb) FROM mine),
     'zoho_contacts', (SELECT COALESCE(jsonb_agg(zoho_contact_id ORDER BY zoho_contact_id), '[]'::jsonb) FROM public.zoho_contact_links WHERE user_id = _customer_id)
@@ -287,6 +333,10 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM public.profiles WHERE id = _customer_id) THEN
     RAISE EXCEPTION USING ERRCODE = 'P0002', MESSAGE = 'Customer not found';
   END IF;
+  -- Its ties were cut by the first try, so the counts below would read as if nothing were kept.
+  IF EXISTS (SELECT 1 FROM public.profiles WHERE id = _customer_id AND status = 'deleted') THEN
+    RETURN jsonb_build_object('already_deleted', true);
+  END IF;
   RETURN jsonb_build_object(
     'blockers', private.customer_deletion_blockers(_customer_id),
     'plan', private.customer_deletion_plan(_customer_id)
@@ -297,8 +347,9 @@ GRANT EXECUTE ON FUNCTION public.admin_customer_deletion_preview(uuid) TO authen
 
 -- Removes what can go, all or nothing, and records who did it. The server then removes any uploaded
 -- seller files and the login itself (src/lib/customer-data.functions.ts). If that step fails the
--- profile is left marked 'deleted', and calling this again only hands back the same record.
-CREATE OR REPLACE FUNCTION public.admin_delete_customer_data(_customer_id uuid, _confirmation text)
+-- profile is left marked 'deleted', and calling this again only hands back the same record. _retry
+-- says the caller is only finishing a delete, so it can never start one on another customer.
+CREATE OR REPLACE FUNCTION public.admin_delete_customer_data(_customer_id uuid, _confirmation text, _retry boolean DEFAULT false)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
   actor public.profiles%ROWTYPE := private.require_admin_actor();
@@ -311,8 +362,11 @@ DECLARE
   all_ids uuid[];
   contact_ids text[];
   sales_order_ids text[];
+  all_order_nos text[];
   known_names text[];
   known_name text;
+  known_phones text[];
+  known_phone text;
   mirror_rows integer;
   request_id uuid;
 BEGIN
@@ -321,12 +375,17 @@ BEGIN
   END IF;
 
   SELECT * INTO person FROM public.profiles WHERE id = _customer_id FOR UPDATE;
-  IF NOT FOUND THEN RAISE EXCEPTION USING ERRCODE = 'P0002', MESSAGE = 'Customer not found'; END IF;
-
-  IF person.status = 'deleted' THEN
+  IF NOT FOUND OR person.status = 'deleted' THEN
+    -- No profile: the login went on an earlier try whose reply never arrived, and the profile with it.
     SELECT * INTO earlier FROM public.customer_data_requests
       WHERE customer_id = _customer_id AND kind = 'delete' ORDER BY created_at DESC LIMIT 1;
+    IF earlier.id IS NULL AND person.id IS NULL THEN
+      RAISE EXCEPTION USING ERRCODE = 'P0002', MESSAGE = 'Customer not found';
+    END IF;
     RETURN jsonb_build_object('request_id', earlier.id, 'summary', earlier.summary, 'already_done', true);
+  END IF;
+  IF _retry THEN
+    RAISE EXCEPTION 'This customer has not been deleted';
   END IF;
 
   PERFORM 1 FROM public.orders WHERE user_id = _customer_id FOR UPDATE;
@@ -343,24 +402,48 @@ BEGIN
          COALESCE(array_agg(o.id) FILTER (WHERE NOT private.customer_order_is_sale(o)), '{}'),
          COALESCE(array_agg(o.id), '{}'),
          COALESCE(array_agg(o.zoho_salesorder_id) FILTER (WHERE o.zoho_salesorder_id IS NOT NULL), '{}'),
+         COALESCE(array_agg(o.order_no), '{}'),
          COALESCE(array_agg(DISTINCT o.customer_name), '{}')
-    INTO kept_ids, cleared_ids, all_ids, sales_order_ids, known_names
+    INTO kept_ids, cleared_ids, all_ids, sales_order_ids, all_order_nos, known_names
     FROM public.orders o WHERE o.user_id = _customer_id;
   SELECT COALESCE(array_agg(zoho_contact_id), '{}') INTO contact_ids FROM public.zoho_contact_links WHERE user_id = _customer_id;
+  -- Longest first, so a full number is replaced before its last 10 digits.
+  SELECT COALESCE(array_agg(p ORDER BY length(p) DESC), '{}') INTO known_phones FROM (
+    SELECT DISTINCT p FROM (
+      SELECT btrim(customer_phone) AS p FROM public.orders WHERE user_id = _customer_id
+      UNION SELECT btrim(shipping_address->>'phone') FROM public.orders WHERE user_id = _customer_id AND jsonb_typeof(shipping_address) = 'object'
+      UNION SELECT btrim(person.phone)
+      UNION SELECT btrim(phone) FROM auth.users WHERE id = _customer_id
+      UNION SELECT right(regexp_replace(COALESCE(customer_phone, ''), '[^0-9]', '', 'g'), 10) FROM public.orders WHERE user_id = _customer_id
+      UNION SELECT right(regexp_replace(COALESCE(person.phone, ''), '[^0-9]', '', 'g'), 10)
+      UNION SELECT right(regexp_replace(COALESCE(phone, ''), '[^0-9]', '', 'g'), 10) FROM auth.users WHERE id = _customer_id
+    ) raw WHERE length(regexp_replace(COALESCE(p, ''), '[^0-9]', '', 'g')) >= 6
+  ) phones;
 
-  -- Messages to the admin that repeat an enquiry's details go with the enquiry; names in order alerts are replaced.
+  -- Messages to the admin that repeat an enquiry's details go with the enquiry; names and phones in order alerts are replaced.
   DELETE FROM public.notifications n
     USING private.customer_enquiry_matches(_customer_id) m JOIN public.contact_enquiries e ON e.id = m.enquiry_id
     WHERE n.status = 'enquiry'
-      AND (position(e.id::text IN n.message) > 0 OR (btrim(e.email) <> '' AND position(lower(e.email) IN lower(n.message)) > 0));
+      AND (position(e.id::text IN n.message) > 0 OR (btrim(e.email) <> '' AND position(' · ' || lower(e.email) || ' · ' IN lower(n.message)) > 0));
   DELETE FROM public.contact_enquiries WHERE id IN (SELECT enquiry_id FROM private.customer_enquiry_matches(_customer_id));
   DELETE FROM public.notifications WHERE recipient_id = _customer_id;
   FOREACH known_name IN ARRAY array_append(known_names, person.full_name) LOOP
-    IF length(btrim(COALESCE(known_name, ''))) >= 3 THEN
-      UPDATE public.notifications
-        SET title = replace(title, known_name, 'A customer'), message = replace(message, known_name, 'A customer')
-        WHERE order_id = ANY (all_ids) AND (position(known_name IN title) > 0 OR position(known_name IN message) > 0);
+    CONTINUE WHEN btrim(COALESCE(known_name, '')) = '';
+    IF length(btrim(known_name)) >= 3 THEN
+      -- Payment alerts cut a name to 60 characters.
+      UPDATE public.notifications SET
+          title = replace(replace(title, known_name, 'A customer'), left(known_name, 60), 'A customer'),
+          message = replace(replace(message, known_name, 'A customer'), left(known_name, 60), 'A customer')
+        WHERE order_id = ANY (all_ids) OR order_no = ANY (all_order_nos);
+    ELSE
+      -- Too short to swap anywhere in a sentence: only where a payment alert names the customer.
+      UPDATE public.notifications SET message = replace(message, 'Customer: ' || known_name || ',', 'Customer: A customer,')
+        WHERE order_id = ANY (all_ids) OR order_no = ANY (all_order_nos);
     END IF;
+  END LOOP;
+  FOREACH known_phone IN ARRAY known_phones LOOP
+    UPDATE public.notifications SET message = replace(message, known_phone, 'phone removed')
+      WHERE order_id = ANY (all_ids) OR order_no = ANY (all_order_nos);
   END LOOP;
 
   DELETE FROM public.addresses WHERE user_id = _customer_id;
@@ -414,8 +497,38 @@ BEGIN
 
   RETURN jsonb_build_object('request_id', request_id, 'summary', plan, 'already_done', false);
 END $$;
-REVOKE ALL ON FUNCTION public.admin_delete_customer_data(uuid, text) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.admin_delete_customer_data(uuid, text) TO authenticated;
+REVOKE ALL ON FUNCTION public.admin_delete_customer_data(uuid, text, boolean) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.admin_delete_customer_data(uuid, text, boolean) TO authenticated;
+
+-- Between the database step and the login going, nothing may write to the blanked profile: not the
+-- customer's own session, which could put their details back, and not an admin's stale Block button,
+-- which would undo the 'deleted' mark that every later step relies on.
+CREATE OR REPLACE FUNCTION private.keep_deleted_profile_blank()
+RETURNS trigger LANGUAGE plpgsql SET search_path = public AS $$
+BEGIN
+  IF OLD.status = 'deleted' THEN
+    RAISE EXCEPTION USING ERRCODE = '42501', MESSAGE = 'This account has been deleted';
+  END IF;
+  RETURN NEW;
+END $$;
+REVOKE ALL ON FUNCTION private.keep_deleted_profile_blank() FROM PUBLIC, anon, authenticated;
+DROP TRIGGER IF EXISTS profiles_stay_deleted ON public.profiles;
+CREATE TRIGGER profiles_stay_deleted BEFORE UPDATE ON public.profiles
+  FOR EACH ROW EXECUTE FUNCTION private.keep_deleted_profile_blank();
+
+-- The record says the login is gone whatever route took it and even if nobody heard the reply: a
+-- profile goes only with its login.
+CREATE OR REPLACE FUNCTION private.note_customer_login_removed()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+  UPDATE public.customer_data_requests SET login_removed_at = now()
+    WHERE customer_id = OLD.id AND kind = 'delete' AND login_removed_at IS NULL;
+  RETURN OLD;
+END $$;
+REVOKE ALL ON FUNCTION private.note_customer_login_removed() FROM PUBLIC, anon, authenticated;
+DROP TRIGGER IF EXISTS profiles_note_login_removed ON public.profiles;
+CREATE TRIGGER profiles_note_login_removed AFTER DELETE ON public.profiles
+  FOR EACH ROW EXECUTE FUNCTION private.note_customer_login_removed();
 
 -- Any later route to the queue, such as the initial export, skips a customer whose login is still being removed.
 CREATE OR REPLACE FUNCTION public.enqueue_zoho_sync(_entity_type text, _entity_id text)

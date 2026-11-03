@@ -31,7 +31,7 @@ test("the file has a read-me sheet and one sheet for every kind of record", () =
 test("a saved address keeps its map position in the file", () => {
   const { rows } = sheet("Saved addresses");
   assert.deepEqual(rows[0], ["Line", "Latitude", "Longitude", "Is Default"]);
-  assert.deepEqual(rows[1], ["1 Test Road", 12.97, 77.55, "Yes"]);
+  assert.deepEqual(rows[1], ["1 Test Road", "12.97", "77.55", "Yes"], "as text, so Excel doesn't round a map position");
 });
 
 test("an order's address becomes its own columns, and row ids stay out", () => {
@@ -63,6 +63,14 @@ test("the read-me counts each kind of record and points to the Zoho copy", () =>
   assert.equal(rows[boldRows![3]!]![0], "Before sending this file to the customer");
 });
 
+test("the read-me says how many enquiries were left out, only when some were", () => {
+  const mentions = (data: CustomerDataFile) => sheet("Read me", data).rows.some((row) => /other enquiries/i.test(String(row[0])));
+  assert.equal(mentions(file()), false);
+  assert.equal(mentions(file({ unproved_enquiries: 2 })), true);
+  const { rows, boldRows } = sheet("Read me", file({ unproved_enquiries: 2 }));
+  assert.equal(rows[boldRows![3]!]![0], "Before sending this file to the customer", "headings stay bold when a line is added");
+});
+
 test("values read as a person expects", () => {
   assert.equal(customerDataCell(null), "");
   assert.equal(customerDataCell(false), "No");
@@ -76,6 +84,7 @@ test("values read as a person expects", () => {
 
 test("the file name has no name or phone in it", () => {
   assert.equal(customerDataFileName(file()), "Customer_data_6f1c2d3e_2026-11-03.xlsx");
+  assert.equal(customerDataFileName(file({ generated_at: "2026-11-03T20:30:00+00:00" })), "Customer_data_6f1c2d3e_2026-11-04.xlsx", "the Indian date, as the file says inside");
 });
 
 test("the workbook builds, and text from a customer cannot run as a formula or break the file", () => {
@@ -91,7 +100,7 @@ test("the workbook builds, and text from a customer cannot run as a formula or b
 test("every reason the database gives for refusing a delete has its own wording", () => {
   const fallback = deletionBlockerText("something new");
   assert.equal(fallback, "This customer cannot be deleted yet.");
-  for (const code of ["other_login", "open_order", "unpaid_delivery", "money_not_refunded", "open_return", "unconfirmed_payment", "waiting_for_zoho", "not_in_zoho"]) {
+  for (const code of ["other_login", "open_order", "unpaid_delivery", "money_not_refunded", "open_return", "unconfirmed_payment", "open_bank_money", "waiting_for_zoho", "zoho_busy", "not_in_zoho"]) {
     assert.notEqual(deletionBlockerText(code), fallback, code);
   }
 });
@@ -100,12 +109,12 @@ test("the confirmation lists only what this customer has", () => {
   const plan: DeletionPlan = {
     removed: { addresses: 2, preferences: 0, reviews: 1, enquiries_by_phone: 1, orders_cleared: 3 },
     kept: { orders: 1, invoices: 0, returns: 2 },
-    kept_orders: ["GB-1"], cleared_orders: [], zoho_contacts: [],
+    kept_orders: ["GB-1"], cleared_orders: [], zoho_contacts: [], unproved_enquiries: 0,
   };
   assert.deepEqual(removedLines(plan).map((line) => line.count), [2, 1, 3]);
   assert.ok(removedLines(plan).every((line) => !/by_phone/.test(line.text)), "the phone count is a note, not a line of its own");
   assert.deepEqual(keptLines(plan).map((line) => [line.text, line.count]), [
-    ["Paid or delivered orders, with name, address and GSTIN", 1],
+    ["Paid, delivered or refunded orders, with name, address and GSTIN", 1],
     ["Returns", 2],
   ]);
 });
@@ -114,8 +123,8 @@ test("the panel, its confirmation and every reason read in Kannada", async () =>
   await loadKannada();
   const plan: DeletionPlan = {
     removed: { addresses: 1, preferences: 1, reviews: 1, enquiries: 1, notifications: 1, admin_notes: 1, seller_applications: 1, seller_documents: 1, orders_cleared: 1 },
-    kept: { orders: 1, invoices: 1, payments: 1, payment_references: 1, returns: 1, partner_commissions: 1, delivery_notes: 1 },
-    kept_orders: [], cleared_orders: [], zoho_contacts: [],
+    kept: { orders: 1, invoices: 1, payments: 1, payment_references: 1, returns: 1, bank_receipts: 1, zoho_invoices: 1, terms_accepted: 1, partner_commissions: 1, delivery_notes: 1 },
+    kept_orders: [], cleared_orders: [], zoho_contacts: [], unproved_enquiries: 0,
   };
   const screen = [
     "Information Requests",
@@ -150,7 +159,9 @@ test("the panel, its confirmation and every reason read in Kannada", async () =>
     "These orders were delivered but are not fully paid. Record the payment first.",
     "These orders were cancelled with money not refunded. Refund it first.",
     "These orders have a return or refund still open. Close it first.",
-    "These orders have a payment reference waiting. Confirm or reject it first.",
+    "These orders have a payment reference still open. Close it in UPI & Bank Payments first.",
+    "These orders have money in the bank account still to be sorted out. Refund it or place the order, then mark it settled.",
+    "This customer is being sent to Zoho right now. Try again in a minute.",
     "These orders are still going to Zoho or need a review in Zoho Sync. Clear that first.",
     "These delivered orders have not reached Zoho yet. Send them first, so the sales records are complete.",
     "Removed for good",
@@ -163,7 +174,7 @@ test("the panel, its confirmation and every reason read in Kannada", async () =>
     "Seller applications",
     "Uploaded seller documents",
     "Unpaid orders: name, phone, GSTIN and address cleared",
-    "Paid or delivered orders, with name, address and GSTIN",
+    "Paid, delivered or refunded orders, with name, address and GSTIN",
     "Payment references (UTR)",
     "Partner commissions",
     "No sales records to keep.",
@@ -172,15 +183,15 @@ test("the panel, its confirmation and every reason read in Kannada", async () =>
     "Type DELETE to confirm",
     "Deleting…",
     "The customer's information has been deleted",
-    ...["other_login", "open_order", "unpaid_delivery", "money_not_refunded", "open_return", "unconfirmed_payment", "waiting_for_zoho", "not_in_zoho", "new"].map(deletionBlockerText),
+    ...["other_login", "open_order", "unpaid_delivery", "money_not_refunded", "open_return", "unconfirmed_payment", "open_bank_money", "waiting_for_zoho", "zoho_busy", "not_in_zoho", "new"].map(deletionBlockerText),
     ...removedLines(plan).map((line) => line.text),
     ...keptLines(plan).map((line) => line.text),
   ];
-  const brandWords = /\b(Zoho Sync|Zoho|Excel|GSTIN|UTR|DELETE)\b/g;
+  const brandWords = /\b(Zoho Sync|Zoho|Excel|GSTIN|UTR|UPI|DELETE)\b/g;
   for (const text of screen) {
     const out = translateText(text, "kn").replace(brandWords, "");
     assert.ok(!/[A-Za-z]/.test(out), `no Kannada for "${text}": ${out}`);
   }
-  const phone = translateText("Enquiries are matched on email or phone. 2 matched by phone only, so check they are really this customer's.", "kn");
-  assert.ok(phone.includes("2") && !/[A-Za-z]/.test(phone), phone);
+  const left = translateText("Other enquiries that use a phone or email from their profile or orders: 2. We can't tell they are theirs, so they stay. Check them in Admin > Enquiries.", "kn");
+  assert.ok(left.includes("2") && !/[A-Za-z]/.test(left), left);
 });

@@ -26,6 +26,8 @@ export const deleteCustomerData = createServerFn({ method: "POST" })
   .validator(z.object({
     customerId: z.string().uuid(),
     confirmation: z.literal(CUSTOMER_DELETE_WORD),
+    /** Only finish a delete that already got through the database step. */
+    retry: z.boolean().default(false),
   }))
   .handler(async ({ data, context }) => {
     const db = serviceClient();
@@ -33,6 +35,7 @@ export const deleteCustomerData = createServerFn({ method: "POST" })
     const { data: done, error } = await context.supabase.rpc("admin_delete_customer_data", {
       _customer_id: data.customerId,
       _confirmation: data.confirmation,
+      _retry: data.retry,
     });
     if (error || !done) throw new Error(error?.message ?? "The information could not be deleted");
     const { request_id: requestId } = done as unknown as DeleteResult;
@@ -46,11 +49,8 @@ export const deleteCustomerData = createServerFn({ method: "POST" })
       if (filesError) return unfinished("Their uploaded seller documents could not be removed.");
     }
 
+    // The record notes this by itself when the profile goes with the login. A 404 means an earlier try already removed it.
     const { error: loginError } = await db.auth.admin.deleteUser(data.customerId);
     if (loginError && loginError.status !== 404) return unfinished(`Their login could not be removed: ${loginError.message}`);
-
-    const { error: recordError } = await db.from("customer_data_requests")
-      .update({ login_removed_at: new Date().toISOString() }).eq("id", requestId);
-    if (recordError) console.error("Could not note the removed login on the record", recordError);
     return { requestId, loginRemoved: true, problem: null };
   });

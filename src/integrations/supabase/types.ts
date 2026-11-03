@@ -1218,7 +1218,7 @@ export type Database = {
       admin_update_payout: { Args: { _id: string; _status: string; _reference?: string | null }; Returns: boolean }
       admin_export_customer_data: { Args: { _customer_id: string }; Returns: Json }
       admin_customer_deletion_preview: { Args: { _customer_id: string }; Returns: Json }
-      admin_delete_customer_data: { Args: { _customer_id: string; _confirmation: string }; Returns: Json }
+      admin_delete_customer_data: { Args: { _customer_id: string; _confirmation: string; _retry?: boolean }; Returns: Json }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]

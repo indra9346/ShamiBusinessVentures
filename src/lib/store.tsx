@@ -583,7 +583,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             const vendor = profiles?.find((profile) => profile.vendor_id === row.vendor_id);
             const order = orderRows?.find((item) => item.id === row.order_id);
             return {
-              id: row.id, order: order?.order_no ?? row.order_id, customer: customer?.full_name || "Customer",
+              id: row.id, order: order?.order_no ?? row.order_id, customer: customer?.full_name || order?.customer_name || "Customer",
               product: product?.name || row.product_id, vendor: vendor?.company || vendor?.full_name || "Vendor",
               reason: row.reason, amount: Number(row.amount), date: asDate(row.created_at), status: row.status, refund: row.refund_status,
             };

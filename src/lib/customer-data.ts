@@ -51,6 +51,9 @@ export const CUSTOMER_DATA_SECTIONS = [
 const HIDDEN_COLUMNS = new Set(["id", "order_id", "order_item_id", "customer_id", "subject_id"]);
 
 const IST = new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" });
+const IST_DATE = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" });
+/** Excel would show a map position rounded to 2 places as a number, so it goes in as text. */
+const MAP_POSITION = /(^|\.)(latitude|longitude)$/;
 const TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
 
 const label = (key: string) =>
@@ -97,7 +100,9 @@ function tableSheet(name: string, records: CustomerDataRow[]): XlsxSheet {
   if (!records.length) return { name, rows: [[NOTHING_HELD]], widths: [24] };
   const flat = records.map(flattenCustomerRow);
   const columns = leadingFirst([...new Set(flat.flatMap((row) => Object.keys(row)))]);
-  const rows: XlsxCell[][] = [columns.map(label), ...flat.map((row) => columns.map((column) => customerDataCell(row[column])))];
+  const cellOf = (column: string, value: unknown) =>
+    MAP_POSITION.test(column) && typeof value === "number" ? String(value) : customerDataCell(value);
+  const rows: XlsxCell[][] = [columns.map(label), ...flat.map((row) => columns.map((column) => cellOf(column, row[column])))];
   return { name, rows, boldRows: [0], widths: columns.map((_, index) => widthOf(rows, index)) };
 }
 
@@ -121,6 +126,10 @@ const countOf = (file: CustomerDataFile, key: string) => {
 
 export function customerDataSheets(file: CustomerDataFile): XlsxSheet[] {
   const zohoContacts = (file.zoho_contacts ?? []).map((row) => row["zoho_contact_id"]).filter(Boolean).join(", ");
+  const unproved = Number(file["unproved_enquiries"] ?? 0);
+  const HOLDS = "What this file holds";
+  const NOT_HELD = "What this file does not hold";
+  const BEFORE_SENDING = "Before sending this file to the customer";
   const about: XlsxCell[][] = [
     ["Information we hold on this customer"],
     [],
@@ -129,20 +138,20 @@ export function customerDataSheets(file: CustomerDataFile): XlsxSheet[] {
     ["Downloaded", customerDataCell(file.generated_at)],
     ["Downloaded by", file.generated_by],
     [],
-    ["What this file holds", "Records"],
+    [HOLDS, "Records"],
     ...CUSTOMER_DATA_SECTIONS.map(({ key, title }): XlsxCell[] => [title, countOf(file, key)]),
     [],
-    ["What this file does not hold"],
+    [NOT_HELD],
     [`Zoho keeps its own copy of the contact, sales orders and invoices${zohoContacts ? ` (Zoho contact ${zohoContacts})` : ""}. Look in Zoho for those.`],
     ["Database backups, and emails or text messages already sent."],
     ["Files uploaded as seller documents: the sheet lists them, and the files open from the seller's page."],
-    ["The store's own bank messages: the bank receipts sheet shows only the amount, reference and payer."],
+    ["The store's own bank messages: the bank receipts sheet shows only the amount and reference, and the payer where the money is confirmed as theirs."],
+    ...(unproved > 0 ? [[`Other enquiries that use a phone or email from their profile or orders: ${unproved}. We can't tell they are theirs. Check them in Admin > Enquiries.`]] : []),
     [],
-    ["Before sending this file to the customer"],
-    ["Read the Admin notes sheet: those notes were written by the admin team."],
-    ["An enquiry is matched on email or phone, so check any enquiry matched by phone is really theirs."],
+    [BEFORE_SENDING],
+    ["Read the Admin notes sheet and the notes on the Payment references, Order tracking, Seller applications and Seller documents sheets: staff wrote those."],
   ];
-  const boldRows = [0, 7, 9 + CUSTOMER_DATA_SECTIONS.length, 15 + CUSTOMER_DATA_SECTIONS.length];
+  const boldRows = [0, ...[HOLDS, NOT_HELD, BEFORE_SENDING].map((heading) => about.findIndex((row) => row[0] === heading))];
   return [
     { name: "Read me", rows: about, boldRows, widths: [30, 44] },
     ...CUSTOMER_DATA_SECTIONS.map(({ key, title }) =>
@@ -154,7 +163,7 @@ export function customerDataSheets(file: CustomerDataFile): XlsxSheet[] {
 
 /** No name or phone in the file name: it sits in the admin's downloads folder and in emails. */
 export function customerDataFileName(file: Pick<CustomerDataFile, "customer_id" | "generated_at">) {
-  return `Customer_data_${file.customer_id.slice(0, 8)}_${file.generated_at.slice(0, 10)}.xlsx`;
+  return `Customer_data_${file.customer_id.slice(0, 8)}_${IST_DATE.format(new Date(file.generated_at))}.xlsx`;
 }
 
 /** What the admin types to confirm. The database checks the same word. */
@@ -167,8 +176,10 @@ export type DeletionPlan = {
   kept_orders: string[];
   cleared_orders: string[];
   zoho_contacts: string[];
+  unproved_enquiries: number;
 };
-export type DeletionPreview = { blockers: DeletionBlocker[]; plan: DeletionPlan };
+/** already_deleted: an earlier try got through the database step, so only the login is left to remove. */
+export type DeletionPreview = { blockers: DeletionBlocker[]; plan: DeletionPlan; already_deleted?: boolean };
 
 const BLOCKER_TEXT: Record<string, string> = {
   other_login: "This person also has a seller, partner, staff or admin login. Those have their own records, so they cannot be deleted from here.",
@@ -176,8 +187,10 @@ const BLOCKER_TEXT: Record<string, string> = {
   unpaid_delivery: "These orders were delivered but are not fully paid. Record the payment first.",
   money_not_refunded: "These orders were cancelled with money not refunded. Refund it first.",
   open_return: "These orders have a return or refund still open. Close it first.",
-  unconfirmed_payment: "These orders have a payment reference waiting. Confirm or reject it first.",
+  unconfirmed_payment: "These orders have a payment reference still open. Close it in UPI & Bank Payments first.",
+  open_bank_money: "These orders have money in the bank account still to be sorted out. Refund it or place the order, then mark it settled.",
   waiting_for_zoho: "These orders are still going to Zoho or need a review in Zoho Sync. Clear that first.",
+  zoho_busy: "This customer is being sent to Zoho right now. Try again in a minute.",
   not_in_zoho: "These delivered orders have not reached Zoho yet. Send them first, so the sales records are complete.",
 };
 export const deletionBlockerText = (code: string) => BLOCKER_TEXT[code] ?? "This customer cannot be deleted yet.";
@@ -194,11 +207,14 @@ const REMOVED_LABELS: [string, string][] = [
   ["orders_cleared", "Unpaid orders: name, phone, GSTIN and address cleared"],
 ];
 const KEPT_LABELS: [string, string][] = [
-  ["orders", "Paid or delivered orders, with name, address and GSTIN"],
+  ["orders", "Paid, delivered or refunded orders, with name, address and GSTIN"],
   ["invoices", "Invoices"],
   ["payments", "Payments"],
   ["payment_references", "Payment references (UTR)"],
   ["returns", "Returns"],
+  ["bank_receipts", "Bank receipts, with the payer's name"],
+  ["zoho_invoices", "Zoho invoice records"],
+  ["terms_accepted", "Terms accepted on those orders"],
   ["partner_commissions", "Partner commissions"],
   ["delivery_notes", "Delivery notes, exactly as printed, with phone"],
 ];

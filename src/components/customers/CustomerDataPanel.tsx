@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { Link } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { Download, Trash2 } from "lucide-react";
 import { DataTable, Panel } from "@/components/panel/widgets";
@@ -54,7 +55,10 @@ export function CustomerDataLog({ customerId, refresh = 0 }: { customerId?: stri
       minWidth={customerId ? 420 : 560}
       rows={rows.map((row) => [
         when(row.created_at),
-        actionLabel(row),
+        // The customer's page is the only place to finish it, and their name is gone from the list.
+        !customerId && row.kind === "delete" && !row.login_removed_at
+          ? <Link to="/admin/customers/$id" params={{ id: row.customer_id }} className="font-semibold text-navy hover:text-gold">{actionLabel(row)}</Link>
+          : actionLabel(row),
         ...(customerId ? [] : [<span data-no-translate>{row.customer_label || "—"}</span>]),
         <span data-no-translate>{row.actor_name || row.actor_email || "—"}</span>,
       ])}
@@ -107,10 +111,15 @@ function DeleteDialog({ customerId, customerName, open, onOpenChange, onFinished
     setProblem("");
     void supabase.rpc("admin_customer_deletion_preview", { _customer_id: customerId }).then(({ data, error }) => {
       if (!active) return;
-      if (error || !data) setLoadFailed(error?.message ?? "Nothing came back.");
-      else setPreview(data as unknown as DeletionPreview);
+      if (error || !data) { setLoadFailed(error?.message ?? "Nothing came back."); return; }
+      const next = data as unknown as DeletionPreview;
+      // An earlier try got through the database step and its reply was lost: only the login is left.
+      if (next.already_deleted) { onFinished(); onOpenChange(false); return; }
+      setPreview(next);
     });
     return () => { active = false; };
+    // Runs once each time the dialog opens; the two callbacks change on every render of the panel.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, customerId]);
 
   const submit = async () => {
@@ -127,14 +136,14 @@ function DeleteDialog({ customerId, customerName, open, onOpenChange, onFinished
       onFinished();
     } catch (cause) {
       setProblem(cause instanceof Error ? cause.message : "The information could not be deleted.");
-    } finally {
-      setWorking(false);
     }
+    // Not on success: the page is already leaving, and the button must not come back.
+    setWorking(false);
   };
 
   const blockers = preview?.blockers ?? [];
   const ready = preview !== null && blockers.length === 0 && !problem;
-  const byPhone = preview?.plan.removed["enquiries_by_phone"] ?? 0;
+  const unproved = preview?.plan.unproved_enquiries ?? 0;
 
   return (
     <AlertDialog open={open} onOpenChange={(next) => { if (!working) onOpenChange(next); }}>
@@ -168,7 +177,7 @@ function DeleteDialog({ customerId, customerName, open, onOpenChange, onFinished
             <div>
               <p className="text-sm font-semibold text-navy">Removed for good</p>
               <CountedList lines={[{ text: "Login and profile", count: 1 }, ...removedLines(preview.plan)]} />
-              {byPhone > 0 && <p className="mt-1 text-xs text-slate">{`Enquiries are matched on email or phone. ${byPhone} matched by phone only, so check they are really this customer's.`}</p>}
+              {unproved > 0 && <p className="mt-1 text-xs text-slate">{`Other enquiries that use a phone or email from their profile or orders: ${unproved}. We can't tell they are theirs, so they stay. Check them in Admin > Enquiries.`}</p>}
             </div>
             <div>
               <p className="text-sm font-semibold text-navy">Kept</p>
@@ -231,7 +240,7 @@ export function CustomerDataPanel({ customerId, customerName, deleted }: { custo
   const finish = async () => {
     setFinishing(true);
     try {
-      const result = await deleteCustomerData({ data: { customerId, confirmation: CUSTOMER_DELETE_WORD } });
+      const result = await deleteCustomerData({ data: { customerId, confirmation: CUSTOMER_DELETE_WORD, retry: true } });
       if (!result.loginRemoved) throw new Error(result.problem ?? undefined);
       toast.success("The customer's login has been removed");
       window.location.assign("/admin/customers");

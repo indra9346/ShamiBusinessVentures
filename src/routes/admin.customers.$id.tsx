@@ -355,7 +355,7 @@ function AdminCustomerDetail() {
         </Tabs>
       </div>
 
-      <CustomerDataPanel customerId={customer.id} customerName={customer.name} deleted={customer.status === "deleted"} />
+      <CustomerDataPanel key={customer.id} customerId={customer.id} customerName={customer.name} deleted={customer.status === "deleted"} />
     </PanelLayout>
   );
 }
