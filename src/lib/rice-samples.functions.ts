@@ -4,12 +4,14 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import type { Database, Json } from "@/integrations/supabase/types";
 import {
-  RICE_PO_SETTINGS_KEY, checkRicePo, createInZohoOnce, differsFromRaised, findPurchaseOrdersByReference, gstPreferencesFrom, inPlay, indiaToday, isSamplePhone, itemBody, itemMatchFrom, nameKey,
-  planPoLine, plainZohoRefusal, poDescription, poLineProblem, poReference, raiseRicePo, readPoStatus, vendorBody, vendorMatchesFrom, zohoVerdict,
-  type ClaimAnswer, type CreationStore, type PoActor, type PoFound, type PoPlan, type PoStore, type RaiseResult, type RecordAnswer, type ReleaseAnswer, type RiceEvent, type RicePo, type RiceSample, type RiceTest,
+  RICE_PO_SETTINGS_KEY, cancelRicePo, checkRicePo, createInZohoOnce, differsFromRaised, findPurchaseOrdersByReference, gstPreferencesFrom, inPlay, indiaToday, isSamplePhone, itemBody, itemMatchFrom, nameKey,
+  PO_DEATH_WORDS, planPoLine, plainZohoRefusal, poDescription, poLineProblem, poReference, raiseRicePo, retiredPoProblem, settleRaisedPo, syncRaisedPos, vendorBody, vendorMatchesFrom, zohoVerdict,
+  type CancelResult, type ClaimAnswer, type CreationStore, type PoActor, type PoFound, type PoLifeStore, type PoPlan, type PoStore, type PoSyncResult, type RaiseResult, type RecordAnswer, type ReleaseAnswer, type RetiredPo, type RiceEvent, type RicePo, type RiceSample, type RiceTest,
   type TakeoverAnswer, type ZohoItemMatch, type ZohoRaw, type ZohoSend, type ZohoVendorMatch,
+  canCancelPo, zohoStatusLabel,
 } from "@/lib/rice-samples";
 import { GSTIN_REGEX, normaliseGstin } from "@/lib/gstin";
+import { zohoPaused } from "@/lib/zoho-sync-core";
 
 /*
  * Admin > Rice Samples. Everything here checks the admin role. The page reads through the admin's own session, so the
@@ -49,7 +51,7 @@ const asRecords = (value: unknown): Record<string, unknown>[] => (Array.isArray(
 type ReadClient = SupabaseClient<Database>;
 
 const poFromRow = (row: Database["public"]["Tables"]["rice_sample_purchase_orders"]["Row"]): RicePo => ({
-  sample_id: row.sample_id, reference: row.reference, state: row.state as RicePo["state"], attempt_id: row.attempt_id, attempts: row.attempts,
+  sample_id: row.sample_id, reference: row.reference, state: row.state as RicePo["state"], generation: row.generation, retired_pos: (row.retired_pos ?? []) as unknown as RetiredPo[], attempt_id: row.attempt_id, attempts: row.attempts,
   snapshot: row.snapshot as unknown as PoPlan, claimed_by_name: row.claimed_by_name, claimed_at: row.claimed_at, last_error: row.last_error,
   zoho_po_id: row.zoho_po_id, zoho_po_number: row.zoho_po_number, zoho_po_status: row.zoho_po_status,
   zoho_sub_total: nullableNumber(row.zoho_sub_total), zoho_tax_total: nullableNumber(row.zoho_tax_total), zoho_total: nullableNumber(row.zoho_total),
@@ -111,9 +113,9 @@ async function zohoKit() {
 }
 
 /** Runs `fn` with Zoho connected, every call logged under this desk. A Zoho that cannot be reached at all becomes plain words. */
-async function withZoho<T>(fn: (zoho: { send: ZohoSend; region: string; organizationId: string }) => Promise<T>): Promise<T> {
+async function withZoho<T>(fn: (zoho: { send: ZohoSend; region: string; organizationId: string }) => Promise<T>, purpose = PURPOSE): Promise<T> {
   const { openZohoInventory, withZohoPurpose } = await zohoKit();
-  return withZohoPurpose(PURPOSE, async () => {
+  return withZohoPurpose(purpose, async () => {
     let zoho;
     try {
       zoho = await openZohoInventory();
@@ -329,6 +331,7 @@ export const raiseRiceSamplePurchaseOrder = createServerFn({ method: "POST" })
       db.from("branches").select("id,name,active,vendor_id,zoho_location_id").eq("id", data.branchId).maybeSingle(),
     ]);
     if (!sample) return { kind: "rejected", message: "This sample no longer exists." };
+    if (sample.deleted_at) return { kind: "rejected", message: "This card is deleted. Restore it first. Nothing was sent to Zoho." };
     if (!inPlay(sample.status as RiceSample["status"])) return { kind: "rejected", message: `This sample is ${sample.status}. Nothing was sent to Zoho.` };
     if (sample.updated_at !== data.confirmed.sampleUpdatedAt) return { kind: "rejected", message: "This sample has changed since you opened this screen. Review it and confirm again. Nothing was sent to Zoho." };
     // A broker's sample can be bought from the broker or from the seller behind them, once that seller's name is on record.
@@ -341,7 +344,12 @@ export const raiseRiceSamplePurchaseOrder = createServerFn({ method: "POST" })
       return { kind: "rejected", message: `The purchase order setting has changed: it would now be created as ${settings.issueOnCreate ? "Issued" : "Draft"}. Review and confirm again. Nothing was sent to Zoho.` };
     }
 
-    return withZoho(async ({ send }) => {
+    return withZoho(async ({ send, organizationId }) => {
+      // An earlier purchase order brought back to life in Zoho would make this one a second live order.
+      if (existing?.retired_pos.length) {
+        const problem = await retiredPoProblem(send, existing.retired_pos);
+        if (problem) return { kind: "rejected", message: problem };
+      }
       // Vendor and item straight from Zoho, not from what the browser remembers.
       const vendorRaw = await send(`contacts/${encodeURIComponent(data.vendorId)}`, "GET");
       if (zohoVerdict(vendorRaw) !== "ok") return { kind: "rejected", message: `The vendor could not be read from Zoho. ${plainZohoRefusal(vendorRaw)} Nothing was sent.` };
@@ -363,10 +371,10 @@ export const raiseRiceSamplePurchaseOrder = createServerFn({ method: "POST" })
         return { kind: "rejected", message: "The figures on your screen do not match the sample any more. Review and confirm again. Nothing was sent to Zoho." };
       }
       const plan: PoPlan = {
-        reference: poReference(sample.id), date: indiaToday(Date.now()), vendorRole: data.vendorRole, vendorId: data.vendorId, vendorName: text(vendor["contact_name"]),
+        reference: existing?.state === "dead" ? poReference(sample.id, existing.generation + 1) : existing?.reference ?? poReference(sample.id), date: indiaToday(Date.now()), vendorRole: data.vendorRole, vendorId: data.vendorId, vendorName: text(vendor["contact_name"]),
         itemId: data.itemId, itemName: item.name, itemUnit: item.unit, kgPerUnit: data.kgPerUnit, quantityQntl: data.quantityQntl, ratePerQntl: data.ratePerQntl,
         poQuantity: line.poQuantity, poRate: line.poRate, subTotal: line.subTotal, gstPercent: item.gstPercent, branchId: branch.id, branchName: branch.name, locationId: branch.zoho_location_id,
-        issueOnCreate: settings.issueOnCreate, description: poDescription(sample.variety, sample.method, data.quantityQntl, data.ratePerQntl),
+        issueOnCreate: settings.issueOnCreate, description: poDescription(sample.variety, sample.method, data.quantityQntl, data.ratePerQntl), organizationId,
       };
       const actor = await actorOf(db, context.userId);
       try {
@@ -424,7 +432,86 @@ export const releaseRiceSampleByHand = createServerFn({ method: "POST" })
     return { ok: false, message: outcome["outcome"] === "too_soon" ? `Zoho may still be working on the last request. Wait ${text(outcome["wait_seconds"])} seconds.` : "This has changed. Refresh the page." };
   });
 
-/** Zoho's current status for a raised purchase order, shown read-only. */
+function poLifeStore(db: ReadClient): PoLifeStore {
+  return {
+    refresh: async ({ sampleId, poId, status, subTotal, taxTotal, total, gone, duplicates }) => {
+      const { error } = await db.rpc("rice_sample_po_refresh", { _sample_id: sampleId, _po_id: poId, _po_status: status, _sub_total: subTotal, _tax_total: taxTotal, _total: total, _gone: gone, _duplicates: duplicates as unknown as Json });
+      if (error) throw new Error(error.message);
+    },
+    markDead: async ({ sampleId, poId, reason, status, note, actor }) => {
+      const { data, error } = await db.rpc("rice_sample_po_mark_dead", { _sample_id: sampleId, _po_id: poId, _reason: reason, _zoho_status: status, _note: note, _user: actor?.userId ?? null, _user_name: actor?.name ?? "" });
+      if (error) throw new Error(error.message);
+      return { outcome: asRecord(data)["outcome"] === "freed" ? "freed" : "changed" };
+    },
+    cancelAsked: async ({ sampleId, number, reason, actor }) => {
+      const { error } = await db.rpc("rice_sample_po_cancel_asked", { _sample_id: sampleId, _po_number: number, _reason: reason, _user: actor.userId, _user_name: actor.name });
+      if (error) throw new Error(error.message);
+    },
+  };
+}
+
+const EMPTY_SYNC: PoSyncResult = { checked: 0, freed: [], unknown: 0, listRead: false };
+/** After a check that failed or left something unsettled, open pages wait this long before asking Zoho again. */
+const POLL_HOLD_SECONDS = 300;
+
+/**
+ * Brings raised purchase orders in step with Zoho. Called while the page is open, and by the hourly sync so a sample is right even
+ * if nobody looks. No raised purchase orders means no Zoho call at all. minGapSeconds: several open pages share one check.
+ */
+export async function syncRiceSamplePos(options: { minGapSeconds?: number } = {}): Promise<PoSyncResult> {
+  const db = serviceClient();
+  const { data: budget } = await db.from("settings").select("value").eq("key", "zoho_api_budget").maybeSingle();
+  if (zohoPaused(text(asRecord(budget?.value)["pausedUntil"]), Date.now())) return EMPTY_SYNC;
+  const { data, error } = await db.from("rice_sample_purchase_orders").select("*").eq("state", "raised").order("zoho_checked_at", { ascending: true, nullsFirst: true }).limit(200);
+  if (error) throw new Error("Could not read purchase orders");
+  const rows = (data ?? []).map(poFromRow);
+  if (!rows.length) return EMPTY_SYNC;
+  if (options.minGapSeconds) {
+    const { data: claimed, error: claimError } = await db.rpc("rice_sample_po_poll_claim", { _gap_seconds: options.minGapSeconds });
+    if (claimError) throw new Error("Could not read purchase orders");
+    if (!claimed) return EMPTY_SYNC;
+  }
+  const hold = () => db.rpc("rice_sample_po_poll_hold", { _seconds: POLL_HOLD_SECONDS });
+  try {
+    const result = await withZoho(({ send, organizationId }) => syncRaisedPos({ store: poLifeStore(db), zoho: send, organizationId }, rows), "Rice sample desk: status check");
+    if (!result.listRead || result.unknown) await hold();
+    return result;
+  } catch (cause) {
+    await hold();
+    throw cause;
+  }
+}
+
+/** The open page's regular check. Quiet on failure: the next one tries again. */
+export const pollRiceSamplePos = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }): Promise<PoSyncResult> => {
+    await ensureAdmin(context.supabase, context.userId);
+    try {
+      return await syncRiceSamplePos({ minGapSeconds: 45 });
+    } catch (cause) {
+      console.warn(JSON.stringify({ event: "rice_po_poll_failed", message: cause instanceof Error ? cause.message : String(cause) }));
+      return EMPTY_SYNC;
+    }
+  });
+
+/** Cancels a purchase order in Zoho, with Zoho's own "Mark as Cancelled". Needs the admin's confirmation and a reason. Never deletes from Zoho. */
+export const cancelRiceSamplePurchaseOrder = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  // poId: the purchase order on the admin's screen. A newer one on the same sample is not what they agreed to cancel.
+  .validator(z.object({ sampleId: z.string().uuid(), poId: z.string().trim().min(1).max(40), reason: z.string().trim().min(3).max(300), confirmed: z.literal(true) }))
+  .handler(async ({ data, context }): Promise<CancelResult> => {
+    await ensureAdmin(context.supabase, context.userId);
+    const db = serviceClient();
+    const po = await readPo(db, data.sampleId);
+    if (!po || po.state !== "raised") return { kind: "refused", message: "This sample has no live purchase order to cancel." };
+    if (po.zoho_po_id !== data.poId) return { kind: "refused", message: `This sample now has a different purchase order, ${po.zoho_po_number}. Nothing was sent to Zoho. Close this and look again.` };
+    if (!canCancelPo(po.zoho_po_status)) return { kind: "refused", message: `${po.zoho_po_number} is ${zohoStatusLabel(po.zoho_po_status)} in Zoho, so it can't be cancelled from here. Nothing was sent to Zoho.` };
+    const actor = await actorOf(db, context.userId);
+    return withZoho(({ send, organizationId }) => cancelRicePo({ store: poLifeStore(db), zoho: send, organizationId }, po, actor, data.reason));
+  });
+
+/** Zoho's current status for a raised purchase order, on the admin's request. */
 export const refreshRiceSamplePoStatus = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator(z.object({ sampleId: z.string().uuid() }))
@@ -433,18 +520,16 @@ export const refreshRiceSamplePoStatus = createServerFn({ method: "POST" })
     const db = serviceClient();
     const po = await readPo(db, data.sampleId);
     if (!po || po.state !== "raised") return { ok: false, message: "This sample has no purchase order yet." };
-    return withZoho(async ({ send }) => {
-      const current = await readPoStatus(send, po.zoho_po_id);
-      if (!current) return { ok: false, message: "Zoho could not be asked just now. The status shown is from the last check." };
+    return withZoho(async ({ send, organizationId }) => {
+      const store = poLifeStore(db);
+      const settled = await settleRaisedPo({ store, zoho: send, organizationId }, po, null);
+      if (settled.kind === "freed") return { ok: true, message: `${settled.number} is ${PO_DEATH_WORDS[settled.reason]} in Zoho. The sample is back in play.` };
+      if (settled.kind === "changed") return { ok: true, message: "" };
+      if (settled.kind !== "alive") return { ok: false, message: settled.message };
       // Finds any second purchase order with this reference, and proves on real data that the search after a lost answer works.
-      const search = current.gone ? null : await findPurchaseOrdersByReference(send, po.reference);
-      const duplicates = search?.complete ? search.matches.filter((match) => match.id !== po.zoho_po_id) : null;
-      const { error } = await db.rpc("rice_sample_po_refresh", {
-        _sample_id: data.sampleId, _po_status: current.gone ? null : current.status, _sub_total: current.subTotal, _tax_total: current.taxTotal, _total: current.total,
-        _gone: current.gone, _duplicates: duplicates as unknown as Json,
-      });
-      if (error) return { ok: false, message: "Zoho's status could not be saved." };
-      const lost = search?.complete && !search.matches.some((match) => match.id === po.zoho_po_id);
+      const search = await findPurchaseOrdersByReference(send, po.reference);
+      if (search.complete) await store.refresh({ sampleId: data.sampleId, poId: po.zoho_po_id, status: settled.status, subTotal: null, taxTotal: null, total: null, gone: false, duplicates: search.matches.filter((match) => match.id !== po.zoho_po_id) });
+      const lost = search.complete && !search.matches.some((match) => match.id === po.zoho_po_id);
       return { ok: !lost, message: lost ? `Status updated, but Zoho's search by reference did not find this purchase order. Check its Reference# in Zoho is still ${po.reference}.` : "" };
     });
   });
