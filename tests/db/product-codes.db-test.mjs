@@ -5,7 +5,7 @@
 //   PGLITE_PATH=<folder with @electric-sql/pglite> node tests/db/product-codes.db-test.mjs
 //
 // It must end with "product code migration OK".
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { inflateRawSync } from "node:zlib";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -127,18 +127,20 @@ const seedMethods = await q(`SELECT letter, name FROM public.product_code_method
 const seedVarieties = await q(`SELECT letter, name FROM public.product_code_varieties ORDER BY sort_order`);
 assert.deepEqual(seedMethods, [5, 6, 7, 8, 9].map((row) => ({ letter: book.legend[row].B, name: book.legend[row].A })));
 assert.deepEqual(seedVarieties, [5, 6, 7, 8, 9, 10].map((row) => ({ letter: book.legend[row].E, name: book.legend[row].D })));
-const seedCodes = await q(`SELECT c.code, m.name method, v.name variety, c.name description, c.serial, c.subcategory, c.description d, c.images, c.retired_at
+assert.equal(riceSet[0].brand, "Grain Bazar");
+const seedCodes = await q(`SELECT c.code, m.name method, v.name variety, c.name, c.serial, c.subcategory, c.description d, c.images, c.retired_at
   FROM public.product_codes c JOIN public.product_code_methods m ON m.id = c.method_id JOIN public.product_code_varieties v ON v.id = c.variety_id
   ORDER BY m.sort_order, v.sort_order`);
 assert.equal(seedCodes.length, 30);
 Object.keys(book.list).filter((row) => row !== "1").forEach((row, index) => {
   const sheetRow = book.list[row], seeded = seedCodes[index];
   assert.equal(Number(sheetRow.A), index + 1);
-  assert.deepEqual({ code: seeded.code, method: seeded.method, variety: seeded.variety, description: seeded.description }, { code: sheetRow.B, method: sheetRow.C, variety: sheetRow.D, description: sheetRow.E });
+  assert.deepEqual({ code: seeded.code, method: seeded.method, variety: seeded.variety, name: seeded.name }, { code: sheetRow.B, method: sheetRow.C, variety: sheetRow.D, name: `Grain Bazar ${sheetRow.B} ${sheetRow.E}` });
   assert.equal(seeded.serial, 1);
   assert.equal(seeded.subcategory, seeded.method);
-  assert.equal(seeded.d, "");
-  assert.deepEqual(seeded.images, []);
+  assert.equal(seeded.d, `${sheetRow.E}. Traditional taste, natural aromatic, purity for sure. Packed and marketed by Shami Business Ventures Pvt Ltd.`);
+  assert.deepEqual(seeded.images, [`/product-codes/${sheetRow.B}.webp`]);
+  assert.ok(existsSync(join(root, "public", "product-codes", `${sheetRow.B}.webp`)), `${sheetRow.B} picture exists`);
   assert.equal(seeded.retired_at, null);
 });
 const matrixCodes = [4, 5, 6, 7, 8, 9].flatMap((row) => ["B", "C", "D", "E", "F"].map((column) => book.matrix[row][column]));
@@ -162,12 +164,12 @@ assert.equal(created.letter, "A");
 assert.equal(created.name, "Jeera Samba");
 const ra = await admin(() => insertCode(RICE, R, created.id));
 assert.equal(ra[0].code, "RA01");
-assert.equal(ra[0].name, "Raw Rice - Jeera Samba");
+assert.equal(ra[0].name, "Grain Bazar RA01 Raw Rice - Jeera Samba");
 assert.equal(ra[0].subcategory, "Raw Rice");
 const rs02 = await admin(() => q(`INSERT INTO public.product_codes (set_id, method_id, variety_id, serial, code, retired_at) VALUES ($1,$2,$3,7,'ZZ99',now()) RETURNING *`, [RICE, R, VS]));
 assert.equal(rs02[0].code, "RS02", "what the page sends for the code and serial is ignored");
 assert.equal(rs02[0].serial, 2);
-assert.equal(rs02[0].name, "Raw Rice - Sona Rice 02", "a later serial must not read like the first");
+assert.equal(rs02[0].name, "Grain Bazar RS02 Raw Rice - Sona Rice", "a later serial must not read like the first");
 assert.equal(rs02[0].retired_at, null);
 await admin(() => q(`UPDATE public.product_codes SET name = 'Sona Raw Super', description = 'Second grade', images = ARRAY['https://x/1.jpg','https://x/2.jpg'] WHERE code = 'RS02'`));
 assert.deepEqual((await q(`SELECT name, images FROM public.product_codes WHERE code = 'RS02'`))[0], { name: "Sona Raw Super", images: ["https://x/1.jpg", "https://x/2.jpg"] });
@@ -262,6 +264,10 @@ await refused(() => admin(() => insertCode(sugar.id, R, sv.id)), /must belong/);
 await admin(() => q(`UPDATE public.product_code_sets SET prefix = 'u' WHERE id = $1`, [sugar.id]));
 const [urs] = await admin(() => insertCode(sugar.id, sm.id, sv.id));
 assert.equal(urs.code, "URS01");
+// A set with no brand keeps the plain name, and its later serial still reads differently.
+assert.equal(urs.name, "Refined - S30");
+const [urs2] = await admin(() => insertCode(sugar.id, sm.id, sv.id));
+assert.equal(urs2.name, "Refined - S30 02");
 await refused(() => admin(() => q(`UPDATE public.product_code_sets SET prefix = 'V' WHERE id = $1`, [sugar.id])), /prefix/);
 await refused(() => admin(() => q(`INSERT INTO public.product_code_sets (category, prefix) VALUES ('Oil','U')`)), /unique/);
 

@@ -1,11 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { inflateRawSync } from "node:zlib";
 import {
   RICE_WORKBOOK, activeCodeOptions, activePartsOfSet, buildCode, codeDetailsProblem, codePartProblem, codeSetProblem, codesOfPair, defaultCodeName,
   demoCreateCode, demoCreatePart, demoCreateSet, demoSetCodeRetired, demoSetPartRetired, demoUpdateCode, demoUpdatePart, duplicateProducts, duplicatesToConfirm, emptyCodeMaster,
-  findMasterCode, isCodeLetter, isCodePrefix, letterLocked, newCodePreview, nextSerial, normalizeCodeInput, normalizeLetter, packKey, packLabel, productsWithCode,
+  findMasterCode, bagDescription, isCodeLetter, isCodePrefix, letterLocked, newCodePreview, nextSerial, normalizeCodeInput, normalizeLetter, packKey, packLabel, productsWithCode,
   productsWithoutCode, riceWorkbookMaster, serialText, setForCategory, type CodeMaster,
 } from "../src/lib/product-code-rules.ts";
 
@@ -92,12 +92,15 @@ test("Code List sheet: all 30 rows match the seed, in order", () => {
     assert.equal(cell("Code List", `B${row}`), code.code);
     assert.equal(cell("Code List", `C${row}`), method.name);
     assert.equal(cell("Code List", `D${row}`), variety.name);
-    // The workbook's Description column is the code's name.
-    assert.equal(cell("Code List", `E${row}`), code.name);
+    // The code's name is the bag's brand and code, then the workbook's Description column, word for word.
+    assert.equal(`Grain Bazar ${code.code} ${cell("Code List", `E${row}`)}`, code.name);
     assert.equal(code.subcategory, method.name);
     assert.equal(code.serial, 1);
-    assert.equal(code.description, "");
-    assert.deepEqual(code.images, []);
+    assert.equal(code.description, bagDescription(method.name, variety.name));
+    assert.ok(code.description.startsWith(`${cell("Code List", `E${row}`)}. `));
+    // The bag picture made for this code, and no other.
+    assert.deepEqual(code.images, [`/product-codes/${code.code}.webp`]);
+    assert.ok(existsSync(new URL(`../public${code.images[0]}`, import.meta.url)), `${code.code} picture exists`);
     assert.equal(code.retiredAt, null);
   });
   assert.equal(new Set(master.codes.map((code) => code.code)).size, 30);
@@ -139,8 +142,10 @@ test("the migration seeds exactly the workbook, only rice, and links no product"
   const expected = (list: { letter?: string | undefined; name?: string | undefined }[]) => list.map((part, index) => ({ letter: part.letter, name: part.name, sort: index + 1 }));
   assert.deepEqual(values("product_code_methods"), expected(legendMethods));
   assert.deepEqual(values("product_code_varieties"), expected(legendVarieties));
-  const sets = [...migration.matchAll(/INSERT INTO public\.product_code_sets \(category\) VALUES \('([^']+)'\)/g)].map((row) => row[1]);
+  const sets = [...migration.matchAll(/INSERT INTO public\.product_code_sets \(category(?:, brand)?\) VALUES \('([^']+)'/g)].map((row) => row[1]);
   assert.deepEqual(sets, ["Rice"]);
+  assert.match(migration, /VALUES \('Rice', 'Grain Bazar'\)/);
+  assert.match(migration, /'\/product-codes\/' \|\| method_row\.letter \|\| variety_row\.letter \|\| '01\.webp'/);
   // Applying the migration changes no product. The one update is the function an admin calls later.
   const whenApplied = migration.replace(/CREATE OR REPLACE FUNCTION public\.admin_set_product_code[\s\S]*?END \$\$;/, "");
   assert.notEqual(whenApplied, migration);
@@ -169,7 +174,8 @@ test("what an admin types reads as a code", () => {
   assert.equal(buildCode("U", "R", "S", 2), "URS02");
   assert.equal(defaultCodeName("Raw Rice", "Sona Rice", 1), "Raw Rice - Sona Rice");
   assert.equal(defaultCodeName("Raw Rice", "Sona Rice", 2), "Raw Rice - Sona Rice 02");
-  assert.equal(findMasterCode(master, "rs01")?.name, "Raw Rice - Sona Rice");
+  assert.equal(defaultCodeName("Raw Rice", "Sona Rice", 2, "Grain Bazar", "RS02"), "Grain Bazar RS02 Raw Rice - Sona Rice");
+  assert.equal(findMasterCode(master, "rs01")?.name, "Grain Bazar RS01 Raw Rice - Sona Rice");
   assert.equal(findMasterCode(master, "RS99"), undefined);
   assert.equal(findMasterCode(master, "  "), undefined);
   assert.equal(setForCategory(master, " rice ")?.category, "Rice");
@@ -236,7 +242,7 @@ test("a retired method or variety keeps its name until restored", () => {
 test("the next serial moves forward and counts retired codes", () => {
   assert.equal(nextSerial(master, "method-R", "variety-S"), 2);
   const made = demoCreateCode(master, "method-R", "variety-S");
-  assert.deepEqual([made.code.code, made.code.serial, made.code.name, made.code.subcategory], ["RS02", 2, "Raw Rice - Sona Rice 02", "Raw Rice"]);
+  assert.deepEqual([made.code.code, made.code.serial, made.code.name, made.code.subcategory], ["RS02", 2, "Grain Bazar RS02 Raw Rice - Sona Rice", "Raw Rice"]);
   assert.equal(nextSerial(made.master, "method-R", "variety-S"), 3);
   const retired = demoSetCodeRetired(made.master, made.code.id, true, retiredAt);
   assert.equal(nextSerial(retired, "method-R", "variety-S"), 3, "RS02 is never used again");
@@ -246,7 +252,7 @@ test("the next serial moves forward and counts retired codes", () => {
 });
 
 test("a new code's preview refuses a retired part and shows the code", () => {
-  assert.deepEqual(newCodePreview(master, "method-R", "variety-S"), { code: "RS02", serial: 2, name: "Raw Rice - Sona Rice 02", subcategory: "Raw Rice" });
+  assert.deepEqual(newCodePreview(master, "method-R", "variety-S"), { code: "RS02", serial: 2, name: "Grain Bazar RS02 Raw Rice - Sona Rice", subcategory: "Raw Rice" });
   const retired = demoSetPartRetired(master, "method", "method-R", true, retiredAt);
   assert.match((newCodePreview(retired, "method-R", "variety-S") as { error: string }).error, /retired/);
   assert.match((newCodePreview(master, "nope", "variety-S") as { error: string }).error, /same category/);
@@ -254,7 +260,7 @@ test("a new code's preview refuses a retired part and shows the code", () => {
 });
 
 const withSugar = (prefix: string) => {
-  let next = demoCreateSet(master, { category: "Sugar", prefix, firstLabel: "Grade", secondLabel: "Mill" });
+  let next = demoCreateSet(master, { category: "Sugar", prefix, firstLabel: "Grade", secondLabel: "Mill", brand: "" });
   const id = setForCategory(next, "Sugar")!.id;
   next = demoCreatePart(next, "method", id, { letter: "R", name: "Refined" });
   next = demoCreatePart(next, "variety", id, { letter: "S", name: "S-30" });
@@ -276,15 +282,15 @@ test("codes are unique across categories; a prefix keeps sets apart", () => {
 });
 
 test("a set needs its own category and prefix; the prefix locks once it has codes", () => {
-  assert.match(codeSetProblem(master, { category: " rice ", prefix: "", firstLabel: "Method", secondLabel: "Variety" })!, /already has a code set/);
-  assert.match(codeSetProblem(master, { category: "", prefix: "", firstLabel: "Method", secondLabel: "Variety" })!, /Choose a category/);
-  assert.match(codeSetProblem(master, { category: "Sugar", prefix: "U1", firstLabel: "Method", secondLabel: "Variety" })!, /up to 3 letters/);
-  assert.match(codeSetProblem(master, { category: "Sugar", prefix: "", firstLabel: " ", secondLabel: "Variety" })!, /Name both/);
-  assert.equal(codeSetProblem(master, { category: "Sugar", prefix: "u", firstLabel: "Grade", secondLabel: "Mill" }), null);
-  assert.match(codeSetProblem(master, { category: "Rice", prefix: "X", firstLabel: "Method", secondLabel: "Variety" }, RICE)!, /prefix can no longer change/);
+  assert.match(codeSetProblem(master, { category: " rice ", prefix: "", firstLabel: "Method", secondLabel: "Variety", brand: "" })!, /already has a code set/);
+  assert.match(codeSetProblem(master, { category: "", prefix: "", firstLabel: "Method", secondLabel: "Variety", brand: "" })!, /Choose a category/);
+  assert.match(codeSetProblem(master, { category: "Sugar", prefix: "U1", firstLabel: "Method", secondLabel: "Variety", brand: "" })!, /up to 3 letters/);
+  assert.match(codeSetProblem(master, { category: "Sugar", prefix: "", firstLabel: " ", secondLabel: "Variety", brand: "" })!, /Name both/);
+  assert.equal(codeSetProblem(master, { category: "Sugar", prefix: "u", firstLabel: "Grade", secondLabel: "Mill", brand: "" }), null);
+  assert.match(codeSetProblem(master, { category: "Rice", prefix: "X", firstLabel: "Method", secondLabel: "Variety", brand: "" }, RICE)!, /prefix can no longer change/);
   const sugar = withSugar("U");
-  assert.match(codeSetProblem(sugar.next, { category: "Oil", prefix: "U", firstLabel: "Type", secondLabel: "Brand" })!, /Prefix U is already used by Sugar/);
-  assert.equal(codeSetProblem(sugar.next, { category: "Sugar", prefix: "V", firstLabel: "Grade", secondLabel: "Mill" }, sugar.id), null, "no codes yet");
+  assert.match(codeSetProblem(sugar.next, { category: "Oil", prefix: "U", firstLabel: "Type", secondLabel: "Brand", brand: "" })!, /Prefix U is already used by Sugar/);
+  assert.equal(codeSetProblem(sugar.next, { category: "Sugar", prefix: "V", firstLabel: "Grade", secondLabel: "Mill", brand: "" }, sugar.id), null, "no codes yet");
 });
 
 /* ---------- active list ---------- */
@@ -294,8 +300,8 @@ test("active options keep the workbook's order and leave out retired codes", () 
   assert.equal(options.length, 30);
   assert.deepEqual(options.slice(0, 7).map((option) => option.code), ["RS01", "RK01", "RN01", "RH01", "RJ01", "RM01", "SS01"]);
   assert.deepEqual(options[0], {
-    code: "RS01", name: "Raw Rice - Sona Rice", description: "", category: "Rice", subcategory: "Raw Rice",
-    methodName: "Raw Rice", methodLetter: "R", varietyName: "Sona Rice", varietyLetter: "S", serial: 1, images: [],
+    code: "RS01", name: "Grain Bazar RS01 Raw Rice - Sona Rice", description: bagDescription("Raw Rice", "Sona Rice"), category: "Rice", subcategory: "Raw Rice", brand: "Grain Bazar",
+    methodName: "Raw Rice", methodLetter: "R", varietyName: "Sona Rice", varietyLetter: "S", serial: 1, images: ["/product-codes/RS01.webp"],
   });
   assert.equal(activeCodeOptions(master, "Sugar").length, 0);
   assert.equal(activeCodeOptions(emptyCodeMaster()).length, 0);
@@ -466,4 +472,24 @@ test("setting a code goes through its own function, never a whole-product save",
     assert.doesNotMatch(page, /productCode: (editForm|codeDraft)\.productCode/, file);
   }
   assert.match(source("src/lib/store.tsx"), /supabase\.rpc\("admin_set_product_code"/);
+});
+
+test("the bag pictures: one per seeded code, and the script's colours are one per variety", () => {
+  const pictures = readdirSync(new URL("../public/product-codes", import.meta.url)).filter((file) => file.endsWith(".webp")).sort();
+  assert.deepEqual(pictures, master.codes.map((code) => `${code.code}.webp`).sort());
+  const script = source("scripts/make-code-bag-images.py");
+  for (const variety of RICE_WORKBOOK.varieties) assert.match(script, new RegExp(`"${variety.letter}": \\(\\d, "\\w{3}"\\)`));
+});
+
+test("the serial is a running number, not a grade", () => {
+  for (const file of ["src/components/panel/ProductCodePicker.tsx", "src/routes/admin.product-codes.tsx"]) {
+    assert.doesNotMatch(source(file), /another grade/, file);
+  }
+});
+
+test("a set's brand fills in, and a set without one keeps the plain name", () => {
+  const sugar = demoCreateSet(master, { category: "Sugar", prefix: "U", firstLabel: "Grade", secondLabel: "Mill", brand: " Grain  Bazar " });
+  assert.equal(sugar.sets.at(-1)!.brand, "Grain Bazar");
+  assert.match(codeSetProblem(master, { category: "Sugar", prefix: "", firstLabel: "G", secondLabel: "M", brand: "x".repeat(61) })!, /brand is up to 60/);
+  assert.equal(activeCodeOptions(master, "Rice")[0]!.brand, "Grain Bazar");
 });

@@ -10,7 +10,7 @@
 
 export type CodePartKind = "method" | "variety";
 
-export type CodeSet = { id: string; category: string; prefix: string; firstLabel: string; secondLabel: string };
+export type CodeSet = { id: string; category: string; prefix: string; firstLabel: string; secondLabel: string; brand: string };
 /** A method or a variety: one letter position of the code. */
 export type CodePart = { id: string; setId: string; letter: string; name: string; sortOrder: number; retiredAt: string | null };
 export type MasterCode = {
@@ -37,6 +37,7 @@ export type ActiveCodeOption = {
   description: string;
   category: string;
   subcategory: string;
+  brand: string;
   methodName: string;
   methodLetter: string;
   varietyName: string;
@@ -48,6 +49,8 @@ export type ActiveCodeOption = {
 /** The client's workbook, Rice_Product_Codes.xlsx (Legend sheet). tests/product-codes.test.ts holds this to the file. */
 export const RICE_WORKBOOK = {
   category: "Rice",
+  /** From the bag artwork, Grain bazar V4.pdf. */
+  brand: "Grain Bazar",
   methods: [
     { letter: "R", name: "Raw Rice" },
     { letter: "S", name: "Steam Rice" },
@@ -76,8 +79,14 @@ export const normalizeCodeInput = (raw: string) => raw.toUpperCase().replace(/[^
 export const serialText = (serial: number) => String(serial).padStart(2, "0");
 export const buildCode = (prefix: string, methodLetter: string, varietyLetter: string, serial: number) =>
   `${prefix}${methodLetter}${varietyLetter}${serialText(serial)}`;
-export const defaultCodeName = (methodName: string, varietyName: string, serial: number) =>
-  `${methodName} - ${varietyName}${serial > 1 ? ` ${serialText(serial)}` : ""}`;
+/** The name a new code starts with: brand and code as on the bag, then the workbook's wording. */
+export const defaultCodeName = (methodName: string, varietyName: string, serial: number, brand = "", code = "") =>
+  brand
+    ? `${brand} ${code} ${methodName} - ${varietyName}`
+    : `${methodName} - ${varietyName}${serial > 1 ? ` ${serialText(serial)}` : ""}`;
+/** The words on the bag, for the seeded rice codes. */
+export const bagDescription = (methodName: string, varietyName: string) =>
+  `${methodName} - ${varietyName}. Traditional taste, natural aromatic, purity for sure. Packed and marketed by Shami Business Ventures Pvt Ltd.`;
 
 /** The rice set as the migration seeds it, for static demo mode. */
 export function riceWorkbookMaster(): CodeMaster {
@@ -90,10 +99,11 @@ export function riceWorkbookMaster(): CodeMaster {
     const code = buildCode("", method.letter, variety.letter, 1);
     return {
       id: `code-${code}`, setId, methodId: method.id, varietyId: variety.id, serial: 1, code,
-      name: defaultCodeName(method.name, variety.name, 1), description: "", subcategory: method.name, images: [], retiredAt: null, retiredWithPart: false,
+      name: defaultCodeName(method.name, variety.name, 1, RICE_WORKBOOK.brand, code), description: bagDescription(method.name, variety.name),
+      subcategory: method.name, images: [`/product-codes/${code}.webp`], retiredAt: null, retiredWithPart: false,
     };
   }));
-  return { sets: [{ id: setId, category: RICE_WORKBOOK.category, prefix: "", firstLabel: "Method", secondLabel: "Variety" }], methods, varieties, codes };
+  return { sets: [{ id: setId, category: RICE_WORKBOOK.category, prefix: "", firstLabel: "Method", secondLabel: "Variety", brand: RICE_WORKBOOK.brand }], methods, varieties, codes };
 }
 
 export const emptyCodeMaster = (): CodeMaster => ({ sets: [], methods: [], varieties: [], codes: [] });
@@ -127,7 +137,7 @@ export function codeOption(master: CodeMaster, code: MasterCode): ActiveCodeOpti
   const variety = master.varieties.find((row) => row.id === code.varietyId);
   if (!set || !method || !variety) return null;
   return {
-    code: code.code, name: code.name, description: code.description, category: set.category, subcategory: code.subcategory,
+    code: code.code, name: code.name, description: code.description, category: set.category, subcategory: code.subcategory, brand: set.brand,
     methodName: method.name, methodLetter: method.letter, varietyName: variety.name, varietyLetter: variety.letter,
     serial: code.serial, images: code.images,
   };
@@ -148,11 +158,14 @@ export function activeCodeOptions(master: CodeMaster, category?: string): Active
 
 /* ---------- what can and can't be saved ---------- */
 
-export function codeSetProblem(master: CodeMaster, input: { category: string; prefix: string; firstLabel: string; secondLabel: string }, editingId?: string): string | null {
+export type CodeSetInput = { category: string; prefix: string; firstLabel: string; secondLabel: string; brand: string };
+
+export function codeSetProblem(master: CodeMaster, input: CodeSetInput, editingId?: string): string | null {
   if (!tidy(input.category)) return "Choose a category";
   if (tidy(input.category).length > 80) return "A category name is up to 80 characters";
   if (!tidy(input.firstLabel) || !tidy(input.secondLabel)) return "Name both letter positions, for example Method and Variety";
   if (tidy(input.firstLabel).length > 40 || tidy(input.secondLabel).length > 40) return "A position's name is up to 40 characters";
+  if (tidy(input.brand).length > 60) return "A brand is up to 60 characters";
   const prefix = normalizeLetter(input.prefix);
   if (!isCodePrefix(prefix)) return "A prefix is up to 3 letters, A to Z";
   const others = master.sets.filter((set) => set.id !== editingId);
@@ -202,7 +215,7 @@ export function newCodePreview(master: CodeMaster, methodId: string, varietyId: 
     const where = master.sets.find((row) => row.id === taken.setId)?.category ?? "another category";
     return { error: `Code ${code} is already used in ${where}. Give this category's set a prefix, or use a different letter.` };
   }
-  return { code, serial, name: defaultCodeName(method.name, variety.name, serial), subcategory: method.name };
+  return { code, serial, name: defaultCodeName(method.name, variety.name, serial, set.brand, code), subcategory: method.name };
 }
 
 /* ---------- products ---------- */
@@ -278,17 +291,17 @@ export function packLabel(pack: Pick<CodedProduct, "weight" | "ratePricing">): s
 let demoCounter = 0;
 const demoId = (prefix: string) => `${prefix}-${Date.now().toString(36)}-${(demoCounter += 1)}`;
 
-export function demoCreateSet(master: CodeMaster, input: { category: string; prefix: string; firstLabel: string; secondLabel: string }): CodeMaster {
+export function demoCreateSet(master: CodeMaster, input: CodeSetInput): CodeMaster {
   const problem = codeSetProblem(master, input);
   if (problem) throw new Error(problem);
-  const set: CodeSet = { id: demoId("set"), category: tidy(input.category), prefix: normalizeLetter(input.prefix), firstLabel: tidy(input.firstLabel), secondLabel: tidy(input.secondLabel) };
+  const set: CodeSet = { id: demoId("set"), category: tidy(input.category), prefix: normalizeLetter(input.prefix), firstLabel: tidy(input.firstLabel), secondLabel: tidy(input.secondLabel), brand: tidy(input.brand) };
   return { ...master, sets: [...master.sets, set] };
 }
 
-export function demoUpdateSet(master: CodeMaster, id: string, input: { category: string; prefix: string; firstLabel: string; secondLabel: string }): CodeMaster {
+export function demoUpdateSet(master: CodeMaster, id: string, input: CodeSetInput): CodeMaster {
   const problem = codeSetProblem(master, input, id);
   if (problem) throw new Error(problem);
-  return { ...master, sets: master.sets.map((set) => set.id === id ? { ...set, category: tidy(input.category), prefix: normalizeLetter(input.prefix), firstLabel: tidy(input.firstLabel), secondLabel: tidy(input.secondLabel) } : set) };
+  return { ...master, sets: master.sets.map((set) => set.id === id ? { ...set, category: tidy(input.category), prefix: normalizeLetter(input.prefix), firstLabel: tidy(input.firstLabel), secondLabel: tidy(input.secondLabel), brand: tidy(input.brand) } : set) };
 }
 
 const withParts = (master: CodeMaster, kind: CodePartKind, parts: CodePart[]): CodeMaster =>

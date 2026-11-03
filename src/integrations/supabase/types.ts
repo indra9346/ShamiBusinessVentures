@@ -467,9 +467,9 @@ export type Database = {
         Relationships: []
       }
       product_code_sets: {
-        Row: { id: string; category: string; prefix: string; first_label: string; second_label: string; created_at: string; updated_at: string }
-        Insert: { category: string; id?: string; prefix?: string; first_label?: string; second_label?: string; created_at?: string; updated_at?: string }
-        Update: { id?: string; category?: string; prefix?: string; first_label?: string; second_label?: string; created_at?: string; updated_at?: string }
+        Row: { id: string; category: string; prefix: string; first_label: string; second_label: string; brand: string; created_at: string; updated_at: string }
+        Insert: { category: string; id?: string; prefix?: string; first_label?: string; second_label?: string; brand?: string; created_at?: string; updated_at?: string }
+        Update: { id?: string; category?: string; prefix?: string; first_label?: string; second_label?: string; brand?: string; created_at?: string; updated_at?: string }
         Relationships: []
       }
       product_code_methods: {

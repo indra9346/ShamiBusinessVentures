@@ -1,12 +1,12 @@
 # Product codes: decisions
 
-Master list of product names and codes, kept by admin at **Admin → Product Codes**. Client's request, 2 Nov 2026. The rice seed is the client's workbook `tests/fixtures/Rice_Product_Codes.xlsx`, and a test holds the seed to that file.
+Master list of product names and codes, kept by admin at **Admin → Product Codes**. Client's request, 2 Nov 2026; client's answers, 3 Nov. The rice letters and codes are the client's workbook `tests/fixtures/Rice_Product_Codes.xlsx`, and a test holds the seed to that file. Names and pictures come from the client's bag artwork, `Grain bazar V4.pdf`.
 
 `code = [set prefix][method letter][variety letter][serial]`. Example: RS01 = Raw Rice + Sona Rice + 01.
 
 ## What a code is
 
-A code names the rice: its method, its variety and its grade. It does not name a pack, a purchase or a seller.
+A code names the rice: its method and variety, then a running number. It does not name a pack, a purchase or a seller.
 
 | Thing | What identifies it |
 |---|---|
@@ -16,17 +16,13 @@ A code names the rice: its method, its variety and its grade. It does not name a
 
 ## Pack sizes: one code across 25 kg and 50 kg
 
-Here each pack size is its own product, with its own SKU, price and stock. There are no variants in this catalogue. So **RS01 goes on both the 25 kg and the 50 kg product**, and those stay two products with two SKUs. The code is the same because the rice is the same.
+Here each pack size is its own product, with its own SKU, price and stock. There are no variants in this catalogue. So **RS01 goes on both the 25 kg and the 50 kg product**, and those stay two products with two SKUs. The code is the same because the rice is the same. The client confirmed this on 3 Nov.
 
 Two active products with the same code and the same pack size are probably a mistake, so the form warns and asks for a tick before saving. It does not refuse, because two sellers can honestly sell the same rice in the same bag.
 
-*Question for the client: is this right, or should each pack size have a code of its own?*
-
 ## What the serial means
 
-The workbook only says "Serial 01". This build treats a serial as **another grade or quality of the same method and variety**: RS01 and RS02 are both Raw Sona, different grades. It is not a purchase lot: Batches already does that job. The next serial is always the next number, and a retired number is never used again.
-
-*Question for the client: is a serial a grade, or do they use it for something else, such as a mill or a brand?*
+The client confirmed on 3 Nov: **a serial does not mean a grade**. It is a running number within a method and variety: RS01, RS02, SS01, SS02, BS01, BS02, BS03, BM01, BM02. It is not a purchase lot either: Batches does that job. The next serial is always the next number, and a retired number is never used again.
 
 ## Codes never change
 
@@ -46,11 +42,30 @@ Nothing here changes a live product by itself: no name, SKU or image.
 - Adding a product, the code fills the form, and the admin can change anything before saving.
 - Editing a product, the code goes on and nothing else moves. The list's name, subcategory, description or image each need their own tap. Saving only a code changes that one field, through `admin_set_product_code`.
 - Changing a code's name or images in the list doesn't touch products already carrying it.
-- A code can bring a subcategory its category doesn't list yet (Half Boiled, Boiled, Broken). It is added to the category when a new product uses it, or when an admin takes it on an existing product, and shows as a filter on the store.
+- A code can bring a subcategory its category doesn't list yet (Half Boiled, Boiled, Broken). It is added to the category when a new product uses it, or when an admin takes it on an existing product, and shows as a filter on the store. The client wants this (3 Nov).
 
-## Images
+## Names and images
 
-A code can hold up to 8 images. A product holds one image today, so the form uses the first and lets the admin tap another.
+Each rice code starts with a name such as **Grain Bazar RS01 Raw Rice - Sona Rice**: the brand and code as on the bag, then the workbook's Description wording. Its description uses the words on the bag. Admin can change both. New codes start the same way from the set's brand.
+
+Each rice code has a picture: the front of the client's bag with the code in the plaque where the artwork has 111, 333 and so on. They are in `public/product-codes`, made by `scripts/make-code-bag-images.py`. Only the plaque text changes. The artwork's plaque font (Barmeno) is embedded with just the characters it uses, so the code is drawn in Trebuchet MS Bold, the closest font on hand. Print files should come from the designer.
+
+One colour per variety, in the workbook's order, using the six designs the client named:
+
+| Variety | Design |
+|---|---|
+| Sona Rice | 111, navy |
+| Kaveri Rice | 333, purple |
+| RNR | 555, green |
+| HMT | 777, magenta |
+| JSR (Bullet) | RRR, brown |
+| Basmati (Sriram Sona) | SSS, teal |
+
+AAA (orange) and EEE (maroon) are left for new varieties. **The client hasn't confirmed this mapping.**
+
+All the artwork says **Net Quantity 26kg**, so these pictures are right only for 26 kg products. A new code has no picture until admin adds one.
+
+A code can hold up to 8 images. A product holds one image today, so the form uses the first and lets the admin tap another. These pictures ship with the site, so they need no storage upload. The Zoho sync skips images that ship with the site, without an error, so a product using one gets no picture in Zoho.
 
 ## Zoho
 

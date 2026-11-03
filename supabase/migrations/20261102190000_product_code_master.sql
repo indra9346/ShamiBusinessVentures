@@ -3,7 +3,8 @@
 --   code = [set prefix][method letter][variety letter][serial]   e.g. RS01 = Raw Rice + Sona Rice + 01
 --
 -- One set per category (Rice now; Sugar, Oil and others are created by admin when wanted). The seed at
--- the end of this file is the client's workbook Rice_Product_Codes.xlsx, and only that.
+-- the end of this file is the client's workbook Rice_Product_Codes.xlsx for the letters and codes, and the
+-- bag artwork Grain bazar V4.pdf for each code's name and picture (client's answer, 3 Nov 2026).
 --
 -- Codes are printed on bags and spoken in the business, so what the workbook did (change a letter and
 -- every code changes) must not happen here. The database enforces:
@@ -28,6 +29,8 @@ CREATE TABLE IF NOT EXISTS public.product_code_sets (
   prefix text NOT NULL DEFAULT '' CHECK (prefix ~ '^[A-Z]{0,3}$'),
   first_label text NOT NULL DEFAULT 'Method' CHECK (length(first_label) BETWEEN 1 AND 40),
   second_label text NOT NULL DEFAULT 'Variety' CHECK (length(second_label) BETWEEN 1 AND 40),
+  -- The brand on these products and on the front of their names, e.g. Grain Bazar. Blank is fine.
+  brand text NOT NULL DEFAULT '' CHECK (length(brand) <= 60),
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -92,6 +95,7 @@ BEGIN
   NEW.prefix := upper(trim(NEW.prefix));
   NEW.first_label := trim(NEW.first_label);
   NEW.second_label := trim(NEW.second_label);
+  NEW.brand := regexp_replace(trim(NEW.brand), '\s+', ' ', 'g');
   IF TG_OP = 'UPDATE' THEN
     IF NEW.prefix IS DISTINCT FROM OLD.prefix AND EXISTS (SELECT 1 FROM public.product_codes WHERE set_id = OLD.id) THEN
       RAISE EXCEPTION 'This set already has codes, so its prefix can no longer change';
@@ -187,9 +191,11 @@ BEGIN
   IF other_category IS NOT NULL THEN
     RAISE EXCEPTION 'Code % is already used in %. Give this category''s set a prefix, or use a different letter.', NEW.code, other_category;
   END IF;
-  -- The same wording as the workbook's Description column. A later serial must not look like the first.
+  -- The workbook's Description wording, with the brand and code in front as on the bag. Without a brand a
+  -- later serial must still not read like the first.
   NEW.name := COALESCE(NULLIF(regexp_replace(trim(COALESCE(NEW.name, '')), '\s+', ' ', 'g'), ''),
-    method_row.name || ' - ' || variety_row.name || CASE WHEN NEW.serial > 1 THEN ' ' || lpad(NEW.serial::text, 2, '0') ELSE '' END);
+    CASE WHEN set_row.brand <> '' THEN set_row.brand || ' ' || NEW.code || ' ' ELSE '' END || method_row.name || ' - ' || variety_row.name
+      || CASE WHEN NEW.serial > 1 AND set_row.brand = '' THEN ' ' || lpad(NEW.serial::text, 2, '0') ELSE '' END);
   NEW.subcategory := COALESCE(NULLIF(regexp_replace(trim(COALESCE(NEW.subcategory, '')), '\s+', ' ', 'g'), ''), method_row.name);
   NEW.description := trim(COALESCE(NEW.description, ''));
   NEW.images := COALESCE(NEW.images, '{}');
@@ -406,9 +412,11 @@ REVOKE ALL ON FUNCTION public.product_code_before_update() FROM PUBLIC, anon, au
 REVOKE ALL ON FUNCTION public.product_code_no_delete() FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.guard_catalog_product_code() FROM PUBLIC, anon, authenticated;
 
--- The client's workbook: Legend sheet for the letters, Code List sheet for the order. The insert
--- trigger above works out each code (RS01 .. NM01) and its name ("Raw Rice - Sona Rice", the workbook's
--- Description column). No other category is seeded and no product is linked.
+-- The client's workbook: Legend sheet for the letters, Code List sheet for the order. The insert trigger
+-- above works out each code (RS01 .. NM01) and its name ("Grain Bazar RS01 Raw Rice - Sona Rice": the
+-- artwork's brand and code, then the workbook's Description column). The description uses the words on the
+-- bag, and the picture is the bag's front with the code in the plaque (public/product-codes, made by
+-- scripts/make-code-bag-images.py). No other category is seeded and no product is linked.
 DO $$
 DECLARE
   rice uuid;
@@ -418,7 +426,7 @@ BEGIN
   IF EXISTS (SELECT 1 FROM public.product_code_sets WHERE lower(category) = 'rice') THEN
     RETURN;
   END IF;
-  INSERT INTO public.product_code_sets (category) VALUES ('Rice') RETURNING id INTO rice;
+  INSERT INTO public.product_code_sets (category, brand) VALUES ('Rice', 'Grain Bazar') RETURNING id INTO rice;
   INSERT INTO public.product_code_methods (set_id, letter, name, sort_order) VALUES
     (rice, 'R', 'Raw Rice', 1),
     (rice, 'S', 'Steam Rice', 2),
@@ -432,9 +440,13 @@ BEGIN
     (rice, 'H', 'HMT', 4),
     (rice, 'J', 'JSR (Bullet)', 5),
     (rice, 'M', 'Basmati (Sriram Sona)', 6);
-  FOR method_row IN SELECT id FROM public.product_code_methods WHERE set_id = rice ORDER BY sort_order LOOP
-    FOR variety_row IN SELECT id FROM public.product_code_varieties WHERE set_id = rice ORDER BY sort_order LOOP
-      INSERT INTO public.product_codes (set_id, method_id, variety_id) VALUES (rice, method_row.id, variety_row.id);
+  FOR method_row IN SELECT id, letter, name FROM public.product_code_methods WHERE set_id = rice ORDER BY sort_order LOOP
+    FOR variety_row IN SELECT id, letter, name FROM public.product_code_varieties WHERE set_id = rice ORDER BY sort_order LOOP
+      INSERT INTO public.product_codes (set_id, method_id, variety_id, description, images) VALUES (
+        rice, method_row.id, variety_row.id,
+        method_row.name || ' - ' || variety_row.name || '. Traditional taste, natural aromatic, purity for sure. Packed and marketed by Shami Business Ventures Pvt Ltd.',
+        ARRAY['/product-codes/' || method_row.letter || variety_row.letter || '01.webp']
+      );
     END LOOP;
   END LOOP;
 END $$;

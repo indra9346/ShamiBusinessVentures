@@ -29,7 +29,7 @@ import {
 import { codeListErrorText, createCodePart, createProductCode, useCodeMaster } from "@/lib/product-codes";
 
 /** What a chosen code brings from the master list. */
-export type CodeFill = Pick<ActiveCodeOption, "code" | "name" | "description" | "category" | "subcategory" | "images">;
+export type CodeFill = Pick<ActiveCodeOption, "code" | "name" | "description" | "category" | "subcategory" | "brand" | "images">;
 /** The product form's fields a code can fill in. */
 export type CodeFormFields = { name: string; description: string; subcategory: string; image: string };
 type Pack = Pick<Product, "weight" | "ratePricing">;
@@ -37,7 +37,7 @@ type Pack = Pick<Product, "weight" | "ratePricing">;
 const NEW_PART = "__new_part__";
 
 const fillOf = (option: ActiveCodeOption): CodeFill => ({
-  code: option.code, name: option.name, description: option.description, category: option.category, subcategory: option.subcategory, images: option.images,
+  code: option.code, name: option.name, description: option.description, category: option.category, subcategory: option.subcategory, brand: option.brand, images: option.images,
 });
 const clean = (text: string | undefined) => (text ?? "").trim();
 const sameWords = (a: string | undefined, b: string | undefined) => clean(a).toLowerCase() === clean(b).toLowerCase();
@@ -220,7 +220,7 @@ export function ProductCodePicker({
       onDuplicateOk(false);
       setTyped(made.code);
       setConfirmingCode(false);
-      onSelect({ code: made.code, name: made.name, description: made.description, category: set.category, subcategory: made.subcategory, images: made.images });
+      onSelect({ code: made.code, name: made.name, description: made.description, category: set.category, subcategory: made.subcategory, brand: set.brand, images: made.images });
       toast.success(`Code ${made.code} created`);
     } catch (cause) {
       toast.error("Could not create this code", { description: cause instanceof Error ? cause.message : "Please retry." });
@@ -371,7 +371,7 @@ export function ProductCodePicker({
           {preview && "code" in preview && !confirmingCode && (
             <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => setConfirmingCode(true)}>
               <Plus className="mr-1 h-3.5 w-3.5" />
-              {pairActive.length === 0 ? `Create ${preview.code}` : `Add ${preview.code} for another grade`}
+              {pairActive.length === 0 ? `Create ${preview.code}` : `Add the next code, ${preview.code}`}
             </Button>
           )}
           {preview && "code" in preview && confirmingCode && (

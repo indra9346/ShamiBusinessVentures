@@ -20,6 +20,7 @@ import {
   type CodeDetails,
   type CodeMaster,
   type CodePartKind,
+  type CodeSetInput,
   type MasterCode,
 } from "@/lib/product-code-rules";
 
@@ -82,7 +83,7 @@ export async function loadCodeMaster(): Promise<CodeMaster> {
   const part = (row: { id: string; set_id: string; letter: string; name: string; sort_order: number; retired_at: string | null }) =>
     ({ id: row.id, setId: row.set_id, letter: row.letter, name: row.name, sortOrder: row.sort_order, retiredAt: row.retired_at });
   return {
-    sets: (sets.data ?? []).map((row) => ({ id: row.id, category: row.category, prefix: row.prefix, firstLabel: row.first_label, secondLabel: row.second_label })),
+    sets: (sets.data ?? []).map((row) => ({ id: row.id, category: row.category, prefix: row.prefix, firstLabel: row.first_label, secondLabel: row.second_label, brand: row.brand })),
     methods: (methods.data ?? []).map(part),
     varieties: (varieties.data ?? []).map(part),
     codes: (codes.data ?? []).map((row) => ({
@@ -141,21 +142,19 @@ export function useCodeMaster() {
 
 /* ---------- changes (admin) ---------- */
 
-type SetInput = { category: string; prefix: string; firstLabel: string; secondLabel: string };
-
-export async function createCodeSet(input: SetInput): Promise<void> {
+export async function createCodeSet(input: CodeSetInput): Promise<void> {
   if (STATIC_DATA_MODE) { writeDemoMaster(demoCreateSet(readDemoMaster(), input)); return; }
   const problem = codeSetProblem(await loadCodeMaster(), input);
   if (problem) throw new Error(problem);
-  const { error } = await supabase.from("product_code_sets").insert({ category: input.category, prefix: input.prefix.trim().toUpperCase(), first_label: input.firstLabel, second_label: input.secondLabel });
+  const { error } = await supabase.from("product_code_sets").insert({ category: input.category, prefix: input.prefix.trim().toUpperCase(), first_label: input.firstLabel, second_label: input.secondLabel, brand: input.brand });
   if (error) throw failure(error);
 }
 
-export async function updateCodeSet(id: string, input: SetInput): Promise<void> {
+export async function updateCodeSet(id: string, input: CodeSetInput): Promise<void> {
   if (STATIC_DATA_MODE) { writeDemoMaster(demoUpdateSet(readDemoMaster(), id, input)); return; }
   const problem = codeSetProblem(await loadCodeMaster(), input, id);
   if (problem) throw new Error(problem);
-  const { error } = await supabase.from("product_code_sets").update({ category: input.category, prefix: input.prefix.trim().toUpperCase(), first_label: input.firstLabel, second_label: input.secondLabel }).eq("id", id);
+  const { error } = await supabase.from("product_code_sets").update({ category: input.category, prefix: input.prefix.trim().toUpperCase(), first_label: input.firstLabel, second_label: input.secondLabel, brand: input.brand }).eq("id", id);
   if (error) throw failure(error);
 }
 

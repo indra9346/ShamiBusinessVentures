@@ -40,6 +40,7 @@ import {
   type CodePart,
   type CodePartKind,
   type CodeSet,
+  type CodeSetInput,
   type MasterCode,
 } from "@/lib/product-code-rules";
 import { Button } from "@/components/ui/button";
@@ -304,7 +305,7 @@ function AdminProductCodes() {
                   <Label htmlFor="move-code-set" className="text-xs">Move this set to</Label>
                   <Select
                     onValueChange={(category) => {
-                      void act(`Code set moved to ${category}`, () => updateCodeSet(set.id, { category, prefix: set.prefix, firstLabel: set.firstLabel, secondLabel: set.secondLabel }))
+                      void act(`Code set moved to ${category}`, () => updateCodeSet(set.id, { category, prefix: set.prefix, firstLabel: set.firstLabel, secondLabel: set.secondLabel, brand: set.brand }))
                         .then((ok) => { if (ok) chooseCategory(category); });
                     }}
                   >
@@ -556,7 +557,7 @@ function AdminProductCodes() {
 
 /* ---------- a category's code set ---------- */
 
-type SetInput = { category: string; prefix: string; firstLabel: string; secondLabel: string };
+type SetInput = CodeSetInput;
 
 function SetFields({ value, onChange, prefixLocked }: { value: SetInput; onChange: (next: SetInput) => void; prefixLocked: boolean }) {
   return (
@@ -570,6 +571,11 @@ function SetFields({ value, onChange, prefixLocked }: { value: SetInput; onChang
           <Label htmlFor="set-second-label">Second letter is the</Label>
           <Input id="set-second-label" className="h-10" maxLength={40} value={value.secondLabel} onChange={(e) => onChange({ ...value, secondLabel: e.target.value })} />
         </div>
+      </div>
+      <div>
+        <Label htmlFor="set-brand">Brand (optional)</Label>
+        <Input id="set-brand" className="h-10 sm:w-64" maxLength={60} value={value.brand} onChange={(e) => onChange({ ...value, brand: e.target.value })} />
+        <p className="mt-1 text-xs text-slate">Fills in on new products, and starts the name of each new code, such as Grain Bazar RS02. Codes already made keep their names.</p>
       </div>
       <div>
         <Label htmlFor="set-prefix">Code prefix (optional, up to 3 letters)</Label>
@@ -592,7 +598,7 @@ function SetFields({ value, onChange, prefixLocked }: { value: SetInput; onChang
 }
 
 function StartSetPanel({ master, category, onStart }: { master: CodeMaster; category: string; onStart: (input: SetInput) => Promise<boolean> }) {
-  const [input, setInput] = useState<SetInput>({ category, prefix: "", firstLabel: "Method", secondLabel: "Variety" });
+  const [input, setInput] = useState<SetInput>({ category, prefix: "", firstLabel: "Method", secondLabel: "Variety", brand: "" });
   const [saving, setSaving] = useState(false);
   const problem = codeSetProblem(master, input);
   return (
@@ -614,7 +620,7 @@ function StartSetPanel({ master, category, onStart }: { master: CodeMaster; cate
 }
 
 function EditSetDialog({ master, set, onClose, onSave }: { master: CodeMaster; set: CodeSet; onClose: () => void; onSave: (input: SetInput) => Promise<boolean> }) {
-  const [input, setInput] = useState<SetInput>({ category: set.category, prefix: set.prefix, firstLabel: set.firstLabel, secondLabel: set.secondLabel });
+  const [input, setInput] = useState<SetInput>({ category: set.category, prefix: set.prefix, firstLabel: set.firstLabel, secondLabel: set.secondLabel, brand: set.brand });
   const [saving, setSaving] = useState(false);
   const problem = codeSetProblem(master, input, set.id);
   return (
@@ -830,7 +836,7 @@ function CodeMatrix({ master, set, onEdit, onAdd }: { master: CodeMaster; set: C
         <p className="py-6 text-center text-sm text-slate">Add at least one {set.firstLabel.toLowerCase()} and one {set.secondLabel.toLowerCase()}, then codes can be made here.</p>
       ) : (
         <>
-          <p className="mb-3 text-xs text-slate">Tap a code to edit it. Tap + to make the next serial (02, 03) for another grade.</p>
+          <p className="mb-3 text-xs text-slate">Tap a code to edit it. Tap + to make the next code in that box (02, 03).</p>
           <div className="overflow-x-auto">
             <table className="w-full border-collapse text-sm" style={{ minWidth: 150 + methods.length * 110 }}>
               <thead>

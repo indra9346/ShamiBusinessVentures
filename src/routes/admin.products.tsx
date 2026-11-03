@@ -328,6 +328,8 @@ function AdminProductsPanel() {
     const category = categoryChoices.find((c) => c.name.trim().toLowerCase() === fill.category.trim().toLowerCase())?.name ?? fill.category;
     setFormCode(fill.code);
     if (category !== form.category) chooseCategory(category, fill.subcategory, true);
+    // The brand the code's set carries, for a product that has none yet.
+    if (fill.brand) setTrade((current) => (current.brand.trim() ? current : { ...current, brand: fill.brand }));
     const previous = lastCodeFill.current;
     const image = fill.images[0] ?? "";
     setForm((current) => ({
