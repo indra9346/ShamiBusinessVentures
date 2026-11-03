@@ -139,6 +139,10 @@ re-authorizes Zoho).
   draft sales order Open when it is emailed (observed live), so enabling this confirms new website
   orders in Zoho on arrival. Test sends use an in-page confirmation (no browser pop-up).
 - Structured JSON logs (`source: "zoho-sync"`), no tokens or customer details.
+- Zoho access token: each server process keeps one in memory until 30 minutes before it expires
+  (`src/lib/zoho-token-cache.ts`), because Zoho allows 10 new tokens per refresh token in 10 minutes
+  and then answers "Access Denied". A Reauthorize takes effect on the next call. A restart asks for
+  a new one. The log lines `zoho_token_new` and `zoho_token_limit` show how often that happens.
 - Tests: `npm run test:zoho` (16 tests, incl. Zoho's documented signature examples).
 
 ## 6. Backup, migration, parity, rollback (no cutover without owner approval)
