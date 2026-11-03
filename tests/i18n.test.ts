@@ -4,7 +4,6 @@ import { loadKannada, translateText } from "../src/lib/i18n-core.ts";
 import { kn } from "../src/lib/i18n-kn.ts";
 import { productDescription } from "../src/lib/seo.ts";
 import { DEFAULT_RULES, MARK_WORDS, REGISTER_LEGEND, leaveProblem, ruleLines, rulesProblem } from "../src/lib/attendance.ts";
-import { HEAD_OFFICE_ADDRESS } from "../src/lib/site-details-rules.ts";
 
 await loadKannada();
 
@@ -119,12 +118,4 @@ test("a product description made from its facts reads in Kannada", () => {
   assert.doesNotMatch(withPack, /pack size|Sold by/);
   const noPack = translateText(productDescription({ name: "Belgaum Sugar - 50 kg Bag", weight: "50 kg bag" }), "kn");
   assert.doesNotMatch(noPack, /pack size|Sold by/);
-});
-
-test("the company details read in Kannada", () => {
-  assert.ok(kn[HEAD_OFFICE_ADDRESS], "the head office address has its Kannada");
-  assert.equal(translateText(HEAD_OFFICE_ADDRESS, "kn"), kn[HEAD_OFFICE_ADDRESS]);
-  assert.equal(translateText("Chat on WhatsApp (+91 95385 00840)", "kn"), kn["Chat on WhatsApp ({0})"]!.replace("{0}", "+91 95385 00840"));
-  assert.equal(translateText("Please try again, or call us on +91 83100 84308.", "kn"), kn["Please try again, or call us on {0}."]!.replace("{0}", "+91 83100 84308"));
-  assert.ok(kn["Email Desk ("]);
 });

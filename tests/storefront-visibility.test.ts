@@ -2,6 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { hiddenReason, shownOnStorefront, storefrontPatch } from "../src/lib/storefront-visibility.ts";
 import { readFileSync } from "node:fs";
+import { loadKannada, translateText } from "../src/lib/i18n-core.ts";
+import { kn } from "../src/lib/i18n-kn.ts";
 import {
   DEFAULT_SITE_DETAILS,
   HEAD_OFFICE_ADDRESS,
@@ -117,4 +119,13 @@ test("the dead email domains and the old office are gone from what customers see
   for (const file of ["src/components/site/SiteFooter.tsx", "src/routes/about.tsx"]) {
     assert.ok(!readFileSync(file, "utf8").includes("29ABCDE1234F1Z5"), `the sample GSTIN is still in ${file}`);
   }
+});
+
+test("the company details read in Kannada", async () => {
+  await loadKannada();
+  assert.ok(kn[HEAD_OFFICE_ADDRESS], "the head office address has its Kannada");
+  assert.equal(translateText(HEAD_OFFICE_ADDRESS, "kn"), kn[HEAD_OFFICE_ADDRESS]);
+  assert.equal(translateText("Chat on WhatsApp (+91 95385 00840)", "kn"), kn["Chat on WhatsApp ({0})"]!.replace("{0}", "+91 95385 00840"));
+  assert.equal(translateText("Please try again, or call us on +91 83100 84308.", "kn"), kn["Please try again, or call us on {0}."]!.replace("{0}", "+91 83100 84308"));
+  assert.ok(kn["Email Desk ("]);
 });
