@@ -130,7 +130,10 @@ re-authorizes Zoho).
   the invoice: it is sent with the saved address and the queue entry goes to review. While a
   delivery's sent invoice shows another place than its sales order and still equals the contact's,
   each push reports it, until a person corrects it or the goods have gone.
-  The write itself has not been tried on real Zoho yet.
+  Live test, 3 Nov 2026, second test order: both writes worked on a draft made by
+  `invoices/fromsalesorder`, the address held after it was marked sent, the landmark was cleared, and
+  tax, total and the contact's addresses were unchanged. The contact's last-modified time moved at
+  the moment of the writes.
 - Optional official notification: Books "Email a sales order" for each new website order to
   configured staff addresses; off by default; failures logged, never block the sync. Zoho marks a
   draft sales order Open when it is emailed (observed live), so enabling this confirms new website
