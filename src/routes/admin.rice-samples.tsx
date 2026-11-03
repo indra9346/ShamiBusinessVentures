@@ -471,7 +471,7 @@ function PoPanel({ sample, po, zoho, onChanged, onCancel }: { sample: RiceSample
         {po.zoho_tax_total !== null ? ` · GST in Zoho ${inrPrecise(po.zoho_tax_total)}` : ""}
         {po.zoho_total !== null ? ` · total in Zoho ${inrPrecise(po.zoho_total)}` : ""}
       </p>
-      <p className="mt-1 text-slate">Raised by {po.raised_by_name || "an admin"}{po.raised_at ? `, ${when(po.raised_at)}` : ""}.{po.zoho_gone ? "" : " Carry on in Zoho; this sample is locked here."}{po.zoho_checked_at ? ` Status checked ${when(po.zoho_checked_at)}.` : ""}</p>
+      <p className="mt-1 text-slate">Raised by {po.raised_by_name || "an admin"}{po.raised_at ? `, ${when(po.raised_at)}` : ""}.{po.zoho_gone || poDeathReason(po.zoho_po_status) ? "" : " Carry on in Zoho; this sample is locked here."}{po.zoho_checked_at ? ` Status checked ${when(po.zoho_checked_at)}.` : ""}</p>
       {po.zoho_gone && <p className="mt-1 font-semibold text-danger">Zoho no longer has this purchase order. This updates by itself once Zoho has been checked.</p>}
       {po.differences.map((difference) => <p key={difference} className="mt-1 font-semibold text-danger">{difference} Check it in Zoho.</p>)}
       {po.duplicates.length > 0 && <p className="mt-1 font-semibold text-danger">Zoho also has {po.duplicates.map((other) => other.number || other.id).join(", ")} with this sample's reference. Open Zoho and delete the extra one.</p>}
@@ -516,7 +516,7 @@ function CancelPoDialog({ sample, po, onClose, onDone }: { sample: RiceSample; p
       const { cancelRiceSamplePurchaseOrder } = await import("@/lib/rice-samples.functions");
       const result = await cancelRiceSamplePurchaseOrder({ data: { sampleId: sample.id, poId: po.zoho_po_id, reason: reason.trim(), confirmed: true } });
       if (result.kind === "cancelled") {
-        toast.success(`${result.number} cancelled in Zoho`, { description: "The sample is back in play." });
+        toast.success(`${result.number} cancelled in Zoho`, { description: result.settling ? "This card updates by itself within a minute." : "The sample is back in play." });
         onClose();
       } else {
         setMessage(result.message);

@@ -81,7 +81,7 @@ function fakeZoho(options: { create?: "ok" | "reject" | "no_scope" | "timeout_cr
     const order = {
       purchaseorder_id: `PO${orders.length + 1}`, purchaseorder_number: `PO-03112601${48 + orders.length}`, reference_number: body["reference_number"], status: "draft", vendor_id: body["vendor_id"], location_id: body["location_id"],
       source_of_supply: body["source_of_supply"], destination_of_supply: body["destination_of_supply"],
-      line_items: [{ item_id: line["item_id"], rate, quantity, unit: "qtl", item_total: rate * quantity, tax_id: line["tax_id"] }], sub_total: rate * quantity, tax_total: rate * quantity * 0.05, total: rate * quantity * 1.05,
+      line_items: [{ item_id: line["item_id"], rate, quantity, unit: "qtl", item_total: rate * quantity, tax_id: line["tax_id"], name: line["name"] }], sub_total: rate * quantity, tax_total: rate * quantity * 0.05, total: rate * quantity * 1.05,
     };
     orders.push(order);
     return order;
@@ -502,7 +502,7 @@ test("a full page with no page details is not the end of the list", async () => 
 });
 
 test("Zoho's copy is compared with what was confirmed", () => {
-  const same = { vendor_id: "V1", location_id: "L1", sub_total: 420000, tax_total: 0, source_of_supply: "KA", destination_of_supply: "KA", line_items: [{ item_id: "I1", rate: 4200, quantity: 100, tax_id: "T-GST5" }] };
+  const same = { vendor_id: "V1", location_id: "L1", sub_total: 420000, tax_total: 0, source_of_supply: "KA", destination_of_supply: "KA", line_items: [{ item_id: "I1", name: "Rice bulk", rate: 4200, quantity: 100, tax_id: "T-GST5" }] };
   assert.deepEqual(poDifferences(plan(), same), []);
   const moved = poDifferences(plan(), { ...same, location_id: "HO", location_name: "Head Office", vendor_id: "V9", vendor_name: "Other", sub_total: 1, line_items: [{ item_id: "I9", name: "Sugar", rate: 5, quantity: 9 }, {}] });
   assert.equal(moved.length, 8, moved.join("\n"));
@@ -911,7 +911,7 @@ test("tax: a purchase order with no tax worked out is never sent", async () => {
 });
 
 test("tax: says so when Zoho's reply differs from what was shown", () => {
-  const reply = (patch: Record<string, unknown> = {}, line: Record<string, unknown> = {}) => ({ tax_total: 21000, sub_total: 420000, source_of_supply: "KA", destination_of_supply: "KA", line_items: [{ tax_id: "T-GST5", tax_name: "GST5", ...line }], ...patch });
+  const reply = (patch: Record<string, unknown> = {}, line: Record<string, unknown> = {}) => ({ tax_total: 21000, sub_total: 420000, source_of_supply: "KA", destination_of_supply: "KA", line_items: [{ name: "Rice bulk", tax_id: "T-GST5", tax_name: "GST5", ...line }], ...patch });
   const shown = plan({ gstPercent: 5 });
   assert.deepEqual(poDifferences(shown, reply()), []);
   // What happened on the first live purchase order.
@@ -995,7 +995,7 @@ test("tax: a new draft is compared with what Zoho saved, not only with its reply
 });
 
 test("tax: a purchase order raised before this has no tax on record, and none of this applies to it", () => {
-  assert.deepEqual(poDifferences(plan({ taxId: undefined, taxName: undefined, sourceOfSupply: undefined, destinationOfSupply: undefined }), { sub_total: 420000, source_of_supply: "MH", line_items: [{ tax_id: "T" }] }), []);
+  assert.deepEqual(poDifferences(plan({ taxId: undefined, taxName: undefined, sourceOfSupply: undefined, destinationOfSupply: undefined }), { sub_total: 420000, source_of_supply: "MH", line_items: [{ name: "Rice bulk", tax_id: "T" }] }), []);
 });
 
 // ---------------------------------------------------------------- After raising: staying in step with Zoho
@@ -1156,12 +1156,84 @@ test("same company, or a purchase order from before this was recorded: carries o
   }
 });
 
+test("the item's name goes on the line, and it is flagged if Zoho's line doesn't show it", () => {
+  assert.equal((purchaseOrderBody(plan())["line_items"] as Record<string, unknown>[])[0]!["name"], "Rice bulk");
+  const copy = (line: Record<string, unknown>) => ({ sub_total: 420000, tax_total: 0, source_of_supply: "KA", destination_of_supply: "KA", line_items: [{ tax_id: "T-GST5", ...line }] });
+  assert.deepEqual(poDifferences(plan(), copy({ name: "Rice bulk" })), []);
+  assert.match(poDifferences(plan(), copy({ name: "" }))[0]!, /doesn't show the item's name, Rice bulk/);
+});
+
 test("the read says cancelled but the list still shows it alive: stays locked", async () => {
   const { store, dead } = lifeStore();
   const zoho = liveZoho({ P1: { status: "open", reference_number: REF } });
   const odd: ZohoSend = async (resource, method, body, query) => (resource === "purchaseorders/P1" ? { status: 200, body: { code: 0, purchaseorder: { purchaseorder_id: "P1", status: "cancelled" } } } : zoho.send(resource, method, body, query));
   assert.equal((await settleRaisedPo({ store, zoho: odd }, raised(), null)).kind, "unknown");
   assert.equal(dead.length, 0);
+});
+
+/** As seen live right after a cancel: Zoho's read says cancelled while its list still says draft. */
+const listBehindZoho = (listed: string, read: string | null = "cancelled") => {
+  const calls: string[] = [];
+  const row = { purchaseorder_id: "P1", purchaseorder_number: "CLK-PO-1", reference_number: REF, status: listed, order_status: listed };
+  const send: ZohoSend = async (resource, method) => {
+    calls.push(`${method} ${resource}`);
+    if (method === "POST") return { status: 200, body: { code: 0, message: "The purchase order has been marked as cancelled." } };
+    if (resource === "purchaseorders") return { status: 200, body: { code: 0, purchaseorders: [row], page_context: { has_more_page: false } } };
+    return read ? { status: 200, body: { code: 0, purchaseorder: { ...row, status: read, order_status: read } } } : { status: 404, body: { code: 1002, message: "Purchase Order does not exist." } };
+  };
+  return { send, calls };
+};
+
+test("Zoho's list catching up: stays locked, in calm words, and the card shows the status it read", async () => {
+  const { store, dead, refreshed } = lifeStore();
+  const result = await settleRaisedPo({ store, zoho: listBehindZoho("draft").send }, raised(), null);
+  assert.equal(result.kind, "unknown");
+  if (result.kind === "unknown") {
+    assert.equal(result.listBehind, "cancelled");
+    assert.match(result.message, /as cancelled, but its list hasn't caught up yet/);
+    assert.doesNotMatch(result.message, /disagree/);
+  }
+  assert.equal(dead.length, 0);
+  assert.deepEqual([refreshed[0]!.poId, refreshed[0]!.status, refreshed[0]!.gone], ["P1", "cancelled", false]);
+});
+
+test("Zoho's list catching up after a delete: stays locked, and says deleted", async () => {
+  const { store, dead, refreshed } = lifeStore();
+  const result = await settleRaisedPo({ store, zoho: listBehindZoho("draft", null).send }, raised(), null);
+  assert.equal(result.kind === "unknown" && result.listBehind, "deleted");
+  assert.equal(dead.length, 0);
+  assert.deepEqual([refreshed[0]!.status, refreshed[0]!.gone], [null, true]);
+});
+
+test("cancel: Zoho takes it while its list is catching up: reported as cancelled, and the sample comes back at the next check", async () => {
+  const { store, dead } = lifeStore();
+  const zoho = listBehindZoho("draft");
+  assert.deepEqual(await cancelRicePo({ store, zoho: zoho.send }, raised(), ACTOR, "wrong vendor"), { kind: "cancelled", number: "CLK-PO-1", settling: true });
+  assert.equal(dead.length, 0);
+  // Once the list has caught up, the next check frees it.
+  const later = lifeStore();
+  assert.equal((await settleRaisedPo({ store: later.store, zoho: listBehindZoho("cancelled").send }, raised({ zoho_po_status: "cancelled" }), null)).kind, "freed");
+  assert.equal(later.dead.length, 1);
+});
+
+test("cancel: Zoho's read says deleted while its list catches up: not reported as cancelled", async () => {
+  const { store } = lifeStore();
+  const result = await cancelRicePo({ store, zoho: listBehindZoho("draft", null).send }, raised(), ACTOR, "x");
+  assert.equal(result.kind, "unclear");
+});
+
+test("the regular check: a list catching up doesn't make every page wait five minutes", async () => {
+  const { store } = lifeStore();
+  // The list has moved on to cancelled, so the check reads it, and the search by reference is the one still behind.
+  const row = { purchaseorder_id: "P1", purchaseorder_number: "CLK-PO-1", reference_number: REF, status: "cancelled" };
+  const zoho: ZohoSend = async (resource, _method, _body, query = {}) => {
+    if (resource === "purchaseorders/P1") return { status: 200, body: { code: 0, purchaseorder: row } };
+    if (query["reference_number"]) return { status: 200, body: { code: 0, purchaseorders: [{ ...row, status: "draft" }], page_context: { has_more_page: false } } };
+    return { status: 200, body: { code: 0, purchaseorders: [row], page_context: { has_more_page: false } } };
+  };
+  const result = await syncRaisedPos({ store, zoho }, [raised()]);
+  assert.equal(result.unknown, 0);
+  assert.equal(result.freed.length, 0);
 });
 
 test("rejected shown only in order_status, in the read and the list alike: freed", async () => {
