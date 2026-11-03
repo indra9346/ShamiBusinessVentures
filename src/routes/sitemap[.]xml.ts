@@ -14,6 +14,7 @@ const STATIC_PAGES: SitemapEntry[] = [
   { path: "/categories", changefreq: "weekly", priority: 0.8 },
   { path: "/about", changefreq: "monthly", priority: 0.5 },
   { path: "/contact", changefreq: "monthly", priority: 0.5 },
+  { path: "/privacy", changefreq: "monthly", priority: 0.3 },
 ];
 
 const categorySlug = (name: string) => (name.toLowerCase() === "cooking oil" ? "oil" : name.toLowerCase().replace(/[^a-z0-9]+/g, "-"));

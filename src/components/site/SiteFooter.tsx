@@ -56,6 +56,7 @@ export function SiteFooter() {
               {[
                 ["About Us", "/about"],
                 ["Contact", "/contact"],
+                ["Privacy Policy", "/privacy"],
               ].map(([label, to]) => (
                 <li key={to}>
                   <Link to={to!} className="transition-colors hover:text-gold">

@@ -4,6 +4,7 @@ import { loadKannada, translateText } from "../src/lib/i18n-core.ts";
 import { kn } from "../src/lib/i18n-kn.ts";
 import { productDescription } from "../src/lib/seo.ts";
 import { DEFAULT_RULES, MARK_WORDS, REGISTER_LEGEND, leaveProblem, ruleLines, rulesProblem } from "../src/lib/attendance.ts";
+import { privacyPolicySections, privacyPolicyText } from "../src/lib/privacy-policy.ts";
 
 await loadKannada();
 
@@ -118,4 +119,18 @@ test("a product description made from its facts reads in Kannada", () => {
   assert.doesNotMatch(withPack, /pack size|Sold by/);
   const noPack = translateText(productDescription({ name: "Belgaum Sugar - 50 kg Bag", weight: "50 kg bag" }), "kn");
   assert.doesNotMatch(noPack, /pack size|Sold by/);
+});
+
+test("every sentence of the privacy policy reads in Kannada", () => {
+  for (const text of privacyPolicyText()) {
+    assert.ok(kn[text], `no Kannada for "${text}"`);
+    assert.equal(translateText(text, "kn"), kn[text]);
+  }
+});
+
+test("the privacy policy mentions Google Analytics only when the tag can run", () => {
+  const wording = (analyticsOn: boolean) => JSON.stringify(privacyPolicySections(analyticsOn));
+  assert.doesNotMatch(wording(false), /analytics|_ga\b|opt-out/i);
+  assert.match(wording(true), /Google Analytics/);
+  assert.match(wording(true), /cookies/);
 });
