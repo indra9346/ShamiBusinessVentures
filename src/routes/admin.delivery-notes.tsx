@@ -59,21 +59,20 @@ function AdminDeliveryNotes() {
         {rows && (
           <DataTable
             tableId="admin-delivery-notes"
-            columns={["Note", "Order", "Customer", "Godown", "Items", "Generated", "By", "Prints", "State"]}
+            columns={["Note", "State", "Order", "Customer", "Godown", "Items", "Generated", "Prints"]}
             empty={STATIC_DATA_MODE ? "Delivery notes need the live database, so they are not available in this demo." : "No delivery notes yet"}
-            minWidth={980}
+            minWidth={900}
             rows={rows.map((row) => {
               const warned = paperWarnings(row.state).length > 0;
               return [
-                <span key="note" className="font-mono font-semibold text-navy">{row.note_no}</span>,
+                <span key="note" className="whitespace-nowrap font-mono font-semibold text-navy">{row.note_no}</span>,
+                <span key="state" className={warned ? "font-bold text-danger" : "font-semibold text-emerald-800"}>{warned ? gateWords(row.state).title : "In order"}</span>,
                 <Link key="order" to="/admin/orders/$id" params={{ id: row.order_no }} className="font-semibold text-gold hover:underline">{row.order_no}</Link>,
                 row.customer,
                 row.godown,
                 String(row.items),
-                istDateTime(row.generated_at),
-                row.generated_by,
+                `${istDateTime(row.generated_at)} by ${row.generated_by}`,
                 row.prints > 0 ? `${row.prints} · last ${istDateTime(row.last_printed_at ?? "")}` : "Not printed",
-                <span key="state" className={warned ? "font-bold text-danger" : "font-semibold text-emerald-800"}>{warned ? gateWords(row.state).title : "In order"}</span>,
               ];
             })}
           />

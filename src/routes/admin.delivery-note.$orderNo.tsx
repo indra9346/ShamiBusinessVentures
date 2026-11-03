@@ -27,9 +27,9 @@ type Paper = { printedAt: string | null; noteCopy: number | null; slipCopies: Re
 /*
  * On screen the sheets are as wide as the phone or window allows. On paper each is one A4 page (a long
  * note runs on, repeating its table header) and only what was chosen prints, each on its own page.
- * The sheets print only straight after a press of Print, which has just re-checked the payment and
- * recorded the copy. The browser's own print menu gets a line saying to use the button, so no paper can
- * carry a stale check, a wrong copy number or no record.
+ * The sheets print only for a few minutes after a press of Print, which has just re-checked the payment
+ * and recorded the copy. Otherwise the browser's own print menu gets a line saying to use the button, so
+ * a tab left open can't print a stale check or a copy nobody recorded.
  */
 const PRINT_CSS = `
 @page { size: A4 portrait; margin: 10mm; }
@@ -42,14 +42,18 @@ const PRINT_CSS = `
   .dn-sheet[data-print="yes"] ~ .dn-sheet[data-print="yes"] { break-before: page; page-break-before: always; }
   .dn-sheet tr, .dn-keep { break-inside: avoid; page-break-inside: avoid; }
   .dn-sheet thead { display: table-header-group; }
+  .dn-sheet tfoot { display: table-row-group; }
   .dn-root[data-armed="no"] .dn-docs { display: none !important; }
   .dn-root[data-armed="no"] .dn-use-button { display: block !important; }
   * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }
 `;
 
-/** How long after a press the paper may still print (the print screen can be slow on a phone). */
-const ARMED_MS = 120_000;
+/**
+ * How long after a press the paper may still print. A phone's print screen asks for the page after
+ * print() returns, and again if the paper size is changed, so this can't be one print only.
+ */
+const ARMED_MS = 300_000;
 
 function DeliveryNotePrintPage() {
   const { orderNo } = Route.useParams();
@@ -58,8 +62,6 @@ function DeliveryNotePrintPage() {
   const [busy, setBusy] = useState(false);
   const [paper, setPaper] = useState<Paper>({ printedAt: null, noteCopy: null, slipCopies: {}, selection: { note: true, slips: [] } });
   const [armed, setArmed] = useState(false);
-  // One press allows one print; the browser's print event uses it up.
-  const printsAllowed = useRef(0);
   const disarmTimer = useRef<number | undefined>(undefined);
 
   const load = useCallback(async () => {
@@ -76,18 +78,7 @@ function DeliveryNotePrintPage() {
 
   useEffect(() => { void load(); }, [load]);
 
-  // A second print with no new press (the browser's menu) gets the "use the button" line, not a copy nobody recorded.
-  useEffect(() => {
-    const onBeforePrint = () => {
-      if (printsAllowed.current > 0) { printsAllowed.current -= 1; return; }
-      flushSync(() => setArmed(false));
-    };
-    window.addEventListener("beforeprint", onBeforePrint);
-    return () => {
-      window.removeEventListener("beforeprint", onBeforePrint);
-      window.clearTimeout(disarmTimer.current);
-    };
-  }, []);
+  useEffect(() => () => window.clearTimeout(disarmTimer.current), []);
 
   const press = async (selection: Selection) => {
     setBusy(true);
@@ -98,10 +89,9 @@ function DeliveryNotePrintPage() {
         setPaper({ selection, printedAt: record.printedAt, noteCopy: record.noteCopy, slipCopies: record.slipCopies });
         setArmed(true);
       });
-      printsAllowed.current = 1;
       window.clearTimeout(disarmTimer.current);
-      disarmTimer.current = window.setTimeout(() => { printsAllowed.current = 0; setArmed(false); }, ARMED_MS);
       window.print();
+      disarmTimer.current = window.setTimeout(() => setArmed(false), ARMED_MS);
     } catch (cause) {
       toast.error("Not printed", { description: cause instanceof Error ? cause.message : "The print could not be recorded" });
     } finally {

@@ -37,8 +37,8 @@ Only `paid` allows a note. It needs all of these:
 - `paid_amount` equals the sum of its `Paid` payments, and `payment_status` agrees.
 - Paid amount is at least the order total.
 - No office stop on the order, and no refund started or made on a return of it.
-- No payment's UTR is also on another order, however it was typed.
-- No bank alert for one of its UTRs shows less than was recorded.
+- No payment's bank UTR is also on another order, however it was typed. Short manual references (under 12 characters) aren't compared, because exact repeats are refused when entered and look-alikes aren't the same money.
+- No bank alert for one of its UTRs shows less than was recorded, unless the office has settled that alert with a note.
 - Exactly one live Zoho invoice, not a draft, read just now, and not already on another note.
 - Zoho status `paid` with balance 0, and `payment_made` covering the invoice total less ₹1. A credit note or a big write-off also makes Books say "paid", so status alone isn't money. A missing amount never reads as zero.
 - Invoice total within ₹1 of the order total (Zoho rounds CGST and SGST separately).
@@ -86,7 +86,7 @@ Only `paid` allows a note. It needs all of these:
 - Content is a snapshot fixed at generation. If lines or the invoice change later, the print says so.
 - One slip per item line, each on its own page: "Slip x of y".
 - **Printed time** is the moment of the press, from the database clock, in IST with seconds. **Generated time** stays on the paper too.
-- Paper prints only straight after a press of Print, which re-checks the payment and records the copy first. If the record fails, nothing prints. The browser's own print menu gets a line saying to use the button, so no paper can carry a stale check, a wrong copy number or no record.
+- Paper prints only for 5 minutes after a press of Print, which re-checks the payment and records the copy first. If the record fails, nothing prints. Otherwise the browser's own print menu gets a line saying to use the button, so a tab left open can't print a stale check or an unrecorded copy. It can't be one print per press, because phones ask for the page more than once. So within those 5 minutes the browser's menu can repeat the same paper, with the same time and copy number, unrecorded.
 - Copy 1 is the original. Each later copy of the note, and of each slip, is marked `Reprint, copy n`. A press counts as a copy even if the print screen is then cancelled.
 - Who and when is in `delivery_note_events`.
 

@@ -214,16 +214,18 @@ BEGIN
   paid := COALESCE(o.paid_amount, 0);
   SELECT COALESCE(sum(p.amount), 0) INTO receipts FROM public.payments p WHERE p.order_id = o.id AND p.status = 'Paid';
   SELECT * INTO stop FROM public.delivery_stops s WHERE s.order_id = o.id ORDER BY s.id DESC LIMIT 1;
-  -- A bank alert saying less came in for a transfer recorded as more. Confirming a payment does not compare them.
+  -- A bank alert saying less came in for a transfer recorded as more. Confirming a payment does not compare
+  -- them. An alert the office has settled, with a note of what was done, is dealt with.
   SELECT COALESCE(sum(p.amount - c.amount), 0) INTO bank_short
     FROM public.payments p JOIN public.bank_credits c ON private.same_utr(c.utr, p.txn_ref)
-    WHERE p.order_id = o.id AND p.status = 'Paid' AND c.amount < p.amount;
-  -- One bank transfer can pay one order, however its UTR was typed.
+    WHERE p.order_id = o.id AND p.status = 'Paid' AND c.amount < p.amount AND c.status <> 'settled';
+  -- One bank transfer can pay one order, however its UTR was typed. Only references long enough to be a bank
+  -- UTR count: same_utr reads O as 0 and I as 1, which would make "RCPT1" and "RCPTI" the same money.
   SELECT other_o.order_no INTO other_order
     FROM public.payments p
     JOIN public.payments q ON q.order_id <> p.order_id AND q.status = 'Paid' AND private.same_utr(q.txn_ref, p.txn_ref)
     JOIN public.orders other_o ON other_o.id = q.order_id
-    WHERE p.order_id = o.id AND p.status = 'Paid'
+    WHERE p.order_id = o.id AND p.status = 'Paid' AND length(private.utr_form(p.txn_ref)) >= 12
     LIMIT 1;
 
   -- What the website's own records say. orders and payments must agree with each other first.
@@ -601,8 +603,11 @@ BEGIN
   -- Packed to Dispatched and so on are normal and don't touch the note.
   IF NOT ended AND NOT money THEN RETURN NEW; END IF;
   PERFORM private.delivery_note_flag(NEW.id, 'order_changed',
-    format('Order %s to %s; payment %s to %s; paid %s to %s; total %s to %s',
-      OLD.order_status, NEW.order_status, OLD.payment_status, NEW.payment_status, OLD.paid_amount, NEW.paid_amount, OLD.total, NEW.total),
+    concat_ws('; ',
+      CASE WHEN NEW.order_status IS DISTINCT FROM OLD.order_status THEN format('Order %s to %s', OLD.order_status, NEW.order_status) END,
+      CASE WHEN NEW.payment_status IS DISTINCT FROM OLD.payment_status THEN format('payment %s to %s', OLD.payment_status, NEW.payment_status) END,
+      CASE WHEN NEW.paid_amount IS DISTINCT FROM OLD.paid_amount THEN format('paid Rs %s to Rs %s', OLD.paid_amount, NEW.paid_amount) END,
+      CASE WHEN NEW.total IS DISTINCT FROM OLD.total THEN format('total Rs %s to Rs %s', OLD.total, NEW.total) END),
     CASE
       WHEN NEW.order_status = 'Cancelled' THEN 'the order was cancelled. Do not release the goods. Collect any printed note and slips.'
       WHEN NEW.payment_status = 'Refunded' THEN 'the payment was refunded. Do not release the goods. Collect any printed note and slips.'

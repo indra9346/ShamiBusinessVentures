@@ -186,21 +186,21 @@ export function gateWords(gate: DeliveryGate): GateWords {
     case "invoice_used":
       return words("Invoice already on another note", `${invoice} is already on another order's delivery note. Check that this order is linked to the right Zoho sales order.`);
     case "utr_reused":
-      return words("Same bank transfer on another order", `A payment on this order has the same UTR as a payment on order ${gate.other_order_no}. One transfer can pay one order only. Check the bank account and correct the record.`);
+      return words("Same bank transfer on another order", `A payment on this order has the same UTR as a payment on order ${gate.other_order_no}. One transfer can pay one order only. Check the bank account. If it is a mistake, the record needs correcting by your developer; there is no screen for this yet.`);
     case "bank_credit_short":
-      return words("The bank shows less than was recorded", `The bank alert for a payment on this order shows ${money(gate.bank_short)} less than the amount recorded. Check the bank account and correct the record.`);
+      return words("The bank shows less than was recorded", `The bank alert for a payment on this order shows ${money(gate.bank_short)} less than the amount recorded. Check the bank account. If the rest came another way, mark that alert settled in UPI & Bank Payments, with a note of what was done. If it is already marked matched, the record needs correcting by your developer.`);
     case "stopped":
       return words("Delivery stopped by the office", `${gate.stop_reason || "No reason given"}. Lift the stop on this page once it is settled.`);
     case "records_disagree":
-      return words("The website's payment records do not match", `The order says ${money(gate.paid)} paid (${gate.payment_status}), but its confirmed payments add up to ${money(gate.receipts)}. These need correcting before a note can be generated.`);
+      return words("The website's payment records do not match", `The order says ${money(gate.paid)} paid (${gate.payment_status}), but its confirmed payments add up to ${money(gate.receipts)}. These need correcting by your developer before a note can be generated; there is no screen for this yet.`);
     case "refunded":
-      return words("Refunded", "The payment for this order was refunded. No delivery note can be generated.");
+      return words("Refunded", "The payment for this order was refunded, so it cannot be delivered.");
     case "return_refunded":
-      return words("A refund on this order", "A refund on a return of this order has been started or made. No delivery note can be generated.");
+      return words("A refund on this order", "A refund on a return of this order has been started or made. Check before delivering anything on it.");
     case "cancelled":
-      return words("Order cancelled", "This order is cancelled. No delivery note can be generated.");
+      return words("Order cancelled", "This order is cancelled, so it cannot be delivered.");
     case "payment_expired":
-      return words("Payment time ran out", "This order was not paid in time and was not placed. No delivery note can be generated.");
+      return words("Payment time ran out", "This order was not paid in time and was not placed, so it cannot be delivered.");
     case "not_confirmed":
       return words("Not confirmed yet", "This order is not confirmed yet. Confirm its full payment first.", "wait");
     case "no_items":
