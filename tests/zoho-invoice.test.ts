@@ -87,10 +87,10 @@ test("a payment Zoho shows but the website has no note of gets the note, with Zo
 });
 
 test("references are compared the way the database reads a UTR", () => {
-  for (const [a, b] of [["849320392376", "SBIN849320392376"], ["8493-2039-2376", "849320392376"], ["8493 2039 2376", "849320392376"], ["UTR: 849320392376", "SBIN849320392376"], ["849320392376 RAHUL", "849320392376"], ["A/c 501001234567 UTR 849320392376", "849320392376"], ["849320392375 + 849320392376", "SBIN849320392376"], ["sbin849320392376", "SBIN849320392376"], ["SBINO49320392376", "SBIN049320392376"], ["rcpt 1", "RCPT1"]]) {
+  for (const [a, b] of [["849320392376", "SBIN849320392376"], ["8493-2039-2376", "849320392376"], ["8493 2039 2376", "849320392376"], ["UTR: 849320392376", "SBIN849320392376"], ["849320392376 RAHUL", "849320392376"], ["A/c 501001234567 UTR 849320392376", "849320392376"], ["849320392375 + 849320392376", "SBIN849320392376"], ["UTR: HDFCN26307123456", "HDFCN26307123456"], ["NEFT-SBINN26307123457-RAHUL KUMAR", "SBINN26307123457"], ["RTGS UTIBR52026110300012345", "UTIBR52026110300012345"], ["sbin849320392376", "SBIN849320392376"], ["SBINO49320392376", "SBIN049320392376"], ["rcpt 1", "RCPT1"]]) {
     assert.equal(sameReference(a!, b!), true, `${a} and ${b}`);
   }
-  for (const [a, b] of [["RCPT1", "RCPTI"], ["RCPT0", "RCPTO"], ["SBIN849320392376", "HDFC849320392376"], ["849320392376", "849320392377"], ["", ""]]) {
+  for (const [a, b] of [["RCPT1", "RCPTI"], ["RCPT0", "RCPTO"], ["SBIN849320392376", "HDFC849320392376"], ["UTR: HDFCN26307123456", "UTR: HDFCN26307123457"], ["SBINN26307123456", "HDFCN26307123456"], ["849320392376", "849320392377"], ["", ""]]) {
     assert.equal(sameReference(a!, b!), false, `${a} and ${b}`);
   }
 });
@@ -114,6 +114,9 @@ test("what a person must look at after the payments are on the invoice", () => {
   assert.equal(invoicePaymentReview(0, 2500, 2500, 2500, 25, 2475), "short");
   assert.equal(invoicePaymentReview(0, 2500, 2500, 2500, 0, 0), "short", "a credit note closed it before the first push");
   assert.equal(invoicePaymentReview(0, 2500, 2500, 2500, 1000, 0), "short", "part paid in Books, the rest a credit note");
+  // Books holds more than the website recorded: one transfer entered twice, say.
+  assert.equal(invoicePaymentReview(0, 1100, 2500, 2500, 2100, 400), "over");
+  assert.equal(invoicePaymentReview(0, 1100, 2500, 2500, 1101, 1399), null, "up to a rupee is rounding");
   // Zoho's total ₹1.01 to ₹2 above the website.
   assert.equal(invoicePaymentReview(0, 2500, 2500, 2501.01, 2500, 1.01), "above");
   assert.equal(invoicePaymentReview(0, 2500, 2500, 2502, 2500, 2), "above");
@@ -127,6 +130,7 @@ test("the money on an invoice is what Zoho calls payments, not what is no longer
   assert.equal(invoicePaidOf({ total: 2500, balance: 1500, payment_made: 1000 }), 1000);
   assert.equal(invoicePaidOf({ total: 2500, balance: 1500 }), 1000, "Zoho did not say");
   assert.equal(invoicePaidOf({ total: 2500, balance: 1500, payment_made: null }), 1000, "Zoho did not say");
+  assert.equal(invoicePaidOf({ total: 2500, balance: 1500, payment_made: "" as unknown as number }), 1000, "Zoho did not say");
 });
 
 test("a paisa left by Zoho's CGST/SGST rounding is written off when the order is paid in full", () => {

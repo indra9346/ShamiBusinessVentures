@@ -20,31 +20,71 @@ RETURNS text LANGUAGE sql IMMUTABLE AS $function$
 $function$;
 REVOKE ALL ON FUNCTION private.utr_form(text) FROM PUBLIC, anon, authenticated;
 
--- Every 12-digit number standing alone in what was typed: an account number can come first, or two transfers can be named.
-CREATE OR REPLACE FUNCTION private.utr_numbers(_text text)
-RETURNS text[] LANGUAGE sql IMMUTABLE AS $function$
-  SELECT COALESCE(array_agg(m[1]), ARRAY[]::text[])
-  FROM regexp_matches(COALESCE(_text, ''), '(?:^|[^0-9A-Za-z])([0-9]{12})(?=$|[^0-9A-Za-z])', 'g') AS m
+-- Every run of 12 to 22 letters and digits standing alone in what was typed, with at least 8 digits, could be the UTR:
+-- NEFT and RTGS ones carry letters, an account number can come first, or two transfers can be named.
+-- plpgsql from here on: these run on every row, and a nested SQL function is planned again each time.
+CREATE OR REPLACE FUNCTION private.utr_tokens(_text text)
+RETURNS text[] LANGUAGE plpgsql IMMUTABLE AS $function$
+DECLARE
+  found text[];
+  tokens text[] := ARRAY[]::text[];
+BEGIN
+  FOR found IN SELECT regexp_matches(COALESCE(_text, ''), '(?:^|[^0-9A-Za-z])([0-9A-Za-z]{12,22})(?=$|[^0-9A-Za-z])', 'g') LOOP
+    IF length(regexp_replace(found[1], '[^0-9]', '', 'g')) >= 8 THEN
+      tokens := tokens || translate(upper(found[1]), 'OIL', '011');
+    END IF;
+  END LOOP;
+  RETURN tokens;
+END;
 $function$;
-REVOKE ALL ON FUNCTION private.utr_numbers(text) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION private.utr_tokens(text) FROM PUBLIC, anon, authenticated;
 
--- As before, plus any standing number shared, or one standing in the first that is how the second ends. Two that both
--- carry letters and differ in them, with no number standing alone, are still different transfers.
+-- As before, plus any token shared, or a 12-digit token that is how the other side ends. Two that both carry letters
+-- and differ in them, with no 12-digit token standing alone, are still different transfers.
 CREATE OR REPLACE FUNCTION private.same_utr(_a text, _b text)
-RETURNS boolean LANGUAGE sql IMMUTABLE AS $function$
-  SELECT a <> '' AND (a = b OR (a ~ '^[0-9]{12}$' AND right(b, 12) = a) OR (b ~ '^[0-9]{12}$' AND right(a, 12) = b)
-    OR numbers_a && numbers_b OR right(b, 12) = ANY (numbers_a) OR right(a, 12) = ANY (numbers_b))
-  FROM (SELECT private.utr_form(_a) AS a, private.utr_form(_b) AS b, private.utr_numbers(_a) AS numbers_a, private.utr_numbers(_b) AS numbers_b) forms
+RETURNS boolean LANGUAGE plpgsql IMMUTABLE AS $function$
+DECLARE
+  a text := private.utr_form(_a);
+  b text := private.utr_form(_b);
+  tokens_a text[];
+  tokens_b text[];
+  token text;
+BEGIN
+  IF a = '' THEN RETURN false; END IF;
+  IF a = b OR (a ~ '^[0-9]{12}$' AND right(b, 12) = a) OR (b ~ '^[0-9]{12}$' AND right(a, 12) = b) THEN RETURN true; END IF;
+  tokens_a := private.utr_tokens(_a);
+  tokens_b := private.utr_tokens(_b);
+  IF tokens_a && tokens_b THEN RETURN true; END IF;
+  FOREACH token IN ARRAY tokens_a LOOP
+    IF token ~ '^[0-9]{12}$' AND (right(b, 12) = token OR token = ANY (SELECT right(t, 12) FROM unnest(tokens_b) AS t)) THEN RETURN true; END IF;
+  END LOOP;
+  FOREACH token IN ARRAY tokens_b LOOP
+    IF token ~ '^[0-9]{12}$' AND (right(a, 12) = token OR token = ANY (SELECT right(t, 12) FROM unnest(tokens_a) AS t)) THEN RETURN true; END IF;
+  END LOOP;
+  RETURN false;
+END;
 $function$;
 REVOKE ALL ON FUNCTION private.same_utr(text, text) FROM PUBLIC, anon, authenticated;
+
+-- What to lock so that any two references same_utr calls one transfer wait for each other, in the same order every
+-- time: how the reference ends, and how each of its tokens ends. A plain UTR has one key, the one submit_upi_utr and
+-- record_bank_credit take.
+CREATE OR REPLACE FUNCTION private.utr_lock_keys(_text text)
+RETURNS text[] LANGUAGE sql IMMUTABLE AS $function$
+  SELECT array_agg(DISTINCT key ORDER BY key)
+  FROM unnest(ARRAY[right(private.utr_form(_text), 12)] || (SELECT COALESCE(array_agg(right(t, 12)), ARRAY[]::text[]) FROM unnest(private.utr_tokens(_text)) AS t)) AS key
+$function$;
+REVOKE ALL ON FUNCTION private.utr_lock_keys(text) FROM PUBLIC, anon, authenticated;
 
 -- References an admin types can be anything. As long as a bank's UTR they are one payment when they are one transfer
 -- (private.same_utr). Shorter ones are no UTR, so O and 0, I and 1 stay apart: RCPT1 and RCPTI are different money,
 -- while rcpt 1 and RCPT1 are one reference.
 CREATE OR REPLACE FUNCTION private.same_payment_ref(_a text, _b text)
-RETURNS boolean LANGUAGE sql IMMUTABLE AS $function$
-  SELECT CASE WHEN length(private.utr_form(_a)) >= 12 AND length(private.utr_form(_b)) >= 12 THEN private.same_utr(_a, _b)
-    ELSE upper(regexp_replace(COALESCE(_a, ''), '\s', '', 'g')) = upper(regexp_replace(COALESCE(_b, ''), '\s', '', 'g')) END
+RETURNS boolean LANGUAGE plpgsql IMMUTABLE AS $function$
+BEGIN
+  IF length(private.utr_form(_a)) >= 12 AND length(private.utr_form(_b)) >= 12 THEN RETURN private.same_utr(_a, _b); END IF;
+  RETURN upper(regexp_replace(COALESCE(_a, ''), '\s', '', 'g')) = upper(regexp_replace(COALESCE(_b, ''), '\s', '', 'g'));
+END;
 $function$;
 REVOKE ALL ON FUNCTION private.same_payment_ref(text, text) FROM PUBLIC, anon, authenticated;
 
@@ -73,20 +113,29 @@ DECLARE
   reference text;
   earlier numeric;
   other_order text;
+  other_status text;
 BEGIN
   IF auth.uid() IS NULL OR NOT public.has_role(auth.uid(), 'admin') THEN RAISE EXCEPTION 'Only administrators may reconcile a manual payment'; END IF;
-  reference := trim(COALESCE(_utr,''));
-  IF length(reference) < 4 OR length(reference) > 120 THEN RAISE EXCEPTION 'Enter the verified UTR / transfer reference'; END IF;
+  -- Kannada, Devanagari, Arabic and full-width digits are the same number, and nothing below would see that. Zoho takes up to 100 characters.
+  reference := translate(trim(COALESCE(_utr,'')), '೦೧೨೩೪೫೬೭೮೯०१२३४५६७८९٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹０１２３４５６７８９', '01234567890123456789012345678901234567890123456789');
+  IF length(reference) < 4 OR length(reference) > 100 THEN RAISE EXCEPTION 'Enter the verified UTR / transfer reference'; END IF;
   -- The payment dialog sends a float: 70.14999999999999 must not leave a fully paid order "Partially Paid".
   _amount := round(_amount, 2);
   IF _amount IS NULL OR _amount <= 0 THEN RAISE EXCEPTION 'Payment amount must be positive'; END IF;
-  -- Once only, however the same transfer is written. The same lock as submit_upi_utr and record_bank_credit.
-  PERFORM pg_advisory_xact_lock(hashtextextended('upi-utr:' || right(private.utr_form(reference), 12), 0));
-  IF EXISTS (SELECT 1 FROM public.payments WHERE private.same_payment_ref(txn_ref, reference) AND status = 'Paid') THEN
-    RAISE EXCEPTION 'This transfer reference has already been recorded';
+  -- Once only, however the same transfer is written. The same lock as submit_upi_utr and record_bank_credit, for every
+  -- number named, always in the same order.
+  PERFORM pg_advisory_xact_lock(hashtextextended('upi-utr:' || key, 0)) FROM unnest(private.utr_lock_keys(reference)) AS key;
+  SELECT o2.order_no INTO other_order FROM public.payments p JOIN public.orders o2 ON o2.id = p.order_id
+    WHERE private.same_payment_ref(p.txn_ref, reference) AND p.status = 'Paid' ORDER BY p.created_at LIMIT 1;
+  IF other_order = _order_no THEN
+    RAISE EXCEPTION 'This transfer reference has already been recorded on this order. If that was only part of the money, record the rest under words that do not name it, such as rest of NEFT, and tell the office.';
+  ELSIF other_order IS NOT NULL THEN
+    RAISE EXCEPTION 'This transfer reference has already been recorded on order %', other_order;
   END IF;
   -- Money that went back pays for nothing, and a payment row marked Refunded has no customer's UTR to catch it by.
-  IF EXISTS (SELECT 1 FROM public.payments WHERE private.same_payment_ref(txn_ref, reference) AND status = 'Refunded') THEN
+  -- Bank transfers only: the word CASH on a refunded row says nothing about new cash.
+  IF length(private.utr_form(reference)) >= 12
+     AND EXISTS (SELECT 1 FROM public.payments WHERE private.same_payment_ref(txn_ref, reference) AND status = 'Refunded') THEN
     RAISE EXCEPTION 'This UTR was refunded. It cannot pay for anything any more.';
   END IF;
   SELECT * INTO target FROM public.orders WHERE order_no = _order_no FOR UPDATE;
@@ -102,10 +151,14 @@ BEGIN
   SELECT amount INTO earlier FROM public.upi_payment_submissions
     WHERE private.same_utr(utr, reference) AND status = 'rejected' AND note = 'we could not check your UTR in time' AND order_id <> target.id LIMIT 1;
   IF earlier IS NOT NULL AND earlier < _amount THEN
-    RAISE EXCEPTION 'This UTR was sent for Rs % on a checkout that lapsed, so it covers no more than that.', to_char(earlier, 'FM99999990.00');
+    RAISE EXCEPTION 'This UTR was sent for an order of Rs % that lapsed. Record no more than that under it, and the rest under its own reference. If the bank shows more, tell the office.', to_char(earlier, 'FM99999990.00');
   END IF;
-  SELECT order_no INTO other_order FROM public.upi_payment_submissions WHERE private.same_utr(utr, reference) AND status <> 'rejected' AND order_id <> target.id LIMIT 1;
-  IF other_order IS NOT NULL THEN RAISE EXCEPTION 'This UTR was already used for order %', other_order; END IF;
+  SELECT order_no, status INTO other_order, other_status FROM public.upi_payment_submissions WHERE private.same_utr(utr, reference) AND status <> 'rejected' AND order_id <> target.id LIMIT 1;
+  IF other_status = 'submitted' THEN
+    RAISE EXCEPTION 'The customer sent this UTR on order % and it waits for a check. Reject it there first (UPI & Bank Payments), then record it here.', other_order;
+  ELSIF other_order IS NOT NULL THEN
+    RAISE EXCEPTION 'The customer sent this UTR on order %, which was paid under another reference. If this money is really for this order, record it under words that do not name the UTR, and tell the office.', other_order;
+  END IF;
   -- What the bank said about this transfer, if it said anything. Two alerts cannot be one transfer: their UTRs are unique and all digits.
   SELECT * INTO credit FROM public.bank_credits WHERE private.same_utr(utr, reference) LIMIT 1 FOR UPDATE;
   IF credit.id IS NOT NULL THEN
@@ -117,6 +170,7 @@ BEGIN
        OR EXISTS (SELECT 1 FROM public.upi_payment_submissions WHERE private.same_utr(utr, credit.utr) AND status = 'rejected' AND note = 'refunded by our team') THEN
       RAISE EXCEPTION 'This UTR was refunded. It cannot pay for anything any more.';
     END IF;
+    other_order := NULL;
     SELECT o2.order_no INTO other_order FROM public.payments p JOIN public.orders o2 ON o2.id = p.order_id
       WHERE private.same_utr(p.txn_ref, credit.utr) AND p.status = 'Paid' LIMIT 1;
     IF other_order IS NOT NULL OR credit.status = 'matched' THEN
@@ -125,12 +179,12 @@ BEGIN
     -- Refused, except up to a rupee short when this clears the balance (a customer who typed Rs 677 for Rs 677.25): that is recorded and the alert stays open for a person.
     IF credit.amount < _amount AND (credit.amount + 1 < _amount OR _amount < target.total - target.paid_amount) THEN
       IF target.order_status = 'Awaiting Payment' THEN
-        RAISE EXCEPTION 'The bank alert for UTR % shows Rs %, not Rs %. Reject this UTR, or refund it and mark the alert settled: a checkout is placed only when its full amount is paid.',
+        RAISE EXCEPTION 'The bank alert for UTR % shows Rs %, not Rs %. Reject this UTR. If you refund the money, also mark the alert settled: a checkout is placed only when its full amount is paid.',
           credit.utr, to_char(credit.amount, 'FM99999990.00'), to_char(_amount, 'FM99999990.00');
       END IF;
       RAISE EXCEPTION 'The bank alert for UTR % shows Rs %, not Rs %. Record Rs % as a part payment (Admin > Payments, % percent of the order), then ask the customer for the rest.',
         credit.utr, to_char(credit.amount, 'FM99999990.00'), to_char(_amount, 'FM99999990.00'), to_char(credit.amount, 'FM99999990.00'),
-        to_char(round(credit.amount * 100 / NULLIF(target.total, 0), 6), 'FM990.099999');
+        to_char(round(credit.amount * 100 / NULLIF(target.total, 0), 8), 'FM990.09999999');
     END IF;
   END IF;
   applied := target.paid_amount + _amount;
@@ -174,7 +228,7 @@ BEGIN
             to_char(credit.amount, 'FM99999990.00'), credit.utr, to_char(_amount, 'FM99999990.00'), target.order_no));
       ELSE
         PERFORM private.alert_admins_about_credit(credit, 'Payment needs you',
-          format('The bank shows ₹%s for UTR %s, but only ₹%s was recorded for %s. Refund the extra or call the customer, then mark it settled.',
+          format('The bank shows ₹%s for UTR %s, but only ₹%s was recorded for %s. Refund the extra or call the customer; if it paid another order, say so. Then mark it settled.',
             to_char(credit.amount, 'FM99999990.00'), credit.utr, to_char(_amount, 'FM99999990.00'), target.order_no));
       END IF;
     END IF;
@@ -202,7 +256,7 @@ BEGIN
   IF _decision NOT IN ('confirmed', 'rejected') THEN RAISE EXCEPTION 'Choose confirm or reject'; END IF;
   -- The UTR's lock before the row locks, as in record_bank_credit: the other way round the two could wait for each other.
   SELECT utr INTO sent_utr FROM public.upi_payment_submissions WHERE order_no = _order_no;
-  IF sent_utr IS NOT NULL THEN PERFORM pg_advisory_xact_lock(hashtextextended('upi-utr:' || right(private.utr_form(sent_utr), 12), 0)); END IF;
+  IF sent_utr IS NOT NULL THEN PERFORM pg_advisory_xact_lock(hashtextextended('upi-utr:' || key, 0)) FROM unnest(private.utr_lock_keys(sent_utr)) AS key; END IF;
   SELECT * INTO s FROM public.upi_payment_submissions WHERE order_no = _order_no FOR UPDATE;
   IF NOT FOUND THEN RAISE EXCEPTION 'No UPI payment was sent for this order'; END IF;
   IF s.status <> 'submitted' THEN RAISE EXCEPTION 'This payment was already %', s.status; END IF;
@@ -307,13 +361,17 @@ BEGIN
       PERFORM private.alert_admins_about_credit(c, 'Payment needs you',
         format('The bank shows ₹%s for UTR %s, and that one transfer is recorded on more than one order, first %s. Check the bank account and correct it, then mark it settled.',
           amount_text, c.utr, o.order_no));
+    ELSIF EXISTS (SELECT 1 FROM public.payments p WHERE private.same_utr(p.txn_ref, c.utr) AND p.status = 'Paid' AND cardinality(private.utr_tokens(p.txn_ref)) > 1) THEN
+      PERFORM private.alert_admins_about_credit(c, 'Payment needs you',
+        format('The bank shows ₹%s for UTR %s, and the payment recorded for %s names more than one transfer. Check them together, then mark it settled.',
+          amount_text, c.utr, o.order_no));
     ELSIF c.amount < recorded THEN
       PERFORM private.alert_admins_about_credit(c, 'Payment needs you',
         format('The bank shows ₹%s for UTR %s, but ₹%s was recorded for %s. Check the bank account, collect the difference or tell the office, then mark it settled.',
           amount_text, c.utr, to_char(recorded, 'FM99999990.00'), o.order_no));
     ELSE
       PERFORM private.alert_admins_about_credit(c, 'Payment needs you',
-        format('The bank shows ₹%s for UTR %s, but only ₹%s was recorded for %s. Refund the extra or call the customer, then mark it settled.',
+        format('The bank shows ₹%s for UTR %s, but only ₹%s was recorded for %s. Refund the extra or call the customer; if it paid another order, say so. Then mark it settled.',
           amount_text, c.utr, to_char(recorded, 'FM99999990.00'), o.order_no));
     END IF;
     RETURN jsonb_build_object('status', 'mismatch', 'order_no', o.order_no);
@@ -331,6 +389,21 @@ BEGIN
     PERFORM private.alert_admins_about_credit(c, 'Payment needs you',
       format('₹%s (UTR %s) came in. The customer sent this UTR for %s, and its payment was recorded under another reference. If this is a second payment, refund it. Then mark it settled.', amount_text, c.utr, o.order_no));
     RETURN jsonb_build_object('status', 'mismatch', 'order_no', o.order_no);
+  END IF;
+
+  -- A customer sent this UTR and it was turned down or lapsed, and now the bank says the money came. It is that
+  -- customer's money: a person looks, and it never pays someone else's order by its amount.
+  SELECT s.order_id INTO paid_order FROM public.upi_payment_submissions s
+    WHERE private.same_utr(s.utr, c.utr) AND s.status = 'rejected' ORDER BY s.submitted_at DESC LIMIT 1;
+  IF paid_order IS NOT NULL
+     AND NOT EXISTS (SELECT 1 FROM public.upi_payment_submissions s2 WHERE private.same_utr(s2.utr, c.utr) AND s2.status = 'submitted') THEN
+    SELECT * INTO o FROM public.orders WHERE id = paid_order;
+    UPDATE public.bank_credits SET status = CASE WHEN o.order_status = 'Payment Expired' THEN 'late' ELSE 'mismatch' END,
+      order_id = o.id, order_no = o.order_no, note = format('The customer sent this UTR for %s and it was not accepted', o.order_no)
+      WHERE id = c.id RETURNING * INTO c;
+    PERFORM private.alert_admins_about_credit(c, 'Payment needs you',
+      format('₹%s (UTR %s) came in. A customer sent this UTR for %s and it was not accepted. Check the bank account: confirm it if that order can still be paid, or refund it and mark it settled.', amount_text, c.utr, o.order_no));
+    RETURN jsonb_build_object('status', c.status, 'order_no', o.order_no);
   END IF;
 
   -- Two orders sent this transfer, with different bank letters: its amount can't choose between them.
@@ -497,21 +570,98 @@ WITH running AS (
   SELECT p.id, i.zoho_invoice_id, i.updated_at, i.total - i.balance AS on_invoice,
     sum(p.amount) OVER (PARTITION BY p.order_id ORDER BY p.created_at, p.id) AS so_far
   FROM public.payments p JOIN public.zoho_order_invoices i ON i.order_id = p.order_id
-  WHERE p.status = 'Paid' AND p.zoho_pushed_at IS NULL AND i.zoho_invoice_id IS NOT NULL
+  WHERE p.status = 'Paid' AND i.zoho_invoice_id IS NOT NULL
 )
 UPDATE public.payments p SET zoho_invoice_id = r.zoho_invoice_id, zoho_pushed_at = r.updated_at
-  FROM running r WHERE r.id = p.id AND r.so_far <= r.on_invoice + 1;
+  FROM running r WHERE r.id = p.id AND p.zoho_pushed_at IS NULL AND r.so_far <= r.on_invoice + 1;
+-- A voided or deleted invoice keeps no id here, and voiding leaves its payments in Zoho as the customer's credit. Those
+-- paid before then are noted too, so a new invoice does not get them posted a second time.
+UPDATE public.payments p SET zoho_invoice_id = i.status, zoho_pushed_at = i.updated_at
+  FROM public.zoho_order_invoices i
+  WHERE i.order_id = p.order_id AND p.status = 'Paid' AND p.zoho_pushed_at IS NULL AND i.zoho_invoice_id IS NULL
+    AND i.status IN ('void', 'deleted', 'awaiting_approval') AND p.created_at <= i.updated_at;
 
--- A short alert marked matched before this fix could never be settled: it goes back to a person.
+-- A short alert marked matched before this fix could never be settled, and the old manual path never looked at an
+-- unmatched one: whatever disagrees with what was recorded goes back to a person.
 WITH recorded AS (
   SELECT c.id, sum(p.amount) AS amount, (array_agg(p.order_id ORDER BY p.created_at))[1] AS order_id
   FROM public.bank_credits c JOIN public.payments p ON p.status = 'Paid' AND private.same_utr(p.txn_ref, c.utr)
-  WHERE c.status = 'matched' GROUP BY c.id
+  WHERE c.status IN ('matched', 'unmatched', 'ambiguous') GROUP BY c.id
 )
 UPDATE public.bank_credits c
   SET status = 'mismatch', order_id = r.order_id, order_no = o.order_no,
     note = format('Bank amount ₹%s, recorded as ₹%s', to_char(c.amount, 'FM99999990.00'), to_char(r.amount, 'FM99999990.00'))
   FROM recorded r JOIN public.orders o ON o.id = r.order_id
   WHERE c.id = r.id AND r.amount <> c.amount;
+
+-- Fully paid orders the old float left "Partially Paid" with nothing due: no screen can change them.
+DO $repair$
+BEGIN
+  PERFORM set_config('app.payment_workflow', 'on', true);
+  UPDATE public.orders SET payment_status = 'Paid' WHERE payment_status = 'Partially Paid' AND total > 0 AND paid_amount >= total;
+  PERFORM set_config('app.payment_workflow', 'off', true);
+END;
+$repair$;
+
+-- The website still shows such an order as paid while a person looks: telling the customer money is due could get it paid twice.
+CREATE OR REPLACE FUNCTION public.notify_zoho_invoice_change()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public'
+AS $function$
+DECLARE
+  o public.orders%ROWTYPE;
+  title text;
+  message text;
+  admins_only boolean := false;
+  label text := COALESCE(NULLIF(NEW.invoice_number, ''), 'the invoice');
+  amount text := CASE WHEN NEW.total IS NULL THEN '' ELSE ' (₹' || to_char(NEW.total, 'FM999,999,999,990.00') || ')' END;
+BEGIN
+  IF TG_OP = 'UPDATE' AND NEW.status IS NOT DISTINCT FROM OLD.status
+    AND NEW.zoho_invoice_id IS NOT DISTINCT FROM OLD.zoho_invoice_id THEN
+    RETURN NEW;
+  END IF;
+  IF NEW.status IN ('sent', 'overdue') AND (TG_OP = 'INSERT' OR NEW.zoho_invoice_id IS DISTINCT FROM OLD.zoho_invoice_id OR OLD.status IN ('none', 'void', 'deleted', 'awaiting_approval')) THEN
+    title := 'Invoice issued';
+    message := format('Invoice %s%s was issued for order %s.', label, amount, NEW.order_no);
+  ELSIF NEW.status = 'partially_paid' THEN
+    title := 'Invoice partly paid';
+    message := format('Invoice %s for order %s is partly paid; ₹%s is due.', label, NEW.order_no, to_char(COALESCE(NEW.balance, 0), 'FM999,999,999,990.00'));
+  ELSIF NEW.status = 'paid' THEN
+    title := 'Invoice paid';
+    message := format('Invoice %s%s for order %s is fully paid.', label, amount, NEW.order_no);
+  ELSIF NEW.status IN ('void', 'deleted') THEN
+    title := 'Invoice cancelled';
+    message := format('Invoice %s for order %s was %s in Zoho Books. A new invoice will be issued after admin approval.',
+      label, NEW.order_no, CASE WHEN NEW.status = 'void' THEN 'voided' ELSE 'deleted' END);
+  ELSIF NEW.status = 'awaiting_approval' THEN
+    title := 'Invoice awaiting approval';
+    message := format('Order %s has no Zoho invoice. Approve a new invoice from the order page.', NEW.order_no);
+    admins_only := true;
+  ELSE
+    RETURN NEW;
+  END IF;
+
+  SELECT * INTO o FROM public.orders WHERE id = NEW.order_id;
+  IF NOT FOUND THEN RETURN NEW; END IF;
+  IF NEW.status = 'partially_paid' AND o.payment_status = 'Paid' THEN admins_only := true; END IF;
+  IF NOT admins_only THEN
+    IF o.user_id IS NOT NULL THEN
+      INSERT INTO public.notifications (order_no, order_id, recipient_id, recipient_role, title, message, status)
+      VALUES (o.order_no, o.id, o.user_id, 'customer', title, message, 'invoice');
+    END IF;
+    INSERT INTO public.notifications (order_no, order_id, recipient_id, recipient_role, recipient_vendor_id, title, message, status)
+    SELECT o.order_no, o.id, ur.user_id, 'vendor', p.vendor_id, title, message, 'invoice'
+    FROM public.profiles p
+    JOIN public.user_roles ur ON ur.user_id = p.id AND ur.role = 'vendor'
+    WHERE p.vendor_id = ANY (o.vendor_ids);
+  END IF;
+  INSERT INTO public.notifications (order_no, order_id, recipient_id, recipient_role, title, message, status)
+  SELECT o.order_no, o.id, ur.user_id, 'admin', title, message, 'invoice'
+  FROM public.user_roles ur WHERE ur.role = 'admin';
+  RETURN NEW;
+END;
+$function$;
 
 NOTIFY pgrst, 'reload schema';

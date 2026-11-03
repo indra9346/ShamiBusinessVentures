@@ -496,25 +496,33 @@ export function zohoPaymentMode(method: string | null | undefined) {
 
 export type WebsitePayment = { amount: number; txnRef: string; method: string | null; paidAt: string; pushedToInvoice?: string | null; zohoPaymentId?: string | null };
 export type PaymentToRecord = { amount: number; reference: string; date: string; mode: string; method: string };
-export type InvoicePayment = { paymentId: string; reference: string };
+export type InvoicePayment = { paymentId: string; reference: string; amount?: number };
 
 /**
  * One reference read the way the database reads a UTR (private.utr_form and same_utr): a 12-digit number standing alone
  * is the transfer, O and 0, I and 1, L and 1 are alike, and one that is exactly 12 digits matches a longer one ending in
  * it. Below a bank UTR's 12 characters only the same text counts: RCPT1 and RCPTI are different money.
  */
-function standingNumbers(reference: string) {
-  return [...reference.matchAll(/(?:^|[^0-9A-Za-z])([0-9]{12})(?=$|[^0-9A-Za-z])/g)].map((match) => match[1]!);
-}
+const lookAlike = (text: string) => text.toUpperCase().replace(/O/g, "0").replace(/[IL]/g, "1");
 function referenceForm(reference: string) {
-  return (standingNumbers(reference)[0] ?? reference.replace(/[^0-9A-Za-z]/g, "")).toUpperCase().replace(/O/g, "0").replace(/[IL]/g, "1");
+  const standing = /(?:^|[^0-9A-Za-z])([0-9]{12})(?:$|[^0-9A-Za-z])/.exec(reference)?.[1];
+  return lookAlike(standing ?? reference.replace(/[^0-9A-Za-z]/g, ""));
+}
+/** Runs of 12 to 22 letters and digits standing alone, with at least 8 digits: each could be the UTR (private.utr_tokens). */
+function referenceTokens(reference: string) {
+  return [...reference.matchAll(/(?:^|[^0-9A-Za-z])([0-9A-Za-z]{12,22})(?=$|[^0-9A-Za-z])/g)]
+    .map((match) => match[1]!).filter((token) => token.replace(/[^0-9]/g, "").length >= 8).map(lookAlike);
 }
 export function sameReference(a: string, b: string) {
   const [x, y] = [referenceForm(a), referenceForm(b)];
-  const [numbersA, numbersB] = [standingNumbers(a), standingNumbers(b)];
-  if (numbersA.some((number) => numbersB.includes(number) || y.endsWith(number)) || numbersB.some((number) => x.endsWith(number))) return true;
   const twelve = /^[0-9]{12}$/;
-  if (x.length >= 12 && y.length >= 12) return x === y || (twelve.test(x) && y.endsWith(x)) || (twelve.test(y) && x.endsWith(y));
+  if (x.length >= 12 && y.length >= 12) {
+    if (x === y || (twelve.test(x) && y.endsWith(x)) || (twelve.test(y) && x.endsWith(y))) return true;
+    const [tokensA, tokensB] = [referenceTokens(a), referenceTokens(b)];
+    if (tokensA.some((token) => tokensB.includes(token))) return true;
+    const endsIn = (token: string, form: string, others: string[]) => twelve.test(token) && (form.endsWith(token) || others.some((other) => other.endsWith(token)));
+    return tokensA.some((token) => endsIn(token, y, tokensB)) || tokensB.some((token) => endsIn(token, x, tokensA));
+  }
   const plain = (text: string) => text.replace(/\s/g, "").toUpperCase();
   return plain(a) !== "" && plain(a) === plain(b);
 }
@@ -572,22 +580,24 @@ export function paymentsToNoteAsPushed<T extends WebsitePayment>(payments: T[], 
   });
 }
 
-export type InvoicePaymentReview = "gone" | "short" | "above" | null;
+export type InvoicePaymentReview = "gone" | "short" | "over" | "above" | null;
 
 /**
  * The money on a Books invoice: its `payment_made`, because "paid" can also mean a credit note or a write-off. Total
  * less balance only when Zoho does not say.
  */
 export function invoicePaidOf(invoice: { total?: number | null; balance?: number | null; payment_made?: number | null }) {
-  return invoice.payment_made != null && Number.isFinite(Number(invoice.payment_made)) ? Number(invoice.payment_made) : Number(invoice.total) - Number(invoice.balance);
+  const made = invoice.payment_made;
+  return made != null && String(made).trim() !== "" && Number.isFinite(Number(made)) ? Number(made) : Number(invoice.total) - Number(invoice.balance);
 }
 
 /**
  * What a person must look at once the payments are on the invoice, in paise so floats can't decide it. "gone": a pushed
  * payment is missing and the invoice really is short of it (re-entered under another reference, nothing is missing).
  * "short": Books holds more than ₹1 less money than the website recorded, with no missing payment to blame. An invoice
- * for less than the website can hold no more than its total. "above": paid in full here, but the invoice's own total
- * leaves more than ₹1 due: Re-sync can't clear that.
+ * for less than the website can hold no more than its total. "over": Books holds more than ₹1 more than the website
+ * recorded, so one transfer may be entered twice. "above": paid in full here, but the invoice's own total leaves more
+ * than ₹1 due: Re-sync can't clear that.
  */
 export function invoicePaymentReview(goneCount: number, websitePaid: number, orderTotal: number, invoiceTotal: number, invoicePaid: number, invoiceBalance: number): InvoicePaymentReview {
   if (![websitePaid, orderTotal, invoiceTotal, invoicePaid, invoiceBalance].every(Number.isFinite)) return null;
@@ -596,6 +606,7 @@ export function invoicePaymentReview(goneCount: number, websitePaid: number, ord
   const limit = paise(ROUNDING_WRITE_OFF_LIMIT);
   if (goneCount > 0 && missing > 0) return "gone";
   if (missing > limit) return "short";
+  if (paise(invoicePaid) - paise(websitePaid) > limit) return "over";
   if (paise(websitePaid) >= paise(orderTotal) && paise(invoiceBalance) > limit) return "above";
   return null;
 }

@@ -136,9 +136,31 @@ if (!WITHOUT_FIX) {
   await confirm(a, 2500, before.posted); await note(a, "Z-A", 0);
   await confirm(b, 1000, before.part1); await confirm(b, 1500, before.part2); await note(b, "Z-B", 1500);
   await confirm(c, 2500, before.noMoney); await note(c, "Z-C", 2500);
+  // A part payment not yet posted must stay unnoted however many times the migration runs.
+  before.partA = utr(); before.partB = utr();
+  const pp = await placed();
+  await confirm(pp, 1000, before.partA); await confirm(pp, 500, before.partB); await note(pp, "Z-PP", 1500);
+  // The old manual path never looked at an unmatched alert.
+  before.quiet = utr();
+  await sms(before.quiet, 1234);
+  const qq = await placed();
+  await confirm(qq, 2500, before.quiet);
+  assert.equal((await credit(before.quiet)).status, "unmatched");
+  // The old float left a fully paid order "Partially Paid".
+  const ff = await placed({ total: 100.21, balance_due: 100.21, payment_method: "NEFT" });
+  await confirm(ff, 30.06, utr());
+  await confirm(ff, 70.14999999999999, utr());
+  assert.equal((await orderRow(ff)).payment_status, "Partially Paid");
+  before.float = ff;
+  before.voided = utr();
+  const v = await checkout();
+  await confirm(v, 2500, before.voided);
+  const vo = await one(`SELECT id FROM public.orders WHERE order_no = $1`, [v]);
+  await db.query(`INSERT INTO public.zoho_order_invoices (order_id, order_no, zoho_invoice_id, status, total, balance, updated_at) VALUES ($1, $2, NULL, 'void', NULL, NULL, now() + interval '1 minute')`, [vo.id, v]);
   await db.exec(fixText);
   repaired = beforeRef;
   await db.exec(fixText); // running it twice changes nothing
+  await db.exec(fixText);
 }
 
 const results = [];
@@ -204,8 +226,8 @@ await test("the same short reference twice is refused, whatever its case or spac
 await test("a UTR a customer sent on another order cannot be recorded here", async () => {
   const a = await checkout(), b = await checkout(), ref = utr();
   await submit(a, ref);
-  await refused(() => confirm(b, 2500, ref), new RegExp(`already used for order ${a}`));
-  await refused(() => confirm(b, 2500, `SBIN${ref}`), new RegExp(`already used for order ${a}`));
+  await refused(() => confirm(b, 2500, ref), new RegExp(`sent this UTR on order ${a} and it waits for a check`));
+  await refused(() => confirm(b, 2500, `SBIN${ref}`), new RegExp(`sent this UTR on order ${a}`));
 });
 await test("a rejected UTR on another order is free to use", async () => {
   const a = await checkout(), b = await checkout(), ref = utr();
@@ -258,8 +280,8 @@ await test("a payment marked refunded cannot pay another order, however it is wr
   const c = await checkout(), d = await checkout();
   await confirm(c, 2500, "RCPT90");
   await refundByHand(c);
-  await refused(() => confirm(d, 2500, "rcpt 90"), /refunded/);
-  await confirm(d, 2500, "RCPT9O");
+  await confirm(d, 2500, "rcpt 90");
+  assert.equal((await orderRow(d)).payment_status, "Paid", "a receipt or the word CASH is no bank transfer: new money can use it");
 });
 await test("a bank alert for refunded money pays no waiting order, by amount or by UTR", async () => {
   const gone = await checkout([{ product_id: "PA", qty: 21 }]), ref = utr();
@@ -314,6 +336,46 @@ await test("words around the UTR do not hide it, in either order", async () => {
   await refused(() => confirm(d, 2500, `SBIN${other}`), /already been recorded/);
   await refused(() => submit(d, other), /already used/);
 });
+await test("a NEFT or RTGS UTR with words beside it is still that transfer", async () => {
+  const big = [{ product_id: "PA", qty: 3 }];
+  const a = await checkout(big, "NEFT"), b = await checkout(big, "NEFT");
+  await confirm(a, 3000, "UTR: HDFCN26307123456");
+  await refused(() => submit(b, "HDFCN26307123456"), /already used/);
+  await refused(() => confirm(b, 3000, "HDFCN26307123456"), /already been recorded/);
+  const c = await checkout(big, "NEFT"), d = await checkout(big, "NEFT");
+  await submit(c, "SBINN26307123457");
+  await refused(() => confirm(d, 3000, "NEFT-SBINN26307123457-RAHUL KUMAR"), new RegExp(`sent this UTR on order ${c}`));
+  const e = await checkout(big, "NEFT"), f = await checkout(big, "NEFT");
+  await confirm(e, 3000, "RTGS UTIBR52026110300012345");
+  await refused(() => confirm(f, 3000, "UTIBR52026110300012345 RAHUL"), /already been recorded/);
+  const g = await checkout(big, "NEFT"), h = await checkout(big, "NEFT");
+  await confirm(g, 3000, "CNRBN26307123461");
+  await refundByHand(g);
+  await refused(() => confirm(h, 3000, "UTR: CNRBN26307123461"), /refunded/);
+  const i = await checkout(big, "NEFT");
+  await confirm(i, 3000, "UTR: HDFCN26307123499");
+  assert.equal((await orderRow(i)).payment_status, "Paid", "a different number is a different transfer");
+});
+await test("a UTR typed in Kannada or other digits is the same number", async () => {
+  const a = await checkout(), b = await checkout(), c = await checkout(), ref = utr();
+  const kannada = [...ref].map((digit) => "೦೧೨೩೪೫೬೭೮೯"[Number(digit)]).join("");
+  const fullWidth = [...ref].map((digit) => "０１２３４５６７８９"[Number(digit)]).join("");
+  await confirm(a, 2500, kannada);
+  assert.equal((await one(`SELECT txn_ref FROM public.payments WHERE order_id = (SELECT id FROM public.orders WHERE order_no = $1)`, [a])).txn_ref, ref, "stored in plain digits");
+  await refused(() => confirm(b, 2500, ref), /already been recorded/);
+  await refused(() => confirm(c, 2500, fullWidth), /already been recorded/);
+});
+await test("a reference longer than Zoho takes is refused here", async () => {
+  const no = await checkout();
+  await refused(() => confirm(no, 2500, `UPI/${utr()}/${"R".repeat(90)}`), /Enter the verified UTR/);
+});
+await test("the same transfer recorded twice on one order says what to do", async () => {
+  const no = await placed(), ref = utr();
+  await confirm(no, 1000, ref);
+  await refused(() => confirm(no, 1500, `${ref} BAL`), /on this order\. If that was only part/);
+  await confirm(no, 1500, "REST OF THAT NEFT");
+  assert.equal((await orderRow(no)).payment_status, "Paid");
+});
 await test("every number standing alone counts, not only the first", async () => {
   const a = await checkout(), b = await checkout(), ref = utr();
   await confirm(a, 2500, `A/c 501001234567 UTR ${ref}`);
@@ -325,6 +387,8 @@ await test("every number standing alone counts, not only the first", async () =>
   await confirm(named, 2600, `${one1} + ${one2}`);
   assert.equal((await sms(one2, 9000)).status, "mismatch", "the second one named is accounted for, not free to pay another order");
   assert.equal(await received(waiting), 0);
+  assert.ok((await alerts(one2)).some((text) => /names more than one transfer/.test(text)));
+  assert.ok(!(await alerts(one2)).some((text) => /collect the difference/.test(text)), "nobody is asked for money already paid");
 });
 await test("a bank alert is read through those words too", async () => {
   const no = await placed(), ref = utr();
@@ -384,6 +448,39 @@ await test("two orders sent one transfer under different letters: a person choos
   assert.equal(await received(a) + await received(b), 0);
   assert.ok((await alerts(ref)).some((text) => /more than one order sent this UTR/.test(text)));
 });
+await test("a rejected UTR's money pays no other order by its amount", async () => {
+  const a = await checkout([{ product_id: "PA", qty: 15 }]), b = await checkout([{ product_id: "PA", qty: 15 }]), ref = utr();
+  await submit(a, ref);
+  await review(a, ref, "rejected", "not found");
+  const out = await sms(ref, 15000);
+  assert.equal(out.status, "mismatch");
+  assert.equal(out.order_no, a);
+  assert.equal(await received(b), 0);
+  assert.ok((await alerts(ref)).some((text) => /was not accepted/.test(text)));
+  await submit(a, ref);
+  await review(a, ref);
+  assert.equal((await orderRow(a)).payment_status, "Paid");
+  assert.equal((await credit(ref)).status, "matched");
+});
+await test("an ended checkout's UTR is late money for a person, not for the next order of that amount", async () => {
+  const a = await checkout([{ product_id: "PA", qty: 16 }]), b = await checkout([{ product_id: "PA", qty: 16 }]), ref = utr();
+  await submit(a, ref);
+  await one(`SELECT public.admin_end_payment_hold($1) AS r`, [a]);
+  const out = await sms(ref, 16000);
+  assert.equal(out.status, "late");
+  assert.equal(await received(b), 0);
+  assert.ok((await alerts(ref)).some((text) => /was not accepted/.test(text)));
+});
+await test("an exact balance for a rejected UTR on a part-paid order still reaches a person", async () => {
+  const no = await partPaid(), ref = utr();
+  await submit(no, ref);
+  await review(no, ref, "rejected", "not found yet");
+  assert.equal((await sms(ref, 1500)).status, "mismatch");
+  assert.ok((await alerts(ref)).length > 0);
+  await submit(no, ref);
+  await review(no, ref);
+  assert.equal((await orderRow(no)).payment_status, "Paid");
+});
 await test("the customer's UTR with bank letters is theirs: another order is not paid with it", async () => {
   const a = await checkout([{ product_id: "PA", qty: 5 }], "NEFT"), b = await checkout([{ product_id: "PA", qty: 1 }]), ref = utr();
   await submit(a, `SBIN${ref}`);
@@ -418,6 +515,14 @@ await test("a customer's UTR closed by a payment under another reference: its al
   await confirm(c, 2500, "BANK STATEMENT LINE 5");
   assert.equal((await sms(ref2, 900)).status, "mismatch");
   assert.ok((await alerts(ref2)).length > 0);
+});
+await test("a UTR closed under another reference says how to go on", async () => {
+  const a = await checkout(), b = await checkout(), ref = utr();
+  await submit(a, ref);
+  await confirm(a, 2500, "CASH RECEIPT 5");
+  await refused(() => confirm(b, 2500, ref), new RegExp(`sent this UTR on order ${a}, which was paid under another reference`));
+  await confirm(b, 2500, "NEFT STATEMENT LINE 7");
+  assert.equal((await orderRow(b)).payment_status, "Paid", "the way it describes works");
 });
 await test("refunded under one set of letters, refused under another once the alert names the transfer", async () => {
   const a = await checkout(), ref = utr();
@@ -643,6 +748,29 @@ await test("payments the sync had posted are noted by the fix; the unsure ones a
   assert.equal((await row(before.part1)).zoho_invoice_id, "Z-B", "the invoice shows Rs 1000 on it");
   assert.equal((await row(before.part2)).zoho_invoice_id, null, "and not this one too");
   assert.equal((await row(before.noMoney)).zoho_invoice_id, null, "the invoice shows no money");
+  assert.equal((await row(before.voided)).zoho_invoice_id, "void", "voiding left it in Zoho as the customer's credit");
+  assert.equal((await row(before.partA)).zoho_invoice_id, "Z-PP");
+  assert.equal((await row(before.partB)).zoho_invoice_id, null, "applying the migration again must not note a part never posted");
+});
+await test("an unmatched alert that disagrees with what was recorded goes to a person through the fix", async () => {
+  if (WITHOUT_FIX) throw new Error("needs the fix");
+  const c = await credit(before.quiet);
+  assert.equal(c.status, "mismatch");
+  assert.match(c.note, /Bank amount ₹1234\.00, recorded as ₹2500\.00/);
+});
+await test("fully paid orders the old float left Partially Paid are put right by the fix", async () => {
+  if (WITHOUT_FIX) throw new Error("needs the fix");
+  assert.equal((await orderRow(before.float)).payment_status, "Paid");
+});
+await test("a customer is not told money is due while the website shows the order paid", async () => {
+  if (WITHOUT_FIX) throw new Error("needs the fix");
+  const no = await checkout();
+  await confirm(no, 2500, utr());
+  const o = await one(`SELECT id FROM public.orders WHERE order_no = $1`, [no]);
+  await db.query(`INSERT INTO public.zoho_order_invoices (order_id, order_no, zoho_invoice_id, status, total, balance) VALUES ($1, $2, 'Z-N', 'paid', 2500, 0)`, [o.id, no]);
+  await db.query(`UPDATE public.zoho_order_invoices SET status = 'partially_paid', balance = 1000 WHERE order_id = $1`, [o.id]);
+  const told = await q(`SELECT recipient_role FROM public.notifications WHERE order_no = $1 AND title = 'Invoice partly paid'`, [no]);
+  assert.ok(told.length > 0 && told.every((row) => row.recipient_role === "admin"), JSON.stringify(told));
 });
 await test("a matched credit still cannot be settled over", async () => {
   const no = await checkout(), ref = utr();
