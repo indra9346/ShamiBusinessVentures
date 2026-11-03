@@ -79,6 +79,7 @@ const WHY_WE_USE_IT: PolicySection = {
     { text: "To answer your enquiries and requests." },
     { text: "To keep business and tax records, including GST invoices." },
     { text: "To keep the site working and secure, and to fix problems." },
+    { text: "In future, to send you offers by SMS, WhatsApp or email." },
   ],
 };
 
@@ -93,12 +94,13 @@ const WHO_CAN_SEE_IT: PolicySection = {
     },
     {
       lead: "Supabase",
-      text: "Our database, sign-in system and file storage. Your account, addresses, orders and enquiries are stored there, on servers in Japan. Email sign-in codes are sent through Supabase and the email service connected to it.",
+      text: "Our database, sign-in system and file storage. Your account, addresses, orders and enquiries are stored there, on servers in Japan.",
     },
     {
       lead: "Zoho",
       text: "Our accounting and stock system (Zoho Books and its related tools). It receives your name, company, email, phone number, address and GSTIN, and what you ordered, the amounts and the payments, so that we can raise sales orders and invoices.",
     },
+    { lead: "Resend", text: "Sends our sign-in emails, so it receives your email address and the one-time code." },
     { lead: "Fast2SMS", text: "Your mobile number and the one-time code, when you sign in by phone." },
     { lead: "Hostinger", text: "Runs the website and keeps the visit logs." },
     { lead: "OpenStreetMap Nominatim and BigDataCloud", text: "The map position, as explained above." },
@@ -108,6 +110,7 @@ const WHO_CAN_SEE_IT: PolicySection = {
     },
   ],
   outro: [
+    "We do not sell your information.",
     "Some of these companies may store or handle information outside India.",
     "We may also share information when the law requires it.",
     "Buttons for WhatsApp, Google Maps, Instagram, YouTube, Facebook and UPI apps open those services, and their own privacy rules apply there. A WhatsApp button may fill in a message with your details for you to check and send.",
@@ -179,7 +182,7 @@ const PEOPLE_WHO_WORK_WITH_US: PolicySection = {
 const HOW_LONG: PolicySection = {
   heading: "How long we keep it",
   intro: [
-    "The site does not delete your account, addresses, orders or enquiries automatically. Some records, such as invoices and tax records, may have to be kept even after you ask us to delete them, because the law requires it.",
+    "We keep customer, order, enquiry, staff and vendor records with no fixed end date, and the site does not delete them automatically. Some records, such as invoices and tax records, may have to be kept even after you ask us to delete them, because the law requires it.",
   ],
 };
 
@@ -188,10 +191,16 @@ const YOUR_CHOICES: PolicySection = {
   items: [
     { text: "You can see and change your details under My Profile and Saved Addresses in your account at any time, and delete an address." },
     { text: "You can say no to the location and contacts permissions and type the details instead." },
+    { text: "You can ask us not to send you offers." },
     {
-      text: "To ask for a copy of your information, to correct or delete it, or to withdraw a permission you gave, contact us using the details below. The site has no button for closing an account, so we handle these requests ourselves.",
+      text: "To ask for a copy of your information, to correct or delete it, or to withdraw a permission you gave, contact us using the details below. The site has no button for closing an account, so our admin team handles these requests.",
     },
   ],
+};
+
+const AGE_OF_CUSTOMERS: PolicySection = {
+  heading: "Age of customers",
+  intro: ["The store is open to all customers and does not ask anyone's age."],
 };
 
 const KEEPING_IT_SAFE: PolicySection = {
@@ -208,9 +217,10 @@ const CHANGES: PolicySection = {
 
 const CONTACT_US: PolicySection = {
   heading: "Contact us",
-  intro: ["For any privacy question or request, use our Contact page, or call or WhatsApp us on +91 95385 00840 (Mon–Sat, 9am–7pm)."],
+  intro: ["For any privacy question or request, use our Contact page, email headoffice@shamibusiness.com, or call or WhatsApp us on +91 95385 00840 (Mon–Sat, 9am–7pm)."],
   links: [
     { label: "Open the Contact page", href: "/contact" },
+    { label: "Email headoffice@shamibusiness.com", href: "mailto:headoffice@shamibusiness.com" },
     { label: "Call +91 95385 00840", href: "tel:+919538500840" },
     { label: "WhatsApp +91 95385 00840", href: "https://wa.me/919538500840" },
   ],
@@ -232,6 +242,7 @@ export function privacyPolicySections(analyticsOn: boolean): PolicySection[] {
     PEOPLE_WHO_WORK_WITH_US,
     HOW_LONG,
     YOUR_CHOICES,
+    AGE_OF_CUSTOMERS,
     KEEPING_IT_SAFE,
     CHANGES,
     CONTACT_US,
