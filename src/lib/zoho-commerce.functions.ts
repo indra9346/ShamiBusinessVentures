@@ -15,7 +15,7 @@ import {
   zohoPricebookItemsFor, reconcileCatalog, reconcileCustomers, reconcileOrders, shouldRetryZohoCall,
   zohoItemSyncAllows, zohoLogLine,
   zohoOrderNumber, websiteOrderNoOf, WEBSITE_ORDER_NUMBER, zohoRetryDelayMs, type AppProductForParity, type ZohoItemForParity, type ZohoOrderForReconcile,
-  orderNeedsZohoInvoice, paymentsToRecord, roundingWriteOff,
+  orderNeedsZohoInvoice, paymentsGoneFromInvoice, paymentsToNoteAsPushed, paymentsToRecord, roundingWriteOff,
   invoiceDecision, websiteInvoiceStatus, zohoInvoicesOf, type InvoiceRecord,
   DAILY_LIMIT_PAUSE_MINUTES, inboundPollDue, isZohoDailyLimitError, zohoPaused,
   indiaDate, nextZohoFulfilmentStep, zohoFulfilmentStatus, zohoPackagesOf, zohoStatusMovesForward,
@@ -2225,7 +2225,8 @@ async function syncLinkedZohoOrder(
  * Zoho Books invoice for a confirmed website order: converts its sales order to an invoice (Books
  * "invoices/fromsalesorder", so it gets the godown location's invoice series), marks it sent,
  * then records each verified website payment (by UTR) against it, so Books shows the order PAID.
- * Every step looks at Zoho first, so a retry never makes a second invoice or payment.
+ * Every step looks at Zoho first, so a retry never makes a second invoice or payment. A payment already pushed
+ * to this invoice is never posted to it again: if it is gone, someone removed it in Zoho, and that goes to review.
  */
 async function ensureZohoBooksInvoice(
   db: Awaited<ReturnType<typeof dbAdmin>>,
@@ -2299,26 +2300,35 @@ async function ensureZohoBooksInvoice(
     throw new NeedsReviewError(`Zoho Books invoice ${str(invoice.invoice_number)} totals ₹${invoiceTotal.toFixed(2)}; Grain Bazar order ${order.order_no} totals ₹${Number(order.total).toFixed(2)}. Payments were not recorded; correct the invoice in Zoho Books.`);
 
   // Verified website payments (admin-confirmed UTRs) not yet on the invoice.
-  const { data: payments, error } = await db.from("payments").select("amount,txn_ref,method,created_at,status")
+  const { data: payments, error } = await db.from("payments").select("id,amount,txn_ref,method,created_at,status,zoho_invoice_id,zoho_payment_id")
     .eq("order_id", order.id).eq("status", "Paid");
   if (error) throw new Error("Could not read the order's payments from Grain Bazar");
   if (!payments?.length) return invoice;
-  let recorded: string[] = [];
+  let onInvoice: { paymentId: string; reference: string }[] = [];
   try {
-    const response = await booksRequest<{ payments?: { reference_number?: string }[] }>(region, organizationId, token, `invoices/${encodeURIComponent(invoiceId)}/payments`, "GET");
-    recorded = (response.payments ?? []).map((payment) => str(payment.reference_number));
+    const response = await booksRequest<{ payments?: { payment_id?: string; reference_number?: string }[] }>(region, organizationId, token, `invoices/${encodeURIComponent(invoiceId)}/payments`, "GET");
+    onInvoice = (response.payments ?? []).map((payment) => ({ paymentId: str(payment.payment_id), reference: str(payment.reference_number) }));
   } catch (cause) {
     fail("reading the invoice's payments", cause);
   }
-  const toRecord = paymentsToRecord(
-    payments.map((payment) => ({ amount: Number(payment.amount), txnRef: str(payment.txn_ref), method: payment.method, paidAt: payment.created_at })),
-    recorded,
-    Number(invoice.balance),
-  );
+  const website = payments.map((payment) => ({
+    id: payment.id, amount: Number(payment.amount), txnRef: str(payment.txn_ref), method: payment.method, paidAt: payment.created_at,
+    pushedToInvoice: payment.zoho_invoice_id, zohoPaymentId: payment.zoho_payment_id,
+  }));
+  // A note that cannot be written only delays it: Zoho shows the payment, so the next sync writes it and posts nothing.
+  const noteAsPushed = async (paymentId: string, zohoPaymentId: string | null) => {
+    const { error: noteError } = await db.from("payments")
+      .update({ zoho_invoice_id: invoiceId, zoho_payment_id: zohoPaymentId, zoho_pushed_at: new Date().toISOString() }).eq("id", paymentId);
+    if (noteError) console.warn(zohoLogLine("zoho_invoice_payment_note_failed", { order: number, error: noteError.message }));
+  };
+  for (const seen of paymentsToNoteAsPushed(website, onInvoice, invoiceId)) await noteAsPushed(seen.payment.id, seen.zohoPaymentId);
+  const gone = paymentsGoneFromInvoice(website, onInvoice, invoiceId);
+  const toRecord = paymentsToRecord(website, onInvoice.map((payment) => payment.reference), Number(invoice.balance), invoiceId);
   const customerId = str(invoice.customer_id) || str(zoho["customer_id"]);
   for (const payment of toRecord) {
+    let created: { payment?: { payment_id?: string } } | undefined;
     try {
-      await booksRequest(region, organizationId, token, "customerpayments", "POST", {
+      created = await booksRequest<{ payment?: { payment_id?: string } }>(region, organizationId, token, "customerpayments", "POST", {
         customer_id: customerId,
         payment_mode: payment.mode,
         amount: payment.amount,
@@ -2330,7 +2340,13 @@ async function ensureZohoBooksInvoice(
     } catch (cause) {
       fail(`recording payment ${payment.reference}`, cause);
     }
+    const pushed = website.find((row) => row.txnRef.trim() === payment.reference);
+    if (pushed) await noteAsPushed(pushed.id, str(created?.payment?.payment_id) || null);
     console.info(zohoLogLine("zoho_invoice_payment_recorded", { order: number, amount: payment.amount }));
+  }
+  if (gone.length) {
+    const names = gone.map((payment) => `₹${payment.amount.toFixed(2)} (UTR ${payment.txnRef})`).join(", ");
+    throw new NeedsReviewError(`Zoho Books invoice ${str(invoice.invoice_number) || number} no longer shows ${names} for Grain Bazar order ${order.order_no}: it was removed in Zoho. It was not posted again, so nothing is paid twice. If it was removed by mistake, record it in Zoho Books with that UTR as the reference, then Retry. If the money went back to the customer, the website still shows it as paid: tell the office before the goods go.`);
   }
   // Paid in full on the website, but Zoho's separate CGST/SGST rounding left a paisa or two on the
   // invoice: write that off so Books shows it PAID for exactly what the customer paid.

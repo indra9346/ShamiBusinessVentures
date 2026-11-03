@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { indiaDate, orderNeedsZohoInvoice, paymentsToRecord, roundingWriteOff, zohoPaymentMode } from "../src/lib/zoho-sync-core.ts";
+import { indiaDate, orderNeedsZohoInvoice, paymentsGoneFromInvoice, paymentsToNoteAsPushed, paymentsToRecord, roundingWriteOff, zohoPaymentMode } from "../src/lib/zoho-sync-core.ts";
 
 test("only admin-confirmed, live orders get a Zoho Books invoice", () => {
   for (const status of ["Payment Confirmed", "Accepted", "Packed", "Dispatched", "Out for Delivery", "Delivered"])
@@ -52,6 +52,42 @@ test("never more than the invoice balance, and nothing when it is already paid",
 
 test("payments without a UTR or amount are skipped", () => {
   assert.deepEqual(paymentsToRecord([paid(100, "  ", "2026-10-24T10:00:00Z"), paid(0, "U2", "2026-10-24T10:00:00Z")], [], 500), []);
+});
+
+const pushed = (txnRef: string, invoice: string, zohoPaymentId: string | null = null) => ({ ...paid(2500, txnRef, "2026-11-03T10:00:00Z"), pushedToInvoice: invoice, zohoPaymentId });
+
+test("a payment deleted in Zoho is not posted to that invoice again, but goes to review", () => {
+  const payment = pushed("849320392376", "INV1", "P1");
+  assert.deepEqual(paymentsToRecord([payment], [], 2500, "INV1"), []);
+  assert.deepEqual(paymentsGoneFromInvoice([payment], [], "INV1"), [payment]);
+});
+
+test("a new invoice after a void gets the payment again", () => {
+  const payment = pushed("849320392376", "INV1", "P1");
+  assert.deepEqual(paymentsToRecord([payment], [], 2500, "INV2").map((p) => p.reference), ["849320392376"]);
+  assert.deepEqual(paymentsGoneFromInvoice([payment], [], "INV2"), []);
+});
+
+test("a payment still on the invoice is not gone, even when its reference was edited in Zoho", () => {
+  const payment = pushed("849320392376", "INV1", "P1");
+  assert.deepEqual(paymentsGoneFromInvoice([payment], [{ paymentId: "P1", reference: "edited" }], "INV1"), []);
+  assert.deepEqual(paymentsGoneFromInvoice([payment], [{ paymentId: "P9", reference: "849320392376" }], "INV1"), [], "put back by hand with the same UTR");
+  assert.deepEqual(paymentsToRecord([payment], ["edited"], 2500, "INV1"), []);
+});
+
+test("a payment never pushed is posted as before, and is not gone", () => {
+  const payment = paid(2500, "849320392376", "2026-11-03T10:00:00Z");
+  assert.deepEqual(paymentsToRecord([payment], [], 2500, "INV1").map((p) => p.amount), [2500]);
+  assert.deepEqual(paymentsGoneFromInvoice([payment], [], "INV1"), []);
+});
+
+test("a payment Zoho shows but the website has no note of gets the note, with Zoho's id", () => {
+  const payment = paid(2500, "UTR-1", "2026-11-03T10:00:00Z");
+  assert.deepEqual(paymentsToNoteAsPushed([payment], [{ paymentId: "P7", reference: "utr-1" }], "INV1"), [{ payment, zohoPaymentId: "P7" }]);
+  assert.deepEqual(paymentsToNoteAsPushed([payment], [{ paymentId: "P7", reference: "other" }], "INV1"), []);
+  const moved = pushed("UTR-1", "INV1", "P1");
+  assert.deepEqual(paymentsToNoteAsPushed([moved], [{ paymentId: "P2", reference: "UTR-1" }], "INV2"), [{ payment: moved, zohoPaymentId: "P2" }]);
+  assert.deepEqual(paymentsToNoteAsPushed([moved], [{ paymentId: "P1", reference: "UTR-1" }], "INV1"), [], "already noted against this invoice");
 });
 
 test("a paisa left by Zoho's CGST/SGST rounding is written off when the order is paid in full", () => {

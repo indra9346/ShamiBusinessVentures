@@ -206,7 +206,7 @@ export async function loadUpiAudit(): Promise<UpiAuditRow[]> {
 
 export type BankCredit = {
   id: string; receivedAt: string; amount: number; utr: string; payer: string | null; sender: string | null;
-  status: "matched" | "unmatched" | "ambiguous" | "mismatch" | "late" | "settled"; orderNo: string | null; note: string | null; raw: string | null;
+  status: "matched" | "unmatched" | "ambiguous" | "mismatch" | "late" | "settled" | "balance"; orderNo: string | null; note: string | null; raw: string | null;
 };
 /** Admin: money-received SMS alerts from the company phone, newest first (customers see none). */
 export async function loadBankCredits(): Promise<BankCredit[]> {

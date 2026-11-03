@@ -494,8 +494,9 @@ export function zohoPaymentMode(method: string | null | undefined) {
   return "Bank Transfer";
 }
 
-export type WebsitePayment = { amount: number; txnRef: string; method: string | null; paidAt: string };
+export type WebsitePayment = { amount: number; txnRef: string; method: string | null; paidAt: string; pushedToInvoice?: string | null; zohoPaymentId?: string | null };
 export type PaymentToRecord = { amount: number; reference: string; date: string; mode: string; method: string };
+export type InvoicePayment = { paymentId: string; reference: string };
 
 /** yyyy-mm-dd of a timestamp in India time (Books dates are the organization's local dates). */
 export function indiaDate(timestamp: string) {
@@ -508,8 +509,9 @@ export function indiaDate(timestamp: string) {
  * The website payments still to record in Books against an invoice: each verified payment whose
  * UTR is not already on the invoice (case-insensitive), oldest first, never more than the
  * invoice's balance. Re-running after a partial failure therefore never records a payment twice.
+ * One already pushed to this invoice is never posted to it again: if it is gone, somebody removed it (see paymentsGoneFromInvoice).
  */
-export function paymentsToRecord(payments: WebsitePayment[], recordedReferences: string[], invoiceBalance: number): PaymentToRecord[] {
+export function paymentsToRecord(payments: WebsitePayment[], recordedReferences: string[], invoiceBalance: number, invoiceId?: string): PaymentToRecord[] {
   const recorded = new Set(recordedReferences.map((ref) => ref.trim().toLowerCase()).filter(Boolean));
   let balance = Math.round(Math.max(0, invoiceBalance) * 100);
   const result: PaymentToRecord[] = [];
@@ -517,12 +519,39 @@ export function paymentsToRecord(payments: WebsitePayment[], recordedReferences:
     const reference = payment.txnRef.trim();
     const amount = Math.round(Number(payment.amount) * 100);
     if (!reference || !(amount > 0) || recorded.has(reference.toLowerCase()) || balance <= 0) continue;
+    if (invoiceId && payment.pushedToInvoice === invoiceId) continue;
     const applied = Math.min(amount, balance);
     balance -= applied;
     recorded.add(reference.toLowerCase());
     result.push({ amount: applied / 100, reference, date: indiaDate(payment.paidAt), mode: zohoPaymentMode(payment.method), method: payment.method ?? "" });
   }
   return result;
+}
+
+/** Whether Zoho's list of an invoice's payments shows this website payment: by Zoho's id (a reference can be edited there) or its UTR. */
+function shownOnInvoice(payment: WebsitePayment, onInvoice: InvoicePayment[]) {
+  const reference = payment.txnRef.trim().toLowerCase();
+  return onInvoice.some((row) => (payment.zohoPaymentId && row.paymentId === payment.zohoPaymentId) || (reference && row.reference.trim().toLowerCase() === reference));
+}
+
+/**
+ * Website payments once pushed to this invoice that it no longer shows: somebody removed them in Zoho, maybe because
+ * the money went back. A person decides, so they are not posted again. A new invoice (after a void, with an admin's
+ * approval) starts clean: payments are pushed to it, and that is noted against it.
+ */
+export function paymentsGoneFromInvoice<T extends WebsitePayment>(payments: T[], onInvoice: InvoicePayment[], invoiceId: string): T[] {
+  return payments.filter((payment) => payment.pushedToInvoice === invoiceId && !shownOnInvoice(payment, onInvoice));
+}
+
+/**
+ * Website payments on this invoice not yet noted as pushed to it: the note was lost after the post, or the payment
+ * was pushed before notes were kept. With Zoho's id for each. Noting them now keeps them from ever being posted again.
+ */
+export function paymentsToNoteAsPushed<T extends WebsitePayment>(payments: T[], onInvoice: InvoicePayment[], invoiceId: string): { payment: T; zohoPaymentId: string | null }[] {
+  return payments.filter((payment) => payment.pushedToInvoice !== invoiceId && shownOnInvoice(payment, onInvoice)).map((payment) => {
+    const reference = payment.txnRef.trim().toLowerCase();
+    return { payment, zohoPaymentId: onInvoice.find((row) => row.reference.trim().toLowerCase() === reference)?.paymentId || null };
+  });
 }
 
 /** Zoho rounds CGST and SGST separately (₹51.225 → ₹51.23 each), so its invoice can exceed the website total by a paisa or two. */

@@ -853,6 +853,9 @@ export type Database = {
           txn_ref: string | null
           updated_at: string
           user_id: string | null
+          zoho_invoice_id: string | null
+          zoho_payment_id: string | null
+          zoho_pushed_at: string | null
         }
         Insert: {
           amount?: number
@@ -866,6 +869,9 @@ export type Database = {
           txn_ref?: string | null
           updated_at?: string
           user_id?: string | null
+          zoho_invoice_id?: string | null
+          zoho_payment_id?: string | null
+          zoho_pushed_at?: string | null
         }
         Update: {
           amount?: number
@@ -879,6 +885,9 @@ export type Database = {
           txn_ref?: string | null
           updated_at?: string
           user_id?: string | null
+          zoho_invoice_id?: string | null
+          zoho_payment_id?: string | null
+          zoho_pushed_at?: string | null
         }
         Relationships: [
           {

@@ -444,6 +444,7 @@ const CREDIT_STATUS: Record<BankCredit["status"], { label: string; tone: string 
   ambiguous: { label: "Several checkouts: waiting for the customer's UTR", tone: "text-amber-700" },
   mismatch: { label: "Wrong amount: you decide", tone: "text-danger" },
   late: { label: "Paid after time ran out: refund or place by hand", tone: "text-danger" },
+  balance: { label: "The exact balance: confirm it", tone: "text-amber-700" },
   settled: { label: "Settled", tone: "text-slate" },
 };
 
@@ -459,7 +460,7 @@ function BankAlertsPanel({ credits, onDemoMatch }: { credits: BankCredit[]; onDe
   const parsed = sample.trim() ? parseBankCredit(sample) : null;
   const endpoint = typeof window === "undefined" ? "https://grainbazar.com/api/payments/bank-alert" : `${window.location.origin}/api/payments/bank-alert`;
   const lastAlert = credits[0]?.receivedAt;
-  const needsYou = credits.filter((credit) => ["ambiguous", "mismatch", "late"].includes(credit.status));
+  const needsYou = credits.filter((credit) => ["ambiguous", "mismatch", "late", "balance"].includes(credit.status));
 
   const settle = async (credit: BankCredit) => {
     const note = window.prompt(`What was done about ₹${credit.amount} (UTR ${credit.utr})? For example: refunded on 28 Oct, or order placed by hand.`, "");
@@ -514,7 +515,7 @@ function BankAlertsPanel({ credits, onDemoMatch }: { credits: BankCredit[]; onDe
       </div>
 
       {needsYou.length > 0 && (
-        <p className="mt-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-800">{needsYou.length} payment{needsYou.length === 1 ? "" : "s"} need you: refund, or place the order by hand, then mark settled.</p>
+        <p className="mt-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-800">{needsYou.length} payment{needsYou.length === 1 ? "" : "s"} need you: confirm a balance below, or refund, or place the order by hand, then mark settled.</p>
       )}
       {credits.length > 0 && (
         <div className="mt-4 overflow-x-auto">
@@ -535,7 +536,7 @@ function BankAlertsPanel({ credits, onDemoMatch }: { credits: BankCredit[]; onDe
                     {CREDIT_STATUS[credit.status].label}{credit.note ? ` · ${credit.note}` : ""}
                   </td>
                   <td className="px-2 py-2">
-                    {["ambiguous", "mismatch", "late", "unmatched"].includes(credit.status) && (
+                    {["ambiguous", "mismatch", "late", "unmatched", "balance"].includes(credit.status) && (
                       <Button size="sm" variant="outline" disabled={busy === credit.id} onClick={() => void settle(credit)}>Mark settled</Button>
                     )}
                   </td>
