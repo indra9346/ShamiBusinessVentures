@@ -500,19 +500,6 @@
   }
 }
 
-/* The strip holds the tiles twice; moving it by half loops seamlessly. */
-@utility animate-ad-marquee {
-  animation: ad-marquee 18s linear infinite;
-}
-@keyframes ad-marquee {
-  from {
-    transform: translate3d(0, 0, 0);
-  }
-  to {
-    transform: translate3d(calc(-50% - 0.375rem), 0, 0);
-  }
-}
-
 @utility animate-ad-backdrop {
   animation: ad-backdrop 18s ease-in-out infinite alternate;
 }
@@ -529,7 +516,6 @@
   .animate-ad-kenburns,
   .animate-ad-progress,
   .animate-ad-fade-in,
-  .animate-ad-marquee,
   .animate-ad-backdrop {
     animation: none;
   }
