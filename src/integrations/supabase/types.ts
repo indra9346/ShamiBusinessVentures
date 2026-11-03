@@ -20,6 +20,30 @@ export type Database = {
         Update: { id?: string; code?: string; name?: string; address?: string; city?: string; state?: string; state_code?: string; pincode?: string; phone?: string; email?: string; map_url?: string; instructions?: string; gstin?: string; zoho_location_id?: string; zoho_location_name?: string; zoho_pricebook_id?: string; zoho_pricebook_name?: string; serves_pincodes?: string[]; pickup_enabled?: boolean; delivery_enabled?: boolean; delivery_fee?: number; free_delivery_above?: number | null; is_default?: boolean; active?: boolean; sort_order?: number; created_at?: string; updated_at?: string; vendor_id?: string | null; latitude?: number | null; longitude?: number | null; attendance_radius_m?: number; shift_start?: string; late_grace_min?: number; weekly_off?: number | null; shift_end?: string; presence_interval_min?: number }
         Relationships: []
       }
+      rice_samples: {
+        Row: { id: string; sample_no: number; arrival_date: string; variety: string; method: string; price_per_qntl: number; quantity_qntl: number; party_role: string; party_name: string; party_phone: string; seller_name: string; notes: string; status: string; status_reason: string; status_changed_at: string; created_by: string | null; created_by_name: string; created_at: string; updated_at: string; deleted_at: string | null; deleted_by: string | null; deleted_by_name: string; deleted_reason: string }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
+      rice_sample_tests: {
+        Row: { id: string; sample_id: string; tested_at: string; tested_by_name: string; score: number; grain: string; swelling: string; taste: string; broken: string; notes: string; recorded_by: string | null; recorded_at: string }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
+      rice_sample_events: {
+        Row: { id: number; sample_id: string; action: string; from_status: string | null; to_status: string | null; detail: string; actor: string | null; actor_name: string; at: string }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
+      rice_sample_purchase_orders: {
+        Row: { sample_id: string; reference: string; state: string; generation: number; retired_pos: Json; attempt_id: string; attempts: number; snapshot: Json; claimed_by: string | null; claimed_by_name: string; claimed_at: string; last_error: string; last_error_detail: string; zoho_po_id: string; zoho_po_number: string; zoho_po_status: string; zoho_sub_total: number | null; zoho_tax_total: number | null; zoho_total: number | null; differences: string[]; duplicates: Json; zoho_gone: boolean; zoho_checked_at: string | null; raised_at: string | null; raised_by: string | null; raised_by_name: string; updated_at: string }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
       price_lots: {
         Row: { id: string; lot_code: string; purchase_date: string | null; order_folio: string; factory: string; item: string; product_id: string | null; branch_id: string | null; quantity_qntl: number; price: number; commission: number; gst_rate: number; transport: number; amali_transport: number; amali_shami: number; driver_tips: number; unloading: number; margin: number; bag_kg: number; gst: number; landing_price: number; selling_qntl: number; selling_bag: number; applied_price: number | null; applied_branch_id: string | null; applied_at: string | null; notes: string; created_by: string | null; created_at: string; updated_at: string }
         Insert: { id?: string; lot_code?: string; purchase_date?: string | null; order_folio?: string; factory?: string; item?: string; product_id?: string | null; branch_id?: string | null; quantity_qntl?: number; price?: number; commission?: number; gst_rate?: number; transport?: number; amali_transport?: number; amali_shami?: number; driver_tips?: number; unloading?: number; margin?: number; bag_kg?: number; applied_price?: number | null; applied_branch_id?: string | null; applied_at?: string | null; notes?: string; created_by?: string | null; created_at?: string; updated_at?: string }
@@ -472,6 +496,30 @@ export type Database = {
         Update: { id?: string; branch_id?: string; effective_from?: string; shift_start?: string; shift_end?: string; late_grace_min?: number; late_counted_from?: string; early_grace_min?: number; half_day_below_min?: number; absent_below_min?: number; missed_checkout?: string; weekly_off?: number | null; radius_m?: number; gps_accuracy_limit_m?: number; require_device?: boolean; presence_interval_min?: number; presence_early_min?: number; presence_late_min?: number; leave_types?: string[]; leave_max_days?: number; leave_back_days?: number; leave_ahead_days?: number; leave_partner_required?: boolean; note?: string; created_by?: string | null; created_by_name?: string; created_at?: string; cancelled_at?: string | null; cancelled_by?: string | null }
         Relationships: []
       }
+      product_code_sets: {
+        Row: { id: string; category: string; prefix: string; first_label: string; second_label: string; brand: string; created_at: string; updated_at: string }
+        Insert: { category: string; id?: string; prefix?: string; first_label?: string; second_label?: string; brand?: string; created_at?: string; updated_at?: string }
+        Update: { id?: string; category?: string; prefix?: string; first_label?: string; second_label?: string; brand?: string; created_at?: string; updated_at?: string }
+        Relationships: []
+      }
+      product_code_methods: {
+        Row: { id: string; set_id: string; letter: string; name: string; sort_order: number; retired_at: string | null; created_at: string; updated_at: string }
+        Insert: { set_id: string; letter: string; name: string; id?: string; sort_order?: number; retired_at?: string | null; created_at?: string; updated_at?: string }
+        Update: { id?: string; set_id?: string; letter?: string; name?: string; sort_order?: number; retired_at?: string | null; created_at?: string; updated_at?: string }
+        Relationships: []
+      }
+      product_code_varieties: {
+        Row: { id: string; set_id: string; letter: string; name: string; sort_order: number; retired_at: string | null; created_at: string; updated_at: string }
+        Insert: { set_id: string; letter: string; name: string; id?: string; sort_order?: number; retired_at?: string | null; created_at?: string; updated_at?: string }
+        Update: { id?: string; set_id?: string; letter?: string; name?: string; sort_order?: number; retired_at?: string | null; created_at?: string; updated_at?: string }
+        Relationships: []
+      }
+      product_codes: {
+        Row: { id: string; set_id: string; method_id: string; variety_id: string; serial: number; code: string; name: string; description: string; subcategory: string; images: string[]; retired_at: string | null; retired_with_part: boolean; created_at: string; updated_at: string }
+        Insert: { set_id: string; method_id: string; variety_id: string; id?: string; serial?: number; code?: string; name?: string; description?: string; subcategory?: string; images?: string[]; retired_at?: string | null; retired_with_part?: boolean; created_at?: string; updated_at?: string }
+        Update: { id?: string; set_id?: string; method_id?: string; variety_id?: string; serial?: number; code?: string; name?: string; description?: string; subcategory?: string; images?: string[]; retired_at?: string | null; retired_with_part?: boolean; created_at?: string; updated_at?: string }
+        Relationships: []
+      }
       godown_holidays: {
         Row: { id: string; branch_id: string; holiday_date: string; name: string; created_by: string | null; created_by_name: string; created_at: string; removed_at: string | null; removed_by: string | null }
         Insert: { branch_id: string; holiday_date: string; name: string; id?: string; created_by?: string | null; created_by_name?: string; created_at?: string; removed_at?: string | null; removed_by?: string | null }
@@ -599,6 +647,18 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      delivery_notes: {
+        Row: { id: string; seq: number; note_no: string; order_id: string; order_no: string; zoho_invoice_id: string; invoice_number: string; invoice_total: number; order_total: number; paid_amount: number; snapshot: Json; generated_at: string; generated_by: string; generated_by_name: string }
+        Insert: { id?: string; seq: number; note_no: string; order_id: string; order_no: string; zoho_invoice_id: string; invoice_number: string; invoice_total: number; order_total: number; paid_amount: number; snapshot: Json; generated_at?: string; generated_by: string; generated_by_name: string }
+        Update: Record<string, never>
+        Relationships: []
+      }
+      delivery_note_events: {
+        Row: { id: number; note_id: string; kind: string; doc: string | null; slip_line: number | null; copy_no: number | null; gate_code: string | null; detail: string; actor_id: string | null; actor_name: string; occurred_at: string }
+        Insert: { id?: number; note_id: string; kind: string; doc?: string | null; slip_line?: number | null; copy_no?: number | null; gate_code?: string | null; detail?: string; actor_id?: string | null; actor_name?: string; occurred_at?: string }
+        Update: Record<string, never>
+        Relationships: []
       }
       order_items: {
         Row: {
@@ -974,9 +1034,9 @@ export type Database = {
         Relationships: []
       }
       return_requests: {
-        Row: { id: string; order_id: string; order_item_id: string; customer_id: string; product_id: string; vendor_id: string; quantity: number; amount: number; reason: string; status: string; refund_status: string; created_at: string; updated_at: string }
-        Insert: { id?: string; order_id: string; order_item_id: string; customer_id: string; product_id: string; vendor_id: string; quantity: number; amount: number; reason: string; status?: string; refund_status?: string; created_at?: string; updated_at?: string }
-        Update: { id?: string; order_id?: string; order_item_id?: string; customer_id?: string; product_id?: string; vendor_id?: string; quantity?: number; amount?: number; reason?: string; status?: string; refund_status?: string; created_at?: string; updated_at?: string }
+        Row: { id: string; order_id: string; order_item_id: string; customer_id: string | null; product_id: string; vendor_id: string; quantity: number; amount: number; reason: string; status: string; refund_status: string; created_at: string; updated_at: string }
+        Insert: { id?: string; order_id: string; order_item_id: string; customer_id?: string | null; product_id: string; vendor_id: string; quantity: number; amount: number; reason: string; status?: string; refund_status?: string; created_at?: string; updated_at?: string }
+        Update: { id?: string; order_id?: string; order_item_id?: string; customer_id?: string | null; product_id?: string; vendor_id?: string; quantity?: number; amount?: number; reason?: string; status?: string; refund_status?: string; created_at?: string; updated_at?: string }
         Relationships: []
       }
       vendor_payout_requests: {
@@ -989,6 +1049,12 @@ export type Database = {
         Row: { vendor_id: string; key: string; value: Json; updated_at: string }
         Insert: { vendor_id: string; key: string; value?: Json; updated_at?: string }
         Update: { vendor_id?: string; key?: string; value?: Json; updated_at?: string }
+        Relationships: []
+      }
+      customer_data_requests: {
+        Row: { id: string; kind: string; customer_id: string; customer_label: string; actor_id: string | null; actor_name: string; actor_email: string; summary: Json; login_removed_at: string | null; created_at: string }
+        Insert: { id?: string; kind: string; customer_id: string; customer_label?: string; actor_id?: string | null; actor_name?: string; actor_email?: string; summary?: Json; login_removed_at?: string | null; created_at?: string }
+        Update: { id?: string; kind?: string; customer_id?: string; customer_label?: string; actor_id?: string | null; actor_name?: string; actor_email?: string; summary?: Json; login_removed_at?: string | null; created_at?: string }
         Relationships: []
       }
       customer_settings: {
@@ -1140,6 +1206,22 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      rice_sample_save: { Args: { _id: string | null; _arrival_date: string; _variety: string; _method: string; _price_per_qntl: number; _quantity_qntl: number; _party_role: string; _party_name: string; _party_phone: string; _seller_name: string; _notes: string }; Returns: string }
+      rice_sample_add_test: { Args: { _sample_id: string; _tested_at: string | null; _tested_by_name: string; _score: number; _grain: string; _swelling: string; _taste: string; _broken: string; _notes: string }; Returns: string }
+      rice_sample_set_status: { Args: { _sample_id: string; _action: string; _reason: string }; Returns: string }
+      rice_sample_po_claim: { Args: { _sample_id: string; _attempt_id: string; _reference: string; _snapshot: Json; _user: string; _user_name: string }; Returns: Json }
+      rice_sample_po_takeover: { Args: { _sample_id: string; _expected_attempt: string; _attempt_id: string; _snapshot: Json; _user: string; _user_name: string }; Returns: Json }
+      rice_sample_po_mark_dead: { Args: { _sample_id: string; _po_id: string; _reason: string; _zoho_status: string; _note: string; _user: string | null; _user_name: string }; Returns: Json }
+      rice_sample_po_release: { Args: { _sample_id: string; _expected_attempt: string; _user: string; _user_name: string; _by_hand?: boolean }; Returns: Json }
+      rice_sample_po_mark_failed: { Args: { _sample_id: string; _attempt_id: string; _state: string; _message: string; _detail: string; _user: string; _user_name: string }; Returns: undefined }
+      rice_sample_po_record: { Args: { _sample_id: string; _po_id: string; _po_number: string; _po_status: string; _sub_total: number | null; _tax_total: number | null; _total: number | null; _differences: string[]; _found_by_search: boolean; _user: string; _user_name: string }; Returns: Json }
+      rice_sample_po_refresh: { Args: { _sample_id: string; _po_id?: string | null; _po_status: string | null; _sub_total: number | null; _tax_total: number | null; _total: number | null; _gone: boolean; _duplicates: Json | null }; Returns: undefined }
+      rice_sample_po_cancel_asked: { Args: { _sample_id: string; _po_number: string; _reason: string; _user: string; _user_name: string }; Returns: undefined }
+      rice_sample_po_poll_claim: { Args: { _gap_seconds: number }; Returns: boolean }
+      rice_sample_po_poll_hold: { Args: { _seconds: number }; Returns: undefined }
+      rice_sample_creation_claim: { Args: { _kind: string; _name_key: string; _display_name: string; _attempt_id: string; _user: string; _user_name: string }; Returns: Json }
+      rice_sample_creation_takeover: { Args: { _kind: string; _name_key: string; _expected_attempt: string; _attempt_id: string; _user: string; _user_name: string }; Returns: Json }
+      rice_sample_creation_finish: { Args: { _kind: string; _name_key: string; _attempt_id: string; _state: string; _zoho_id: string; _message: string }; Returns: undefined }
       enqueue_zoho_sync: { Args: { _entity_type: string; _entity_id: string }; Returns: undefined }
       claim_zoho_sync_jobs: { Args: { _limit?: number }; Returns: Database["public"]["Tables"]["zoho_sync_outbox"]["Row"][] }
       apply_zoho_contact_update: { Args: { _user_id: string; _contact_type: string; _full_name: string | null; _phone: string | null; _company: string | null; _gstin: string | null; _address?: Json | null }; Returns: undefined }
@@ -1191,6 +1273,11 @@ export type Database = {
       submit_upi_utr: { Args: { _order_no: string; _utr: string }; Returns: { id: string; order_id: string; order_no: string; user_id: string | null; customer_name: string; amount: number; utr: string; status: string; note: string | null; submitted_at: string; reviewed_at: string | null; reviewed_by: string | null } }
       admin_end_payment_hold: { Args: { _order_no: string }; Returns: boolean }
       mark_utr_refunded: { Args: { _order_no: string }; Returns: boolean }
+      delivery_note_check: { Args: { _order_no: string; _zoho: Json | null }; Returns: Json }
+      issue_delivery_note: { Args: { _order_no: string; _zoho: Json; _actor: string; _actor_name: string }; Returns: Json }
+      record_delivery_print: { Args: { _note_id: string; _note: boolean; _slip_lines: number[]; _zoho: Json; _actor: string; _actor_name: string }; Returns: Json }
+      delivery_note_register: { Args: { _limit?: number }; Returns: Json }
+      set_delivery_stop: { Args: { _order_no: string; _stopped: boolean; _reason: string; _actor: string; _actor_name: string }; Returns: boolean }
       review_upi_utr: { Args: { _order_no: string; _decision: string; _note?: string | null; _expected_utr?: string | null }; Returns: { id: string; order_id: string; order_no: string; user_id: string | null; customer_name: string; amount: number; utr: string; status: string; note: string | null; submitted_at: string; reviewed_at: string | null; reviewed_by: string | null } }
       record_stock_count: {
         Args: { _branch_id: string; _product_id: string; _counted: number; _zoho_physical_before: number; _zoho_delta: number; _site_after: number; _reason: string; _note: string; _flagged: boolean; _zoho_adjustment_id: string; _counted_by: string; _counted_by_name: string; _employee_id: string | null }
@@ -1223,6 +1310,9 @@ export type Database = {
         Returns: { order_item_id: string; order_no: string; placed_at: string; order_status: string; payment_status: string; customer_name: string; pin: string; product_name: string; qty: number; line_total: number; kind: string; rate: number; amount: number; status: string; partner_id: string }[]
       }
       admin_update_payout: { Args: { _id: string; _status: string; _reference?: string | null }; Returns: boolean }
+      admin_export_customer_data: { Args: { _customer_id: string }; Returns: Json }
+      admin_customer_deletion_preview: { Args: { _customer_id: string }; Returns: Json }
+      admin_delete_customer_data: { Args: { _customer_id: string; _confirmation: string; _retry?: boolean }; Returns: Json }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
@@ -1267,6 +1357,7 @@ export type Database = {
       vendor_set_product_stock: { Args: { _product_id: string; _stock: number }; Returns: boolean }
       vendor_set_product_active: { Args: { _product_id: string; _active: boolean }; Returns: boolean }
       admin_set_branch_stock: { Args: { _branch_id: string; _product_id: string; _stock: number }; Returns: number }
+      admin_set_product_code: { Args: { _product_id: string; _code: string }; Returns: boolean }
       default_branch_id: { Args: Record<string, never>; Returns: string }
       admin_update_vendor_business: { Args: { _vendor_id: string; _gstin: string; _city: string; _address: string }; Returns: boolean }
       admin_update_order_status: { Args: { _order_no: string; _status: string }; Returns: boolean }

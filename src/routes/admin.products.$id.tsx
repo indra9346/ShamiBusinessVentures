@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { DataTable, Panel, StatusBadge } from "@/components/panel/widgets";
@@ -8,6 +8,9 @@ import { getPricingDisplayMode, inr, type PricingDisplayMode } from "@/lib/data"
 import { shownOnStorefront, storefrontPatch } from "@/lib/storefront-visibility";
 import { PricingDisplayModeToggle } from "@/components/panel/PricingDisplayModeToggle";
 import { GodownPricesPanel } from "@/components/panel/GodownPricesPanel";
+import { ProductCodePicker } from "@/components/panel/ProductCodePicker";
+import { duplicatesToConfirm } from "@/lib/product-code-rules";
+import { isZohoMirrorProduct } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -37,7 +40,7 @@ export const Route = createFileRoute("/admin/products/$id")({
 
 function AdminProductDetail() {
   const { id } = Route.useParams();
-  const { products, reviews, orders, updateProduct } = useApp();
+  const { products, reviews, orders, categories, updateProduct, updateCategory, setProductCode } = useApp();
   const product = products.find((p) => p.id === id);
 
   const [stockOpen, setStockOpen] = useState(false);
@@ -45,6 +48,27 @@ function AdminProductDetail() {
   const [priceOpen, setPriceOpen] = useState(false);
   const [priceValue, setPriceValue] = useState("");
   const [pricingModeValue, setPricingModeValue] = useState<PricingDisplayMode>("strike_through");
+  const [codeOpen, setCodeOpen] = useState(false);
+  const [codeDraft, setCodeDraft] = useState({ productCode: "", name: "", description: "", subcategory: "", image: "" });
+  // The product as the dialog opened: what the admin changed is measured from here, because the live copy can move meanwhile.
+  const [codeOpenedAs, setCodeOpenedAs] = useState(codeDraft);
+  const [codeBox, setCodeBox] = useState("");
+  const [codeDuplicateOk, setCodeDuplicateOk] = useState(false);
+  const [codeSaving, setCodeSaving] = useState(false);
+  const openCode = () => {
+    if (!product) return;
+    const opened = { productCode: product.productCode ?? "", name: product.name, description: product.description ?? "", subcategory: product.subcategory, image: product.image };
+    setCodeDraft(opened);
+    setCodeOpenedAs(opened);
+    setCodeDuplicateOk(false);
+    setCodeOpen(true);
+  };
+  // The Product Codes page links here to give this product a code.
+  const productLoaded = !!product;
+  useEffect(() => {
+    if (productLoaded && window.location.hash === "#product-code" && !isZohoMirrorProduct(product!)) openCode();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [productLoaded]);
 
   if (!product) {
     return (
@@ -129,6 +153,15 @@ function AdminProductDetail() {
               </div>
             </div>
             <dl className="grid gap-2 text-sm sm:grid-cols-2">
+              <div className="flex items-center justify-between gap-2 sm:col-span-2">
+                <dt className="text-slate">Product code</dt>
+                <dd className="flex items-center gap-2 font-medium text-navy">
+                  {product.productCode
+                    ? <span className="rounded bg-navy px-2 py-0.5 font-mono text-xs font-bold text-white">{product.productCode}</span>
+                    : <span className="text-slate">None yet</span>}
+                  {!isZohoMirrorProduct(product) && <Button size="sm" variant="outline" onClick={openCode}>{product.productCode ? "Change" : "Set code"}</Button>}
+                </dd>
+              </div>
               <div className="flex justify-between"><dt className="text-slate">Brand</dt><dd className="font-medium text-navy">{product.brand}</dd></div>
               <div className="flex justify-between"><dt className="text-slate">Category</dt><dd className="font-medium text-navy">{product.category}</dd></div>
               <div className="flex justify-between"><dt className="text-slate">Subcategory</dt><dd className="font-medium text-navy">{product.subcategory}</dd></div>
@@ -210,6 +243,71 @@ function AdminProductDetail() {
           />
         </Panel>
       </div>
+
+      <Dialog open={codeOpen} onOpenChange={setCodeOpen}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+          <DialogHeader><DialogTitle className="pr-6 leading-snug">Product code: {product.name}</DialogTitle></DialogHeader>
+          <ProductCodePicker
+            mode="edit"
+            category={product.category}
+            value={codeDraft.productCode}
+            onSelect={(fill) => setCodeDraft((current) => ({ ...current, productCode: fill.code }))}
+            onClear={() => { setCodeDraft((current) => ({ ...current, productCode: "" })); setCodeDuplicateOk(false); }}
+            onBoxChange={setCodeBox}
+            original={{ code: codeOpenedAs.productCode, subcategory: codeOpenedAs.subcategory, pack: product }}
+            current={codeDraft}
+            onUse={(patch) => setCodeDraft((current) => ({ ...current, ...patch }))}
+            pack={product}
+            excludeProductId={product.id}
+            subcategories={categories.find((c) => c.name === product.category)?.grades ?? []}
+            duplicateOk={codeDuplicateOk}
+            onDuplicateOk={setCodeDuplicateOk}
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCodeOpen(false)}>Cancel</Button>
+            <Button
+              disabled={codeSaving}
+              onClick={async () => {
+                if (codeBox && codeBox !== codeDraft.productCode) {
+                  toast.error(`“${codeBox}” in the code box is not a code you can use`, { description: "Correct it, or clear the box to go on." });
+                  return;
+                }
+                const originalCode = codeOpenedAs.productCode;
+                if (!codeDuplicateOk && duplicatesToConfirm(products, codeDraft.productCode, product, product.id, { code: originalCode, pack: product }).length > 0) {
+                  toast.error(`An active product already has code ${codeDraft.productCode} in this pack size`, { description: "Look at the warning, and tick it if you do want both." });
+                  return;
+                }
+                const codeChanged = codeDraft.productCode !== originalCode;
+                const taken = {
+                  ...(codeDraft.name !== codeOpenedAs.name ? { name: codeDraft.name } : {}),
+                  ...(codeDraft.description !== codeOpenedAs.description ? { description: codeDraft.description } : {}),
+                  ...(codeDraft.subcategory !== codeOpenedAs.subcategory ? { subcategory: codeDraft.subcategory } : {}),
+                  ...(codeDraft.image !== codeOpenedAs.image ? { image: codeDraft.image } : {}),
+                };
+                if (!codeChanged && Object.keys(taken).length === 0) { setCodeOpen(false); return; }
+                setCodeSaving(true);
+                try {
+                  // Only what the admin chose changes. A code alone is written by itself: name, image, SKU and Zoho aren't touched.
+                  if (Object.keys(taken).length > 0 && !(await updateProduct(product.id, taken))) return;
+                  if (codeChanged && !(await setProductCode(product.id, codeDraft.productCode || undefined))) return;
+                  const category = categories.find((c) => c.name.trim().toLowerCase() === product.category.trim().toLowerCase());
+                  const sub = codeDraft.subcategory.trim();
+                  if (taken.subcategory && category && sub && !category.grades.some((g) => g.trim().toLowerCase() === sub.toLowerCase())) {
+                    if (!(await updateCategory(category.id, { grades: [...category.grades, sub] })))
+                      toast.warning(`Saved, but “${sub}” was not added to ${category.name}`, { description: "Add it under Admin → Categories." });
+                  }
+                  toast.success(!codeChanged ? `${product.name} updated` : codeDraft.productCode ? `${product.name} now carries code ${codeDraft.productCode}` : `Code removed from ${product.name}`);
+                  setCodeOpen(false);
+                } finally {
+                  setCodeSaving(false);
+                }
+              }}
+            >
+              {codeSaving ? "Saving…" : "Save"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={stockOpen} onOpenChange={setStockOpen}>
         <DialogContent>

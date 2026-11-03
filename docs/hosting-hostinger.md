@@ -40,6 +40,7 @@ them. The owner sends the secret values privately, not in chat or email.
 |---|---|---|
 | `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, `VITE_SUPABASE_PROJECT_ID` | **build time** | Public. Already in the repo's `.env`. Must be present when `npm run build` runs. |
 | `VITE_STATIC_DATA_MODE` | build time | Must be `false` (or unset) on the live site. `true` shows demo data. |
+| `VITE_GA_MEASUREMENT_ID` | build time | Public. Google Analytics ID, kept in the repo's `.env`. Don't add it blank in Hostinger: a blank value overrides `.env` and switches analytics off. |
 | `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY` | server | Same Supabase project. |
 | `SUPABASE_SERVICE_ROLE_KEY` | server | **Secret.** Full database access. Server only. |
 | `ZOHO_CLIENT_ID`, `ZOHO_CLIENT_SECRET` | server | **Secret** (client secret). Zoho API Console app. |

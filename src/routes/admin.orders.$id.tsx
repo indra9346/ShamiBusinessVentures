@@ -27,6 +27,7 @@ import { canCancelOrder, inr, orderStages, type OrderStatus } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { useBranches, zohoLocationLabel } from "@/lib/branches";
 import { ZohoInvoiceStatus } from "@/components/panel/ZohoInvoiceStatus";
+import { DeliveryNotePanel } from "@/components/panel/DeliveryNotePanel";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { syncSingleOrderToZoho } from "@/lib/zoho-commerce.functions";
 import { PickupPointCard } from "@/components/site/PickupPointCard";
@@ -132,11 +133,9 @@ function AdminOrderDetail() {
   ));
   const currentIdx = orderStages.indexOf(order.status);
 
-  // Retrieve customer details including GSTIN
-  const matchedCustomer = customers.find(
-    (c) => c.id === order.customerId || c.name === order.customer || c.email === order.email,
-  );
-  const customerGstin = order.gstin || matchedCustomer?.gst || "29AAACB2026D1Z5";
+  // Only this order's or this customer's own GSTIN: a shared name or a blank email is not the same person.
+  const matchedCustomer = customers.find((c) => c.id === order.customerId);
+  const customerGstin = order.gstin || matchedCustomer?.gst;
 
   // Retrieve vendor records involved in this order
   const orderVendors = vendors.filter((v) =>
@@ -404,6 +403,8 @@ function AdminOrderDetail() {
         </div>
       </div>
 
+      <DeliveryNotePanel orderNo={order.id} className="mb-5" />
+
       {/* Zoho ERP Style 4-Stage Horizontal Progression Tracker */}
       <Panel title="Order Stage Progression" className="mb-5">
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -523,10 +524,12 @@ function AdminOrderDetail() {
                 {order.email}
               </dd>
             </div>
-            <div className="flex justify-between border-t border-border pt-1.5">
-              <dt className="text-slate">GSTIN</dt>
-              <dd className="font-mono font-semibold text-navy">{customerGstin}</dd>
-            </div>
+            {customerGstin && (
+              <div className="flex justify-between border-t border-border pt-1.5">
+                <dt className="text-slate">GSTIN</dt>
+                <dd className="font-mono font-semibold text-navy">{customerGstin}</dd>
+              </div>
+            )}
             <div className="flex justify-between">
               <dt className="text-slate">Customer ID</dt>
               <dd className="font-mono text-xs text-slate">{order.customerId}</dd>

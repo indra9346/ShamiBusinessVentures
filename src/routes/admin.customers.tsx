@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { downloadCSV } from "@/lib/export-utils";
+import { CustomerDataLog } from "@/components/customers/CustomerDataPanel";
 
 export const Route = createFileRoute("/admin/customers")({
   head: () => ({
@@ -274,7 +275,7 @@ function AdminCustomersPanel() {
               <Link to="/admin/customers/$id" params={{ id: c.id }}>
                 <Button variant="outline" size="sm">View</Button>
               </Link>
-              <Button
+              {c.status !== "deleted" && <Button
                 variant="outline"
                 size="sm"
                 onClick={() => {
@@ -283,12 +284,16 @@ function AdminCustomersPanel() {
                 }}
               >
                 {c.status === "blocked" ? "Unblock" : "Block"}
-              </Button>
+              </Button>}
               <Button variant="outline" size="sm" onClick={() => { window.location.href = `mailto:${encodeURIComponent(c.email)}`; }}>Email</Button>
             </div>,
           ])}
         />
         <Pager page={pageSafe} pages={pages} onPage={setPage} total={filtered.length} />
+      </Panel>
+
+      <Panel title="Information Requests" className="mt-6">
+        <CustomerDataLog />
       </Panel>
     </PanelLayout>
   );

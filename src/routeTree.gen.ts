@@ -41,6 +41,7 @@ import { Route as AdminCommissionsRouteImport } from './routes/admin.commissions
 import { Route as AdminCouponsRouteImport } from './routes/admin.coupons'
 import { Route as AdminCustomersRouteImport } from './routes/admin.customers'
 import { Route as AdminDashboardRouteImport } from './routes/admin.dashboard'
+import { Route as AdminDeliveryNotesRouteImport } from './routes/admin.delivery-notes'
 import { Route as AdminEnquiriesRouteImport } from './routes/admin.enquiries'
 import { Route as AdminGodownReportRouteImport } from './routes/admin.godown-report'
 import { Route as AdminInventoryRouteImport } from './routes/admin.inventory'
@@ -52,10 +53,12 @@ import { Route as AdminPartnersRouteImport } from './routes/admin.partners'
 import { Route as AdminPaymentsRouteImport } from './routes/admin.payments'
 import { Route as AdminPayoutsRouteImport } from './routes/admin.payouts'
 import { Route as AdminPricingRouteImport } from './routes/admin.pricing'
+import { Route as AdminProductCodesRouteImport } from './routes/admin.product-codes'
 import { Route as AdminProductsRouteImport } from './routes/admin.products'
 import { Route as AdminReportsRouteImport } from './routes/admin.reports'
 import { Route as AdminReturnsRouteImport } from './routes/admin.returns'
 import { Route as AdminReviewsRouteImport } from './routes/admin.reviews'
+import { Route as AdminRiceSamplesRouteImport } from './routes/admin.rice-samples'
 import { Route as AdminSettingsRouteImport } from './routes/admin.settings'
 import { Route as AdminStockCountsRouteImport } from './routes/admin.stock-counts'
 import { Route as AdminUpiPaymentsRouteImport } from './routes/admin.upi-payments'
@@ -87,6 +90,7 @@ import { Route as VendorReviewsRouteImport } from './routes/vendor.reviews'
 import { Route as VendorSettingsRouteImport } from './routes/vendor.settings'
 import { Route as AccountOrdersIdRouteImport } from './routes/account.orders.$id'
 import { Route as AdminCustomersIdRouteImport } from './routes/admin.customers.$id'
+import { Route as AdminDeliveryNoteOrderNoRouteImport } from './routes/admin.delivery-note.$orderNo'
 import { Route as AdminEnquiriesIdRouteImport } from './routes/admin.enquiries.$id'
 import { Route as AdminOrdersIdRouteImport } from './routes/admin.orders.$id'
 import { Route as AdminProductsIdRouteImport } from './routes/admin.products.$id'
@@ -260,6 +264,11 @@ const AdminDashboardRoute = AdminDashboardRouteImport.update({
   path: '/admin/dashboard',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdminDeliveryNotesRoute = AdminDeliveryNotesRouteImport.update({
+  id: '/admin/delivery-notes',
+  path: '/admin/delivery-notes',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AdminEnquiriesRoute = AdminEnquiriesRouteImport.update({
   id: '/admin/enquiries',
   path: '/admin/enquiries',
@@ -315,6 +324,11 @@ const AdminPricingRoute = AdminPricingRouteImport.update({
   path: '/admin/pricing',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdminProductCodesRoute = AdminProductCodesRouteImport.update({
+  id: '/admin/product-codes',
+  path: '/admin/product-codes',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AdminProductsRoute = AdminProductsRouteImport.update({
   id: '/admin/products',
   path: '/admin/products',
@@ -333,6 +347,11 @@ const AdminReturnsRoute = AdminReturnsRouteImport.update({
 const AdminReviewsRoute = AdminReviewsRouteImport.update({
   id: '/admin/reviews',
   path: '/admin/reviews',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminRiceSamplesRoute = AdminRiceSamplesRouteImport.update({
+  id: '/admin/rice-samples',
+  path: '/admin/rice-samples',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AdminSettingsRoute = AdminSettingsRouteImport.update({
@@ -490,6 +509,12 @@ const AdminCustomersIdRoute = AdminCustomersIdRouteImport.update({
   path: '/$id',
   getParentRoute: () => AdminCustomersRoute,
 } as any)
+const AdminDeliveryNoteOrderNoRoute =
+  AdminDeliveryNoteOrderNoRouteImport.update({
+    id: '/admin/delivery-note/$orderNo',
+    path: '/admin/delivery-note/$orderNo',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const AdminEnquiriesIdRoute = AdminEnquiriesIdRouteImport.update({
   id: '/$id',
   path: '/$id',
@@ -583,6 +608,7 @@ export interface FileRoutesByFullPath {
   '/admin/coupons': typeof AdminCouponsRoute
   '/admin/customers': typeof AdminCustomersRouteWithChildren
   '/admin/dashboard': typeof AdminDashboardRoute
+  '/admin/delivery-notes': typeof AdminDeliveryNotesRoute
   '/admin/enquiries': typeof AdminEnquiriesRouteWithChildren
   '/admin/godown-report': typeof AdminGodownReportRoute
   '/admin/inventory': typeof AdminInventoryRoute
@@ -594,10 +620,12 @@ export interface FileRoutesByFullPath {
   '/admin/payments': typeof AdminPaymentsRoute
   '/admin/payouts': typeof AdminPayoutsRoute
   '/admin/pricing': typeof AdminPricingRoute
+  '/admin/product-codes': typeof AdminProductCodesRoute
   '/admin/products': typeof AdminProductsRouteWithChildren
   '/admin/reports': typeof AdminReportsRoute
   '/admin/returns': typeof AdminReturnsRoute
   '/admin/reviews': typeof AdminReviewsRoute
+  '/admin/rice-samples': typeof AdminRiceSamplesRoute
   '/admin/settings': typeof AdminSettingsRoute
   '/admin/stock-counts': typeof AdminStockCountsRoute
   '/admin/upi-payments': typeof AdminUpiPaymentsRoute
@@ -630,6 +658,7 @@ export interface FileRoutesByFullPath {
   '/vendor/': typeof VendorIndexRoute
   '/account/orders/$id': typeof AccountOrdersIdRoute
   '/admin/customers/$id': typeof AdminCustomersIdRoute
+  '/admin/delivery-note/$orderNo': typeof AdminDeliveryNoteOrderNoRoute
   '/admin/enquiries/$id': typeof AdminEnquiriesIdRoute
   '/admin/orders/$id': typeof AdminOrdersIdRoute
   '/admin/products/$id': typeof AdminProductsIdRoute
@@ -674,6 +703,7 @@ export interface FileRoutesByTo {
   '/admin/coupons': typeof AdminCouponsRoute
   '/admin/customers': typeof AdminCustomersRouteWithChildren
   '/admin/dashboard': typeof AdminDashboardRoute
+  '/admin/delivery-notes': typeof AdminDeliveryNotesRoute
   '/admin/enquiries': typeof AdminEnquiriesRouteWithChildren
   '/admin/godown-report': typeof AdminGodownReportRoute
   '/admin/inventory': typeof AdminInventoryRoute
@@ -685,10 +715,12 @@ export interface FileRoutesByTo {
   '/admin/payments': typeof AdminPaymentsRoute
   '/admin/payouts': typeof AdminPayoutsRoute
   '/admin/pricing': typeof AdminPricingRoute
+  '/admin/product-codes': typeof AdminProductCodesRoute
   '/admin/products': typeof AdminProductsRouteWithChildren
   '/admin/reports': typeof AdminReportsRoute
   '/admin/returns': typeof AdminReturnsRoute
   '/admin/reviews': typeof AdminReviewsRoute
+  '/admin/rice-samples': typeof AdminRiceSamplesRoute
   '/admin/settings': typeof AdminSettingsRoute
   '/admin/stock-counts': typeof AdminStockCountsRoute
   '/admin/upi-payments': typeof AdminUpiPaymentsRoute
@@ -721,6 +753,7 @@ export interface FileRoutesByTo {
   '/vendor': typeof VendorIndexRoute
   '/account/orders/$id': typeof AccountOrdersIdRoute
   '/admin/customers/$id': typeof AdminCustomersIdRoute
+  '/admin/delivery-note/$orderNo': typeof AdminDeliveryNoteOrderNoRoute
   '/admin/enquiries/$id': typeof AdminEnquiriesIdRoute
   '/admin/orders/$id': typeof AdminOrdersIdRoute
   '/admin/products/$id': typeof AdminProductsIdRoute
@@ -767,6 +800,7 @@ export interface FileRoutesById {
   '/admin/coupons': typeof AdminCouponsRoute
   '/admin/customers': typeof AdminCustomersRouteWithChildren
   '/admin/dashboard': typeof AdminDashboardRoute
+  '/admin/delivery-notes': typeof AdminDeliveryNotesRoute
   '/admin/enquiries': typeof AdminEnquiriesRouteWithChildren
   '/admin/godown-report': typeof AdminGodownReportRoute
   '/admin/inventory': typeof AdminInventoryRoute
@@ -778,10 +812,12 @@ export interface FileRoutesById {
   '/admin/payments': typeof AdminPaymentsRoute
   '/admin/payouts': typeof AdminPayoutsRoute
   '/admin/pricing': typeof AdminPricingRoute
+  '/admin/product-codes': typeof AdminProductCodesRoute
   '/admin/products': typeof AdminProductsRouteWithChildren
   '/admin/reports': typeof AdminReportsRoute
   '/admin/returns': typeof AdminReturnsRoute
   '/admin/reviews': typeof AdminReviewsRoute
+  '/admin/rice-samples': typeof AdminRiceSamplesRoute
   '/admin/settings': typeof AdminSettingsRoute
   '/admin/stock-counts': typeof AdminStockCountsRoute
   '/admin/upi-payments': typeof AdminUpiPaymentsRoute
@@ -814,6 +850,7 @@ export interface FileRoutesById {
   '/vendor/': typeof VendorIndexRoute
   '/account/orders/$id': typeof AccountOrdersIdRoute
   '/admin/customers/$id': typeof AdminCustomersIdRoute
+  '/admin/delivery-note/$orderNo': typeof AdminDeliveryNoteOrderNoRoute
   '/admin/enquiries/$id': typeof AdminEnquiriesIdRoute
   '/admin/orders/$id': typeof AdminOrdersIdRoute
   '/admin/products/$id': typeof AdminProductsIdRoute
@@ -861,6 +898,7 @@ export interface FileRouteTypes {
     | '/admin/coupons'
     | '/admin/customers'
     | '/admin/dashboard'
+    | '/admin/delivery-notes'
     | '/admin/enquiries'
     | '/admin/godown-report'
     | '/admin/inventory'
@@ -872,10 +910,12 @@ export interface FileRouteTypes {
     | '/admin/payments'
     | '/admin/payouts'
     | '/admin/pricing'
+    | '/admin/product-codes'
     | '/admin/products'
     | '/admin/reports'
     | '/admin/returns'
     | '/admin/reviews'
+    | '/admin/rice-samples'
     | '/admin/settings'
     | '/admin/stock-counts'
     | '/admin/upi-payments'
@@ -908,6 +948,7 @@ export interface FileRouteTypes {
     | '/vendor/'
     | '/account/orders/$id'
     | '/admin/customers/$id'
+    | '/admin/delivery-note/$orderNo'
     | '/admin/enquiries/$id'
     | '/admin/orders/$id'
     | '/admin/products/$id'
@@ -952,6 +993,7 @@ export interface FileRouteTypes {
     | '/admin/coupons'
     | '/admin/customers'
     | '/admin/dashboard'
+    | '/admin/delivery-notes'
     | '/admin/enquiries'
     | '/admin/godown-report'
     | '/admin/inventory'
@@ -963,10 +1005,12 @@ export interface FileRouteTypes {
     | '/admin/payments'
     | '/admin/payouts'
     | '/admin/pricing'
+    | '/admin/product-codes'
     | '/admin/products'
     | '/admin/reports'
     | '/admin/returns'
     | '/admin/reviews'
+    | '/admin/rice-samples'
     | '/admin/settings'
     | '/admin/stock-counts'
     | '/admin/upi-payments'
@@ -999,6 +1043,7 @@ export interface FileRouteTypes {
     | '/vendor'
     | '/account/orders/$id'
     | '/admin/customers/$id'
+    | '/admin/delivery-note/$orderNo'
     | '/admin/enquiries/$id'
     | '/admin/orders/$id'
     | '/admin/products/$id'
@@ -1044,6 +1089,7 @@ export interface FileRouteTypes {
     | '/admin/coupons'
     | '/admin/customers'
     | '/admin/dashboard'
+    | '/admin/delivery-notes'
     | '/admin/enquiries'
     | '/admin/godown-report'
     | '/admin/inventory'
@@ -1055,10 +1101,12 @@ export interface FileRouteTypes {
     | '/admin/payments'
     | '/admin/payouts'
     | '/admin/pricing'
+    | '/admin/product-codes'
     | '/admin/products'
     | '/admin/reports'
     | '/admin/returns'
     | '/admin/reviews'
+    | '/admin/rice-samples'
     | '/admin/settings'
     | '/admin/stock-counts'
     | '/admin/upi-payments'
@@ -1091,6 +1139,7 @@ export interface FileRouteTypes {
     | '/vendor/'
     | '/account/orders/$id'
     | '/admin/customers/$id'
+    | '/admin/delivery-note/$orderNo'
     | '/admin/enquiries/$id'
     | '/admin/orders/$id'
     | '/admin/products/$id'
@@ -1129,6 +1178,7 @@ export interface RootRouteChildren {
   AdminCouponsRoute: typeof AdminCouponsRoute
   AdminCustomersRoute: typeof AdminCustomersRouteWithChildren
   AdminDashboardRoute: typeof AdminDashboardRoute
+  AdminDeliveryNotesRoute: typeof AdminDeliveryNotesRoute
   AdminEnquiriesRoute: typeof AdminEnquiriesRouteWithChildren
   AdminGodownReportRoute: typeof AdminGodownReportRoute
   AdminInventoryRoute: typeof AdminInventoryRoute
@@ -1140,10 +1190,12 @@ export interface RootRouteChildren {
   AdminPaymentsRoute: typeof AdminPaymentsRoute
   AdminPayoutsRoute: typeof AdminPayoutsRoute
   AdminPricingRoute: typeof AdminPricingRoute
+  AdminProductCodesRoute: typeof AdminProductCodesRoute
   AdminProductsRoute: typeof AdminProductsRouteWithChildren
   AdminReportsRoute: typeof AdminReportsRoute
   AdminReturnsRoute: typeof AdminReturnsRoute
   AdminReviewsRoute: typeof AdminReviewsRoute
+  AdminRiceSamplesRoute: typeof AdminRiceSamplesRoute
   AdminSettingsRoute: typeof AdminSettingsRoute
   AdminStockCountsRoute: typeof AdminStockCountsRoute
   AdminUpiPaymentsRoute: typeof AdminUpiPaymentsRoute
@@ -1172,6 +1224,7 @@ export interface RootRouteChildren {
   PartnerIndexRoute: typeof PartnerIndexRoute
   StaffIndexRoute: typeof StaffIndexRoute
   VendorIndexRoute: typeof VendorIndexRoute
+  AdminDeliveryNoteOrderNoRoute: typeof AdminDeliveryNoteOrderNoRoute
   ApiAuthSendSmsRoute: typeof ApiAuthSendSmsRoute
   ApiPaymentsBankAlertRoute: typeof ApiPaymentsBankAlertRoute
   ApiZohoCallbackRoute: typeof ApiZohoCallbackRoute
@@ -1405,6 +1458,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminDashboardRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/admin/delivery-notes': {
+      id: '/admin/delivery-notes'
+      path: '/admin/delivery-notes'
+      fullPath: '/admin/delivery-notes'
+      preLoaderRoute: typeof AdminDeliveryNotesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/admin/enquiries': {
       id: '/admin/enquiries'
       path: '/admin/enquiries'
@@ -1482,6 +1542,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminPricingRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/admin/product-codes': {
+      id: '/admin/product-codes'
+      path: '/admin/product-codes'
+      fullPath: '/admin/product-codes'
+      preLoaderRoute: typeof AdminProductCodesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/admin/products': {
       id: '/admin/products'
       path: '/admin/products'
@@ -1508,6 +1575,13 @@ declare module '@tanstack/react-router' {
       path: '/admin/reviews'
       fullPath: '/admin/reviews'
       preLoaderRoute: typeof AdminReviewsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/rice-samples': {
+      id: '/admin/rice-samples'
+      path: '/admin/rice-samples'
+      fullPath: '/admin/rice-samples'
+      preLoaderRoute: typeof AdminRiceSamplesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/admin/settings': {
@@ -1726,6 +1800,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/admin/customers/$id'
       preLoaderRoute: typeof AdminCustomersIdRouteImport
       parentRoute: typeof AdminCustomersRoute
+    }
+    '/admin/delivery-note/$orderNo': {
+      id: '/admin/delivery-note/$orderNo'
+      path: '/admin/delivery-note/$orderNo'
+      fullPath: '/admin/delivery-note/$orderNo'
+      preLoaderRoute: typeof AdminDeliveryNoteOrderNoRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/admin/enquiries/$id': {
       id: '/admin/enquiries/$id'
@@ -1985,6 +2066,7 @@ const rootRouteChildren: RootRouteChildren = {
   AdminCouponsRoute: AdminCouponsRoute,
   AdminCustomersRoute: AdminCustomersRouteWithChildren,
   AdminDashboardRoute: AdminDashboardRoute,
+  AdminDeliveryNotesRoute: AdminDeliveryNotesRoute,
   AdminEnquiriesRoute: AdminEnquiriesRouteWithChildren,
   AdminGodownReportRoute: AdminGodownReportRoute,
   AdminInventoryRoute: AdminInventoryRoute,
@@ -1996,10 +2078,12 @@ const rootRouteChildren: RootRouteChildren = {
   AdminPaymentsRoute: AdminPaymentsRoute,
   AdminPayoutsRoute: AdminPayoutsRoute,
   AdminPricingRoute: AdminPricingRoute,
+  AdminProductCodesRoute: AdminProductCodesRoute,
   AdminProductsRoute: AdminProductsRouteWithChildren,
   AdminReportsRoute: AdminReportsRoute,
   AdminReturnsRoute: AdminReturnsRoute,
   AdminReviewsRoute: AdminReviewsRoute,
+  AdminRiceSamplesRoute: AdminRiceSamplesRoute,
   AdminSettingsRoute: AdminSettingsRoute,
   AdminStockCountsRoute: AdminStockCountsRoute,
   AdminUpiPaymentsRoute: AdminUpiPaymentsRoute,
@@ -2028,6 +2112,7 @@ const rootRouteChildren: RootRouteChildren = {
   PartnerIndexRoute: PartnerIndexRoute,
   StaffIndexRoute: StaffIndexRoute,
   VendorIndexRoute: VendorIndexRoute,
+  AdminDeliveryNoteOrderNoRoute: AdminDeliveryNoteOrderNoRoute,
   ApiAuthSendSmsRoute: ApiAuthSendSmsRoute,
   ApiPaymentsBankAlertRoute: ApiPaymentsBankAlertRoute,
   ApiZohoCallbackRoute: ApiZohoCallbackRoute,

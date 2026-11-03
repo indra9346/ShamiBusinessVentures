@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { useNavigate } from "@tanstack/react-router";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useLiveAdBanners, type AdBanner } from "@/lib/ad-banners";
+import { flickStep, stripCopies, wrapStrip } from "@/lib/ad-banner-rules";
 import { useFestiveTheme } from "@/lib/festive";
 import { DiwaliBackdrop, DiwaliToran, SideGarlands } from "@/components/site/DiwaliDecor";
 import { cn } from "@/lib/utils";
@@ -11,28 +12,45 @@ import { afterPageLoad } from "@/lib/storefront-snapshot";
 /*
  * The home page's advertising band (offers, hot deals, new products, festival banners, promo
  * videos), managed in Admin > Ad Banners. A large sliding banner with swipe and auto-play, smaller
- * tiles beside it (a looping strip on phones), and the category strip on a frosted card in front
- * of the band. With no live banners only the category strip shows, as before.
+ * tiles beside it (a looping strip you can swipe on phones), and the category strip on a frosted
+ * card in front of the band. With no live banners only the category strip shows, as before.
  */
 
 const SLIDE_MS = 3500;
 const VIDEO_MAX_MS = 12000;
 
-function usePrefersReducedMotion() {
-  const [reduced, setReduced] = useState(false);
+/** How fast the phone strip moves on its own, in pixels per second. */
+const STRIP_PX_PER_SECOND = 85;
+/** How long the strip rests after a finger lifts before it moves on its own again. */
+const STRIP_REST_MS = 1500;
+/** A finger that moves less than this is a tap, not a swipe. */
+const STRIP_TAP_PX = 8;
+/** A flick loses about two thirds of its speed in this time. */
+const STRIP_FLICK_DECAY_MS = 325;
+/** Flick speeds, in pixels per millisecond: the fastest allowed, and the slowest worth moving for. */
+const STRIP_FLICK_MAX = 4;
+const STRIP_FLICK_MIN = 0.02;
+
+/** Whether a media query matches; `initial` is what the server and the browser's first render assume. */
+function useMediaQuery(media: string, initial = false) {
+  const [matches, setMatches] = useState(initial);
   useEffect(() => {
-    const query = window.matchMedia?.("(prefers-reduced-motion: reduce)");
+    const query = window.matchMedia?.(media);
     if (!query) return;
-    setReduced(query.matches);
-    const onChange = () => setReduced(query.matches);
+    setMatches(query.matches);
+    const onChange = () => setMatches(query.matches);
     query.addEventListener?.("change", onChange);
     return () => query.removeEventListener?.("change", onChange);
-  }, []);
-  return reduced;
+  }, [media]);
+  return matches;
+}
+
+function usePrefersReducedMotion() {
+  return useMediaQuery("(prefers-reduced-motion: reduce)");
 }
 
 /** Opens a banner's link: pages on this site without a reload, other sites in a new tab. */
-function BannerLink({ banner, className, children, tabIndex }: { banner: AdBanner; className?: string; children: ReactNode; tabIndex?: number }) {
+function BannerLink({ banner, className, children, tabIndex }: { banner: AdBanner; className?: string; children: ReactNode; tabIndex?: number | undefined }) {
   const navigate = useNavigate();
   const link = banner.linkUrl;
   if (!link) return <div className={className}>{children}</div>;
@@ -200,7 +218,8 @@ function MainCarousel({ banners }: { banners: AdBanner[] }) {
 
   return (
     <div
-      className="group/ad relative h-full overflow-hidden rounded-2xl shadow-elevated ring-1 ring-black/5"
+      // touch-pan-y: without it the browser claims every finger for scrolling and the swipe never arrives.
+      className="group/ad relative h-full touch-pan-y touch-pinch-zoom overflow-hidden rounded-2xl shadow-elevated ring-1 ring-black/5"
       onMouseEnter={() => setPaused(true)}
       onMouseLeave={() => setPaused(false)}
       onPointerDown={onPointerDown}
@@ -286,10 +305,17 @@ function MainCarousel({ banners }: { banners: AdBanner[] }) {
   );
 }
 
-function SideTile({ banner, className }: { banner: AdBanner; className?: string }) {
+/** `copy`: a repeat of a tile in the looping strip, skipped by the keyboard and screen readers. */
+function SideTile({ banner, className, copy }: { banner: AdBanner; className?: string; copy?: boolean }) {
   return (
-    <div className={cn("relative overflow-hidden rounded-xl shadow-card ring-1 ring-black/5", className)} style={{ backgroundColor: banner.background }}>
-      <BannerLink banner={banner} className="block h-full w-full">
+    <div
+      className={cn("relative overflow-hidden rounded-xl shadow-card ring-1 ring-black/5", className)}
+      style={{ backgroundColor: banner.background }}
+      aria-hidden={copy || undefined}
+      // A tap still opens a copy's link, but focus must not land inside something hidden from screen readers.
+      onMouseDown={copy ? (event) => event.preventDefault() : undefined}
+    >
+      <BannerLink banner={banner} className="block h-full w-full" tabIndex={copy ? -1 : undefined}>
         <BannerMedia banner={banner} active eager={false} kenBurns={false} sizes={TILE_SIZES} />
         <BannerCaption banner={banner} />
       </BannerLink>
@@ -300,12 +326,15 @@ function SideTile({ banner, className }: { banner: AdBanner; className?: string 
 /** Desktop: up to two tiles stacked beside the big banner, taking turns when there are more. */
 function SideColumn({ banners }: { banners: AdBanner[] }) {
   const reducedMotion = usePrefersReducedMotion();
+  // Below desktop width the column is hidden: it would keep rebuilding its tiles and playing their videos unseen.
+  const shows = useMediaQuery("(min-width: 1024px)", true);
   const [offset, setOffset] = useState(0);
   useEffect(() => {
-    if (banners.length <= 2 || reducedMotion) return;
+    if (!shows || banners.length <= 2 || reducedMotion) return;
     const timer = window.setInterval(() => setOffset((o) => (o + 1) % banners.length), SLIDE_MS + 1000);
     return () => window.clearInterval(timer);
-  }, [banners.length, reducedMotion]);
+  }, [shows, banners.length, reducedMotion]);
+  if (!shows) return null;
   const shown = banners.length <= 2 ? banners : [banners[offset % banners.length]!, banners[(offset + 1) % banners.length]!];
   return (
     <div className="hidden h-full min-h-0 flex-col gap-3 lg:flex">
@@ -316,20 +345,204 @@ function SideColumn({ banners }: { banners: AdBanner[] }) {
   );
 }
 
-/** Phones and tablets: the tiles move left in an endless loop (pauses while touched). */
+/**
+ * Phones and tablets: the tiles move left in an endless loop, and a finger can drag and flick them
+ * either way. One animation holds the strip's position: left running, the browser moves it without
+ * any script; a swipe moves it by setting its time. So nothing re-renders while it moves, and since
+ * the time simply wraps there is no end to reach or to jump back from.
+ */
 function SideMarquee({ banners }: { banners: AdBanner[] }) {
-  const reducedMotion = usePrefersReducedMotion();
-  if (banners.length === 0) return null;
-  const loop = !reducedMotion && banners.length > 1;
-  const items = loop ? [...banners, ...banners] : banners;
+  const count = banners.length;
+  const [copies, setCopies] = useState(2);
+  const stripRef = useRef<HTMLDivElement>(null);
+  const trackRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const strip = stripRef.current;
+    const track = trackRef.current;
+    if (!strip || !track || count < 2) return;
+    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)");
+    const listeners = new AbortController();
+    const { signal } = listeners;
+    let anim: Animation | null = null;
+    let loopWidth = 0;
+    let drag: { id: number; startX: number; x: number; time: number; velocity: number; swiping: boolean } | null = null;
+    let flickFrame = 0;
+    let restTimer = 0;
+    let onScreen = false;
+    let mouseOver = false;
+    let keyboardFocus = false;
+    let skipClick = false;
+
+    const pxToMs = (px: number) => (px / STRIP_PX_PER_SECOND) * 1000;
+    const position = () => ((anim?.currentTime as number) / 1000) * STRIP_PX_PER_SECOND;
+    const place = (px: number) => { if (anim) anim.currentTime = pxToMs(wrapStrip(px, loopWidth)); };
+    const syncPlaying = () => {
+      if (drag || flickFrame || restTimer || mouseOver || keyboardFocus || !onScreen || document.hidden || reduced?.matches) anim?.pause();
+      else anim?.play();
+    };
+    const rest = () => {
+      window.clearTimeout(restTimer);
+      restTimer = window.setTimeout(() => { restTimer = 0; syncPlaying(); }, STRIP_REST_MS);
+    };
+
+    // Tile widths follow the screen, so this runs again when a phone turns (and when a window narrows
+    // from desktop width, where the strip is hidden and has nothing to measure).
+    const measure = () => {
+      const first = track.children[0] as HTMLElement | undefined;
+      const repeat = track.children[count] as HTMLElement | undefined;
+      // Not offsetLeft: it rounds, and half a pixel off would show as a small jump at every wrap.
+      const width = first && repeat ? repeat.getBoundingClientRect().left - first.getBoundingClientRect().left : 0;
+      if (width) setCopies(stripCopies(strip.clientWidth, width));
+      if (Math.abs(width - loopWidth) < 0.01) return;
+      const part = anim ? position() / loopWidth : 0;
+      anim?.cancel();
+      anim = null;
+      loopWidth = width;
+      if (!width) return;
+      anim = track.animate(
+        [{ transform: "translate3d(0, 0, 0)" }, { transform: `translate3d(${-width}px, 0, 0)` }],
+        { duration: pxToMs(width), iterations: Infinity },
+      );
+      place(part * width);
+      syncPlaying();
+    };
+    const resized = new ResizeObserver(measure);
+    resized.observe(strip);
+    const seen = new IntersectionObserver((entries) => {
+      onScreen = !!entries[entries.length - 1]?.isIntersecting;
+      syncPlaying();
+    });
+    seen.observe(strip);
+    document.addEventListener("visibilitychange", syncPlaying, { signal });
+    reduced?.addEventListener?.("change", syncPlaying, { signal });
+
+    const flick = (start: number) => {
+      let velocity = start;
+      let last = performance.now();
+      const step = (now: number) => {
+        const next = flickStep(velocity, now - last, STRIP_FLICK_DECAY_MS);
+        last = now;
+        velocity = next.velocity;
+        place(position() + next.distance);
+        flickFrame = Math.abs(velocity) > STRIP_FLICK_MIN ? requestAnimationFrame(step) : 0;
+        if (!flickFrame) syncPlaying();
+      };
+      flickFrame = requestAnimationFrame(step);
+    };
+
+    const release = (event: PointerEvent) => {
+      if (drag?.id !== event.pointerId) return;
+      const { swiping, velocity, time } = drag;
+      drag = null;
+      // (a cancel means the browser took the finger, to scroll the page up or down)
+      if (swiping && event.type === "pointerup") {
+        skipClick = true;
+        // A finger that came to rest before lifting does not flick.
+        const speed = event.timeStamp - time > 80 ? 0 : Math.max(-STRIP_FLICK_MAX, Math.min(STRIP_FLICK_MAX, velocity));
+        if (Math.abs(speed) > STRIP_FLICK_MIN) flick(speed);
+      }
+      rest();
+      syncPlaying();
+    };
+    // On the window: a mouse pressed on the strip can be released anywhere.
+    window.addEventListener("pointerup", release, { signal });
+    window.addEventListener("pointercancel", release, { signal });
+
+    strip.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0 || !event.isPrimary) return;
+      // A finger that stops a flick only stops it, it does not open the tile under it.
+      skipClick = flickFrame !== 0;
+      cancelAnimationFrame(flickFrame);
+      flickFrame = 0;
+      window.clearTimeout(restTimer);
+      restTimer = 0;
+      drag = { id: event.pointerId, startX: event.clientX, x: event.clientX, time: event.timeStamp, velocity: 0, swiping: false };
+      syncPlaying();
+    }, { signal });
+
+    strip.addEventListener("pointermove", (event) => {
+      if (drag?.id !== event.pointerId) return;
+      // The mouse was released outside the browser window.
+      if (event.pointerType === "mouse" && !event.buttons) return release(event);
+      if (!drag.swiping) {
+        if (Math.abs(event.clientX - drag.startX) < STRIP_TAP_PX) return;
+        drag.swiping = true;
+        drag.x = event.clientX;
+        drag.time = event.timeStamp;
+        strip.setPointerCapture(event.pointerId);
+        return;
+      }
+      const moved = drag.x - event.clientX;
+      const ms = event.timeStamp - drag.time;
+      place(position() + moved);
+      // The finger's speed over about the last 50 ms, at any touch-screen rate.
+      if (ms > 0) drag.velocity += (1 - Math.exp(-ms / 50)) * (moved / ms - drag.velocity);
+      drag.x = event.clientX;
+      drag.time = event.timeStamp;
+    }, { signal });
+
+    // The click a mouse makes at the end of a swipe. Enter on a focused tile (no pointer, detail 0) still opens it.
+    strip.addEventListener("click", (event) => {
+      if (!skipClick || event.detail === 0) return;
+      skipClick = false;
+      event.preventDefault();
+      event.stopPropagation();
+    }, { capture: true, signal });
+    strip.addEventListener("dragstart", (event) => event.preventDefault(), { signal });
+    // The browser can scroll a clipped box by itself (find in page, focus); the animation alone places the strip.
+    strip.addEventListener("scroll", () => { strip.scrollLeft = 0; }, { signal });
+
+    const onMouse = (event: PointerEvent, over: boolean) => {
+      if (event.pointerType !== "mouse") return;
+      mouseOver = over;
+      syncPlaying();
+    };
+    strip.addEventListener("pointerenter", (event) => onMouse(event, true), { signal });
+    strip.addEventListener("pointerleave", (event) => onMouse(event, false), { signal });
+
+    // Keyboard: hold still and bring the tile into view (only the first set can take focus, so it always fits).
+    strip.addEventListener("focusin", (event) => {
+      const link = event.target as HTMLElement;
+      if (!link.matches(":focus-visible")) return;
+      keyboardFocus = true;
+      syncPlaying();
+      const tile = [...track.children].find((child) => child.contains(link)) as HTMLElement | undefined;
+      if (tile) place(tile.offsetLeft);
+    }, { signal });
+    strip.addEventListener("focusout", () => {
+      if (!keyboardFocus) return;
+      keyboardFocus = false;
+      rest();
+      syncPlaying();
+    }, { signal });
+
+    return () => {
+      listeners.abort();
+      resized.disconnect();
+      seen.disconnect();
+      cancelAnimationFrame(flickFrame);
+      window.clearTimeout(restTimer);
+      anim?.cancel();
+    };
+  }, [count]);
+
+  if (count === 0) return null;
+  const items = count > 1 ? Array.from({ length: copies }, () => banners).flat() : banners;
   return (
-    <div className="relative mt-3 overflow-hidden lg:hidden" aria-label="More offers">
-      <div
-        className={cn("flex w-max gap-3 hover:[animation-play-state:paused] active:[animation-play-state:paused]", loop && "animate-ad-marquee")}
-        style={loop ? { animationDuration: `${Math.max(12, banners.length * 4.5)}s` } : undefined}
-      >
+    <div
+      ref={stripRef}
+      role="group"
+      // (the focus ring sits inside the tile: the tile's rounded clipping would cut off one drawn outside it)
+      className={cn(
+        "relative mt-3 overflow-hidden lg:hidden [&_a:focus-visible]:outline-2 [&_a:focus-visible]:-outline-offset-4 [&_a:focus-visible]:outline-white",
+        count > 1 && "touch-pan-y touch-pinch-zoom select-none",
+      )}
+      aria-label="More offers"
+    >
+      <div ref={trackRef} className={cn("flex w-max gap-3", count > 1 && "will-change-transform")}>
         {items.map((banner, i) => (
-          <SideTile key={`${banner.id}-${i}`} banner={banner} className="aspect-[16/9] w-[46vw] max-w-[16rem] shrink-0 sm:w-[32vw]" />
+          <SideTile key={`${banner.id}-${i}`} banner={banner} copy={i >= count} className="aspect-[16/9] w-[46vw] max-w-[16rem] shrink-0 sm:w-[32vw]" />
         ))}
       </div>
     </div>
@@ -356,8 +569,8 @@ export function AdShowcase({ children }: { children?: ReactNode }) {
   return (
     <section className="relative isolate overflow-hidden">
       {/* Soft moving brand-coloured backdrop behind the banners and the category strip. */}
-      {/* (still while the festival backdrop covers it, so nothing under it repaints every frame) */}
-      <div aria-hidden className={cn("absolute inset-0 -z-10 bg-[length:200%_200%] bg-gradient-to-br from-[#e9f2ec] via-[#fbf5e6] to-[#eef4ef] motion-reduce:animate-none", !festive.on && "animate-ad-backdrop")} />
+      {/* (twice the band's size and slid, so the browser moves it without repainting; still while the festival backdrop covers it) */}
+      <div aria-hidden className={cn("absolute left-0 top-0 -z-10 h-[200%] w-[200%] bg-gradient-to-br from-[#e9f2ec] via-[#fbf5e6] to-[#eef4ef] motion-reduce:animate-none", !festive.on && "animate-ad-backdrop")} />
       <div aria-hidden className="absolute -left-24 -top-24 -z-10 h-72 w-72 rounded-full bg-gold/20 blur-3xl" />
       <div aria-hidden className="absolute -bottom-24 -right-16 -z-10 h-72 w-72 rounded-full bg-emerald-700/10 blur-3xl" />
       {/* Festival dates: warm Deepavali light and a marigold toran hanging in the band's top padding. */}

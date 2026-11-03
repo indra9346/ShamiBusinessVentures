@@ -103,11 +103,46 @@ re-authorizes Zoho).
 - Product sync: refuses (needs review) when another Grain Bazar product has the same SKU or the
   matched Zoho item is linked to another product, so stock never flips between duplicates.
 - HSN on order lines: from the Grain Bazar product, else the Zoho item record.
+- Order address: a sales order is created with no address, so Zoho copies the contact's. When that
+  differs from the order's own copy (`orders.shipping_address`), the site writes the order's copy
+  as the sales order's shipping and billing address through Commerce "update address", before the
+  order email and the invoice. A failed write never stops the push: everything else finishes, then
+  the queue entry shows Zoho's refusal and later pushes retry while the sales order still shows its
+  contact's address. Once a delivered order is invoiced or shipped showing another place, each push
+  asks a person to correct it, until the goods have gone. An address that differs from the
+  contact's counts as set by a person (in Zoho or Admin > Zoho) and is left alone, with two
+  exceptions: one set back to exactly the contact's cannot be told apart and is rewritten, and a
+  retry that just found the sales order by its Reference# writes the order's address without
+  checking. If the contact's address changes before a failed write is retried, the sales order
+  looks hand-set and keeps the old address. Delivered orders without a GSTIN also send
+  `place_of_supply` from the delivery state, as on the website invoice (a GSTIN's state wins; pickup
+  keeps Zoho's default, the contact's place, where the website invoice uses the godown's state).
+  Live test, 3 Nov 2026, one test order: the write works on these Inventory-created sales orders,
+  blanks their address ids and clears the contact's landmark; a full sales order update keeps it;
+  later contact edits don't touch it. The invoice does not follow on its own:
+  `invoices/fromsalesorder` copies the contact's address at that moment and keeps that copy. Zoho
+  also closes a sales order as soon as it is invoiced, with nothing shipped.
+- Invoice address: while the invoice is a draft, before it is marked sent, the sales order's
+  address is copied onto it with Books `PUT invoices/{id}/address/{type}`, so a correction made on
+  the sales order reaches the invoice too. This needs `ZohoBooks.invoices.UPDATE` (without it Zoho
+  answered 401, code 57, live) and so a Reauthorize. A draft address that differs from the contact's
+  was set by a person and is left alone. A sent invoice is never changed. A refusal does not hold up
+  the invoice: it is sent with the saved address and the queue entry goes to review. While a
+  delivery's sent invoice shows another place than its sales order and still equals the contact's,
+  each push reports it, until a person corrects it or the goods have gone.
+  Live test, 3 Nov 2026, second test order: both writes worked on a draft made by
+  `invoices/fromsalesorder`, the address held after it was marked sent, the landmark was cleared, and
+  tax, total and the contact's addresses were unchanged. The contact's last-modified time moved at
+  the moment of the writes.
 - Optional official notification: Books "Email a sales order" for each new website order to
   configured staff addresses; off by default; failures logged, never block the sync. Zoho marks a
   draft sales order Open when it is emailed (observed live), so enabling this confirms new website
   orders in Zoho on arrival. Test sends use an in-page confirmation (no browser pop-up).
 - Structured JSON logs (`source: "zoho-sync"`), no tokens or customer details.
+- Zoho access token: each server process keeps one in memory until 30 minutes before it expires
+  (`src/lib/zoho-token-cache.ts`), because Zoho allows 10 new tokens per refresh token in 10 minutes
+  and then answers "Access Denied". A Reauthorize takes effect on the next call. A restart asks for
+  a new one. The log lines `zoho_token_new` and `zoho_token_limit` show how often that happens.
 - Tests: `npm run test:zoho` (16 tests, incl. Zoho's documented signature examples).
 
 ## 6. Backup, migration, parity, rollback (no cutover without owner approval)

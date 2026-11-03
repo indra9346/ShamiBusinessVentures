@@ -102,7 +102,7 @@ export function UseMyLocationButton({ onLocated, className }: { onLocated: (loca
         <p className="mt-1.5 flex items-center gap-1 text-xs text-slate">
           <MapPin className="h-3.5 w-3.5 text-gold" />
           Pinned at {last.latitude.toFixed(5)}, {last.longitude.toFixed(5)} (±{Math.round(last.accuracy)} m) ·{" "}
-          <a className="font-semibold text-navy underline" href={`https://www.google.com/maps?q=${last.latitude},${last.longitude}`} target="_blank" rel="noreferrer">View on map</a>
+          <a data-analytics-off className="font-semibold text-navy underline" href={`https://www.google.com/maps?q=${last.latitude},${last.longitude}`} target="_blank" rel="noreferrer">View on map</a>
         </p>
       )}
     </div>

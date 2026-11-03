@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { callsByPurpose, describeZohoCall, mergeZohoCalls, type ZohoCall } from "../src/lib/zoho-call-log.ts";
+// Kept in its own file; run from here so package.json, which most open PRs edit, stays out of this change.
+import "./zoho-contact-update.test.ts";
 
 test("Zoho call: API and endpoint with record IDs taken out; token requests are not API calls", () => {
   assert.deepEqual(describeZohoCall("https://www.zohoapis.in/inventory/v1/salesorders/3579709000003272013?organization_id=1"), { api: "Inventory", endpoint: "salesorders/:id" });
