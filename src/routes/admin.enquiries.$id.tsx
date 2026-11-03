@@ -207,7 +207,6 @@ function AdminEnquiryDetail() {
               <p>
                 Status: <StatusBadge status={row.status} />
               </p>
-              <p className="text-xs text-slate">Official recipient: {row.recipient_email}</p>
               <a
                 href={`mailto:${row.email}?subject=${encodeURIComponent("Re: Shami Business Ventures enquiry")}`}
               >
@@ -249,7 +248,7 @@ function AdminEnquiryDetail() {
               {!row.email_sent && (
                 <p className="text-xs text-amber-700">
                   Email status: {row.email_delivery_status}. No provider acceptance is recorded. Use
-                  Reply to customer or contact {row.recipient_email} directly to follow up.
+                  Reply to customer to follow up.
                 </p>
               )}
             </div>

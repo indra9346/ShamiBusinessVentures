@@ -1,6 +1,17 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { hiddenReason, shownOnStorefront, storefrontPatch } from "../src/lib/storefront-visibility.ts";
+import { readFileSync } from "node:fs";
+import {
+  DEFAULT_SITE_DETAILS,
+  HEAD_OFFICE_ADDRESS,
+  cleanSiteDetails,
+  parseSiteDetails,
+  siteDetailsProblem,
+  telHref,
+  visibleSiteDetails,
+  whatsappHref,
+} from "../src/lib/site-details-rules.ts";
 
 test("shown only when approved, switched on and not a Zoho copy", () => {
   assert.equal(shownOnStorefront({ status: "approved", active: true, vendorId: "VENDOR-001" }), true);
@@ -37,4 +48,73 @@ test("the reason a product is hidden", () => {
   assert.equal(hiddenReason({ status: "rejected", active: true }), "Rejected");
   assert.equal(hiddenReason({ status: "pending", active: true }), "Awaiting approval");
   assert.equal(hiddenReason({ status: "approved", active: true, vendorId: "zoho:1" }), "Zoho copy");
+});
+
+test("website details: before an admin saves, customers see what the owner confirmed and no email", () => {
+  const visible = visibleSiteDetails(parseSiteDetails(undefined));
+  assert.equal(visible.address, "179, 5th Main Rd, BCC Layout, Chandra Layout, Bengaluru, Karnataka 560040");
+  assert.equal(visible.gstin, "29ABJCS7870F1ZR");
+  assert.equal(visible.phone, "+91 95385 00840");
+  assert.equal(visible.email, "");
+  assert.equal(siteDetailsProblem(DEFAULT_SITE_DETAILS), null);
+});
+
+test("website details: a switched-off or empty detail is never shown", () => {
+  const details = parseSiteDetails({
+    email: { value: "desk@example.com", show: false },
+    phone: { value: "", show: true },
+    gstin: { value: "  29ABJCS7870F1ZR  ", show: true },
+  });
+  const visible = visibleSiteDetails(details);
+  assert.equal(visible.email, "");
+  assert.equal(visible.phone, "");
+  assert.equal(visible.gstin, "29ABJCS7870F1ZR");
+  assert.equal(visible.address, HEAD_OFFICE_ADDRESS, "a detail the row doesn't hold keeps its default");
+});
+
+test("website details: a bad saved row can't break the page", () => {
+  for (const saved of [null, "text", 5, [], { email: "plain text", gstin: [] }]) {
+    assert.deepEqual(parseSiteDetails(saved), DEFAULT_SITE_DETAILS);
+  }
+  const odd = parseSiteDetails({ email: { value: 7, show: "yes" } });
+  assert.deepEqual(odd.email, { value: "", show: false });
+});
+
+test("website details: what stops the admin saving", () => {
+  const withDetail = (field: keyof typeof DEFAULT_SITE_DETAILS, value: string, show = true) =>
+    siteDetailsProblem({ ...DEFAULT_SITE_DETAILS, [field]: { value, show } });
+  assert.match(withDetail("email", "") ?? "", /email/);
+  assert.match(withDetail("email", "not an address") ?? "", /email/);
+  assert.equal(withDetail("email", "desk@grainbazar.com"), null);
+  assert.equal(withDetail("email", "", false), null, "a hidden detail isn't checked");
+  // The old sample has the right shape but the wrong check digit.
+  assert.match(withDetail("gstin", "29ABCDE1234F1Z5") ?? "", /GSTIN/);
+  assert.match(withDetail("gstin", "29ABJCS7870F1ZA") ?? "", /GSTIN/);
+  assert.equal(withDetail("gstin", "29abjcs7870f1zr"), null);
+  assert.match(withDetail("fssai", "12345") ?? "", /FSSAI/);
+  assert.equal(withDetail("fssai", "1234 5678 9012 34"), null);
+  assert.match(withDetail("phone", "12345") ?? "", /phone/);
+  assert.match(withDetail("whatsapp", "12345") ?? "", /WhatsApp/);
+  assert.match(withDetail("address", "Short") ?? "", /address/);
+});
+
+test("website details: saved tidily, and phone links work however the number is typed", () => {
+  const clean = cleanSiteDetails({ ...DEFAULT_SITE_DETAILS, gstin: { value: " 29abjcs 7870f1zr ", show: true }, email: { value: " a@b.co ", show: true } });
+  assert.equal(clean.gstin.value, "29ABJCS7870F1ZR");
+  assert.equal(clean.email.value, "a@b.co");
+  for (const phone of ["+91 95385 00840", "95385 00840", "095385-00840", "919538500840"]) {
+    assert.equal(telHref(phone), "tel:+919538500840");
+    assert.equal(whatsappHref(phone), "https://wa.me/919538500840");
+  }
+});
+
+test("the dead email domains and the old office are gone from what customers see", () => {
+  const files = ["src/components/site/SiteFooter.tsx", "src/routes/contact.tsx", "src/routes/about.tsx", "src/components/site/NotInYourArea.tsx", "src/lib/i18n-kn.ts"];
+  for (const file of files) {
+    const source = readFileSync(file, "utf8");
+    for (const old of ["shamiventures.in", "shamibusiness.in", "Shami House", "590010"]) assert.ok(!source.includes(old), `${old} is still in ${file}`);
+  }
+  for (const file of ["src/components/site/SiteFooter.tsx", "src/routes/about.tsx"]) {
+    assert.ok(!readFileSync(file, "utf8").includes("29ABCDE1234F1Z5"), `the sample GSTIN is still in ${file}`);
+  }
 });
