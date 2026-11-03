@@ -253,6 +253,7 @@ export const indiaToday = (nowMs: number) => new Date(nowMs + 330 * 60_000).toIS
  * compares what Zoho saved with what was confirmed. No purchase order number is sent: Zoho numbers it from the client's own
  * series. Nothing internal (scores, tasting notes) goes in here, because the vendor receives this document. Zoho doesn't apply an
  * item's tax by itself (the first live purchase order came back with GST 0), so the tax goes on the line, with the two states it depends on.
+ * It doesn't fill in the item's name either (a live test showed a line with only the description), so the name goes on the line too.
  */
 export function purchaseOrderBody(plan: PoPlan): Record<string, unknown> {
   return {
@@ -265,6 +266,7 @@ export function purchaseOrderBody(plan: PoPlan): Record<string, unknown> {
     ...(plan.destinationOfSupply ? { destination_of_supply: plan.destinationOfSupply } : {}),
     line_items: [{
       item_id: plan.itemId,
+      name: plan.itemName,
       description: plan.description,
       quantity: plan.poQuantity,
       rate: plan.poRate,
@@ -294,6 +296,7 @@ export function poDifferences(plan: PoPlan, zohoPo: Record<string, unknown>): st
   if (lines.length > 1) out.push(`Zoho shows ${lines.length} lines, not 1.`);
   if (line) {
     if (text(line["item_id"]) && text(line["item_id"]) !== plan.itemId) out.push(`Zoho's line is for ${text(line["name"]) || "another item"}, not ${plan.itemName}.`);
+    if (!text(line["name"])) out.push(`Zoho's line doesn't show the item's name, ${plan.itemName}, so the vendor wouldn't see it.`);
     const quantity = numberOr(line["quantity"]);
     if (quantity !== null && Math.abs(quantity - plan.poQuantity) > 0.0005) out.push(`Zoho's quantity is ${quantity}, not ${plan.poQuantity}.`);
     const rate = numberOr(line["rate"] ?? line["purchase_rate"]);
@@ -777,7 +780,8 @@ export type SettleResult =
   | { kind: "freed"; reason: PoDeathReason; number: string }
   /** Dead, but Zoho holds another purchase order with this reference, so freeing the sample could make a third. */
   | { kind: "blocked"; message: string }
-  | { kind: "unknown"; message: string }
+  /** listBehind: Zoho's read says this, and only its list hasn't caught up yet. Not a failure, and the next check sorts it out. */
+  | { kind: "unknown"; message: string; listBehind?: PoDeathReason }
   /** Someone else settled it first. */
   | { kind: "changed" };
 
@@ -799,10 +803,12 @@ export async function settleRaisedPo(deps: PoLifeDeps, po: RaisedPo, actor: PoAc
   }
   const search = await findPurchaseOrdersByReference(deps.zoho, po.reference);
   if (!search.complete) return { kind: "unknown", message: `Zoho shows ${po.zoho_po_number} as ${PO_DEATH_WORDS[reason]}, but its list could not be read in full, so the sample stays locked for now. ${search.problem}` };
-  // Its own row in the search must agree: not listed at all if deleted, listed as dead if cancelled or rejected.
+  // Its own row in the search must agree: not listed at all if deleted, listed as dead if cancelled or rejected. Seen live: for under a
+  // minute after a cancel, the read says cancelled while the list still says draft. So the sample waits, and the card shows the status it read.
   const own = search.matches.find((match) => match.id === po.zoho_po_id);
   if (own && (now.gone || !poDeathReason(own.status))) {
-    return { kind: "unknown", message: `Zoho's answers about ${po.zoho_po_number} disagree, so the sample stays locked. Check it in Zoho.` };
+    await deps.store.refresh({ sampleId: po.sample_id, poId: po.zoho_po_id, status: now.gone ? null : now.status, subTotal: null, taxTotal: null, total: null, gone: now.gone, duplicates: null });
+    return { kind: "unknown", listBehind: reason, message: `Zoho shows ${po.zoho_po_number} as ${PO_DEATH_WORDS[reason]}, but its list hasn't caught up yet, so the sample stays locked until it does. That usually takes under a minute, and this page updates by itself. If it doesn't, check it in Zoho.` };
   }
   const others = search.matches.filter((match) => match.id !== po.zoho_po_id && !poDeathReason(match.status));
   if (others.length) {
@@ -858,7 +864,8 @@ export async function syncRaisedPos(deps: PoLifeDeps, rows: RaisedPo[], options:
       reads += 1;
     }
     const settled = await settleRaisedPo(deps, row, null);
-    if (settled.kind === "unknown" || settled.kind === "blocked") result.unknown += 1;
+    // A list catching up isn't a failure, so it doesn't make every page wait five minutes.
+    if ((settled.kind === "unknown" && !settled.listBehind) || settled.kind === "blocked") result.unknown += 1;
     else result.checked += 1;
     if (settled.kind === "freed") result.freed.push({ sampleId: row.sample_id, number: settled.number, reason: settled.reason });
   }
@@ -866,7 +873,8 @@ export async function syncRaisedPos(deps: PoLifeDeps, rows: RaisedPo[], options:
 }
 
 export type CancelResult =
-  | { kind: "cancelled"; number: string }
+  /** settling: Zoho has taken it, and the sample comes back at the next check, once Zoho's list has caught up. */
+  | { kind: "cancelled"; number: string; settling?: boolean }
   /** Zoho refused, and still shows it alive. Nothing changed. */
   | { kind: "refused"; message: string }
   /** No clear answer, or Zoho doesn't show it as cancelled yet. The next status check sorts it out. */
@@ -889,6 +897,7 @@ export async function cancelRicePo(deps: PoLifeDeps, po: RaisedPo, actor: PoActo
   const settled = await settleRaisedPo(deps, po, actor, `${refused ? "Already cancelled when asked from the website" : "Cancelled from the website"}: ${reason}`);
   if (settled.kind === "freed") return { kind: "cancelled", number: settled.number };
   if (settled.kind === "changed") return { kind: "cancelled", number: po.zoho_po_number };
+  if (settled.kind === "unknown" && settled.listBehind === "cancelled") return { kind: "cancelled", number: po.zoho_po_number, settling: true };
   if (refused && raw && settled.kind === "alive") return { kind: "refused", message: `Zoho would not cancel ${po.zoho_po_number}. ${plainZohoRefusal(raw)} Nothing changed. You can deal with it in Zoho.` };
   if (settled.kind === "alive") return { kind: "unclear", message: `Zoho still shows ${po.zoho_po_number} as ${zohoStatusLabel(settled.status)}. Check it in Zoho. This page updates by itself once Zoho changes.` };
   return { kind: "unclear", message: settled.message };
