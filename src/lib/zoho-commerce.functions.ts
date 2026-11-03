@@ -14,7 +14,7 @@ import {
   cleanEmailList, godownPricesFromPricebook, godownStockFromZohoItem, mergeGodownPrices, newOrderEmail, parseZohoItemSyncVendorIds, pendingOrderQty, sameGodownPrices,
   zohoPricebookItemsFor, reconcileCatalog, reconcileCustomers, reconcileOrders, shouldRetryZohoCall,
   zohoItemSyncAllows, zohoLogLine,
-  zohoRefusedWrite,
+  asksAboutUnansweredCreate, unansweredCreateQuestion, zohoPostKind, zohoStatusOutcome, zohoThrownOutcome, type ZohoWriteOutcome,
   zohoOrderIsFor, websiteOrderNoOf, WEBSITE_ORDER_NUMBER, zohoRetryDelayMs, type AppProductForParity, type ZohoItemForParity, type ZohoOrderForReconcile,
   orderNeedsZohoInvoice, paymentsToRecord, roundingWriteOff,
   invoiceDecision, websiteInvoiceStatus, zohoInvoicesOf, type InvoiceRecord,
@@ -79,15 +79,15 @@ const fetch: typeof globalThis.fetch = async (input, init) => {
   const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
   const method = (init?.method ?? "GET").toUpperCase();
   const claim = orderClaims?.getStore();
-  if (claim) await confirmZohoOrderClaim(claim, method !== "GET");
+  if (claim) await beforeZohoCallUnderClaim(claim, url, method);
   try {
     const response = await globalThis.fetch(input, init);
     noteZohoCall(url, method, response.ok);
-    if (claim && method !== "GET") claim.lastWriteStatus = response.status;
+    if (claim) await afterZohoCallUnderClaim(claim, url, method, zohoStatusOutcome(response.status));
     return response;
   } catch (cause) {
     noteZohoCall(url, method, false);
-    if (claim && method !== "GET") claim.lastWriteStatus = null;
+    if (claim) await afterZohoCallUnderClaim(claim, url, method, zohoThrownOutcome(cause));
     throw cause;
   }
 };
@@ -96,8 +96,12 @@ const fetch: typeof globalThis.fetch = async (input, init) => {
 // Two pushes of one order at once can make two sales orders, or two invoices and two payments. The
 // claim is a row in the database, so it holds across server processes, and a push that dies just stops
 // renewing it. Zoho can't check a claim, so each write to Zoho first confirms and extends it: a push
-// that stalled and lost its claim can't write. A claim lasts 3 minutes and a Zoho call at most 20
-// seconds, so a write under way can't outlive its claim.
+// that stalled and lost its claim can't write. A claim lasts 3 minutes and we wait at most 20 seconds
+// for a Zoho call, so a write we are waiting on can't outlive its claim.
+//
+// Zoho may still finish a write after we stop waiting, when the claim is long gone. So a POST with no
+// clear answer holds back this order's other POSTs for 10 minutes. By then what Zoho made shows when
+// the order's records are read, and each step looks there first, so nothing is made twice.
 type ZohoOrderClaim = {
   db: Awaited<ReturnType<typeof dbAdmin>>;
   orderId: string;
@@ -106,10 +110,15 @@ type ZohoOrderClaim = {
   createWaitOver: boolean;
   renewedAt: number;
   lost: boolean;
-  /** Zoho's HTTP status for the last write; null when no reply came. */
-  lastWriteStatus: number | null;
+  lastWriteOutcome: ZohoWriteOutcome | null;
+  /** A create in this push got no clear answer. */
+  createUnanswered: boolean;
+  writesHeldBack: boolean;
+  /** A POST was refused for that reason. Some steps carry on past a refusal, so this is checked at the end. */
+  stoppedByHold: boolean;
 };
 const orderClaims = newContextStore<ZohoOrderClaim>();
+const ZOHO_WRITE_HELD_BACK = "Zoho did not answer an earlier write for this order, and it may still be finishing it. Looking again shortly; nothing more is sent until then.";
 
 /** Another push has this order. Nothing was sent: it isn't a failure, and the queue comes back to it. */
 class ZohoOrderBusyError extends Error {
@@ -119,13 +128,32 @@ class ZohoOrderBusyError extends Error {
 }
 
 /** A read only keeps a long push's claim alive; only a write has to stop if the claim is gone. */
-async function confirmZohoOrderClaim(claim: ZohoOrderClaim, writing: boolean) {
+async function beforeZohoCallUnderClaim(claim: ZohoOrderClaim, url: string, method: string) {
+  const writing = method !== "GET";
   if (!claim.lost && (writing || Date.now() - claim.renewedAt > 60_000)) {
     const { data, error } = await claim.db.rpc("renew_zoho_order_push", { _order_id: claim.orderId, _holder: claim.holder });
     if (error || !data) claim.lost = true;
     else claim.renewedAt = Date.now();
   }
   if (claim.lost && writing) throw new ZohoOrderBusyError();
+  if (method !== "POST") return;
+  const kind = zohoPostKind(url);
+  if (kind === "order_create" ? claim.createUnanswered : kind === "other" && claim.writesHeldBack) {
+    claim.stoppedByHold = true;
+    throw new Error(ZOHO_WRITE_HELD_BACK);
+  }
+}
+
+/** Never throws: it runs between Zoho's reply and whoever is waiting for it. */
+async function afterZohoCallUnderClaim(claim: ZohoOrderClaim, url: string, method: string, outcome: ZohoWriteOutcome) {
+  if (method === "GET") return;
+  claim.lastWriteOutcome = outcome;
+  if (method !== "POST" || outcome !== "unclear") return;
+  const kind = zohoPostKind(url);
+  if (kind === "order_create") claim.createUnanswered = true;
+  if (kind !== "other") return;
+  claim.writesHeldBack = true;
+  await claim.db.rpc("note_zoho_order_write_unanswered", { _order_id: claim.orderId, _holder: claim.holder }).then(() => undefined, () => undefined);
 }
 
 /**
@@ -141,7 +169,7 @@ async function withZohoOrderClaim(db: Awaited<ReturnType<typeof dbAdmin>>, order
   if (!row?.claimed) throw new ZohoOrderBusyError();
   const claim: ZohoOrderClaim = {
     db, orderId, holder, createAttemptedAt: row.create_attempted_at, createWaitOver: row.create_wait_over,
-    renewedAt: Date.now(), lost: false, lastWriteStatus: null,
+    renewedAt: Date.now(), lost: false, lastWriteOutcome: null, createUnanswered: false, writesHeldBack: row.writes_held_back, stoppedByHold: false,
   };
   try {
     await orderClaims.run(claim, push);
@@ -155,21 +183,22 @@ async function withZohoOrderClaim(db: Awaited<ReturnType<typeof dbAdmin>>, order
   }
   // Some steps carry on past a refused write, so a push can reach here without having done everything.
   if (claim.lost) throw new ZohoOrderBusyError();
+  if (claim.stoppedByHold) throw new Error(ZOHO_WRITE_HELD_BACK);
   return holder;
 }
 
 /**
  * A search miss doesn't prove there is no sales order if an earlier create got no clear answer: Zoho
- * may have made it and be slow to show it, or be making it still. So nothing more is sent for 10 minutes
- * (the queue looks again), and after that a person is asked, because Zoho's search can't be trusted
- * further than that: Inventory's documents don't list it, and it was never checked against a live create.
+ * may have made it and be slow to show it, or be making it still. A live read on 3 Nov showed Inventory's
+ * search finds Reference#, but how soon a new sales order becomes findable was not measured. So nothing
+ * more is sent for 10 minutes (the queue looks again), and after that a person is asked, not the search.
  */
 function refuseIfCreateUnanswered(orderNo: string) {
   const claim = orderClaims?.getStore();
   if (!claim?.createAttemptedAt) return;
   if (!claim.createWaitOver)
     throw new Error(`Zoho did not answer when order ${orderNo} was sent, and it may still be making the sales order. Looking again shortly; nothing more is sent until then.`);
-  throw new NeedsReviewError(`Zoho did not answer when order ${orderNo} was sent, and its search still finds no sales order with that Reference#. Look in Zoho Inventory > Sales Orders. If it is not there, press Retry on this entry to carry on. If it is there, do not press Retry yet: the hourly check links it, and Retry is safe after that.`);
+  throw new NeedsReviewError(unansweredCreateQuestion(orderNo));
 }
 
 /** Sends a create with the attempt noted first, so a reply that never comes can't lead to a second one. */
@@ -185,7 +214,8 @@ async function sendZohoOrderCreate<T>(send: () => Promise<T>) {
   try {
     return await send();
   } catch (cause) {
-    if (!claim.lost && zohoRefusedWrite(claim.lastWriteStatus)) await note(false).then(() => undefined, () => undefined);
+    // A clear no: nothing was made, so the next push may create it straight away.
+    if (!claim.lost && !claim.createUnanswered && claim.lastWriteOutcome === "refused") await note(false).then(() => undefined, () => undefined);
     throw cause;
   }
 }
@@ -505,7 +535,13 @@ export const retryZohoSyncJob = createServerFn({ method: "POST" })
   .validator(z.object({ id: z.string().uuid() }))
   .handler(async ({ data, context }) => {
     await ensureAdmin(context.supabase, context.userId);
-    const { error } = await (await dbAdmin()).rpc("retry_zoho_sync_job_checked", { _id: data.id });
+    const db = await dbAdmin();
+    const { data: job } = await db.from("zoho_sync_outbox").select("status,last_error").eq("id", data.id).maybeSingle();
+    // The person was asked to look in Zoho for an unanswered create, so this Retry is the go-ahead to create it.
+    const answersQuestion = job?.status === "needs_review" && asksAboutUnansweredCreate(job.last_error);
+    const { error } = answersQuestion
+      ? await db.rpc("retry_zoho_sync_job_checked", { _id: data.id })
+      : await db.rpc("retry_zoho_sync_job", { _id: data.id });
     if (error) throw new Error("Could not requeue the selected Zoho sync job");
   });
 
@@ -1790,7 +1826,7 @@ async function saveZohoReview(
     .eq("entity_type", entityType).eq("entity_id", entityId).eq("status", "needs_review")
     .limit(1).maybeSingle();
   if (existingError) throw new Error("Could not record the Zoho reconciliation review request");
-  const update = { last_error: reason.slice(0, 1000), updated_at: new Date().toISOString() };
+  const update = { last_error: reason.slice(0, 1000), updated_at: new Date().toISOString(), push_holder: null };
   const { error } = existing?.id
     ? await db.from("zoho_sync_outbox").update(update).eq("id", existing.id)
     : await db.from("zoho_sync_outbox").insert({

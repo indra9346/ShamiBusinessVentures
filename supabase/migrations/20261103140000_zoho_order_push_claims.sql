@@ -11,6 +11,8 @@ CREATE TABLE IF NOT EXISTS public.zoho_order_push_claims (
   locked_until timestamptz,
   -- A create was sent to Zoho and has no clear answer yet, so Zoho may have made it, or may still be making it.
   create_attempted_at timestamptz,
+  -- Another POST for this order (an invoice, a payment, a package) got no clear answer at this time.
+  write_unanswered_at timestamptz,
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 ALTER TABLE public.zoho_order_push_claims ENABLE ROW LEVEL SECURITY;
@@ -33,16 +35,16 @@ $$;
 REVOKE ALL ON FUNCTION public.enqueue_zoho_sync(text, text) FROM PUBLIC, anon, authenticated;
 
 -- Atomic: of any number of callers, one gets the claim. create_wait_over says the 10 minutes given to
--- Zoho to finish an unanswered create have passed.
+-- Zoho to finish an unanswered create have passed; writes_held_back, that it may still be finishing another write.
 CREATE OR REPLACE FUNCTION public.claim_zoho_order_push(_order_id uuid, _holder uuid)
-RETURNS TABLE (claimed boolean, create_attempted_at timestamptz, create_wait_over boolean)
+RETURNS TABLE (claimed boolean, create_attempted_at timestamptz, create_wait_over boolean, writes_held_back boolean)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
   got public.zoho_order_push_claims%ROWTYPE;
 BEGIN
   -- A deleted order has nothing to push: the caller finds that out itself.
   IF NOT EXISTS (SELECT 1 FROM public.orders o WHERE o.id = _order_id) THEN
-    RETURN QUERY SELECT true, NULL::timestamptz, false;
+    RETURN QUERY SELECT true, NULL::timestamptz, false, false;
     RETURN;
   END IF;
   INSERT INTO public.zoho_order_push_claims AS c (order_id, holder, locked_until)
@@ -52,13 +54,15 @@ BEGIN
     WHERE c.locked_until IS NULL OR c.locked_until < now()
   RETURNING c.* INTO got;
   IF got.order_id IS NULL THEN
-    RETURN QUERY SELECT false, NULL::timestamptz, false;
+    RETURN QUERY SELECT false, NULL::timestamptz, false, false;
     RETURN;
   END IF;
   UPDATE public.zoho_sync_outbox q SET push_holder = _holder
     WHERE q.entity_type = 'order' AND q.entity_id = _order_id::text
       AND q.status IN ('pending', 'failed', 'needs_review');
-  RETURN QUERY SELECT true, got.create_attempted_at, COALESCE(got.create_attempted_at <= now() - interval '10 minutes', false);
+  RETURN QUERY SELECT true, got.create_attempted_at,
+    COALESCE(got.create_attempted_at <= now() - interval '10 minutes', false),
+    COALESCE(got.write_unanswered_at > now() - interval '10 minutes', false);
 END;
 $$;
 REVOKE ALL ON FUNCTION public.claim_zoho_order_push(uuid, uuid) FROM PUBLIC, anon, authenticated;
@@ -90,6 +94,17 @@ END;
 $$;
 REVOKE ALL ON FUNCTION public.note_zoho_order_create(uuid, uuid, boolean) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.note_zoho_order_create(uuid, uuid, boolean) TO service_role;
+
+CREATE OR REPLACE FUNCTION public.note_zoho_order_write_unanswered(_order_id uuid, _holder uuid)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+  UPDATE public.zoho_order_push_claims
+    SET write_unanswered_at = now(), updated_at = now()
+    WHERE order_id = _order_id AND holder = _holder;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.note_zoho_order_write_unanswered(uuid, uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.note_zoho_order_write_unanswered(uuid, uuid) TO service_role;
 
 -- A linked order has its sales order, so its create is answered, however that was found out.
 CREATE OR REPLACE FUNCTION public.release_zoho_order_push(_order_id uuid, _holder uuid)
@@ -125,8 +140,9 @@ REVOKE ALL ON FUNCTION public.defer_zoho_sync_job(uuid) FROM PUBLIC, anon, authe
 GRANT EXECUTE ON FUNCTION public.defer_zoho_sync_job(uuid) TO service_role;
 
 -- A person who was asked to look for an unanswered create in Zoho pressed Retry on that entry: that
--- is the go-ahead to create. "Retry all" stays on retry_zoho_sync_job, because nobody looked. Nor does
--- pressing Retry during the 10 minutes skip them: Zoho may still be making it.
+-- is the go-ahead to create. The server calls this only for the entry that asked (retryZohoSyncJob).
+-- "Retry all" and any other entry stay on retry_zoho_sync_job, because nobody looked. Nor does pressing
+-- Retry during the 10 minutes skip them: Zoho may still be making it.
 CREATE OR REPLACE FUNCTION public.retry_zoho_sync_job_checked(_id uuid)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
@@ -143,6 +159,21 @@ END;
 $$;
 REVOKE ALL ON FUNCTION public.retry_zoho_sync_job_checked(uuid) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.retry_zoho_sync_job_checked(uuid) TO service_role;
+
+-- The approval is a change a running push may not have seen, so it clears that push's mark like any other.
+CREATE OR REPLACE FUNCTION public.enqueue_zoho_invoice_approval()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public'
+AS $function$
+BEGIN
+  IF NEW.admin_approved AND (TG_OP = 'INSERT' OR NOT OLD.admin_approved) THEN
+    PERFORM public.enqueue_zoho_sync('order', NEW.order_id::text);
+  END IF;
+  RETURN NEW;
+END;
+$function$;
 
 -- A run that dies on a row's last attempt left it 'processing' for ever, with no Retry: show it as failed.
 CREATE OR REPLACE FUNCTION public.claim_zoho_sync_jobs(_limit integer DEFAULT 20)
@@ -172,3 +203,5 @@ END;
 $$;
 REVOKE ALL ON FUNCTION public.claim_zoho_sync_jobs(integer) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.claim_zoho_sync_jobs(integer) TO service_role;
+
+NOTIFY pgrst, 'reload schema';

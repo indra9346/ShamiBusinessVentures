@@ -69,9 +69,9 @@ export type Database = {
         Relationships: []
       }
       zoho_order_push_claims: {
-        Row: { order_id: string; holder: string | null; locked_until: string | null; create_attempted_at: string | null; updated_at: string }
-        Insert: { order_id: string; holder?: string | null; locked_until?: string | null; create_attempted_at?: string | null; updated_at?: string }
-        Update: { order_id?: string; holder?: string | null; locked_until?: string | null; create_attempted_at?: string | null; updated_at?: string }
+        Row: { order_id: string; holder: string | null; locked_until: string | null; create_attempted_at: string | null; write_unanswered_at: string | null; updated_at: string }
+        Insert: { order_id: string; holder?: string | null; locked_until?: string | null; create_attempted_at?: string | null; write_unanswered_at?: string | null; updated_at?: string }
+        Update: { order_id?: string; holder?: string | null; locked_until?: string | null; create_attempted_at?: string | null; write_unanswered_at?: string | null; updated_at?: string }
         Relationships: []
       }
       zoho_commerce_sync_state: {
@@ -1146,9 +1146,10 @@ export type Database = {
       retry_zoho_sync_job: { Args: { _id: string }; Returns: undefined }
       retry_zoho_sync_job_checked: { Args: { _id: string }; Returns: undefined }
       defer_zoho_sync_job: { Args: { _id: string }; Returns: undefined }
-      claim_zoho_order_push: { Args: { _order_id: string; _holder: string }; Returns: { claimed: boolean; create_attempted_at: string | null; create_wait_over: boolean }[] }
+      claim_zoho_order_push: { Args: { _order_id: string; _holder: string }; Returns: { claimed: boolean; create_attempted_at: string | null; create_wait_over: boolean; writes_held_back: boolean }[] }
       renew_zoho_order_push: { Args: { _order_id: string; _holder: string }; Returns: boolean }
       note_zoho_order_create: { Args: { _order_id: string; _holder: string; _sent: boolean }; Returns: boolean }
+      note_zoho_order_write_unanswered: { Args: { _order_id: string; _holder: string }; Returns: undefined }
       release_zoho_order_push: { Args: { _order_id: string; _holder: string }; Returns: undefined }
       apply_zoho_order_fulfillment: { Args: { _order_id: string; _status: string }; Returns: undefined }
       apply_zoho_order_cancellation: { Args: { _order_id: string }; Returns: string }

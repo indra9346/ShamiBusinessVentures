@@ -1,15 +1,19 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  asksAboutUnansweredCreate,
   reconcileOrders,
   websiteOrderNoOf,
   shouldRetryZohoCall,
+  unansweredCreateQuestion,
   webhookKeyMatches,
   zohoLogLine,
   zohoOrderIsFor,
   zohoOrderNumber,
-  zohoRefusedWrite,
+  zohoPostKind,
   zohoRetryDelayMs,
+  zohoStatusOutcome,
+  zohoThrownOutcome,
   verifyZohoSignature,
   type GbOrderForReconcile,
 } from "../src/lib/zoho-sync-core.ts";
@@ -186,7 +190,36 @@ test("reconcile: orders numbered in the godown series match by Reference#", () =
   assert.equal(orphan.issues[0]?.orderNo, "CLK-SO-0009");
 });
 
-test("a create Zoho clearly refused can be sent again; any other outcome may have made the order", () => {
-  for (const status of [400, 401, 404, 429]) assert.equal(zohoRefusedWrite(status), true, String(status));
-  for (const status of [200, 201, 301, 500, 502, 503, null]) assert.equal(zohoRefusedWrite(status), false, String(status));
+test("a write Zoho clearly refused can be sent again; any other failure may have made the record", () => {
+  for (const status of [400, 401, 404, 409, 429, 503]) assert.equal(zohoStatusOutcome(status), "refused", String(status));
+  for (const status of [301, 408, 500, 502, 504]) assert.equal(zohoStatusOutcome(status), "unclear", String(status));
+  for (const status of [200, 201]) assert.equal(zohoStatusOutcome(status), "done", String(status));
+});
+
+test("a connection that never opened reached nothing; a timeout or a dropped one may have", () => {
+  const failed = (code: string) => Object.assign(new TypeError("fetch failed"), { cause: { code } });
+  for (const code of ["ENOTFOUND", "EAI_AGAIN", "ECONNREFUSED", "ENETUNREACH", "EHOSTUNREACH", "UND_ERR_CONNECT_TIMEOUT"])
+    assert.equal(zohoThrownOutcome(failed(code)), "refused", code);
+  for (const code of ["ECONNRESET", "ETIMEDOUT", "UND_ERR_SOCKET", "UND_ERR_HEADERS_TIMEOUT"])
+    assert.equal(zohoThrownOutcome(failed(code)), "unclear", code);
+  assert.equal(zohoThrownOutcome(new DOMException("The operation was aborted due to timeout", "TimeoutError")), "unclear");
+  assert.equal(zohoThrownOutcome(new TypeError("fetch failed")), "unclear");
+  assert.equal(zohoThrownOutcome(undefined), "unclear");
+});
+
+test("which POSTs to Zoho may be repeated without care", () => {
+  const api = "https://www.zohoapis.in";
+  assert.equal(zohoPostKind(`${api}/inventory/v1/salesorders?organization_id=1`), "order_create");
+  assert.equal(zohoPostKind(`${api}/inventory/v1/salesorders?organization_id=1&ignore_auto_number_generation=true`), "order_create");
+  assert.equal(zohoPostKind(`${api}/books/v3/salesorders/5/email?organization_id=1`), "repeatable");
+  assert.equal(zohoPostKind("https://accounts.zoho.in/oauth/v2/token"), "repeatable");
+  for (const resource of ["inventory/v1/salesorders/5/status/confirmed", "books/v3/invoices/fromsalesorder", "books/v3/customerpayments", "books/v3/invoices/5/writeoff", "inventory/v1/packages", "inventory/v1/shipmentorders", "inventory/v1/contacts"])
+    assert.equal(zohoPostKind(`${api}/${resource}?organization_id=1`), "other", resource);
+});
+
+test("only the question about an unanswered create counts as asking it", () => {
+  assert.equal(asksAboutUnansweredCreate(unansweredCreateQuestion("CLK-577522-261026-143215")), true);
+  assert.match(unansweredCreateQuestion("CLK-577522-261026-143215"), /CLK-577522-261026-143215/);
+  for (const other of ["Order has no line items", "Zoho did not answer when order X was sent, and it may still be making the sales order.", "", null, undefined])
+    assert.equal(asksAboutUnansweredCreate(other), false, String(other));
 });

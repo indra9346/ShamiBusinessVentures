@@ -27,9 +27,41 @@ export function shouldRetryZohoCall(method: HttpMethod, status: number | "networ
   return status === "network" || (status >= 500 && status <= 599);
 }
 
-/** Zoho answered a write with a clear no, so nothing was made. A 5xx, or no reply at all, says nothing about it. */
-export function zohoRefusedWrite(status: number | null) {
-  return status !== null && status >= 400 && status <= 499;
+/**
+ * What a reply says about a write to Zoho. "refused": nothing was made, so it can be sent again. "unclear":
+ * Zoho may have made it, or be making it still. A 503 says the service didn't take the request; any other 5xx,
+ * or a 408, may come from something that had already passed it on.
+ */
+export type ZohoWriteOutcome = "done" | "refused" | "unclear";
+export function zohoStatusOutcome(status: number): ZohoWriteOutcome {
+  if (status >= 200 && status <= 299) return "done";
+  return status === 503 || (status >= 400 && status <= 499 && status !== 408) ? "refused" : "unclear";
+}
+
+/** A connection that never opened reached nothing. A timeout or a dropped connection may have. */
+const NEVER_REACHED_ZOHO = ["ENOTFOUND", "EAI_AGAIN", "ECONNREFUSED", "ENETUNREACH", "EHOSTUNREACH", "UND_ERR_CONNECT_TIMEOUT"];
+export function zohoThrownOutcome(cause: unknown): ZohoWriteOutcome {
+  const code = (cause as { cause?: { code?: unknown } } | null | undefined)?.cause?.code;
+  return typeof code === "string" && NEVER_REACHED_ZOHO.includes(code) ? "refused" : "unclear";
+}
+
+/**
+ * A POST to Zoho makes something, so one with no clear answer isn't sent again straight away. A sales
+ * order has its own rule, because the push has to search for it. An email or a sign-in can just be repeated.
+ */
+export function zohoPostKind(url: string): "order_create" | "repeatable" | "other" {
+  const { pathname } = new URL(url);
+  if (pathname.endsWith("/inventory/v1/salesorders")) return "order_create";
+  return pathname.endsWith("/email") || pathname.includes("/oauth/") ? "repeatable" : "other";
+}
+
+const UNANSWERED_CREATE_QUESTION = "Please check Zoho.";
+/** What a person is asked when a create got no clear answer and Zoho's search still can't find the sales order. */
+export function unansweredCreateQuestion(orderNo: string) {
+  return `${UNANSWERED_CREATE_QUESTION} It did not answer when order ${orderNo} was sent, and its search still finds no sales order with that Reference#. In Zoho Inventory > Sales Orders, look for Reference# ${orderNo}. If it is not there, press Retry on this order's entry in Admin > Zoho, and the sales order is created. If it is there, do not press Retry, or there will be two: ask for it to be linked to this order.`;
+}
+export function asksAboutUnansweredCreate(lastError: string | null | undefined) {
+  return (lastError ?? "").startsWith(UNANSWERED_CREATE_QUESTION);
 }
 
 /** Wait before retry number `retry` (1-based): Retry-After when Zoho sends one, else 1s, 2s, 4s... capped. */
