@@ -2179,7 +2179,7 @@ async function writeZohoOrderAddress(
  * address. One that differs from the contact's was set in Zoho or Admin > Zoho, so it is left alone.
  * Only a still-open sales order just found by its Reference# (`newlyFound`) skips that check. Once
  * invoiced or shipped it is too late to write, so every push reports a delivery that shows the wrong
- * place, until a person corrects it or the sales order closes. A pickup has nothing to deliver.
+ * place, until a person corrects it or the goods have gone. A pickup has nothing to deliver.
  */
 async function finishZohoOrderAddress(
   region: Region,

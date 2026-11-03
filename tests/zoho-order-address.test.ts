@@ -88,6 +88,16 @@ test("only the addresses an invoice shows differently from its sales order are c
   assert.deepEqual(zohoInvoiceAddressesToCopy({ shipping_address: onInvoice, billing_address: onInvoice }, { shipping_address: asZoho, billing_address: blank }), ["shipping"], "a sales order's blank address is not copied");
 });
 
+test("Zoho's copy on a live invoice counts as its contact's, so a new draft takes the sales order's address", () => {
+  // Read from a real invoice and its contact, 3 Nov 2026 (street and names replaced).
+  const onInvoice = { street: "Street", address: "Street", street2: "Landmark", city: "Challakere", state: "Karnataka", zip: "577522", country: "India", country_code: "IN", fax: "", phone: "", attention: "Name" };
+  const onContact = { address_id: "3579709000002858005", attention: "Name", address: "Street", street2: "Landmark", city: "Challakere", state_code: "", state: "Karnataka", zip: "577522", country: "India", county: "", country_code: "IN", phone: "", fax: "", latitude: "", longitude: "" };
+  const invoice = { status: "draft", shipping_address: onInvoice, billing_address: onInvoice };
+  const salesOrder = { shipping_address: asZoho, billing_address: asZoho };
+  const contact = { shipping_address: onContact, billing_address: onContact };
+  assert.deepEqual(zohoAddressesFromContact(invoice, contact, zohoInvoiceAddressesToCopy(invoice, salesOrder)), ["shipping", "billing"]);
+});
+
 test("Zoho's copy on a live sales order counts as the same address as its contact's", () => {
   // Read from a real sales order and its contact, 3 Nov 2026 (street and names replaced).
   const onSalesOrder = { company_name: "", address: "Street", street2: "", city: "Chikkaballapur", state: "Karnataka", zip: "560102", country: "India", country_code: "IN", county: "", state_code: "KA", fax: "", phone: "", latitude: "", longitude: "", attention: "Name" };
