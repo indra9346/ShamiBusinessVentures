@@ -132,7 +132,7 @@ export function addressChangeText(change: AddressChange, total: number, money: (
 
 /** Why the address on a held checkout or a placed order cannot be edited. */
 export function addressLockReason({ paid, checking, godown }: { paid: boolean; checking: boolean; godown: string }): string {
-  if (paid) return "This order is placed, so its address can't be changed here. If it is wrong, call us on +91 95385 00840.";
-  if (checking) return "We are checking your payment for this checkout, so its address can't be changed now. If it is wrong, call us on +91 95385 00840.";
-  return `This address can't be changed now: your prices and stock are held at the ${godown} godown for it, and the payment is for this exact amount. If you have not paid yet and need another address, cancel this payment, press Reorder and start again. If you have already paid, do not cancel: call us on +91 95385 00840.`;
+  if (paid) return "This order is placed, so its address can't be changed here. If it is wrong, call us on +91 98459 66288.";
+  if (checking) return "We are checking your payment for this checkout, so its address can't be changed now. If it is wrong, call us on +91 98459 66288.";
+  return `This address can't be changed now: your prices and stock are held at the ${godown} godown for it, and the payment is for this exact amount. If you have not paid yet and need another address, cancel this payment, press Reorder and start again. If you have already paid, do not cancel: call us on +91 98459 66288.`;
 }
