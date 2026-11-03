@@ -79,8 +79,8 @@ const fetch: typeof globalThis.fetch = async (input, init) => {
   const method = (init?.method ?? "GET").toUpperCase();
   try {
     const response = await globalThis.fetch(input, init);
-    noteZohoCall(url, method, response.ok);
     if (response.status === 401) zohoTokenRefused(init);
+    noteZohoCall(url, method, response.ok);
     return response;
   } catch (cause) {
     noteZohoCall(url, method, false);
@@ -991,6 +991,8 @@ async function accessToken(region: Region, refreshToken: string) {
     }
     if (!response.ok || !data.access_token)
       throw new Error(data.error ?? "Could not refresh Zoho access token");
+    // The call log leaves token requests out, so this is how often each process really asks.
+    console.info(zohoLogLine("zoho_token_new", { expiresIn: String(data.expires_in) }));
     return { token: data.access_token, expiresIn: data.expires_in };
   });
 }
