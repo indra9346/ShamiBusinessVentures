@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { gstStateCodeOf } from "../src/lib/gstin.ts";
-import { sameZohoAddress, sameZohoPlace, ZOHO_PLACE_CODES, zohoAddressesFromContact, zohoAddressesToUpdate, zohoOrderAddress, zohoOrderAddressOpen, zohoOrderFinished } from "../src/lib/zoho-sync-core.ts";
+import { sameZohoAddress, sameZohoPlace, ZOHO_PLACE_CODES, zohoAddressBody, zohoInvoiceAddressesToCopy, zohoAddressesFromContact, zohoAddressesToUpdate, zohoOrderAddress, zohoOrderAddressOpen, zohoOrderFinished } from "../src/lib/zoho-sync-core.ts";
 
 const orderCopy = { id: "a1", name: " Ravi Kumar ", phone: "9876500000", line: " 12 Market Road ", city: "Hubli", state: "Karnataka", pin: "580020" };
 const asZoho = { attention: "Ravi Kumar", address: "12 Market Road", city: "Hubli", state: "Karnataka", zip: "580020" };
@@ -69,6 +69,23 @@ test("an address still equal to the contact's was never set for the order; any o
   assert.deepEqual(zohoAddressesFromContact({ shipping_address: staff, billing_address: staff }, contact, ["shipping", "billing"]), []);
   assert.deepEqual(zohoAddressesFromContact({ shipping_address: saved, billing_address: saved }, contact, ["billing"]), ["billing"]);
   assert.deepEqual(zohoAddressesFromContact({ shipping_address: saved }, {}, ["shipping"]), []);
+});
+
+test("a Zoho address becomes the update call's body, keeping what the sales order holds", () => {
+  const onSalesOrder = { company_name: "", address: " 12 Market Road ", street2: "Near temple", city: "Hubli", state: "Karnataka", zip: "580020", country: "India", country_code: "IN", phone: "98765", attention: "Ravi", fax: "" };
+  assert.deepEqual(zohoAddressBody(onSalesOrder), { attention: "Ravi", address: "12 Market Road", street2: "Near temple", city: "Hubli", state: "Karnataka", zip: "580020", country: "India", phone: "98765" });
+  assert.equal(zohoAddressBody({ ...asZoho, country: "" })?.country, "India");
+  for (const key of ["address", "city", "state", "zip"]) assert.equal(zohoAddressBody({ ...asZoho, [key]: "" }), null, key);
+  assert.equal(zohoAddressBody(undefined), null);
+});
+
+test("only the addresses an invoice shows differently from its sales order are copied", () => {
+  const onInvoice = { street: "99 Old Street", address: "99 Old Street", street2: "TEST", city: "Challakere", state: "Karnataka", zip: "577522", country: "India", country_code: "IN", fax: "", phone: "", attention: "kiran (TEST)" };
+  const blank = { address: "", street2: "", city: "", state: "", zip: "", country: "", attention: "" };
+  assert.deepEqual(zohoInvoiceAddressesToCopy({ shipping_address: onInvoice, billing_address: onInvoice }, { shipping_address: asZoho, billing_address: asZoho }), ["shipping", "billing"]);
+  assert.deepEqual(zohoInvoiceAddressesToCopy({ shipping_address: asZoho, billing_address: asZoho }, { shipping_address: asZoho, billing_address: asZoho }), []);
+  assert.deepEqual(zohoInvoiceAddressesToCopy({ shipping_address: onInvoice, billing_address: asZoho }, { shipping_address: asZoho, billing_address: asZoho }), ["shipping"]);
+  assert.deepEqual(zohoInvoiceAddressesToCopy({ shipping_address: onInvoice, billing_address: onInvoice }, { shipping_address: asZoho, billing_address: blank }), ["shipping"], "a sales order's blank address is not copied");
 });
 
 test("Zoho's copy on a live sales order counts as the same address as its contact's", () => {

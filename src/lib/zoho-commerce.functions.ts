@@ -20,7 +20,7 @@ import {
   DAILY_LIMIT_PAUSE_MINUTES, inboundPollDue, isZohoDailyLimitError, zohoPaused,
   indiaDate, nextZohoFulfilmentStep, zohoFulfilmentStatus, zohoPackagesOf, zohoStatusMovesForward,
   einvoiceProblems,
-  sameZohoPlace, zohoAddressesFromContact, zohoAddressesToUpdate, zohoOrderAddress, zohoOrderAddressOpen, zohoOrderFinished, ZOHO_PLACE_CODES,
+  sameZohoPlace, zohoAddressBody, zohoAddressesFromContact, zohoAddressesToUpdate, zohoInvoiceAddressesToCopy, zohoOrderAddress, zohoOrderAddressOpen, zohoOrderFinished, ZOHO_PLACE_CODES,
   zohoGstFields,
 } from "@/lib/zoho-sync-core";
 import { gstStateCodeOf } from "@/lib/gstin";
@@ -221,7 +221,7 @@ export const startZohoAuthorization = createServerFn({ method: "POST" })
       response_type: "code",
       client_id: reqEnv("ZOHO_CLIENT_ID"),
       scope:
-        "ZohoCommerce.items.READ,ZohoCommerce.items.CREATE,ZohoCommerce.items.UPDATE,ZohoCommerce.coupons.READ,ZohoCommerce.coupons.CREATE,ZohoCommerce.coupons.UPDATE,ZohoCommerce.salesorders.READ,ZohoCommerce.salesorders.CREATE,ZohoCommerce.salesorders.UPDATE,ZohoCommerce.settings.READ,ZohoCommerce.settings.UPDATE,ZohoCommerce.sitesIndex.READ,ZohoCommerce.webhooks.READ,ZohoCommerce.webhooks.CREATE,ZohoInventory.contacts.READ,ZohoInventory.contacts.CREATE,ZohoInventory.contacts.UPDATE,ZohoInventory.items.READ,ZohoInventory.items.CREATE,ZohoInventory.items.UPDATE,ZohoInventory.salesorders.READ,ZohoInventory.salesorders.CREATE,ZohoInventory.salesorders.UPDATE,ZohoInventory.inventoryadjustments.READ,ZohoInventory.inventoryadjustments.CREATE,ZohoInventory.settings.READ,ZohoInventory.settings.UPDATE,ZohoBooks.salesorders.CREATE,ZohoBooks.invoices.READ,ZohoBooks.invoices.CREATE,ZohoBooks.customerpayments.READ,ZohoBooks.customerpayments.CREATE,ZohoInventory.packages.READ,ZohoInventory.packages.CREATE,ZohoInventory.shipmentorders.READ,ZohoInventory.shipmentorders.CREATE,ZohoInventory.shipmentorders.UPDATE",
+        "ZohoCommerce.items.READ,ZohoCommerce.items.CREATE,ZohoCommerce.items.UPDATE,ZohoCommerce.coupons.READ,ZohoCommerce.coupons.CREATE,ZohoCommerce.coupons.UPDATE,ZohoCommerce.salesorders.READ,ZohoCommerce.salesorders.CREATE,ZohoCommerce.salesorders.UPDATE,ZohoCommerce.settings.READ,ZohoCommerce.settings.UPDATE,ZohoCommerce.sitesIndex.READ,ZohoCommerce.webhooks.READ,ZohoCommerce.webhooks.CREATE,ZohoInventory.contacts.READ,ZohoInventory.contacts.CREATE,ZohoInventory.contacts.UPDATE,ZohoInventory.items.READ,ZohoInventory.items.CREATE,ZohoInventory.items.UPDATE,ZohoInventory.salesorders.READ,ZohoInventory.salesorders.CREATE,ZohoInventory.salesorders.UPDATE,ZohoInventory.inventoryadjustments.READ,ZohoInventory.inventoryadjustments.CREATE,ZohoInventory.settings.READ,ZohoInventory.settings.UPDATE,ZohoBooks.salesorders.CREATE,ZohoBooks.invoices.READ,ZohoBooks.invoices.CREATE,ZohoBooks.invoices.UPDATE,ZohoBooks.customerpayments.READ,ZohoBooks.customerpayments.CREATE,ZohoInventory.packages.READ,ZohoInventory.packages.CREATE,ZohoInventory.shipmentorders.READ,ZohoInventory.shipmentorders.CREATE,ZohoInventory.shipmentorders.UPDATE",
       redirect_uri: redirectUri,
       access_type: "offline",
       prompt: "consent",
@@ -2298,8 +2298,9 @@ async function syncLinkedZohoOrder(
     : await finishZohoOrderAddress(region, organizationId, token, order, zoho, options.newlyFound ?? false);
   if (orderAddress.written) zoho = await load();
   // Confirmed by the admin: the Zoho Books invoice, with the verified payments recorded on it.
+  let invoiceAddressProblem: string | null = null;
   if (orderNeedsZohoInvoice(order.order_status) && !["draft", ...ZOHO_CLOSED_ORDER_STATES].includes(zohoStatus())) {
-    if (await syncZohoOrderInvoice(db, region, organizationId, token, order, zoho)) zoho = await load();
+    if (await syncZohoOrderInvoice(db, region, organizationId, token, order, zoho, (problem) => { invoiceAddressProblem = problem; })) zoho = await load();
   }
   // Packed / Dispatched / Out for Delivery / Delivered on the website: package, shipment and
   // delivery in Zoho, at the sales order's godown location.
@@ -2317,6 +2318,54 @@ async function syncLinkedZohoOrder(
     if (zohoOrderAddressOpen(zoho)) throw new Error(orderAddress.problem);
     throw new NeedsReviewError(`${orderAddress.problem} Correct the sales order and its invoice in Zoho, then Retry.`);
   }
+  // A sent invoice is not rewritten, so a retry can't fix it: this one waits for a person.
+  if (invoiceAddressProblem) throw new NeedsReviewError(`${invoiceAddressProblem} Correct the address on the invoice in Zoho Books, then Retry.`);
+}
+
+/**
+ * Zoho makes an invoice with the contact's address, not its sales order's (seen live, 3 Nov 2026), so
+ * the sales order's is copied across while the invoice is a draft, which keeps a correction made there
+ * too. An address that differs from the contact's was set by a person and is left alone. An invoice
+ * already sent is never changed: one showing the wrong place for a delivery is reported, until a person
+ * corrects it or the sales order is finished. Never throws: a refusal must not hold up the invoice.
+ */
+async function copyZohoAddressToInvoice(
+  region: Region,
+  organizationId: string,
+  token: string,
+  order: Database["public"]["Tables"]["orders"]["Row"],
+  zoho: Record<string, unknown>,
+  invoiceId: string,
+  invoice: Record<string, unknown>,
+) {
+  const outcome = { written: 0, problem: null as string | null };
+  const differing = zohoInvoiceAddressesToCopy(invoice, zoho);
+  const draft = str(invoice["status"]).toLowerCase() === "draft";
+  if (!differing.length || (!draft && zohoOrderFinished(zoho))) return outcome;
+  const number = str(invoice["invoice_number"]);
+  try {
+    const { contact } = await inventoryRequest<{ contact?: Record<string, unknown> }>(region, organizationId, token, `contacts/${encodeURIComponent(str(zoho["customer_id"]))}`, "GET");
+    const types = zohoAddressesFromContact(invoice, contact ?? {}, differing);
+    if (!draft) {
+      const wrongPlace = !/^pickup/i.test(str(order.shipping_method)) && types.some((type) => !sameZohoPlace(invoice[`${type}_address`], zoho[`${type}_address`]));
+      if (wrongPlace) outcome.problem = `Zoho Books invoice ${number} was sent with the customer's saved address, not the one on the sales order of Grain Bazar order ${order.order_no}.`;
+      return outcome;
+    }
+    for (const type of types) {
+      const body = zohoAddressBody(zoho[`${type}_address`]);
+      if (!body) continue;
+      await booksRequest(region, organizationId, token, `invoices/${encodeURIComponent(invoiceId)}/address/${type}`, "PUT", body);
+      outcome.written += 1;
+    }
+  } catch (cause) {
+    // Nothing to write on a sent invoice, so nothing lost: the next push checks again.
+    if (!draft) return outcome;
+    const message = cause instanceof Error ? cause.message : "unknown error";
+    console.warn(zohoLogLine("zoho_invoice_address_failed", { order: order.order_no, invoice: number, error: message.slice(0, 200) }));
+    outcome.problem = `Zoho Books invoice ${number} is in place, but it shows the customer's saved address, not the address of Grain Bazar order ${order.order_no}: ${message}.${zohoPermissionHint(message)}`;
+  }
+  if (outcome.written) console.info(zohoLogLine("zoho_invoice_address_set", { order: order.order_no, invoice: number, written: outcome.written }));
+  return outcome;
 }
 
 /**
@@ -2332,6 +2381,7 @@ async function ensureZohoBooksInvoice(
   token: string,
   order: Database["public"]["Tables"]["orders"]["Row"],
   zoho: Record<string, unknown>,
+  reportAddressProblem: (problem: string) => void,
 ) {
   const salesOrderId = order.zoho_salesorder_id!;
   const number = str(zoho["salesorder_number"]) || order.order_no;
@@ -2339,7 +2389,7 @@ async function ensureZohoBooksInvoice(
     const message = cause instanceof Error ? cause.message : String(cause);
     throw new Error(`Zoho Books invoice for ${number}: ${step} failed: ${message}.${zohoPermissionHint(message)}`);
   };
-  type BooksInvoice = { invoice_id?: string; invoice_number?: string; status?: string; total?: number; balance?: number; customer_id?: string; customer_name?: string; gst_treatment?: string; gst_no?: string; place_of_supply?: string };
+  type BooksInvoice = { invoice_id?: string; invoice_number?: string; status?: string; total?: number; balance?: number; customer_id?: string; customer_name?: string; gst_treatment?: string; gst_no?: string; place_of_supply?: string; billing_address?: unknown; shipping_address?: unknown };
   const linked = (Array.isArray(zoho["invoices"]) ? zoho["invoices"] : []).map(plainObject)
     .filter((invoice) => str(invoice["invoice_id"]) && !["void"].includes(str(invoice["status"]).toLowerCase()));
   let invoiceId = str(linked[0]?.["invoice_id"]);
@@ -2366,6 +2416,9 @@ async function ensureZohoBooksInvoice(
     }
   };
   let invoice = await readInvoice();
+  const addressCopy = await copyZohoAddressToInvoice(region, organizationId, token, order, zoho, invoiceId, invoice);
+  if (addressCopy.problem) reportAddressProblem(addressCopy.problem);
+  if (addressCopy.written) invoice = await readInvoice();
   // Business purchases: the invoice (made from the sales order) must carry the buyer's GSTIN as a
   // registered business (or the IRP rejects it), or be an unregistered business when only a company
   // name was given, and be billed to that company. Checked while it is still a draft; nothing is sent
@@ -2514,6 +2567,7 @@ async function syncZohoOrderInvoice(
   token: string,
   order: Database["public"]["Tables"]["orders"]["Row"],
   zoho: Record<string, unknown>,
+  reportAddressProblem: (problem: string) => void,
 ) {
   const row = await readInvoiceRecord(db, order.id);
   const decision = invoiceDecision(asInvoiceRecord(row), zohoInvoicesOf(zoho) ?? []);
@@ -2527,7 +2581,7 @@ async function syncZohoOrderInvoice(
     }
     return false;
   }
-  const invoice = await ensureZohoBooksInvoice(db, region, organizationId, token, order, zoho);
+  const invoice = await ensureZohoBooksInvoice(db, region, organizationId, token, order, zoho, reportAddressProblem);
   const created = decision.action === "create";
   await saveInvoiceRecord(db, order, {
     zoho_invoice_id: str(invoice.invoice_id) || null,
@@ -4721,15 +4775,17 @@ async function readOrderEmailConfig(db: Awaited<ReturnType<typeof dbAdmin>>): Pr
 }
 
 /** Zoho Books API v3 (same organization as Inventory). */
-async function booksRequest<T>(region: Region, organizationId: string, token: string, resource: string, method: "GET" | "POST", body?: Record<string, unknown>) {
+async function booksRequest<T>(region: Region, organizationId: string, token: string, resource: string, method: "GET" | "POST" | "PUT", body?: Record<string, unknown>) {
   const url = new URL(`${REGIONS[region][2]}/books/v3/${resource}`);
   url.searchParams.set("organization_id", organizationId);
-  const response = await fetch(url, {
+  const send = () => fetch(url, {
     method,
     headers: { Authorization: `Zoho-oauthtoken ${token}`, ...(body ? { "content-type": "application/json" } : {}) },
     ...(body ? { body: JSON.stringify(body) } : {}),
     signal: AbortSignal.timeout(20_000),
   });
+  const response = await fetchWithZohoRetry(send, resource, method);
+  if (!response) throw new Error(`Zoho Books ${resource} could not be reached`);
   const data = (await response.json().catch(() => ({}))) as T & { code?: number; message?: string };
   if (!response.ok || data.code !== 0) throw zohoApiError(data.message ?? `Zoho Books ${resource} failed (${response.status})`);
   return data;

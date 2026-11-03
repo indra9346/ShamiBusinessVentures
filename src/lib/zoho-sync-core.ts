@@ -759,9 +759,23 @@ export function zohoAddressesToUpdate(salesOrder: Record<string, unknown>, addre
   return (["shipping", "billing"] as const).filter((type) => !sameZohoAddress(salesOrder[`${type}_address`], address));
 }
 
-/** Those of `types` a sales order still holds as its contact's copy: nobody set them for this order. */
-export function zohoAddressesFromContact(salesOrder: Record<string, unknown>, contact: Record<string, unknown>, types: readonly ("shipping" | "billing")[]) {
-  return types.filter((type) => sameZohoAddress(salesOrder[`${type}_address`], contact[`${type}_address`]));
+/** Those of `types` a sales order or invoice still holds as its contact's copy: nobody set them for this order. */
+export function zohoAddressesFromContact(record: Record<string, unknown>, contact: Record<string, unknown>, types: readonly ("shipping" | "billing")[]) {
+  return types.filter((type) => sameZohoAddress(record[`${type}_address`], contact[`${type}_address`]));
+}
+
+/** A Zoho address as the body of its "update address" calls; null when it lacks the street, city, state or PIN. */
+export function zohoAddressBody(value: unknown): ZohoOrderAddress | null {
+  const fields = zohoAddressFields(value);
+  const text = (key: string) => String(fields[key] ?? "").trim();
+  const address = text("address"), city = text("city"), state = text("state"), zip = text("zip");
+  if (!address || !city || !state || !zip) return null;
+  return { attention: text("attention"), address, street2: text("street2"), city, state, zip, country: text("country") || "India", phone: text("phone") };
+}
+
+/** Which addresses to copy from a sales order to its invoice: those it has that the invoice shows differently. */
+export function zohoInvoiceAddressesToCopy(invoice: Record<string, unknown>, salesOrder: Record<string, unknown>) {
+  return (["shipping", "billing"] as const).filter((type) => zohoAddressBody(salesOrder[`${type}_address`]) && !sameZohoAddress(invoice[`${type}_address`], salesOrder[`${type}_address`]));
 }
 
 const zohoOrderValue = (salesOrder: Record<string, unknown>, key: string) => String(salesOrder[key] ?? "").toLowerCase();

@@ -119,12 +119,18 @@ re-authorizes Zoho).
   keeps Zoho's default, the contact's place, where the website invoice uses the godown's state).
   Live test, 3 Nov 2026, one test order: the write works on these Inventory-created sales orders,
   blanks their address ids and clears the contact's landmark; a full sales order update keeps it;
-  later contact edits don't touch it. **The invoice does not follow:** `invoices/fromsalesorder`
-  copies the contact's address at that moment and keeps that copy, so an order to a non-default
-  address still gets a Zoho invoice with the customer's saved address. Books `PUT invoices/{id}/
-  address/shipping` answered 401, code 57 "not authorized" with today's permissions, so writing the
-  invoice's address needs `ZohoBooks.invoices.UPDATE` and a Reauthorize; the call itself is unproven.
-  Zoho also closes a sales order as soon as it is invoiced, with nothing shipped.
+  later contact edits don't touch it. The invoice does not follow on its own:
+  `invoices/fromsalesorder` copies the contact's address at that moment and keeps that copy. Zoho
+  also closes a sales order as soon as it is invoiced, with nothing shipped.
+- Invoice address: while the invoice is a draft, before it is marked sent, the sales order's
+  address is copied onto it with Books `PUT invoices/{id}/address/{type}`, so a correction made on
+  the sales order reaches the invoice too. This needs `ZohoBooks.invoices.UPDATE` (without it Zoho
+  answered 401, code 57, live) and so a Reauthorize. A draft address that differs from the contact's
+  was set by a person and is left alone. A sent invoice is never changed. A refusal does not hold up
+  the invoice: it is sent with the saved address and the queue entry goes to review. While a
+  delivery's sent invoice shows another place than its sales order and still equals the contact's,
+  each push reports it, until a person corrects it or the sales order closes with the goods gone.
+  The write itself has not been tried on real Zoho yet.
 - Optional official notification: Books "Email a sales order" for each new website order to
   configured staff addresses; off by default; failures logged, never block the sync. Zoho marks a
   draft sales order Open when it is emailed (observed live), so enabling this confirms new website
