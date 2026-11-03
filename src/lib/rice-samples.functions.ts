@@ -306,7 +306,7 @@ const raiseInput = z.object({
   branchId: z.string().trim().min(1).max(40),
   // What the admin's confirmation screen showed. The server works these out again and refuses if they differ.
   confirmed: z.object({
-    vendorName: z.string().max(200), itemName: z.string().max(200), itemUnit: z.string().max(40), poQuantity: z.number(), poRate: z.number(), subTotal: z.number(), issueOnCreate: z.boolean(), taxId: z.string().max(40), taxPercent: z.number(), sourceOfSupply: z.string().max(4), destinationOfSupply: z.string().max(4),
+    vendorName: z.string().max(200), itemName: z.string().max(200), itemUnit: z.string().max(40), poQuantity: z.number(), poRate: z.number(), subTotal: z.number(), issueOnCreate: z.boolean(), taxId: z.string().max(40), taxKind: z.enum(["intra", "inter", "none"]), taxPercent: z.number(), sourceOfSupply: z.string().max(4), destinationOfSupply: z.string().max(4),
     sampleUpdatedAt: z.string().max(60),
   }),
 });
@@ -340,7 +340,7 @@ export const raiseRiceSamplePurchaseOrder = createServerFn({ method: "POST" })
     await ensureAdmin(context.supabase, context.userId);
     const db = serviceClient();
     const existing = await readPo(db, data.sampleId);
-    if (existing?.state === "raised") return { ...raisedResult(existing), warnings: differsFromRaised(existing.snapshot, { ...data, taxId: data.confirmed.taxId }) };
+    if (existing?.state === "raised") return { ...raisedResult(existing), warnings: differsFromRaised(existing.snapshot, { ...data, taxId: data.confirmed.taxId, taxKind: data.confirmed.taxKind }) };
     if (existing && stillSending(existing)) return { kind: "in_progress", message: `${existing.claimed_by_name || "Another admin"} is raising this purchase order right now. It will show here in a moment.` };
 
     const [{ data: sample }, { data: branch }] = await Promise.all([
@@ -391,7 +391,7 @@ export const raiseRiceSamplePurchaseOrder = createServerFn({ method: "POST" })
       const taxAnswer = poTaxFrom(asRecord(itemRaw.body?.["item"]), vendor, { name: branch.name, stateCode: text(branch.state_code) });
       if (!taxAnswer.ok) return { kind: "rejected", message: `${taxAnswer.message} Nothing was sent to Zoho.` };
       const { tax } = taxAnswer;
-      if (tax.taxId !== data.confirmed.taxId || tax.percent !== data.confirmed.taxPercent || tax.sourceOfSupply !== data.confirmed.sourceOfSupply || tax.destinationOfSupply !== data.confirmed.destinationOfSupply) return { kind: "rejected", message: `The tax has changed since this screen opened: it is now ${tax.taxName}. Review and confirm again. Nothing was sent to Zoho.` };
+      if (tax.kind !== data.confirmed.taxKind || tax.taxId !== data.confirmed.taxId || tax.percent !== data.confirmed.taxPercent || tax.sourceOfSupply !== data.confirmed.sourceOfSupply || tax.destinationOfSupply !== data.confirmed.destinationOfSupply) return { kind: "rejected", message: `The tax has changed since this screen opened: it is now ${tax.taxName}. Review and confirm again. Nothing was sent to Zoho.` };
       const plan: PoPlan = {
         reference: existing?.state === "dead" ? poReference(sample.id, existing.generation + 1) : existing?.reference ?? poReference(sample.id), date: indiaToday(Date.now()), vendorRole: data.vendorRole, vendorId: data.vendorId, vendorName: text(vendor["contact_name"]),
         itemId: data.itemId, itemName: item.name, itemUnit: item.unit, kgPerUnit: data.kgPerUnit, quantityQntl: data.quantityQntl, ratePerQntl: data.ratePerQntl,

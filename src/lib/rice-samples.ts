@@ -251,8 +251,8 @@ export const indiaToday = (nowMs: number) => new Date(nowMs + 330 * 60_000).toIS
  * The request body. Quotes from Zoho's Inventory purchase order API are in docs/rice-samples.md. Both rate and purchase_rate
  * are sent because the published example uses purchase_rate while Zoho's live purchase orders report rate; recordCreated then
  * compares what Zoho saved with what was confirmed. No purchase order number is sent: Zoho numbers it from the client's own
- * series. Nothing internal (scores, tasting notes) goes in here, because the vendor receives this document. Zoho doesn't apply an
- * item's tax by itself (the first live purchase order came back with GST 0), so the tax goes on the line, with the two states it depends on.
+ * series. Nothing internal (scores, tasting notes) goes in here, because the vendor receives this document. The tax goes on the line, with
+ * the two states it depends on. A vendor Zoho marks as not registered gets neither, which is what came back with GST 0 on the first live test.
  * It doesn't fill in the item's name either (a live test showed a line with only the description), so the name goes on the line too.
  */
 export function purchaseOrderBody(plan: PoPlan): Record<string, unknown> {
@@ -311,6 +311,15 @@ export function poDifferences(plan: PoPlan, zohoPo: Record<string, unknown>): st
 export function poTaxDifferences(plan: PoPlan, zohoPo: Record<string, unknown>): string[] {
   const out: string[] = [];
   const tax = numberOr(zohoPo["tax_total"]);
+  if (plan.taxKind === "none") {
+    // The vendor isn't registered, so any tax at all is wrong, however small.
+    const noTax = "but Zoho marks the vendor as not registered for GST, so it should carry none.";
+    if (tax === null) out.push("Zoho's copy doesn't show the GST on this purchase order.");
+    else if (tax > 0) out.push(`Zoho shows GST of ₹${tax} on this purchase order, ${noTax}`);
+    const taxedLine = asRecords(zohoPo["line_items"]).find((row) => text(row["tax_id"]));
+    if (taxedLine) out.push(`Zoho put ${text(taxedLine["tax_name"]) || "a tax"} on this line, ${noTax}`);
+    return out;
+  }
   if (tax !== null && plan.gstPercent !== null && plan.gstPercent !== undefined) {
     const expected = round2((plan.subTotal * plan.gstPercent) / 100);
     if (Math.abs(tax - expected) > 1) out.push(`Zoho's GST is ₹${tax}, not the ₹${expected} (${plan.gstPercent}%) you were shown.`);
@@ -329,16 +338,20 @@ export function poTaxDifferences(plan: PoPlan, zohoPo: Record<string, unknown>):
 
 // ---------------------------------------------------------------- The tax on a purchase order
 
+type PoTaxRoute = "intra" | "inter";
 export type PoTax = {
   taxId: string; taxName: string; percent: number;
-  /** intra: the vendor and the godown are in the same state, so CGST + SGST. inter: different states, so IGST. */
-  kind: "intra" | "inter";
+  /** intra: the vendor and the godown are in the same state, so CGST + SGST. inter: different states, so IGST. none: Zoho marks the vendor as not registered, so no tax. */
+  kind: PoTaxRoute | "none";
   /** The parts as Zoho names them, CGST2.5 and SGST2.5, when Zoho lists them. */
   parts: string[];
   /** Zoho's two-letter state codes. */
   sourceOfSupply: string; destinationOfSupply: string;
 };
 export type PoTaxAnswer = { ok: true; tax: PoTax } | { ok: false; message: string };
+/** Said plainly wherever such a purchase order shows. */
+export const NO_GST_WORDS = "No GST: vendor not registered";
+const NO_GST: PoTax = { taxId: "", taxName: "No GST", percent: 0, kind: "none", parts: [], sourceOfSupply: "", destinationOfSupply: "" };
 
 const PLACE_NAMES: Record<string, string> = Object.fromEntries(Object.entries(GST_STATE_CODES).map(([name, digits]) => [ZOHO_PLACE_CODES[digits] ?? digits, name.replace(/\b(?!and\b)[a-z]/g, (c) => c.toUpperCase())]));
 /** Other codes for a state than this site's table holds. Zoho's own code for the vendor is what gets sent; these only stop a false alarm against their GSTIN. */
@@ -350,12 +363,22 @@ const placeName = (code: string) => PLACE_NAMES[OTHER_PLACE_CODES[code] ?? code]
  * the godown's. Each item in Zoho holds two taxes, intra (GST5, a group of CGST and SGST) and inter (IGST5). The rate is the
  * accountant's, so it is never assumed here. When something needed isn't there, or two things disagree, the answer says what to fix,
  * so nothing goes out with GST 0 by accident. A 0% tax set on the item itself is an answer, and the confirm screen says so.
+ *
+ * A vendor Zoho marks as not registered (business_none) gets no tax, the owner's decision of 3 Nov 2026. That comes only from Zoho's own
+ * marking: anything else that isn't plainly registered, or a marking its own GSTIN contradicts, stops, because it isn't clear which is right.
  */
 export function poTaxFrom(item: Record<string, unknown>, vendor: Record<string, unknown>, godown: { name: string; stateCode: string }): PoTaxAnswer {
   const stop = (message: string): PoTaxAnswer => ({ ok: false, message });
   const vendorName = text(vendor["contact_name"]) || "This vendor", itemName = text(item["name"]) || "This item";
   const gstin = text(vendor["gst_no"]).trim().toUpperCase();
-  if (text(vendor["gst_treatment"]) !== "business_gst" || !gstin) return stop(`${vendorName} isn't shown as GST-registered in Zoho, so the website can't tell what tax this purchase order should carry. Add their GSTIN in Zoho if they have one, or ask your accountant.`);
+  const treatment = text(vendor["gst_treatment"]).trim().toLowerCase();
+  if (item["is_taxable"] === false) return stop(`${itemName} is marked as not taxable in Zoho, so the website can't tell what tax this purchase order should carry. Ask your accountant.`);
+  if (treatment === "business_none") {
+    if (gstin) return stop(`Zoho marks ${vendorName} as not registered for GST, but also holds a GSTIN for them, so it isn't clear which is right. Correct it in Zoho.`);
+    return { ok: true, tax: NO_GST };
+  }
+  if (treatment !== "business_gst") return stop(`Zoho doesn't say plainly whether ${vendorName} is registered for GST${treatment ? ` (it says ${treatment.replace(/_/g, " ")})` : ""}, so the website can't tell what tax this purchase order should carry. Correct it in Zoho, or ask your accountant.`);
+  if (!gstin) return stop(`Zoho marks ${vendorName} as GST-registered but holds no GSTIN for them, so it isn't clear which is right. Correct it in Zoho.`);
   const source = text(vendor["place_of_contact"]).trim().toUpperCase();
   if (!source) return stop(`Zoho has no state for ${vendorName}. Add it in Zoho: it decides between CGST + SGST and IGST.`);
   if (!GSTIN_REGEX.test(gstin)) return stop(`${vendorName}'s GSTIN in Zoho, ${gstin}, doesn't look right. Correct it in Zoho.`);
@@ -363,11 +386,10 @@ export function poTaxFrom(item: Record<string, unknown>, vendor: Record<string, 
   if (!gstinPlace || gstinPlace !== (OTHER_PLACE_CODES[source] ?? source)) return stop(`${vendorName}'s GSTIN is from ${gstinPlace ? placeName(gstinPlace) : "an unknown state"}, but Zoho has them in ${placeName(source)}. Correct it in Zoho: it decides between CGST + SGST and IGST.`);
   const destination = ZOHO_PLACE_CODES[godown.stateCode.trim()];
   if (!destination) return stop(`${godown.name} has no state on record. Add it in Admin > Branches: it decides between CGST + SGST and IGST.`);
-  if (item["is_taxable"] === false) return stop(`${itemName} is marked as not taxable in Zoho, so the website can't tell what tax this purchase order should carry. Ask your accountant.`);
 
-  const kind: PoTax["kind"] = (OTHER_PLACE_CODES[source] ?? source) === destination ? "intra" : "inter";
-  const routeOf = (route: PoTax["kind"]) => (route === "intra" ? "within the state" : "from another state");
-  const taxFor = (route: PoTax["kind"]) => asRecords(item["item_tax_preferences"]).find((row) => text(row["tax_specification"]).toLowerCase() === route);
+  const kind: PoTaxRoute = (OTHER_PLACE_CODES[source] ?? source) === destination ? "intra" : "inter";
+  const routeOf = (route: PoTaxRoute) => (route === "intra" ? "within the state" : "from another state");
+  const taxFor = (route: PoTaxRoute) => asRecords(item["item_tax_preferences"]).find((row) => text(row["tax_specification"]).toLowerCase() === route);
   const chosen = taxFor(kind);
   const taxId = text(chosen?.["tax_id"]), taxName = text(chosen?.["tax_name"]), percent = numberOr(chosen?.["tax_percentage"]);
   if (!chosen || !taxId || !taxName || percent === null || percent < 0) return stop(`${itemName} has no tax for purchases ${routeOf(kind)} in Zoho. Set it on the item in Zoho. The rate is for your accountant.`);
@@ -383,7 +405,7 @@ export function poTaxFrom(item: Record<string, unknown>, vendor: Record<string, 
 export const poTaxAmount = (subTotal: number, percent: number) => round2((subTotal * percent) / 100);
 /** "GST5 (CGST2.5 + SGST2.5)" for the confirm screen. */
 export const poTaxLabel = (tax: Pick<PoTax, "taxName" | "parts">) => (tax.parts.length ? `${tax.taxName} (${tax.parts.join(" + ")})` : tax.taxName);
-export const poTaxReason = (tax: Pick<PoTax, "kind" | "sourceOfSupply" | "destinationOfSupply">) => (tax.kind === "intra"
+export const poTaxReason = (tax: Pick<PoTax, "kind" | "sourceOfSupply" | "destinationOfSupply">) => (tax.kind === "none" ? "Zoho marks this vendor as not registered for GST, so this purchase order carries no tax." : tax.kind === "intra"
   ? `CGST + SGST, because the vendor and the godown are both in ${placeName(tax.destinationOfSupply)}.`
   : `IGST, because the vendor is in ${placeName(tax.sourceOfSupply)} and the godown in ${placeName(tax.destinationOfSupply)}.`);
 
@@ -530,14 +552,15 @@ const elapsedWait = (claimedAt: string, nowMs: number) => Math.max(0, PO_RETRY_S
 const tooSoon = (wait: number): RaiseResult => ({ kind: "uncertain", retryAfterSeconds: wait, message: `Zoho has no purchase order for this sample yet, but it may still be working on the last request. Check again in ${wait} seconds. ${UNCERTAIN_NOTE}` });
 
 /** What differs between the purchase order already raised and what this admin just confirmed. Empty when they agree. */
-export function differsFromRaised(saved: PoPlan, wanted: Pick<PoPlan, "vendorId" | "itemId" | "quantityQntl" | "ratePerQntl" | "branchId" | "taxId">): string[] {
+export function differsFromRaised(saved: PoPlan, wanted: Pick<PoPlan, "vendorId" | "itemId" | "quantityQntl" | "ratePerQntl" | "branchId" | "taxId" | "taxKind">): string[] {
   const out: string[] = [];
   if (saved.vendorId !== wanted.vendorId) out.push(`vendor ${saved.vendorName}`);
   if (saved.itemId !== wanted.itemId) out.push(`item ${saved.itemName}`);
   if (Number(saved.quantityQntl) !== wanted.quantityQntl) out.push(`${saved.quantityQntl} quintal`);
   if (Number(saved.ratePerQntl) !== wanted.ratePerQntl) out.push(`Rs ${saved.ratePerQntl} per quintal`);
   if (saved.branchId !== wanted.branchId) out.push(`godown ${saved.branchName}`);
-  if (saved.taxId && wanted.taxId && saved.taxId !== wanted.taxId) out.push(`tax ${saved.taxName || saved.taxId}`);
+  const taxOf = (plan: Pick<PoPlan, "taxId" | "taxKind">) => (plan.taxKind === "none" ? "none" : plan.taxId);
+  if (taxOf(saved) && taxOf(wanted) && taxOf(saved) !== taxOf(wanted)) out.push(`tax ${saved.taxName || saved.taxId}`);
   return out.length ? [`The purchase order already raised for this sample is not what you just confirmed. It has: ${out.join(", ")}. Check it in Zoho.`] : [];
 }
 
@@ -564,7 +587,7 @@ async function saveFound(
 ): Promise<RaiseResult> {
   // wanted is what the admin has just confirmed, when Zoho turned out to hold one from an earlier attempt.
   const differences = zohoCopy ? [...new Set([...poDifferences(plan, zohoCopy), ...poTaxDifferences(wanted, zohoCopy)])]
-    : plan.taxId || wanted.taxId ? ["Zoho's copy could not be read, so its figures and GST were not compared with what was confirmed."] : [];
+    : plan.taxId || plan.taxKind || wanted.taxId || wanted.taxKind ? ["Zoho's copy could not be read, so its figures and GST were not compared with what was confirmed."] : [];
   const status = text(zohoCopy?.["status"]) || found.status || "draft";
   const totals = { subTotal: numberOr(zohoCopy?.["sub_total"]), taxTotal: numberOr(zohoCopy?.["tax_total"]), total: numberOr(zohoCopy?.["total"]) };
   let answer: RecordAnswer | null = null;
@@ -611,8 +634,8 @@ async function adoptFromSearch(deps: RaiseDeps, sampleId: string, plan: PoPlan, 
  * already checked the figures and read the vendor and item from Zoho.
  */
 export async function raiseRicePo(deps: RaiseDeps, sampleId: string, plan: PoPlan, actor: PoActor): Promise<RaiseResult> {
-  // Without a tax on the line Zoho saves GST 0, so this is the last stop before anything goes out.
-  if (!plan.taxId) return { kind: "rejected", message: "The tax for this purchase order hasn't been worked out, so nothing was sent to Zoho. Review it and confirm again." };
+  // Without a tax on the line Zoho saves GST 0, so this is the last stop before anything goes out. Only poTaxFrom's plain "no GST" gets past with none.
+  if (!plan.taxId && plan.taxKind !== "none") return { kind: "rejected", message: "The tax for this purchase order hasn't been worked out, so nothing was sent to Zoho. Review it and confirm again." };
   const attemptId = deps.newId();
   const claim = await deps.store.claim({ sampleId, attemptId, reference: plan.reference, snapshot: plan, actor });
   if (claim.outcome === "already_raised") {

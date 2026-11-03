@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   bestInComparison, canCancelPo, cancelRicePo, checkRicePo, createInZohoOnce, findPurchaseOrdersByReference, gstPreferencesFrom, itemBody, itemMatchFrom, kgPerZohoUnit, latestTest, nameKey, phoneLinks, planPoLine, plainZohoRefusal,
-  differsFromRaised, OFF_LIST_CHECK_MS, poDeathReason, poTaxAmount, poTaxDifferences, poTaxFrom, poTaxLabel, poTaxReason, poDifferences, poLineProblem, poReference, retiredPoProblem, settleRaisedPo, syncRaisedPos, zohoSaysNoSuchPo, priceUnitWarning, purchaseOrderBody, raiseRicePo, readPoStatus, riceTextOptions, sortSamples, testsBySample, vendorBody, vendorMatchesFrom, zohoPoUrl, zohoStatusLabel, zohoVerdict,
+  differsFromRaised, NO_GST_WORDS, OFF_LIST_CHECK_MS, poDeathReason, poTaxAmount, poTaxDifferences, poTaxFrom, poTaxLabel, poTaxReason, poDifferences, poLineProblem, poReference, retiredPoProblem, settleRaisedPo, syncRaisedPos, zohoSaysNoSuchPo, priceUnitWarning, purchaseOrderBody, raiseRicePo, readPoStatus, riceTextOptions, sortSamples, testsBySample, vendorBody, vendorMatchesFrom, zohoPoUrl, zohoStatusLabel, zohoVerdict,
   type ClaimAnswer, type CreationStore, type PoActor, type PoFound, type PoLifeStore, type PoPlan, type PoStore, type RaisedPo, type RecordAnswer, type RicePo, type RiceSample, type RiceTest, type ZohoRaw, type ZohoSend,
 } from "../src/lib/rice-samples.ts";
 
@@ -835,11 +835,88 @@ test("tax: 0% set on the item itself is an answer, so the confirm screen can say
   assert.equal(answer.ok && answer.tax.taxId, "T-GST0");
 });
 
-test("tax: stops when the vendor isn't shown as GST-registered", () => {
-  stops(poTaxFrom(taxItem(), taxVendor({ gst_treatment: "business_none", gst_no: "" }), CLK), /isn't shown as GST-registered/);
-  stops(poTaxFrom(taxItem(), taxVendor({ gst_treatment: "business_gst", gst_no: "" }), CLK), /isn't shown as GST-registered/);
-  stops(poTaxFrom(taxItem(), taxVendor({ gst_treatment: "overseas" }), CLK), /isn't shown as GST-registered/);
-  stops(poTaxFrom(taxItem(), taxVendor({ gst_treatment: undefined }), CLK), /isn't shown as GST-registered/);
+const unregistered = (patch: Record<string, unknown> = {}) => taxVendor({ gst_treatment: "business_none", gst_no: "", ...patch });
+
+test("no GST: a vendor Zoho marks as not registered gets no tax, whatever the item's own tax", () => {
+  assert.deepEqual(poTaxFrom(taxItem(), unregistered(), CLK), { ok: true, tax: { taxId: "", taxName: "No GST", percent: 0, kind: "none", parts: [], sourceOfSupply: "", destinationOfSupply: "" } });
+  assert.equal(NO_GST_WORDS, "No GST: vendor not registered");
+  assert.match(poTaxReason({ kind: "none", sourceOfSupply: "", destinationOfSupply: "" }), /Zoho marks this vendor as not registered/);
+});
+
+test("no GST: neither the vendor's state nor the godown's is needed, because no tax depends on them", () => {
+  assert.equal(poTaxFrom(taxItem(), unregistered({ place_of_contact: "" }), CLK).ok, true);
+  assert.equal(poTaxFrom(taxItem(), unregistered(), { name: "Hubli", stateCode: "" }).ok, true);
+  assert.equal(poTaxFrom(taxItem({ item_tax_preferences: [] }), unregistered(), CLK).ok, true);
+});
+
+test("no GST: a not-taxable item still stops, for any vendor, because the owner hasn't decided that one", () => {
+  stops(poTaxFrom(taxItem({ is_taxable: false }), unregistered(), CLK), /not taxable/);
+  stops(poTaxFrom(taxItem({ is_taxable: false }), taxVendor(), CLK), /not taxable/);
+});
+
+test("no GST: only Zoho's own plain marking counts, so an unclear registration still stops", () => {
+  stops(poTaxFrom(taxItem(), unregistered({ gst_no: "29ABCDE1234F1Z5" }), CLK), /not registered for GST, but also holds a GSTIN/);
+  stops(poTaxFrom(taxItem(), taxVendor({ gst_no: "" }), CLK), /GST-registered but holds no GSTIN/);
+  for (const treatment of ["consumer", "overseas", "business_registered_composition", "business_sez", "", undefined, null]) {
+    stops(poTaxFrom(taxItem(), taxVendor({ gst_treatment: treatment }), CLK), /doesn't say plainly/);
+    stops(poTaxFrom(taxItem(), taxVendor({ gst_treatment: treatment, gst_no: "" }), CLK), /doesn't say plainly/);
+  }
+  // No GSTIN on its own is not a marking.
+  stops(poTaxFrom(taxItem(), taxVendor({ gst_treatment: undefined, gst_no: "" }), CLK), /doesn't say plainly/);
+});
+
+test("no GST: a registered vendor whose tax can't be worked out still stops", () => {
+  stops(poTaxFrom(taxItem({ item_tax_preferences: [] }), taxVendor(), CLK), /no tax for purchases/);
+  stops(poTaxFrom(taxItem(), taxVendor({ place_of_contact: "" }), CLK), /no state for/);
+});
+
+const noGstPlan = (patch: Partial<PoPlan> = {}) => plan({ gstPercent: 0, taxId: "", taxName: "No GST", taxKind: "none", sourceOfSupply: "", destinationOfSupply: "", ...patch });
+
+test("no GST: the purchase order carries no tax and no states, as on the first live test, and is sent", async () => {
+  const body = purchaseOrderBody(noGstPlan());
+  assert.equal("source_of_supply" in body, false);
+  assert.equal("destination_of_supply" in body, false);
+  assert.equal("tax_id" in (body["line_items"] as Record<string, unknown>[])[0]!, false);
+  const sent: Record<string, unknown>[] = [];
+  const recorded: { differences?: string[] } = {};
+  const store: PoStore = {
+    claim: async () => ({ outcome: "claimed", attempts: 1 }), takeover: async () => { throw new Error("no"); }, release: async () => { throw new Error("no"); }, markFailed: async () => undefined,
+    record: async ({ po, differences }) => { recorded.differences = differences; return { outcome: "recorded", po: { zoho_po_id: po.id, zoho_po_number: po.number, zoho_po_status: po.status, zoho_total: 420000 } as RicePo }; },
+  };
+  const saved = { purchaseorder_id: "P1", purchaseorder_number: "CLK-PO-1", status: "draft", sub_total: 420000, tax_total: 0, total: 420000, line_items: [{ item_id: "I1", name: "Rice bulk", tax_id: "", rate: 4200, quantity: 100 }] };
+  const zoho: ZohoSend = async (_resource, method, posted) => {
+    if (method === "POST") { sent.push(posted!); return { status: 201, body: { code: 0, purchase_order: saved } }; }
+    return { status: 200, body: { code: 0, purchaseorder: saved } };
+  };
+  assert.equal((await raiseRicePo({ store, zoho, newId: () => "x", now: () => 0 }, SAMPLE, noGstPlan(), ACTOR)).kind, "raised");
+  assert.equal(sent.length, 1);
+  assert.deepEqual(recorded.differences, []);
+});
+
+test("no GST: a plan with no tax and no plain marking is still never sent", async () => {
+  const zoho: ZohoSend = async () => { throw new Error("Zoho must not be called"); };
+  const store = new Proxy({}, { get: () => () => { throw new Error("the lock must not be touched"); } }) as PoStore;
+  for (const kind of [undefined, "intra", "inter"] as const) {
+    assert.equal((await raiseRicePo({ store, zoho, newId: () => "x", now: () => 0 }, SAMPLE, noGstPlan({ taxKind: kind }), ACTOR)).kind, "rejected", String(kind));
+  }
+});
+
+test("no GST: any tax in Zoho's reply is flagged, however small", () => {
+  const reply = (patch: Record<string, unknown> = {}, line: Record<string, unknown> = {}) => ({ sub_total: 420000, tax_total: 0, line_items: [{ name: "Rice bulk", tax_id: "", ...line }], ...patch });
+  assert.deepEqual(poDifferences(noGstPlan(), reply()), []);
+  assert.match(poDifferences(noGstPlan(), reply({ tax_total: 21000 }))[0]!, /GST of ₹21000 on this purchase order, but Zoho marks the vendor as not registered/);
+  assert.match(poDifferences(noGstPlan(), reply({ tax_total: 0.5 }))[0]!, /GST of ₹0.5/);
+  assert.match(poDifferences(noGstPlan(), reply({}, { tax_id: "T", tax_name: "GST5" }))[0]!, /Zoho put GST5 on this line/);
+  assert.match(poDifferences(noGstPlan(), reply({ tax_total: undefined }))[0]!, /doesn't show the GST/);
+  // Zoho's own state fields are nothing to compare here.
+  assert.deepEqual(poDifferences(noGstPlan(), reply({ source_of_supply: "KA", destination_of_supply: "KA" })), []);
+});
+
+test("no GST: an already raised purchase order on the other footing is called out", () => {
+  assert.match(differsFromRaised(noGstPlan(), plan())[0]!, /tax No GST/);
+  assert.match(differsFromRaised(plan(), noGstPlan())[0]!, /tax GST5/);
+  assert.deepEqual(differsFromRaised(noGstPlan(), noGstPlan()), []);
+  assert.deepEqual(differsFromRaised(plan({ taxId: undefined, taxKind: undefined }), noGstPlan()), []);
 });
 
 test("tax: stops when the vendor's state is missing or disagrees with their GSTIN", () => {
