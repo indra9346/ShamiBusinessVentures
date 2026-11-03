@@ -222,3 +222,6 @@ test("a new admin sign-in replaces the idle clock left by an earlier session", (
     Object.defineProperty(globalThis, "localStorage", { configurable: true, value: original });
   }
 });
+
+// Kept in its own file; run from here so package.json, which every open PR edits, stays out of this change.
+import "./customer-data.test.ts";
