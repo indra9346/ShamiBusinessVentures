@@ -48,8 +48,6 @@ function CustomerAddresses({ customerId }: { customerId: string }) {
   const [saved, setSaved] = useState<SavedAddress[] | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
   useEffect(() => {
-    setSaved(null);
-    setLoadFailed(false);
     if (STATIC_DATA_MODE) {
       setSaved([]);
       return;
@@ -343,7 +341,7 @@ function AdminCustomerDetail() {
 
           <TabsContent value="addresses">
             <Panel>
-              <CustomerAddresses customerId={customer.id} />
+              <CustomerAddresses key={customer.id} customerId={customer.id} />
             </Panel>
           </TabsContent>
 
