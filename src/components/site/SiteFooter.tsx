@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { Link } from "@tanstack/react-router";
 import { Facebook, Instagram, Mail, MapPin, Phone, Youtube } from "lucide-react";
 import { Logo } from "@/components/brand/Logo";
@@ -14,6 +15,18 @@ const socials = [
 export function SiteFooter() {
   const details = useSiteDetails();
   const registrations = [details.gstin && `GSTIN ${details.gstin}`, details.fssai && `FSSAI ${details.fssai}`].filter(Boolean).join(" · ");
+  // The golden sparks are redrawn by the page on every frame, so they run only while they can be seen.
+  const sparksRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const row = sparksRef.current;
+    if (!row) return;
+    const seen = new IntersectionObserver((entries) => {
+      row.toggleAttribute("data-sparks", !!entries[entries.length - 1]?.isIntersecting);
+    });
+    seen.observe(row);
+    return () => seen.disconnect();
+  }, []);
+
   return (
     <footer className="bg-midnight text-white/70">
       <div className="mx-auto max-w-7xl px-6 py-14">
@@ -102,7 +115,7 @@ export function SiteFooter() {
             {registrations && <p data-no-translate className="mt-0.5 text-white/50">{registrations}</p>}
           </div>
 
-          <div className="flex flex-wrap items-center gap-1.5 text-white/75 text-xs sm:text-[13px]">
+          <div ref={sparksRef} className="flex flex-wrap items-center gap-1.5 text-white/75 text-xs sm:text-[13px]">
             <span className="font-medium tracking-wide">Designed &amp; Developed with</span>
             <span
               className="inline-flex items-center mx-1 select-none align-middle"
