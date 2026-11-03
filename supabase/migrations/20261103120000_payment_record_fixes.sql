@@ -5,14 +5,18 @@
 --   The payment dialog's float left a fully paid order "Partially Paid".
 --   The exact balance of a part-paid order was reported as a wrong amount to refund.
 --   An admin could record money on a checkout that had ended, whose stock had gone back on sale.
--- Also records when a payment reached a Zoho invoice, so the sync never posts it to that invoice twice (see
--- ensureZohoBooksInvoice). Built from the live text of these functions, which was the same as the migrations on 3 Nov.
+--   A transfer recorded as refunded could pay another order.
+-- Also records when a payment reached a Zoho invoice, so the sync never posts it twice (see ensureZohoBooksInvoice).
+-- Built from the live text of these functions, which was the same as the migrations on 3 Nov.
 
 -- ---------------------------------------------------------------- one transfer, one payment
--- Punctuation goes too: a reference typed as 8493-2039-2376 is the same transfer as 849320392376.
+-- What an admin types can have words around the UTR (UTR: 849320392376, or UPI/849320392376/NAME from a statement).
+-- A 12-digit number standing alone is the transfer. Otherwise punctuation goes: 8493-2039-2376 is 849320392376.
 CREATE OR REPLACE FUNCTION private.utr_form(_utr text)
 RETURNS text LANGUAGE sql IMMUTABLE AS $function$
-  SELECT translate(upper(regexp_replace(COALESCE(_utr, ''), '[^0-9A-Za-z]', '', 'g')), 'OIL', '011')
+  SELECT translate(upper(COALESCE(
+    (regexp_match(COALESCE(_utr, ''), '(?:^|[^0-9A-Za-z])([0-9]{12})(?:$|[^0-9A-Za-z])'))[1],
+    regexp_replace(COALESCE(_utr, ''), '[^0-9A-Za-z]', '', 'g'))), 'OIL', '011')
 $function$;
 REVOKE ALL ON FUNCTION private.utr_form(text) FROM PUBLIC, anon, authenticated;
 
@@ -79,8 +83,8 @@ BEGIN
   END IF;
   SELECT amount INTO earlier FROM public.upi_payment_submissions
     WHERE private.same_utr(utr, reference) AND status = 'rejected' AND note = 'we could not check your UTR in time' AND order_id <> target.id LIMIT 1;
-  IF earlier IS NOT NULL AND earlier <> _amount THEN
-    RAISE EXCEPTION 'This UTR was sent for Rs % on a checkout that lapsed, so it only covers a payment of that amount.', to_char(earlier, 'FM99999990.00');
+  IF earlier IS NOT NULL AND earlier < _amount THEN
+    RAISE EXCEPTION 'This UTR was sent for Rs % on a checkout that lapsed, so it covers no more than that.', to_char(earlier, 'FM99999990.00');
   END IF;
   SELECT order_no INTO other_order FROM public.upi_payment_submissions WHERE private.same_utr(utr, reference) AND status <> 'rejected' AND order_id <> target.id LIMIT 1;
   IF other_order IS NOT NULL THEN RAISE EXCEPTION 'This UTR was already used for order %', other_order; END IF;
@@ -88,18 +92,23 @@ BEGIN
   SELECT * INTO credit FROM public.bank_credits WHERE private.same_utr(utr, reference) LIMIT 1 FOR UPDATE;
   IF credit.id IS NOT NULL THEN
     IF credit.status = 'settled' THEN
-      RAISE EXCEPTION 'The bank alert for UTR % was marked settled (%), so it cannot pay an order.', credit.utr, COALESCE(credit.note, 'no note');
+      RAISE EXCEPTION 'The bank alert for UTR % was marked settled (%), so it cannot pay an order. If that was a mistake, reopen it first.', credit.utr, COALESCE(credit.note, 'no note');
     END IF;
-    IF credit.status = 'matched' AND credit.order_id IS DISTINCT FROM target.id THEN
-      RAISE EXCEPTION 'This UTR was already used for order %', COALESCE(credit.order_no, 'another order');
+    -- This alert's money was already recorded, whatever bank letters that reference or this one carries.
+    SELECT o2.order_no INTO other_order FROM public.payments p JOIN public.orders o2 ON o2.id = p.order_id
+      WHERE private.same_utr(p.txn_ref, credit.utr) AND p.status = 'Paid' LIMIT 1;
+    IF other_order IS NOT NULL OR credit.status = 'matched' THEN
+      RAISE EXCEPTION 'This UTR was already used for order %', COALESCE(other_order, credit.order_no, 'another order');
     END IF;
-    IF credit.amount < _amount THEN
+    -- More than a rupee short is refused. Paise short (a customer who typed Rs 677 for Rs 677.25) can be recorded: the alert stays open for a person.
+    IF credit.amount + 1 < _amount THEN
       IF target.order_status = 'Awaiting Payment' THEN
         RAISE EXCEPTION 'The bank alert for UTR % shows Rs %, not Rs %. Reject this UTR, or refund it and mark the alert settled: a checkout is placed only when its full amount is paid.',
           credit.utr, to_char(credit.amount, 'FM99999990.00'), to_char(_amount, 'FM99999990.00');
       END IF;
-      RAISE EXCEPTION 'The bank alert for UTR % shows Rs %, not Rs %. Record Rs % as a part payment, then ask the customer for the rest.',
-        credit.utr, to_char(credit.amount, 'FM99999990.00'), to_char(_amount, 'FM99999990.00'), to_char(credit.amount, 'FM99999990.00');
+      RAISE EXCEPTION 'The bank alert for UTR % shows Rs %, not Rs %. Record Rs % as a part payment (Admin > Payments, % percent of the order), then ask the customer for the rest.',
+        credit.utr, to_char(credit.amount, 'FM99999990.00'), to_char(_amount, 'FM99999990.00'), to_char(credit.amount, 'FM99999990.00'),
+        to_char(round(credit.amount * 100 / NULLIF(target.total, 0), 4), 'FM990.0999');
     END IF;
   END IF;
   applied := target.paid_amount + _amount;
@@ -121,7 +130,7 @@ BEGIN
     UPDATE public.upi_payment_submissions SET amount = target.total - applied WHERE order_id = target.id AND status = 'submitted';
   END IF;
   PERFORM private.close_lapsed_utr(reference, target.id, target.order_no);
-  -- The alert is answered, unless more came in than was recorded: then what is left stays open for a person.
+  -- The alert is answered, unless the amounts differ: then what is left stays open for a person.
   IF credit.id IS NOT NULL THEN
     IF credit.amount = _amount THEN
       UPDATE public.bank_credits SET status = 'matched', order_id = target.id, order_no = target.order_no, note = 'Confirmed by an admin' WHERE id = credit.id;
@@ -129,9 +138,15 @@ BEGIN
       UPDATE public.bank_credits SET status = 'mismatch', order_id = target.id, order_no = target.order_no,
         note = format('Bank amount ₹%s, recorded as ₹%s', to_char(credit.amount, 'FM99999990.00'), to_char(_amount, 'FM99999990.00'))
         WHERE id = credit.id RETURNING * INTO credit;
-      PERFORM private.alert_admins_about_credit(credit, 'Payment needs you',
-        format('The bank shows ₹%s for UTR %s, but only ₹%s was recorded for %s. Refund the extra or call the customer, then mark it settled.',
-          to_char(credit.amount, 'FM99999990.00'), credit.utr, to_char(_amount, 'FM99999990.00'), target.order_no));
+      IF credit.amount < _amount THEN
+        PERFORM private.alert_admins_about_credit(credit, 'Payment needs you',
+          format('The bank shows ₹%s for UTR %s, but ₹%s was recorded for %s. Check the bank account, collect the difference or tell the office, then mark it settled.',
+            to_char(credit.amount, 'FM99999990.00'), credit.utr, to_char(_amount, 'FM99999990.00'), target.order_no));
+      ELSE
+        PERFORM private.alert_admins_about_credit(credit, 'Payment needs you',
+          format('The bank shows ₹%s for UTR %s, but only ₹%s was recorded for %s. Refund the extra or call the customer, then mark it settled.',
+            to_char(credit.amount, 'FM99999990.00'), credit.utr, to_char(_amount, 'FM99999990.00'), target.order_no));
+      END IF;
     END IF;
   END IF;
   RETURN true;
@@ -239,9 +254,9 @@ BEGIN
     RETURN jsonb_build_object('status', 'mismatch', 'order_no', o.order_no);
   END IF;
 
-  -- 1. The customer already told us this UTR.
+  -- 1. The customer already told us this UTR, however they wrote it.
   SELECT o2.* INTO o FROM public.upi_payment_submissions s JOIN public.orders o2 ON o2.id = s.order_id
-    WHERE s.utr = c.utr AND s.status = 'submitted' ORDER BY s.submitted_at DESC LIMIT 1;
+    WHERE private.same_utr(s.utr, c.utr) AND s.status = 'submitted' ORDER BY s.submitted_at DESC LIMIT 1;
   IF FOUND THEN
     PERFORM 1 FROM public.orders WHERE id = o.id FOR UPDATE;
     SELECT * INTO o FROM public.orders WHERE id = o.id;
@@ -276,8 +291,14 @@ BEGIN
   END IF;
 
   -- This UTR already paid an order (an admin confirmed it before the SMS came): that money is accounted for, if the bank agrees.
-  SELECT p.order_id, p.amount INTO paid_order, recorded FROM public.payments p
-    WHERE private.same_utr(p.txn_ref, c.utr) AND p.status = 'Paid' ORDER BY p.created_at LIMIT 1;
+  -- The same transfer can sit on more than one row, written with different bank letters: all of it counts against this alert.
+  SELECT (array_agg(p.order_id ORDER BY p.created_at))[1], sum(p.amount) INTO paid_order, recorded FROM public.payments p
+    WHERE private.same_utr(p.txn_ref, c.utr) AND p.status = 'Paid';
+  -- Or the customer's UTR was closed when an admin recorded that order's payment under another reference.
+  IF paid_order IS NULL THEN
+    SELECT s.order_id, s.amount INTO paid_order, recorded FROM public.upi_payment_submissions s
+      WHERE private.same_utr(s.utr, c.utr) AND s.status = 'confirmed' ORDER BY s.reviewed_at DESC LIMIT 1;
+  END IF;
   IF paid_order IS NOT NULL THEN
     SELECT * INTO o FROM public.orders WHERE id = paid_order;
     IF c.amount = recorded THEN
@@ -390,11 +411,44 @@ BEGIN
 END;
 $function$;
 
+-- A settled alert pays for nothing, so one settled by mistake needs a way back. Every admin is told.
+CREATE OR REPLACE FUNCTION public.reopen_bank_credit(_credit_id uuid)
+RETURNS public.bank_credits LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public' AS $function$
+DECLARE
+  result public.bank_credits%ROWTYPE;
+  was text;
+BEGIN
+  IF auth.uid() IS NULL OR NOT public.has_role(auth.uid(), 'admin') THEN RAISE EXCEPTION 'Only administrators can reopen a bank credit'; END IF;
+  SELECT note INTO was FROM public.bank_credits WHERE id = _credit_id AND status = 'settled' FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Only a settled credit can be reopened'; END IF;
+  UPDATE public.bank_credits SET status = CASE WHEN order_id IS NULL THEN 'unmatched' ELSE 'mismatch' END,
+    note = format('Reopened. It was settled: %s', COALESCE(was, 'no note'))
+    WHERE id = _credit_id RETURNING * INTO result;
+  PERFORM private.alert_admins_about_credit(result, 'Payment needs you',
+    format('The bank alert for ₹%s (UTR %s) was settled and has been reopened. It was settled: %s', to_char(result.amount, 'FM99999990.00'), result.utr, COALESCE(was, 'no note')));
+  RETURN result;
+END;
+$function$;
+REVOKE ALL ON FUNCTION public.reopen_bank_credit(uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.reopen_bank_credit(uuid) TO authenticated;
+
+-- Payments the sync has already posted, as far as the website can tell: paid before the invoice was last saved, and the
+-- invoice shows money on it. Wrongly noted, one goes to review at the next sync, which is the safe way to be wrong.
+UPDATE public.payments p SET zoho_invoice_id = i.zoho_invoice_id, zoho_pushed_at = i.updated_at
+  FROM public.zoho_order_invoices i
+  WHERE i.order_id = p.order_id AND p.status = 'Paid' AND p.zoho_pushed_at IS NULL AND i.zoho_invoice_id IS NOT NULL
+    AND i.balance < i.total AND p.created_at <= i.updated_at;
+
 -- A short alert marked matched before this fix could never be settled: it goes back to a person.
+WITH recorded AS (
+  SELECT c.id, sum(p.amount) AS amount, (array_agg(p.order_id ORDER BY p.created_at))[1] AS order_id
+  FROM public.bank_credits c JOIN public.payments p ON p.status = 'Paid' AND private.same_utr(p.txn_ref, c.utr)
+  WHERE c.status = 'matched' GROUP BY c.id
+)
 UPDATE public.bank_credits c
-  SET status = 'mismatch', order_id = p.order_id, order_no = o.order_no,
-    note = format('Bank amount ₹%s, recorded as ₹%s', to_char(c.amount, 'FM99999990.00'), to_char(p.amount, 'FM99999990.00'))
-  FROM public.payments p JOIN public.orders o ON o.id = p.order_id
-  WHERE c.status = 'matched' AND p.status = 'Paid' AND p.amount <> c.amount AND private.same_utr(p.txn_ref, c.utr);
+  SET status = 'mismatch', order_id = r.order_id, order_no = o.order_no,
+    note = format('Bank amount ₹%s, recorded as ₹%s', to_char(c.amount, 'FM99999990.00'), to_char(r.amount, 'FM99999990.00'))
+  FROM recorded r JOIN public.orders o ON o.id = r.order_id
+  WHERE c.id = r.id AND r.amount <> c.amount;
 
 NOTIFY pgrst, 'reload schema';

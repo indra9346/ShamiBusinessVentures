@@ -498,6 +498,23 @@ export type WebsitePayment = { amount: number; txnRef: string; method: string | 
 export type PaymentToRecord = { amount: number; reference: string; date: string; mode: string; method: string };
 export type InvoicePayment = { paymentId: string; reference: string };
 
+/**
+ * One reference read the way the database reads a UTR (private.utr_form and same_utr): a 12-digit number standing alone
+ * is the transfer, O and 0, I and 1, L and 1 are alike, and one that is exactly 12 digits matches a longer one ending in
+ * it. Below a bank UTR's 12 characters only the same text counts: RCPT1 and RCPTI are different money.
+ */
+function referenceForm(reference: string) {
+  const standing = /(?:^|[^0-9A-Za-z])([0-9]{12})(?:$|[^0-9A-Za-z])/.exec(reference)?.[1];
+  return (standing ?? reference.replace(/[^0-9A-Za-z]/g, "")).toUpperCase().replace(/O/g, "0").replace(/[IL]/g, "1");
+}
+export function sameReference(a: string, b: string) {
+  const [x, y] = [referenceForm(a), referenceForm(b)];
+  const twelve = /^[0-9]{12}$/;
+  if (x.length >= 12 && y.length >= 12) return x === y || (twelve.test(x) && y.endsWith(x)) || (twelve.test(y) && x.endsWith(y));
+  const plain = (text: string) => text.replace(/\s/g, "").toUpperCase();
+  return plain(a) !== "" && plain(a) === plain(b);
+}
+
 /** yyyy-mm-dd of a timestamp in India time (Books dates are the organization's local dates). */
 export function indiaDate(timestamp: string) {
   const time = Date.parse(timestamp);
@@ -509,49 +526,65 @@ export function indiaDate(timestamp: string) {
  * The website payments still to record in Books against an invoice: each verified payment whose
  * UTR is not already on the invoice (case-insensitive), oldest first, never more than the
  * invoice's balance. Re-running after a partial failure therefore never records a payment twice.
- * One already pushed to this invoice is never posted to it again: if it is gone, somebody removed it (see paymentsGoneFromInvoice).
+ * One pushed to Zoho before is never posted again, on any invoice: if it is gone, it was removed there, or voiding an
+ * invoice left it as the customer's credit, and posting it would count the money twice (see paymentsGoneFromInvoice).
  */
-export function paymentsToRecord(payments: WebsitePayment[], recordedReferences: string[], invoiceBalance: number, invoiceId?: string): PaymentToRecord[] {
-  const recorded = new Set(recordedReferences.map((ref) => ref.trim().toLowerCase()).filter(Boolean));
+export function paymentsToRecord(payments: WebsitePayment[], recordedReferences: string[], invoiceBalance: number): PaymentToRecord[] {
+  const recorded = [...recordedReferences];
   let balance = Math.round(Math.max(0, invoiceBalance) * 100);
   const result: PaymentToRecord[] = [];
   for (const payment of [...payments].sort((a, b) => Date.parse(a.paidAt) - Date.parse(b.paidAt))) {
     const reference = payment.txnRef.trim();
     const amount = Math.round(Number(payment.amount) * 100);
-    if (!reference || !(amount > 0) || recorded.has(reference.toLowerCase()) || balance <= 0) continue;
-    if (invoiceId && payment.pushedToInvoice === invoiceId) continue;
+    if (!reference || !(amount > 0) || balance <= 0 || payment.pushedToInvoice) continue;
+    if (recorded.some((ref) => sameReference(ref, reference))) continue;
     const applied = Math.min(amount, balance);
     balance -= applied;
-    recorded.add(reference.toLowerCase());
+    recorded.push(reference);
     result.push({ amount: applied / 100, reference, date: indiaDate(payment.paidAt), mode: zohoPaymentMode(payment.method), method: payment.method ?? "" });
   }
   return result;
 }
 
-/** Whether Zoho's list of an invoice's payments shows this website payment: by Zoho's id (a reference can be edited there) or its UTR. */
-function shownOnInvoice(payment: WebsitePayment, onInvoice: InvoicePayment[]) {
-  const reference = payment.txnRef.trim().toLowerCase();
-  return onInvoice.some((row) => (payment.zohoPaymentId && row.paymentId === payment.zohoPaymentId) || (reference && row.reference.trim().toLowerCase() === reference));
+/** The row of Zoho's list of an invoice's payments for this website payment: by Zoho's id (a reference can be edited there) or its UTR. */
+function rowOnInvoice(payment: WebsitePayment, onInvoice: InvoicePayment[]) {
+  return onInvoice.find((row) => payment.zohoPaymentId && row.paymentId === payment.zohoPaymentId)
+    ?? onInvoice.find((row) => sameReference(row.reference, payment.txnRef));
+}
+
+/** Pushed to Zoho before and not on this invoice now: removed in Zoho, or left as the customer's credit when an invoice was voided. */
+export function paymentsGoneFromInvoice<T extends WebsitePayment>(payments: T[], onInvoice: InvoicePayment[]): T[] {
+  return payments.filter((payment) => payment.pushedToInvoice && !rowOnInvoice(payment, onInvoice));
 }
 
 /**
- * Website payments once pushed to this invoice that it no longer shows: somebody removed them in Zoho, maybe because
- * the money went back. A person decides, so they are not posted again. A new invoice (after a void, with an admin's
- * approval) starts clean: payments are pushed to it, and that is noted against it.
- */
-export function paymentsGoneFromInvoice<T extends WebsitePayment>(payments: T[], onInvoice: InvoicePayment[], invoiceId: string): T[] {
-  return payments.filter((payment) => payment.pushedToInvoice === invoiceId && !shownOnInvoice(payment, onInvoice));
-}
-
-/**
- * Website payments on this invoice not yet noted as pushed to it: the note was lost after the post, or the payment
- * was pushed before notes were kept. With Zoho's id for each. Noting them now keeps them from ever being posted again.
+ * Website payments on this invoice not yet noted against it: the note was lost after the post, the payment was pushed
+ * before notes were kept, or someone moved it here in Zoho. Noting them keeps them from ever being posted again.
  */
 export function paymentsToNoteAsPushed<T extends WebsitePayment>(payments: T[], onInvoice: InvoicePayment[], invoiceId: string): { payment: T; zohoPaymentId: string | null }[] {
-  return payments.filter((payment) => payment.pushedToInvoice !== invoiceId && shownOnInvoice(payment, onInvoice)).map((payment) => {
-    const reference = payment.txnRef.trim().toLowerCase();
-    return { payment, zohoPaymentId: onInvoice.find((row) => row.reference.trim().toLowerCase() === reference)?.paymentId || null };
+  return payments.flatMap((payment) => {
+    const row = payment.pushedToInvoice === invoiceId ? undefined : rowOnInvoice(payment, onInvoice);
+    return row ? [{ payment, zohoPaymentId: row.paymentId || payment.zohoPaymentId || null }] : [];
   });
+}
+
+export type InvoicePaymentReview = "gone" | "short" | "above" | null;
+
+/**
+ * What a person must look at once the payments are on the invoice, in paise so floats can't decide it. "gone": a pushed
+ * payment is missing and the invoice really is short of it (re-entered under another reference, nothing is missing).
+ * "short": Books shows more than ₹1 less paid than the website, with no missing payment to blame. "above": paid in
+ * full here, but the invoice's own total leaves more than ₹1 due: Re-sync can't clear that.
+ */
+export function invoicePaymentReview(goneCount: number, websitePaid: number, orderTotal: number, invoiceTotal: number, invoiceBalance: number): InvoicePaymentReview {
+  if (![websitePaid, orderTotal, invoiceTotal, invoiceBalance].every(Number.isFinite)) return null;
+  const paise = (value: number) => Math.round(value * 100);
+  const missing = paise(websitePaid) - (paise(invoiceTotal) - paise(invoiceBalance));
+  const limit = paise(ROUNDING_WRITE_OFF_LIMIT);
+  if (goneCount > 0 && missing > 0) return "gone";
+  if (missing > limit) return "short";
+  if (paise(websitePaid) >= paise(orderTotal) && paise(invoiceBalance) > limit) return "above";
+  return null;
 }
 
 /** Zoho rounds CGST and SGST separately (₹51.225 → ₹51.23 each), so its invoice can exceed the website total by a paisa or two. */

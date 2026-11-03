@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { indiaDate, orderNeedsZohoInvoice, paymentsGoneFromInvoice, paymentsToNoteAsPushed, paymentsToRecord, roundingWriteOff, zohoPaymentMode } from "../src/lib/zoho-sync-core.ts";
+import { indiaDate, invoicePaymentReview, orderNeedsZohoInvoice, paymentsGoneFromInvoice, paymentsToNoteAsPushed, paymentsToRecord, roundingWriteOff, sameReference, zohoPaymentMode } from "../src/lib/zoho-sync-core.ts";
 
 test("only admin-confirmed, live orders get a Zoho Books invoice", () => {
   for (const status of ["Payment Confirmed", "Accepted", "Packed", "Dispatched", "Out for Delivery", "Delivered"])
@@ -56,29 +56,23 @@ test("payments without a UTR or amount are skipped", () => {
 
 const pushed = (txnRef: string, invoice: string, zohoPaymentId: string | null = null) => ({ ...paid(2500, txnRef, "2026-11-03T10:00:00Z"), pushedToInvoice: invoice, zohoPaymentId });
 
-test("a payment deleted in Zoho is not posted to that invoice again, but goes to review", () => {
+test("a payment pushed once is never posted again, on any invoice", () => {
   const payment = pushed("849320392376", "INV1", "P1");
-  assert.deepEqual(paymentsToRecord([payment], [], 2500, "INV1"), []);
-  assert.deepEqual(paymentsGoneFromInvoice([payment], [], "INV1"), [payment]);
-});
-
-test("a new invoice after a void gets the payment again", () => {
-  const payment = pushed("849320392376", "INV1", "P1");
-  assert.deepEqual(paymentsToRecord([payment], [], 2500, "INV2").map((p) => p.reference), ["849320392376"]);
-  assert.deepEqual(paymentsGoneFromInvoice([payment], [], "INV2"), []);
+  assert.deepEqual(paymentsToRecord([payment], [], 2500), []);
+  assert.deepEqual(paymentsGoneFromInvoice([payment], []), [payment]);
 });
 
 test("a payment still on the invoice is not gone, even when its reference was edited in Zoho", () => {
   const payment = pushed("849320392376", "INV1", "P1");
-  assert.deepEqual(paymentsGoneFromInvoice([payment], [{ paymentId: "P1", reference: "edited" }], "INV1"), []);
-  assert.deepEqual(paymentsGoneFromInvoice([payment], [{ paymentId: "P9", reference: "849320392376" }], "INV1"), [], "put back by hand with the same UTR");
-  assert.deepEqual(paymentsToRecord([payment], ["edited"], 2500, "INV1"), []);
+  assert.deepEqual(paymentsGoneFromInvoice([payment], [{ paymentId: "P1", reference: "edited" }]), []);
+  assert.deepEqual(paymentsGoneFromInvoice([payment], [{ paymentId: "P9", reference: "SBIN849320392376" }]), [], "put back by hand with the UTR");
+  assert.deepEqual(paymentsToRecord([payment], ["edited"], 2500), []);
 });
 
 test("a payment never pushed is posted as before, and is not gone", () => {
   const payment = paid(2500, "849320392376", "2026-11-03T10:00:00Z");
-  assert.deepEqual(paymentsToRecord([payment], [], 2500, "INV1").map((p) => p.amount), [2500]);
-  assert.deepEqual(paymentsGoneFromInvoice([payment], [], "INV1"), []);
+  assert.deepEqual(paymentsToRecord([payment], [], 2500).map((p) => p.amount), [2500]);
+  assert.deepEqual(paymentsGoneFromInvoice([payment], []), []);
 });
 
 test("a payment Zoho shows but the website has no note of gets the note, with Zoho's id", () => {
@@ -88,6 +82,39 @@ test("a payment Zoho shows but the website has no note of gets the note, with Zo
   const moved = pushed("UTR-1", "INV1", "P1");
   assert.deepEqual(paymentsToNoteAsPushed([moved], [{ paymentId: "P2", reference: "UTR-1" }], "INV2"), [{ payment: moved, zohoPaymentId: "P2" }]);
   assert.deepEqual(paymentsToNoteAsPushed([moved], [{ paymentId: "P1", reference: "UTR-1" }], "INV1"), [], "already noted against this invoice");
+  assert.deepEqual(paymentsToNoteAsPushed([moved], [{ paymentId: "P1", reference: "edited" }], "INV2"), [{ payment: moved, zohoPaymentId: "P1" }], "moved and edited keeps its id");
+  assert.deepEqual(paymentsToNoteAsPushed([pushed("UTR-1", "INV1", "P1")], [{ paymentId: "", reference: "UTR-1" }], "INV2")[0]?.zohoPaymentId, "P1", "a list without ids keeps the one we have");
+});
+
+test("references are compared the way the database reads a UTR", () => {
+  for (const [a, b] of [["849320392376", "SBIN849320392376"], ["8493-2039-2376", "849320392376"], ["8493 2039 2376", "849320392376"], ["UTR: 849320392376", "SBIN849320392376"], ["849320392376 RAHUL", "849320392376"], ["sbin849320392376", "SBIN849320392376"], ["SBINO49320392376", "SBIN049320392376"], ["rcpt 1", "RCPT1"]]) {
+    assert.equal(sameReference(a!, b!), true, `${a} and ${b}`);
+  }
+  for (const [a, b] of [["RCPT1", "RCPTI"], ["RCPT0", "RCPTO"], ["SBIN849320392376", "HDFC849320392376"], ["849320392376", "849320392377"], ["", ""]]) {
+    assert.equal(sameReference(a!, b!), false, `${a} and ${b}`);
+  }
+});
+
+test("what a person must look at after the payments are on the invoice", () => {
+  // Nothing wrong.
+  assert.equal(invoicePaymentReview(0, 2500, 2500, 2500, 0), null);
+  assert.equal(invoicePaymentReview(0, 1000, 2500, 2500, 1500), null, "part paid, in step");
+  assert.equal(invoicePaymentReview(0, 2500, 2500, 2500.01, 0.01), null, "a paisa of GST rounding");
+  assert.equal(invoicePaymentReview(0, 2500, 2500, 2501, 1), null, "up to the write-off limit");
+  // A pushed payment missing, and the money with it.
+  assert.equal(invoicePaymentReview(1, 2500, 2500, 2500, 2500), "gone");
+  assert.equal(invoicePaymentReview(1, 1000, 2500, 2500, 2500), "gone", "part paid");
+  assert.equal(invoicePaymentReview(1, 1, 1, 1, 1), "gone", "even under the write-off limit");
+  // Re-entered under the bank's own reference: the money is there.
+  assert.equal(invoicePaymentReview(1, 2500, 2500, 2500, 0), null);
+  // Put back for the wrong amount.
+  assert.equal(invoicePaymentReview(0, 2500, 2500, 2500, 2475), "short");
+  // Zoho's total ₹1.01 to ₹2 above the website.
+  assert.equal(invoicePaymentReview(0, 2500, 2500, 2501.01, 1.01), "above");
+  assert.equal(invoicePaymentReview(0, 2500, 2500, 2502, 2), "above");
+  assert.equal(invoicePaymentReview(0, 1000, 2500, 2502, 1502), null, "not yet paid in full");
+  // Nothing to compare.
+  assert.equal(invoicePaymentReview(1, 2500, 2500, Number.NaN, Number.NaN), null);
 });
 
 test("a paisa left by Zoho's CGST/SGST rounding is written off when the order is paid in full", () => {

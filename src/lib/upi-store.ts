@@ -227,6 +227,13 @@ export async function settleBankCredit(id: string, note: string) {
   changed();
 }
 
+/** Admin: an alert settled by mistake goes back to needing a person. A settled alert can pay for nothing. */
+export async function reopenBankCredit(id: string) {
+  const { error } = await supabase.rpc("reopen_bank_credit", { _credit_id: id });
+  if (error) throw new Error(error.message);
+  changed();
+}
+
 /** Settings, submissions and bank alerts, kept current: after every change here, across tabs, and live from the database. */
 export function useUpiPayments() {
   const [settings, setSettings] = useState<UpiSettings | null>(null);
