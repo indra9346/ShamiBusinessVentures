@@ -1190,10 +1190,11 @@ export type Database = {
       submit_upi_utr: { Args: { _order_no: string; _utr: string }; Returns: { id: string; order_id: string; order_no: string; user_id: string | null; customer_name: string; amount: number; utr: string; status: string; note: string | null; submitted_at: string; reviewed_at: string | null; reviewed_by: string | null } }
       admin_end_payment_hold: { Args: { _order_no: string }; Returns: boolean }
       mark_utr_refunded: { Args: { _order_no: string }; Returns: boolean }
-      delivery_note_check: { Args: { _order_no: string; _zoho: Json }; Returns: Json }
+      delivery_note_check: { Args: { _order_no: string; _zoho: Json | null }; Returns: Json }
       issue_delivery_note: { Args: { _order_no: string; _zoho: Json; _actor: string; _actor_name: string }; Returns: Json }
       record_delivery_print: { Args: { _note_id: string; _note: boolean; _slip_lines: number[]; _zoho: Json; _actor: string; _actor_name: string }; Returns: Json }
       delivery_note_register: { Args: { _limit?: number }; Returns: Json }
+      set_delivery_stop: { Args: { _order_no: string; _stopped: boolean; _reason: string; _actor: string; _actor_name: string }; Returns: boolean }
       review_upi_utr: { Args: { _order_no: string; _decision: string; _note?: string | null; _expected_utr?: string | null }; Returns: { id: string; order_id: string; order_no: string; user_id: string | null; customer_name: string; amount: number; utr: string; status: string; note: string | null; submitted_at: string; reviewed_at: string | null; reviewed_by: string | null } }
       record_stock_count: {
         Args: { _branch_id: string; _product_id: string; _counted: number; _zoho_physical_before: number; _zoho_delta: number; _site_after: number; _reason: string; _note: string; _flagged: boolean; _zoho_adjustment_id: string; _counted_by: string; _counted_by_name: string; _employee_id: string | null }

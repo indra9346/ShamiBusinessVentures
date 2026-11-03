@@ -3026,6 +3026,8 @@ export const kn: Record<string, string> = {
   "Need help? Call +91 95385 00840": "ಸಹಾಯ ಬೇಕೇ? +91 95385 00840 ಗೆ ಕರೆ ಮಾಡಿ",
   "Delivery Notes": "ಡೆಲಿವರಿ ನೋಟ್‌ಗಳು",
   "Delivery note and slips": "ಡೆಲಿವರಿ ನೋಟ್ ಮತ್ತು ಸ್ಲಿಪ್‌ಗಳು",
+  "Stop delivery": "ಡೆಲಿವರಿ ನಿಲ್ಲಿಸಿ",
+  "Lift the stop": "ತಡೆ ತೆಗೆಯಿರಿ",
   "Generate delivery note": "ಡೆಲಿವರಿ ನೋಟ್ ರಚಿಸಿ",
   "Open to print": "ಮುದ್ರಿಸಲು ತೆರೆಯಿರಿ",
   "Check again": "ಮತ್ತೆ ಪರಿಶೀಲಿಸಿ",

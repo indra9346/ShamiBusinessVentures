@@ -653,7 +653,7 @@ export function zohoInvoicesOf(salesOrder: Record<string, unknown>): ZohoInvoice
  * invoice record. An amount Zoho left out stays null, so it can never read as zero.
  */
 export type ZohoInvoiceFacts =
-  | { read: true; live_invoices: number; invoice_id?: string; invoice_number?: string; status?: string; total?: number | null; balance?: number | null }
+  | { read: true; live_invoices: number; invoice_id?: string; invoice_number?: string; status?: string; total?: number | null; balance?: number | null; payment_made?: number | null; credits_applied?: number | null; write_off_amount?: number | null }
   | { read: false; error: string };
 
 export function zohoInvoiceFacts(listed: ZohoInvoiceRef[], books: Record<string, unknown> | null): ZohoInvoiceFacts {
@@ -667,6 +667,7 @@ export function zohoInvoiceFacts(listed: ZohoInvoiceRef[], books: Record<string,
     invoice_number: String(books["invoice_number"] ?? "") || invoice.number,
     status: String(books["status"] ?? "").toLowerCase(),
     total: amountOrNull(books["total"]), balance: amountOrNull(books["balance"]),
+    payment_made: amountOrNull(books["payment_made"]), credits_applied: amountOrNull(books["credits_applied"]), write_off_amount: amountOrNull(books["write_off_amount"]),
   };
 }
 

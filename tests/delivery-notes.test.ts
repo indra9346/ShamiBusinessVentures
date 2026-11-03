@@ -15,7 +15,8 @@ const MIGRATION = readFileSync(new URL("../supabase/migrations/20261103090000_de
 const gateCodes = () => {
   const body = MIGRATION.slice(MIGRATION.indexOf("FUNCTION private.delivery_note_gate"), MIGRATION.indexOf("The order's lines as the paper shows them"));
   return [...new Set([...body.matchAll(/(?:code := |THEN |ELSE |WHEN '\w+' THEN |'code', )'([a-z_]+)'/g)].map((match) => match[1]!))]
-    .filter((code) => !["full", "partly", "broken"].includes(code));
+    // What the website's records say, and where a Zoho reading came from: not answers.
+    .filter((code) => !["full", "partly", "broken", "last_reading", "zoho_now"].includes(code));
 };
 
 test("every answer the database can give has its own plain words", () => {
@@ -69,7 +70,8 @@ test("the paper prints clean only when the check is clean", () => {
   assert.deepEqual(paperWarnings(gate("partly_paid")), ["NOT FULLY PAID. DO NOT DELIVER."]);
   assert.deepEqual(paperWarnings(gate("unpaid")), ["NOT FULLY PAID. DO NOT DELIVER."]);
   assert.match(paperWarnings(gate("zoho_unreadable"))[0]!, /COULD NOT BE RE-CHECKED/);
-  for (const code of ["zoho_behind", "website_behind", "no_invoice", "records_disagree", "totals_differ"] as const)
+  assert.deepEqual(paperWarnings(gate("stopped")), ["DELIVERY STOPPED BY THE OFFICE. DO NOT DELIVER."]);
+  for (const code of ["zoho_behind", "website_behind", "no_invoice", "records_disagree", "totals_differ", "zoho_not_money", "utr_reused", "bank_credit_short", "invoice_used"] as const)
     assert.match(paperWarnings(gate(code))[0]!, /CHECK WITH THE OFFICE/, code);
 });
 
@@ -149,9 +151,11 @@ test("nothing extra for an order that is paid, unpaid as usual, or finished", ()
 
 const listed = (status = "paid", invoiceId = "Z1"): ZohoInvoiceRef => ({ invoiceId, number: "CLKINV1", status, total: 100, balance: 0 });
 
-test("Zoho's reading: one live invoice comes from Books' own record", () => {
-  assert.deepEqual(zohoInvoiceFacts([listed()], { invoice_id: "Z1", invoice_number: "CLKINV9", status: "Paid", total: 100.5, balance: "0.00" }),
-    { read: true, live_invoices: 1, invoice_id: "Z1", invoice_number: "CLKINV9", status: "paid", total: 100.5, balance: 0 });
+test("Zoho's reading: one live invoice comes from Books' own record, with what paid it", () => {
+  assert.deepEqual(zohoInvoiceFacts([listed()], { invoice_id: "Z1", invoice_number: "CLKINV9", status: "Paid", total: 100.5, balance: "0.00", payment_made: 100, credits_applied: 0.5, write_off_amount: 0 }),
+    { read: true, live_invoices: 1, invoice_id: "Z1", invoice_number: "CLKINV9", status: "paid", total: 100.5, balance: 0, payment_made: 100, credits_applied: 0.5, write_off_amount: 0 });
+  const missing = zohoInvoiceFacts([listed()], { invoice_id: "Z1", status: "paid", total: 100, balance: 0 });
+  assert.equal(missing.read && missing.payment_made, null);
 });
 
 test("Zoho's reading: an amount left out stays missing and never reads as zero", () => {
@@ -193,9 +197,10 @@ test("the server functions and the Zoho read add no Zoho writes", () => {
 
 test("the migration keeps every table away from anon and customers and every call on the server", () => {
   const sql = MIGRATION;
-  assert.match(sql, /REVOKE ALL ON public\.delivery_note_counter, public\.delivery_notes, public\.delivery_note_events FROM PUBLIC, anon, authenticated/);
-  for (const table of ["delivery_note_counter", "delivery_notes", "delivery_note_events"]) assert.match(sql, new RegExp(`ALTER TABLE public\\.${table} ENABLE ROW LEVEL SECURITY`));
-  for (const fn of ["delivery_note_check", "issue_delivery_note", "record_delivery_print", "delivery_note_register"]) {
+  assert.match(sql, /REVOKE ALL ON public\.delivery_note_counter, public\.delivery_notes, public\.delivery_note_events, public\.delivery_stops FROM PUBLIC, anon, authenticated, service_role/);
+  assert.match(sql, /REVOKE ALL ON SEQUENCE public\.delivery_note_events_id_seq, public\.delivery_stops_id_seq FROM PUBLIC, anon, authenticated, service_role/);
+  for (const table of ["delivery_note_counter", "delivery_notes", "delivery_note_events", "delivery_stops"]) assert.match(sql, new RegExp(`ALTER TABLE public\\.${table} ENABLE ROW LEVEL SECURITY`));
+  for (const fn of ["delivery_note_check", "issue_delivery_note", "record_delivery_print", "delivery_note_register", "set_delivery_stop"]) {
     assert.match(sql, new RegExp(`REVOKE ALL ON FUNCTION public\\.${fn}\\([^)]*\\) FROM PUBLIC, anon, authenticated`), fn);
     assert.doesNotMatch(sql, new RegExp(`GRANT EXECUTE ON FUNCTION public\\.${fn}\\([^)]*\\) TO authenticated`), fn);
   }

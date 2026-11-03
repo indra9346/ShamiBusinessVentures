@@ -5,8 +5,8 @@
 --
 -- The payment rule lives here, not in the browser or the server code:
 --   * private.delivery_note_gate is the only thing that decides. It compares the website's records
---     (orders and payments) with what the server has just read from Zoho Books. If they disagree, or
---     Zoho could not be read, the answer is no, with a code saying why.
+--     (orders, payments, bank alerts) with what the server has just read from Zoho Books. If they
+--     disagree, or Zoho could not be read, the answer is no, with a code saying why.
 --   * Money is recorded in two places that only partly talk to each other. A payment confirmed on the
 --     website reaches Books at the next sync; a payment entered in Books never reaches orders.paid_amount.
 --     That is why orders.payment_status alone proves nothing.
@@ -15,7 +15,7 @@
 --
 -- Numbers (DN-000001, ...) come from a one-row counter updated in the same transaction as the note, so
 -- a failure takes the number back with it: no gaps, no reuse. Notes and their history cannot be changed
--- or deleted, even by the service role. Nothing here writes to Zoho or changes an order.
+-- or deleted; the service role can only read them. Nothing here writes to Zoho or changes an order.
 
 CREATE SCHEMA IF NOT EXISTS private;
 
@@ -32,7 +32,8 @@ CREATE TABLE IF NOT EXISTS public.delivery_notes (
   -- One note per order, and an order that has a note cannot be deleted.
   order_id uuid NOT NULL UNIQUE REFERENCES public.orders(id) ON DELETE RESTRICT,
   order_no text NOT NULL,
-  zoho_invoice_id text NOT NULL,
+  -- One note per invoice.
+  zoho_invoice_id text NOT NULL UNIQUE,
   invoice_number text NOT NULL,
   invoice_total numeric(14,2) NOT NULL,
   order_total numeric(14,2) NOT NULL,
@@ -48,7 +49,7 @@ CREATE INDEX IF NOT EXISTS delivery_notes_generated_idx ON public.delivery_notes
 CREATE TABLE IF NOT EXISTS public.delivery_note_events (
   id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   note_id uuid NOT NULL REFERENCES public.delivery_notes(id) ON DELETE RESTRICT,
-  kind text NOT NULL CHECK (kind IN ('generated', 'printed', 'order_changed', 'invoice_changed')),
+  kind text NOT NULL CHECK (kind IN ('generated', 'printed', 'order_changed', 'invoice_changed', 'payment_problem', 'stop_changed')),
   doc text CHECK (doc IN ('note', 'slip')),
   slip_line integer CHECK (slip_line IS NULL OR slip_line >= 1),
   copy_no integer CHECK (copy_no IS NULL OR copy_no >= 1),
@@ -66,19 +67,38 @@ CREATE INDEX IF NOT EXISTS delivery_note_events_note_idx ON public.delivery_note
 CREATE UNIQUE INDEX IF NOT EXISTS delivery_note_events_copy_idx
   ON public.delivery_note_events (note_id, doc, COALESCE(slip_line, 0), copy_no) WHERE kind = 'printed';
 
--- Supabase's default privileges hand new tables to anon and authenticated, so take them back first.
-REVOKE ALL ON public.delivery_note_counter, public.delivery_notes, public.delivery_note_events FROM PUBLIC, anon, authenticated;
-GRANT SELECT ON public.delivery_notes, public.delivery_note_events TO authenticated;
-GRANT ALL ON public.delivery_note_counter, public.delivery_notes, public.delivery_note_events TO service_role;
+-- An admin's stop on an order's delivery. The site has no way to record a refund or a dispute, so this
+-- is how the office stops a note and warns on any paper already printed. Each stop and lift is a new row;
+-- the newest row for the order decides.
+CREATE TABLE IF NOT EXISTS public.delivery_stops (
+  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  order_id uuid NOT NULL REFERENCES public.orders(id) ON DELETE RESTRICT,
+  stopped boolean NOT NULL,
+  reason text NOT NULL,
+  actor_id uuid NOT NULL,
+  actor_name text NOT NULL,
+  occurred_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS delivery_stops_order_idx ON public.delivery_stops (order_id, id DESC);
+
+-- Supabase's default privileges hand new tables and sequences to anon, authenticated and service_role, so
+-- take them all back first. Writes go only through the functions below, which run as their owner.
+REVOKE ALL ON public.delivery_note_counter, public.delivery_notes, public.delivery_note_events, public.delivery_stops FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON SEQUENCE public.delivery_note_events_id_seq, public.delivery_stops_id_seq FROM PUBLIC, anon, authenticated, service_role;
+GRANT SELECT ON public.delivery_notes, public.delivery_note_events, public.delivery_stops TO authenticated, service_role;
 
 ALTER TABLE public.delivery_note_counter ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.delivery_notes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.delivery_note_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.delivery_stops ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS delivery_notes_admin_read ON public.delivery_notes;
 CREATE POLICY delivery_notes_admin_read ON public.delivery_notes FOR SELECT TO authenticated
   USING (public.has_role(auth.uid(), 'admin'));
 DROP POLICY IF EXISTS delivery_note_events_admin_read ON public.delivery_note_events;
 CREATE POLICY delivery_note_events_admin_read ON public.delivery_note_events FOR SELECT TO authenticated
+  USING (public.has_role(auth.uid(), 'admin'));
+DROP POLICY IF EXISTS delivery_stops_admin_read ON public.delivery_stops;
+CREATE POLICY delivery_stops_admin_read ON public.delivery_stops FOR SELECT TO authenticated
   USING (public.has_role(auth.uid(), 'admin'));
 
 -- ---------------------------------------------------------------- nothing is ever changed or removed
@@ -101,6 +121,12 @@ CREATE TRIGGER delivery_note_events_permanent BEFORE UPDATE OR DELETE ON public.
   FOR EACH ROW EXECUTE FUNCTION private.delivery_records_are_permanent();
 DROP TRIGGER IF EXISTS delivery_note_events_permanent_truncate ON public.delivery_note_events;
 CREATE TRIGGER delivery_note_events_permanent_truncate BEFORE TRUNCATE ON public.delivery_note_events
+  FOR EACH STATEMENT EXECUTE FUNCTION private.delivery_records_are_permanent();
+DROP TRIGGER IF EXISTS delivery_stops_permanent ON public.delivery_stops;
+CREATE TRIGGER delivery_stops_permanent BEFORE UPDATE OR DELETE ON public.delivery_stops
+  FOR EACH ROW EXECUTE FUNCTION private.delivery_records_are_permanent();
+DROP TRIGGER IF EXISTS delivery_stops_permanent_truncate ON public.delivery_stops;
+CREATE TRIGGER delivery_stops_permanent_truncate BEFORE TRUNCATE ON public.delivery_stops
   FOR EACH STATEMENT EXECUTE FUNCTION private.delivery_records_are_permanent();
 
 -- The counter only ever goes up by one.
@@ -129,10 +155,30 @@ RETURNS numeric LANGUAGE sql IMMUTABLE AS $function$
 $function$;
 REVOKE ALL ON FUNCTION private.delivery_fact_amount(jsonb, text) FROM PUBLIC, anon, authenticated;
 
+-- What the website last read from Zoho, for showing a state without a Zoho call. It can show why not,
+-- but it cannot generate a note: issue_delivery_note refuses it. Its copy has no payment_made.
+CREATE OR REPLACE FUNCTION private.delivery_note_last_reading(_order_id uuid)
+RETURNS jsonb
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path TO 'public'
+AS $function$
+  SELECT jsonb_build_object(
+    'source', 'last_reading', 'read', true,
+    'live_invoices', CASE WHEN z.zoho_invoice_id IS NOT NULL AND z.status IN ('sent', 'overdue', 'partially_paid', 'paid') THEN 1 ELSE 0 END,
+    'invoice_id', COALESCE(z.zoho_invoice_id, ''), 'invoice_number', COALESCE(z.invoice_number, ''),
+    'status', COALESCE(z.status, ''), 'total', z.total, 'balance', z.balance)
+  FROM (SELECT _order_id AS id) o
+  LEFT JOIN public.zoho_order_invoices z ON z.order_id = o.id
+$function$;
+REVOKE ALL ON FUNCTION private.delivery_note_last_reading(uuid) FROM PUBLIC, anon, authenticated;
+
 /*
  * Whether a delivery note may be generated for the order now, and why not.
  * _zoho is what the server read from Zoho Books a moment ago:
- *   { "read": true, "live_invoices": 1, "invoice_id", "invoice_number", "status", "total", "balance" }
+ *   { "read": true, "live_invoices": 1, "invoice_id", "invoice_number", "status", "total", "balance",
+ *     "payment_made", "credits_applied", "write_off_amount" }
  *   { "read": false, "error": "..." }
  * Only code 'paid' allows a note. The codes are explained to people in src/lib/delivery-notes.ts.
  */
@@ -148,12 +194,17 @@ DECLARE
   total numeric(14,2);
   paid numeric(14,2);
   receipts numeric(14,2);
+  bank_short numeric(14,2);
+  other_order text;
+  stop public.delivery_stops%ROWTYPE;
   website text;
+  z_last boolean := COALESCE(_zoho->>'source', '') = 'last_reading';
   z_read boolean := COALESCE(_zoho->>'read', '') = 'true';
   z_live integer := CASE WHEN jsonb_typeof(_zoho->'live_invoices') = 'number' THEN (_zoho->>'live_invoices')::integer ELSE 0 END;
   z_status text := lower(btrim(COALESCE(_zoho->>'status', '')));
   z_total numeric := private.delivery_fact_amount(_zoho, 'total');
   z_balance numeric := private.delivery_fact_amount(_zoho, 'balance');
+  z_made numeric := private.delivery_fact_amount(_zoho, 'payment_made');
   z_paid numeric;
   code text;
 BEGIN
@@ -162,6 +213,18 @@ BEGIN
   total := COALESCE(o.total, 0);
   paid := COALESCE(o.paid_amount, 0);
   SELECT COALESCE(sum(p.amount), 0) INTO receipts FROM public.payments p WHERE p.order_id = o.id AND p.status = 'Paid';
+  SELECT * INTO stop FROM public.delivery_stops s WHERE s.order_id = o.id ORDER BY s.id DESC LIMIT 1;
+  -- A bank alert saying less came in for a transfer recorded as more. Confirming a payment does not compare them.
+  SELECT COALESCE(sum(p.amount - c.amount), 0) INTO bank_short
+    FROM public.payments p JOIN public.bank_credits c ON private.same_utr(c.utr, p.txn_ref)
+    WHERE p.order_id = o.id AND p.status = 'Paid' AND c.amount < p.amount;
+  -- One bank transfer can pay one order, however its UTR was typed.
+  SELECT other_o.order_no INTO other_order
+    FROM public.payments p
+    JOIN public.payments q ON q.order_id <> p.order_id AND q.status = 'Paid' AND private.same_utr(q.txn_ref, p.txn_ref)
+    JOIN public.orders other_o ON other_o.id = q.order_id
+    WHERE p.order_id = o.id AND p.status = 'Paid'
+    LIMIT 1;
 
   -- What the website's own records say. orders and payments must agree with each other first.
   IF paid < 0 OR total < 0 OR paid <> receipts THEN website := 'broken';
@@ -173,10 +236,13 @@ BEGIN
   IF o.order_status = 'Cancelled' THEN code := 'cancelled';
   ELSIF o.order_status = 'Payment Expired' THEN code := 'payment_expired';
   ELSIF o.payment_status = 'Refunded' THEN code := 'refunded';
-  ELSIF EXISTS (SELECT 1 FROM public.return_requests r WHERE r.order_id = o.id AND r.refund_status = 'Refunded') THEN code := 'return_refunded';
+  ELSIF COALESCE(stop.stopped, false) THEN code := 'stopped';
+  ELSIF EXISTS (SELECT 1 FROM public.return_requests r WHERE r.order_id = o.id AND r.refund_status IN ('Processing', 'Refunded')) THEN code := 'return_refunded';
   ELSIF o.order_status NOT IN ('Payment Confirmed', 'Accepted', 'Packed', 'Dispatched', 'Out for Delivery', 'Delivered') THEN code := 'not_confirmed';
   ELSIF NOT EXISTS (SELECT 1 FROM public.order_items i WHERE i.order_id = o.id) THEN code := 'no_items';
   ELSIF website = 'broken' THEN code := 'records_disagree';
+  ELSIF other_order IS NOT NULL THEN code := 'utr_reused';
+  ELSIF bank_short > 0 THEN code := 'bank_credit_short';
   -- Short of full payment on the website: the answer is no whatever Zoho says, so say the plain reason
   -- when Zoho has nothing to add.
   ELSIF NOT z_read THEN code := CASE website WHEN 'unpaid' THEN 'unpaid' WHEN 'partly' THEN 'partly_paid' ELSE 'zoho_unreadable' END;
@@ -184,12 +250,17 @@ BEGIN
   ELSIF z_live < 1 OR COALESCE(_zoho->>'invoice_id', '') = '' THEN code := CASE website WHEN 'unpaid' THEN 'unpaid' WHEN 'partly' THEN 'partly_paid' ELSE 'no_invoice' END;
   ELSIF z_status = 'draft' THEN code := CASE website WHEN 'unpaid' THEN 'unpaid' WHEN 'partly' THEN 'partly_paid' ELSE 'invoice_draft' END;
   ELSIF z_total IS NULL OR z_balance IS NULL OR z_balance < 0 OR z_total < 0 OR z_balance > z_total
-     OR (z_status = 'paid') <> (z_balance = 0) THEN code := 'zoho_inconsistent';
+     OR (z_status = 'paid') <> (z_balance = 0)
+     OR (z_status = 'paid' AND z_made IS NULL AND NOT z_last) THEN code := 'zoho_inconsistent';
+  -- "Paid" in Books can mean a credit note or a write-off, not money: only payments count, less the rounding
+  -- write-off of up to Rs 1 (see ROUNDING_WRITE_OFF_LIMIT).
+  ELSIF z_status = 'paid' AND NOT z_last AND z_made < z_total - 1 THEN code := 'zoho_not_money';
   ELSIF website = 'full' THEN
     IF z_balance > 0 THEN code := 'zoho_behind';
-    -- Zoho rounds CGST and SGST separately, so its total can differ from the website's by paise (see
-    -- ROUNDING_WRITE_OFF_LIMIT). More than a rupee is a different bill.
+    -- Zoho rounds CGST and SGST separately, so its total can differ from the website's by paise.
+    -- More than a rupee is a different bill.
     ELSIF abs(z_total - total) > 1 THEN code := 'totals_differ';
+    ELSIF EXISTS (SELECT 1 FROM public.delivery_notes n WHERE n.zoho_invoice_id = _zoho->>'invoice_id' AND n.order_id <> o.id) THEN code := 'invoice_used';
     ELSE code := 'paid';
     END IF;
   ELSIF z_status = 'paid' THEN code := 'website_behind';
@@ -202,13 +273,14 @@ BEGIN
   END IF;
 
   RETURN jsonb_build_object(
-    'allowed', code = 'paid', 'code', code, 'website', website,
+    'allowed', code = 'paid', 'code', code, 'website', website, 'source', CASE WHEN z_last THEN 'last_reading' ELSE 'zoho_now' END,
     'order_no', o.order_no, 'order_status', o.order_status, 'payment_status', o.payment_status,
     'order_total', total, 'paid', paid, 'receipts', receipts,
-    'balance', GREATEST(total - paid, 0), 'overpaid', GREATEST(paid - total, 0),
+    'balance', GREATEST(total - paid, 0), 'overpaid', GREATEST(paid - total, 0), 'bank_short', bank_short, 'other_order_no', other_order,
+    'stopped', COALESCE(stop.stopped, false), 'stop_reason', CASE WHEN stop.stopped THEN stop.reason END,
     'zoho_read', z_read, 'zoho_error', left(COALESCE(_zoho->>'error', ''), 300), 'live_invoices', z_live,
     'invoice_id', COALESCE(_zoho->>'invoice_id', ''), 'invoice_number', COALESCE(_zoho->>'invoice_number', ''),
-    'invoice_status', z_status, 'invoice_total', z_total, 'invoice_balance', z_balance
+    'invoice_status', z_status, 'invoice_total', z_total, 'invoice_balance', z_balance, 'invoice_payment_made', z_made
   );
 END;
 $function$;
@@ -227,7 +299,8 @@ AS $function$
     SELECT jsonb_build_object(
       'line', row_number() OVER (ORDER BY i.created_at, i.product_name, i.id),
       'order_item_id', i.id::text, 'product_id', i.product_id, 'name', i.product_name, 'sku', COALESCE(i.sku, ''),
-      'qty', i.qty, 'pack_size', COALESCE(NULLIF(btrim(i.capacity), ''), NULLIF(btrim(c.payload->>'weight'), ''), ''),
+      'qty', i.qty, 'capacity', COALESCE(i.capacity, ''),
+      'pack_size', COALESCE(NULLIF(btrim(i.capacity), ''), NULLIF(btrim(c.payload->>'weight'), ''), ''),
       'stock_no', COALESCE(i.batch_code, '')
     ) AS line
     FROM public.order_items i
@@ -237,10 +310,11 @@ AS $function$
 $function$;
 REVOKE ALL ON FUNCTION private.delivery_note_lines(uuid) FROM PUBLIC, anon, authenticated;
 
--- A list of lines reduced to what must not change: which line, how many, what pack size.
+-- A list of lines reduced to what must not change on the order itself: which line, how many, what capacity.
+-- The catalogue's own weight is left out, so editing a product doesn't look like editing this order.
 CREATE OR REPLACE FUNCTION private.delivery_note_line_key(_lines jsonb)
 RETURNS jsonb LANGUAGE sql IMMUTABLE AS $function$
-  SELECT COALESCE(jsonb_agg(jsonb_build_array(l->>'order_item_id', l->'qty', l->>'pack_size') ORDER BY l->>'order_item_id'), '[]'::jsonb)
+  SELECT COALESCE(jsonb_agg(jsonb_build_array(l->>'order_item_id', l->'qty', l->>'capacity') ORDER BY l->>'order_item_id'), '[]'::jsonb)
   FROM jsonb_array_elements(_lines) l
 $function$;
 REVOKE ALL ON FUNCTION private.delivery_note_line_key(jsonb) FROM PUBLIC, anon, authenticated;
@@ -282,6 +356,7 @@ AS $function$
 $function$;
 REVOKE ALL ON FUNCTION private.delivery_actor_is_admin(uuid) FROM PUBLIC, anon, authenticated;
 
+-- With _zoho NULL, the check runs on what the website last read from Zoho: no Zoho call to open a page.
 CREATE OR REPLACE FUNCTION public.delivery_note_check(_order_no text, _zoho jsonb)
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -293,7 +368,7 @@ DECLARE target uuid;
 BEGIN
   SELECT id INTO target FROM public.orders WHERE order_no = _order_no;
   IF NOT FOUND THEN RETURN jsonb_build_object('allowed', false, 'code', 'not_found'); END IF;
-  RETURN private.delivery_note_state(target, _zoho);
+  RETURN private.delivery_note_state(target, COALESCE(_zoho, private.delivery_note_last_reading(target)));
 END;
 $function$;
 REVOKE ALL ON FUNCTION public.delivery_note_check(text, jsonb) FROM PUBLIC, anon, authenticated;
@@ -302,7 +377,7 @@ GRANT EXECUTE ON FUNCTION public.delivery_note_check(text, jsonb) TO service_rol
 /*
  * Generates the order's one delivery note if the gate allows it. The order row stays locked from the
  * check to the insert, so a payment change cannot slip between them. A second call returns the same
- * note, never a new number.
+ * note, never a new number. Only a reading of Zoho taken just now can generate one.
  */
 CREATE OR REPLACE FUNCTION public.issue_delivery_note(_order_no text, _zoho jsonb, _actor uuid, _actor_name text)
 RETURNS jsonb
@@ -315,19 +390,21 @@ DECLARE
   n public.delivery_notes%ROWTYPE;
   gate jsonb;
   who text := left(btrim(COALESCE(_actor_name, '')), 120);
+  reading jsonb := CASE WHEN COALESCE(_zoho->>'source', '') = 'last_reading' THEN NULL ELSE _zoho END;
   next_no bigint;
   godown jsonb;
   company jsonb;
 BEGIN
   IF NOT private.delivery_actor_is_admin(_actor) THEN RAISE EXCEPTION 'Only administrators can generate a delivery note'; END IF;
   IF who = '' THEN RAISE EXCEPTION 'Who generated the delivery note must be recorded'; END IF;
+  reading := COALESCE(reading, jsonb_build_object('read', false, 'error', 'Zoho was not read just now'));
   SELECT * INTO o FROM public.orders WHERE order_no = _order_no FOR UPDATE;
   IF NOT FOUND THEN RETURN jsonb_build_object('issued', false, 'gate', jsonb_build_object('allowed', false, 'code', 'not_found')); END IF;
   SELECT * INTO n FROM public.delivery_notes WHERE order_id = o.id;
   IF FOUND THEN
-    RETURN jsonb_build_object('issued', false, 'already', true, 'note_id', n.id, 'note_no', n.note_no, 'gate', private.delivery_note_state(o.id, _zoho));
+    RETURN jsonb_build_object('issued', false, 'already', true, 'note_id', n.id, 'note_no', n.note_no, 'gate', private.delivery_note_state(o.id, reading));
   END IF;
-  gate := private.delivery_note_state(o.id, _zoho);
+  gate := private.delivery_note_state(o.id, reading);
   IF NOT COALESCE((gate->>'allowed')::boolean, false) THEN
     RETURN jsonb_build_object('issued', false, 'gate', gate);
   END IF;
@@ -343,14 +420,17 @@ BEGIN
   UPDATE public.delivery_note_counter SET last_no = last_no + 1 WHERE id RETURNING last_no INTO next_no;
   IF next_no IS NULL THEN RAISE EXCEPTION 'The delivery note counter is missing'; END IF;
   INSERT INTO public.delivery_notes (seq, note_no, order_id, order_no, zoho_invoice_id, invoice_number, invoice_total, order_total, paid_amount, snapshot, generated_by, generated_by_name)
-  VALUES (next_no, 'DN-' || lpad(next_no::text, 6, '0'), o.id, o.order_no, gate->>'invoice_id', gate->>'invoice_number',
+  VALUES (next_no, 'DN-' || lpad(next_no::text, GREATEST(6, length(next_no::text)), '0'), o.id, o.order_no, gate->>'invoice_id', gate->>'invoice_number',
     (gate->>'invoice_total')::numeric, o.total, o.paid_amount,
     jsonb_build_object(
       'order_placed_at', o.created_at,
       'shipping_method', COALESCE(o.shipping_method, ''),
       'customer', jsonb_build_object('name', COALESCE(o.customer_name, ''), 'phone', COALESCE(NULLIF(o.customer_phone, ''), o.shipping_address->>'phone', ''),
         'business_name', COALESCE(o.business_legal_name, ''), 'gstin', COALESCE(o.customer_gstin, '')),
-      'address', COALESCE(o.shipping_address, '{}'::jsonb) - 'id',
+      -- The checkout stores this as sent, so take each field as plain text.
+      'address', jsonb_build_object('name', COALESCE(o.shipping_address->>'name', ''), 'phone', COALESCE(o.shipping_address->>'phone', ''),
+        'line', COALESCE(o.shipping_address->>'line', ''), 'city', COALESCE(o.shipping_address->>'city', ''),
+        'state', COALESCE(o.shipping_address->>'state', ''), 'pin', COALESCE(o.shipping_address->>'pin', '')),
       'godown', COALESCE(godown, '{}'::jsonb),
       'company', COALESCE(company, '{}'::jsonb),
       'items', private.delivery_note_lines(o.id)
@@ -359,7 +439,7 @@ BEGIN
   RETURNING * INTO n;
   INSERT INTO public.delivery_note_events (note_id, kind, gate_code, actor_id, actor_name)
     VALUES (n.id, 'generated', gate->>'code', _actor, who);
-  RETURN jsonb_build_object('issued', true, 'note_id', n.id, 'note_no', n.note_no, 'gate', private.delivery_note_state(o.id, _zoho));
+  RETURN jsonb_build_object('issued', true, 'note_id', n.id, 'note_no', n.note_no, 'gate', private.delivery_note_state(o.id, reading));
 END;
 $function$;
 REVOKE ALL ON FUNCTION public.issue_delivery_note(text, jsonb, uuid, text) FROM PUBLIC, anon, authenticated;
@@ -389,11 +469,11 @@ DECLARE
 BEGIN
   IF NOT private.delivery_actor_is_admin(_actor) THEN RAISE EXCEPTION 'Only administrators can print a delivery note'; END IF;
   IF who = '' THEN RAISE EXCEPTION 'Who printed the delivery note must be recorded'; END IF;
-  SELECT * INTO n FROM public.delivery_notes WHERE id = _note_id FOR UPDATE;
+  SELECT * INTO n FROM public.delivery_notes WHERE id = _note_id FOR NO KEY UPDATE;
   IF NOT FOUND THEN RAISE EXCEPTION 'Delivery note not found'; END IF;
   line_count := jsonb_array_length(n.snapshot->'items');
   IF NOT COALESCE(_note, false) AND cardinality(lines) = 0 THEN RAISE EXCEPTION 'Choose what to print'; END IF;
-  gate := private.delivery_note_state(n.order_id, _zoho);
+  gate := private.delivery_note_state(n.order_id, COALESCE(_zoho, jsonb_build_object('read', false, 'error', 'Zoho was not read just now')));
   code := gate->>'code';
   IF COALESCE(_note, false) THEN
     SELECT COALESCE(max(copy_no), 0) + 1 INTO note_copy FROM public.delivery_note_events
@@ -435,14 +515,9 @@ AS $function$
       'generated_at', n.generated_at, 'generated_by', n.generated_by_name,
       'prints', (SELECT count(*) FROM public.delivery_note_events e WHERE e.note_id = n.id AND e.kind = 'printed'),
       'last_printed_at', (SELECT max(e.occurred_at) FROM public.delivery_note_events e WHERE e.note_id = n.id AND e.kind = 'printed'),
-      'state', private.delivery_note_state(n.order_id, jsonb_build_object(
-        'read', true,
-        'live_invoices', CASE WHEN z.zoho_invoice_id IS NOT NULL AND z.status NOT IN ('void', 'deleted') THEN 1 ELSE 0 END,
-        'invoice_id', COALESCE(z.zoho_invoice_id, ''), 'invoice_number', COALESCE(z.invoice_number, ''),
-        'status', COALESCE(z.status, ''), 'total', z.total, 'balance', z.balance))
+      'state', private.delivery_note_state(n.order_id, private.delivery_note_last_reading(n.order_id))
     ) AS entry
     FROM public.delivery_notes n
-    LEFT JOIN public.zoho_order_invoices z ON z.order_id = n.order_id
     ORDER BY n.seq DESC
     LIMIT GREATEST(1, LEAST(COALESCE(_limit, 500), 2000))
   ) entries
@@ -451,7 +526,8 @@ REVOKE ALL ON FUNCTION public.delivery_note_register(integer) FROM PUBLIC, anon,
 GRANT EXECUTE ON FUNCTION public.delivery_note_register(integer) TO service_role;
 
 -- ---------------------------------------------------------------- after a note exists
--- Writes the change into the note's history and tells the admins. Never stops the change itself.
+-- Writes the change into the note's history and tells the admins. A failure here is only a warning: it
+-- must never stop the order, invoice or bank change that called it.
 CREATE OR REPLACE FUNCTION private.delivery_note_flag(_order_id uuid, _kind text, _detail text, _tell_admins text)
 RETURNS void
 LANGUAGE plpgsql
@@ -469,9 +545,47 @@ BEGIN
       format('Delivery note %s, order %s: %s', n.note_no, n.order_no, _tell_admins), 'delivery_note'
     FROM public.user_roles ur WHERE ur.role = 'admin';
   END IF;
+EXCEPTION WHEN OTHERS THEN
+  RAISE WARNING 'Delivery note history not written for order %: %', _order_id, SQLERRM;
 END;
 $function$;
 REVOKE ALL ON FUNCTION private.delivery_note_flag(uuid, text, text, text) FROM PUBLIC, anon, authenticated;
+
+/*
+ * The office stops or lifts delivery on an order, with a reason. A stop refuses a new note and warns on
+ * every later print. It changes nothing about the order or its payment.
+ */
+CREATE OR REPLACE FUNCTION public.set_delivery_stop(_order_no text, _stopped boolean, _reason text, _actor uuid, _actor_name text)
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public'
+AS $function$
+DECLARE
+  o public.orders%ROWTYPE;
+  who text := left(btrim(COALESCE(_actor_name, '')), 120);
+  why text := left(btrim(COALESCE(_reason, '')), 300);
+  stopped_now boolean;
+BEGIN
+  IF NOT private.delivery_actor_is_admin(_actor) THEN RAISE EXCEPTION 'Only administrators can stop a delivery'; END IF;
+  IF who = '' THEN RAISE EXCEPTION 'Who stopped the delivery must be recorded'; END IF;
+  IF _stopped IS NULL THEN RAISE EXCEPTION 'Choose stop or lift'; END IF;
+  IF length(why) < 3 THEN RAISE EXCEPTION 'Enter the reason'; END IF;
+  SELECT * INTO o FROM public.orders WHERE order_no = _order_no FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Order not found'; END IF;
+  SELECT s.stopped INTO stopped_now FROM public.delivery_stops s WHERE s.order_id = o.id ORDER BY s.id DESC LIMIT 1;
+  IF COALESCE(stopped_now, false) = _stopped THEN
+    RAISE EXCEPTION '%', CASE WHEN _stopped THEN 'Delivery on this order is already stopped' ELSE 'Delivery on this order is not stopped' END;
+  END IF;
+  INSERT INTO public.delivery_stops (order_id, stopped, reason, actor_id, actor_name) VALUES (o.id, _stopped, why, _actor, who);
+  PERFORM private.delivery_note_flag(o.id, 'stop_changed',
+    format('%s by %s: %s', CASE WHEN _stopped THEN 'Delivery stopped' ELSE 'Stop lifted' END, who, why),
+    CASE WHEN _stopped THEN format('delivery was stopped by %s: %s. Do not release the goods. Collect any printed note and slips.', who, why) END);
+  RETURN true;
+END;
+$function$;
+REVOKE ALL ON FUNCTION public.set_delivery_stop(text, boolean, text, uuid, text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.set_delivery_stop(text, boolean, text, uuid, text) TO service_role;
 
 CREATE OR REPLACE FUNCTION private.delivery_note_watch_order()
 RETURNS trigger
@@ -508,21 +622,79 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path TO 'public'
 AS $function$
+DECLARE
+  old_status text := CASE WHEN TG_OP = 'INSERT' THEN NULL ELSE OLD.status END;
+  new_status text := CASE WHEN TG_OP = 'DELETE' THEN 'deleted' ELSE NEW.status END;
+  old_balance numeric := CASE WHEN TG_OP = 'INSERT' THEN NULL ELSE OLD.balance END;
+  new_balance numeric := CASE WHEN TG_OP = 'DELETE' THEN NULL ELSE NEW.balance END;
+  label text := CASE WHEN TG_OP = 'DELETE' THEN OLD.invoice_number ELSE NEW.invoice_number END;
+  target uuid := CASE WHEN TG_OP = 'DELETE' THEN OLD.order_id ELSE NEW.order_id END;
 BEGIN
-  IF NEW.status IS NOT DISTINCT FROM OLD.status AND NEW.zoho_invoice_id IS NOT DISTINCT FROM OLD.zoho_invoice_id
+  IF TG_OP = 'UPDATE' AND NEW.status IS NOT DISTINCT FROM OLD.status AND NEW.zoho_invoice_id IS NOT DISTINCT FROM OLD.zoho_invoice_id
      AND NEW.balance IS NOT DISTINCT FROM OLD.balance AND NEW.total IS NOT DISTINCT FROM OLD.total THEN
     RETURN NEW;
   END IF;
-  PERFORM private.delivery_note_flag(NEW.order_id, 'invoice_changed',
-    format('Zoho invoice %s: %s to %s; balance %s to %s', COALESCE(NEW.invoice_number, OLD.invoice_number, ''), OLD.status, NEW.status, OLD.balance, NEW.balance),
-    CASE WHEN NEW.status <> 'paid' OR COALESCE(NEW.balance, 0) <> 0
-      THEN format('its Zoho invoice is no longer fully paid (%s). Check before releasing the goods.', NEW.status) END);
-  RETURN NEW;
+  PERFORM private.delivery_note_flag(target, 'invoice_changed',
+    format('Zoho invoice %s: %s to %s; balance %s to %s', COALESCE(label, ''), COALESCE(old_status, 'none'), new_status, old_balance, new_balance),
+    CASE WHEN new_status <> 'paid' OR COALESCE(new_balance, 0) <> 0
+      THEN format('its Zoho invoice is no longer fully paid (%s). Check before releasing the goods.', new_status) END);
+  RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
 END;
 $function$;
 REVOKE ALL ON FUNCTION private.delivery_note_watch_invoice() FROM PUBLIC, anon, authenticated;
 DROP TRIGGER IF EXISTS zoho_order_invoices_watch_delivery_note ON public.zoho_order_invoices;
-CREATE TRIGGER zoho_order_invoices_watch_delivery_note AFTER UPDATE ON public.zoho_order_invoices
+CREATE TRIGGER zoho_order_invoices_watch_delivery_note AFTER INSERT OR UPDATE OR DELETE ON public.zoho_order_invoices
   FOR EACH ROW EXECUTE FUNCTION private.delivery_note_watch_invoice();
+
+-- A refund started or made on a return of this order's goods.
+CREATE OR REPLACE FUNCTION private.delivery_note_watch_return()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public'
+AS $function$
+BEGIN
+  IF NEW.refund_status NOT IN ('Processing', 'Refunded') OR (TG_OP = 'UPDATE' AND NEW.refund_status IS NOT DISTINCT FROM OLD.refund_status) THEN
+    RETURN NEW;
+  END IF;
+  PERFORM private.delivery_note_flag(NEW.order_id, 'payment_problem',
+    format('Return refund %s, Rs %s', NEW.refund_status, NEW.amount),
+    format('a refund on a return of this order is %s (Rs %s). Check before releasing the goods.', lower(NEW.refund_status), NEW.amount));
+  RETURN NEW;
+END;
+$function$;
+REVOKE ALL ON FUNCTION private.delivery_note_watch_return() FROM PUBLIC, anon, authenticated;
+DROP TRIGGER IF EXISTS return_requests_watch_delivery_note ON public.return_requests;
+CREATE TRIGGER return_requests_watch_delivery_note AFTER INSERT OR UPDATE OF refund_status ON public.return_requests
+  FOR EACH ROW EXECUTE FUNCTION private.delivery_note_watch_return();
+
+-- A bank alert saying less than was recorded for that UTR, arriving after the note.
+CREATE OR REPLACE FUNCTION private.delivery_note_watch_bank_credit()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public'
+AS $function$
+DECLARE r record;
+BEGIN
+  FOR r IN
+    SELECT p.order_id, p.amount FROM public.payments p
+    JOIN public.delivery_notes n ON n.order_id = p.order_id
+    WHERE p.status = 'Paid' AND p.amount > NEW.amount AND private.same_utr(p.txn_ref, NEW.utr)
+  LOOP
+    PERFORM private.delivery_note_flag(r.order_id, 'payment_problem',
+      format('Bank alert for UTR %s shows Rs %s, recorded as Rs %s', NEW.utr, NEW.amount, r.amount),
+      format('the bank shows Rs %s for a transfer recorded as Rs %s. Check before releasing the goods.', NEW.amount, r.amount));
+  END LOOP;
+  RETURN NEW;
+EXCEPTION WHEN OTHERS THEN
+  RAISE WARNING 'Delivery note check on a bank alert failed: %', SQLERRM;
+  RETURN NEW;
+END;
+$function$;
+REVOKE ALL ON FUNCTION private.delivery_note_watch_bank_credit() FROM PUBLIC, anon, authenticated;
+DROP TRIGGER IF EXISTS bank_credits_watch_delivery_note ON public.bank_credits;
+CREATE TRIGGER bank_credits_watch_delivery_note AFTER INSERT ON public.bank_credits
+  FOR EACH ROW EXECUTE FUNCTION private.delivery_note_watch_bank_credit();
 
 NOTIFY pgrst, 'reload schema';

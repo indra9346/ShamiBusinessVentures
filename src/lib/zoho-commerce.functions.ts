@@ -2760,6 +2760,8 @@ export async function readOrderInvoiceFacts(orderNo: string): Promise<ZohoInvoic
     if (error) throw new Error("Could not read the order");
     if (!order?.zoho_salesorder_id) return { read: true, live_invoices: 0 };
     const salesOrderId = order.zoho_salesorder_id;
+    const { data: budget } = await db.from("settings").select("value").eq("key", ZOHO_API_BUDGET_SETTING).maybeSingle();
+    if (zohoPaused(str(plainObject(budget?.value)["pausedUntil"]), Date.now())) throw new Error("Zoho's daily API limit was reached; calls resume automatically within the hour");
     const { region, organizationId, token } = await zohoOrderContext(db);
     return await withZohoPurpose("Delivery note: payment check", async () => {
       const response = await inventoryRequest<{ salesorder?: Record<string, unknown> }>(region, organizationId, token, `salesorders/${encodeURIComponent(salesOrderId)}`, "GET");

@@ -8,9 +8,10 @@ import type {
 } from "@/lib/delivery-notes";
 
 /*
- * Delivery notes, admin only. Each call reads Zoho Books now (read-only) and hands that reading to the
- * database, which decides: see private.delivery_note_gate. The database functions accept a Zoho reading,
- * so only this server may call them. Nothing here writes to Zoho or changes an order.
+ * Delivery notes, admin only. Generate, Print and Check again read Zoho Books now (read-only) and hand
+ * that reading to the database, which decides: see private.delivery_note_gate. Just opening a page uses
+ * what the website last read, which adds no Zoho call and cannot generate anything. The database functions
+ * accept a Zoho reading, so only this server may call them. Nothing here writes to Zoho or changes an order.
  */
 
 function serviceClient() {
@@ -36,7 +37,7 @@ async function zohoReading(orderNo: string) {
   return readOrderInvoiceFacts(orderNo);
 }
 
-async function loadView(db: ReturnType<typeof serviceClient>, orderNo: string, zoho: Json): Promise<DeliveryNoteView> {
+async function loadView(db: ReturnType<typeof serviceClient>, orderNo: string, zoho: Json | null): Promise<DeliveryNoteView> {
   const { data: state, error } = await db.rpc("delivery_note_check", { _order_no: orderNo, _zoho: zoho });
   if (error || !state) throw new Error("Could not check the order's payment");
   const { data: note, error: noteError } = await db.from("delivery_notes").select("*").eq("order_no", orderNo).maybeSingle();
@@ -51,6 +52,7 @@ async function loadView(db: ReturnType<typeof serviceClient>, orderNo: string, z
   }
   return {
     checkedAt: new Date().toISOString(),
+    fresh: zoho !== null,
     state: state as unknown as DeliveryGate,
     note: note ? { ...note, seq: Number(note.seq), invoice_total: Number(note.invoice_total), order_total: Number(note.order_total), paid_amount: Number(note.paid_amount) } as unknown as DeliveryNote : null,
     events,
@@ -59,13 +61,27 @@ async function loadView(db: ReturnType<typeof serviceClient>, orderNo: string, z
 
 const orderInput = z.object({ orderNo: z.string().trim().min(1).max(80) });
 
-/** The order's payment check as of now, and its delivery note if it has one. */
+/** The order's payment check and its delivery note if it has one. Zoho is read only when asked (fresh). */
 export const getDeliveryNote = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .validator(orderInput)
+  .validator(orderInput.extend({ fresh: z.boolean() }))
   .handler(async ({ data, context }) => {
     await ensureAdmin(context.supabase, context.userId);
-    return loadView(serviceClient(), data.orderNo, await zohoReading(data.orderNo) as unknown as Json);
+    return loadView(serviceClient(), data.orderNo, data.fresh ? await zohoReading(data.orderNo) as unknown as Json : null);
+  });
+
+/** The office stops or lifts delivery on an order, with a reason. */
+export const setDeliveryStop = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator(orderInput.extend({ stopped: z.boolean(), reason: z.string().trim().min(3).max(300) }))
+  .handler(async ({ data, context }) => {
+    await ensureAdmin(context.supabase, context.userId);
+    const db = serviceClient();
+    const { error } = await db.rpc("set_delivery_stop", {
+      _order_no: data.orderNo, _stopped: data.stopped, _reason: data.reason, _actor: context.userId, _actor_name: await actorName(db, context.userId),
+    });
+    if (error) throw new Error(error.message);
+    return loadView(db, data.orderNo, null);
   });
 
 /** Generates the order's one delivery note if the database allows it now. Pressed twice, it returns the same note. */

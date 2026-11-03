@@ -10,7 +10,8 @@
 export type DeliveryGateCode =
   | "paid" | "unpaid" | "partly_paid" | "payment_mismatch" | "website_behind" | "zoho_has_payment" | "zoho_behind"
   | "no_invoice" | "invoice_draft" | "zoho_unreadable" | "several_invoices" | "zoho_inconsistent" | "totals_differ"
-  | "records_disagree" | "refunded" | "return_refunded" | "cancelled" | "payment_expired" | "not_confirmed" | "no_items" | "not_found";
+  | "zoho_not_money" | "invoice_used" | "records_disagree" | "utr_reused" | "bank_credit_short" | "stopped"
+  | "refunded" | "return_refunded" | "cancelled" | "payment_expired" | "not_confirmed" | "no_items" | "not_found";
 
 /** What the database answered. Amounts are rupees. */
 export type DeliveryGate = {
@@ -25,6 +26,12 @@ export type DeliveryGate = {
   receipts?: number;
   balance?: number;
   overpaid?: number;
+  bank_short?: number;
+  other_order_no?: string | null;
+  stopped?: boolean;
+  stop_reason?: string | null;
+  /** zoho_now: read a moment ago. last_reading: what the website last knew, which shows a state but cannot generate. */
+  source?: "zoho_now" | "last_reading";
   zoho_read?: boolean;
   zoho_error?: string;
   live_invoices?: number;
@@ -33,6 +40,7 @@ export type DeliveryGate = {
   invoice_status?: string;
   invoice_total?: number | null;
   invoice_balance?: number | null;
+  invoice_payment_made?: number | null;
   /** Only with a note: what has happened since it was generated. */
   note_no?: string | null;
   items_changed?: boolean;
@@ -48,6 +56,8 @@ export type DeliveryNoteLine = {
   qty: number;
   pack_size: string;
   stock_no: string;
+  /** The order line's own capacity, kept to tell later whether the order itself changed. */
+  capacity?: string;
 };
 
 /** The paper's content, fixed when the note was generated. */
@@ -77,7 +87,7 @@ export type DeliveryNote = {
 
 export type DeliveryNoteEvent = {
   id: number;
-  kind: "generated" | "printed" | "order_changed" | "invoice_changed";
+  kind: "generated" | "printed" | "order_changed" | "invoice_changed" | "payment_problem" | "stop_changed";
   doc: "note" | "slip" | null;
   slip_line: number | null;
   copy_no: number | null;
@@ -89,6 +99,8 @@ export type DeliveryNoteEvent = {
 
 export type DeliveryNoteView = {
   checkedAt: string;
+  /** True when Zoho was read for this view. */
+  fresh: boolean;
   state: DeliveryGate;
   note: DeliveryNote | null;
   events: DeliveryNoteEvent[];
@@ -169,12 +181,22 @@ export function gateWords(gate: DeliveryGate): GateWords {
       return words("Zoho's figures do not add up", `Zoho Books shows ${invoice} as "${gate.invoice_status || "unknown"}" with total ${gate.invoice_total == null ? "missing" : money(gate.invoice_total)} and balance ${gate.invoice_balance == null ? "missing" : money(gate.invoice_balance)}. Check the invoice in Zoho Books.`);
     case "totals_differ":
       return words("Invoice and order totals differ", `${invoice} totals ${money(gate.invoice_total)}, the order totals ${money(gate.order_total)}. Correct the invoice in Zoho Books, then check again.`);
+    case "zoho_not_money":
+      return words("Zoho closed the invoice without full payment", `Zoho Books shows ${invoice} as paid, but only ${money(gate.invoice_payment_made)} of ${money(gate.invoice_total)} came in as payment. The rest is a credit note or a write-off. Check the invoice in Zoho Books.`);
+    case "invoice_used":
+      return words("Invoice already on another note", `${invoice} is already on another order's delivery note. Check that this order is linked to the right Zoho sales order.`);
+    case "utr_reused":
+      return words("Same bank transfer on another order", `A payment on this order has the same UTR as a payment on order ${gate.other_order_no}. One transfer can pay one order only. Check the bank account and correct the record.`);
+    case "bank_credit_short":
+      return words("The bank shows less than was recorded", `The bank alert for a payment on this order shows ${money(gate.bank_short)} less than the amount recorded. Check the bank account and correct the record.`);
+    case "stopped":
+      return words("Delivery stopped by the office", `${gate.stop_reason || "No reason given"}. Lift the stop on this page once it is settled.`);
     case "records_disagree":
       return words("The website's payment records do not match", `The order says ${money(gate.paid)} paid (${gate.payment_status}), but its confirmed payments add up to ${money(gate.receipts)}. These need correcting before a note can be generated.`);
     case "refunded":
       return words("Refunded", "The payment for this order was refunded. No delivery note can be generated.");
     case "return_refunded":
-      return words("Part of this order was refunded", "A return on this order was refunded. No delivery note can be generated.");
+      return words("A refund on this order", "A refund on a return of this order has been started or made. No delivery note can be generated.");
     case "cancelled":
       return words("Order cancelled", "This order is cancelled. No delivery note can be generated.");
     case "payment_expired":
@@ -201,7 +223,8 @@ export function paperWarnings(gate: DeliveryGate): string[] {
     case "cancelled": warnings.push("ORDER CANCELLED. DO NOT DELIVER."); break;
     case "refunded": warnings.push("PAYMENT REFUNDED. DO NOT DELIVER."); break;
     case "payment_expired": warnings.push("ORDER NOT PLACED. DO NOT DELIVER."); break;
-    case "return_refunded": warnings.push("PART OF THIS ORDER WAS REFUNDED. CHECK WITH THE OFFICE BEFORE DELIVERY."); break;
+    case "stopped": warnings.push("DELIVERY STOPPED BY THE OFFICE. DO NOT DELIVER."); break;
+    case "return_refunded": warnings.push("A REFUND WAS STARTED OR MADE ON THIS ORDER. CHECK WITH THE OFFICE BEFORE DELIVERY."); break;
     case "unpaid":
     case "partly_paid": warnings.push("NOT FULLY PAID. DO NOT DELIVER."); break;
     case "zoho_unreadable": warnings.push("PAYMENT COULD NOT BE RE-CHECKED WHEN THIS WAS PRINTED. CHECK WITH THE OFFICE BEFORE DELIVERY."); break;
@@ -217,7 +240,7 @@ export const isPickup = (snapshot: Pick<DeliveryNoteSnapshot, "shipping_method">
 /** An address as lines of text, leaving out what is blank. */
 export function addressLines(address: { line?: string; address?: string; city?: string; state?: string; pin?: string; pincode?: string }) {
   const place = [address.city, [address.state, address.pin ?? address.pincode].filter(Boolean).join(" ")].filter(Boolean).join(", ");
-  return [address.line ?? address.address ?? "", place].map((line) => line.trim()).filter(Boolean);
+  return [address.line ?? address.address ?? "", place].map((line) => String(line).trim()).filter(Boolean);
 }
 
 export const deliveryMethodLabel = (method: string) =>

@@ -6,10 +6,9 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
   addressLines, companyHeading, copyLabel, deliveryMethodLabel, gateWords, isPickup, isReprint, istDateTime, paperWarnings, slipPages,
-  type DeliveryGate, type DeliveryNote, type DeliveryNoteEvent, type DeliveryNoteView, type SlipPage,
+  type DeliveryGate, type DeliveryNote, type DeliveryNoteView, type SlipPage,
 } from "@/lib/delivery-notes";
 import { getDeliveryNote, recordDeliveryPrint } from "@/lib/delivery-notes.functions";
-import { serverNow, syncServerClock } from "@/lib/server-clock";
 
 export const Route = createFileRoute("/admin/delivery-note/$orderNo")({
   head: ({ params }) => ({
@@ -28,6 +27,9 @@ type Paper = { printedAt: string | null; noteCopy: number | null; slipCopies: Re
 /*
  * On screen the sheets are as wide as the phone or window allows. On paper each is one A4 page (a long
  * note runs on, repeating its table header) and only what was chosen prints, each on its own page.
+ * The sheets print only straight after a press of Print, which has just re-checked the payment and
+ * recorded the copy. The browser's own print menu gets a line saying to use the button, so no paper can
+ * carry a stale check, a wrong copy number or no record.
  */
 const PRINT_CSS = `
 @page { size: A4 portrait; margin: 10mm; }
@@ -40,13 +42,14 @@ const PRINT_CSS = `
   .dn-sheet[data-print="yes"] ~ .dn-sheet[data-print="yes"] { break-before: page; page-break-before: always; }
   .dn-sheet tr, .dn-keep { break-inside: avoid; page-break-inside: avoid; }
   .dn-sheet thead { display: table-header-group; }
+  .dn-root[data-armed="no"] .dn-docs { display: none !important; }
+  .dn-root[data-armed="no"] .dn-use-button { display: block !important; }
   * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }
 `;
 
-const nextCopy = (events: DeliveryNoteEvent[], doc: "note" | "slip", line: number | null) =>
-  events.filter((event) => event.kind === "printed" && event.doc === doc && event.slip_line === line)
-    .reduce((highest, event) => Math.max(highest, event.copy_no ?? 0), 0) + 1;
+/** How long after a press the paper may still print (the print screen can be slow on a phone). */
+const ARMED_MS = 120_000;
 
 function DeliveryNotePrintPage() {
   const { orderNo } = Route.useParams();
@@ -54,14 +57,14 @@ function DeliveryNotePrintPage() {
   const [failed, setFailed] = useState("");
   const [busy, setBusy] = useState(false);
   const [paper, setPaper] = useState<Paper>({ printedAt: null, noteCopy: null, slipCopies: {}, selection: { note: true, slips: [] } });
-  // True from a press until its print starts, so the browser's print event doesn't record it twice.
-  const pressed = useRef(false);
-  const latest = useRef({ view, paper });
-  latest.current = { view, paper };
+  const [armed, setArmed] = useState(false);
+  // One press allows one print; the browser's print event uses it up.
+  const printsAllowed = useRef(0);
+  const disarmTimer = useRef<number | undefined>(undefined);
 
   const load = useCallback(async () => {
     try {
-      const next = await getDeliveryNote({ data: { orderNo } });
+      const next = await getDeliveryNote({ data: { orderNo, fresh: false } });
       setView(next);
       setFailed("");
       const lines = next.note ? slipPages(next.note.snapshot).map((slip) => slip.slip) : [];
@@ -71,31 +74,20 @@ function DeliveryNotePrintPage() {
     }
   }, [orderNo]);
 
-  useEffect(() => {
-    void syncServerClock();
-    void load();
-  }, [load]);
+  useEffect(() => { void load(); }, [load]);
 
-  /*
-   * Printing from the browser's own menu, without the buttons: the paper still gets the true time and
-   * the copy that comes next, and the print is recorded. The browser prints as soon as this returns,
-   * so the record is sent without waiting for it.
-   */
+  // A second print with no new press (the browser's menu) gets the "use the button" line, not a copy nobody recorded.
   useEffect(() => {
     const onBeforePrint = () => {
-      if (pressed.current) { pressed.current = false; return; }
-      const { view: current, paper: chosen } = latest.current;
-      if (!current?.note) return;
-      const selection = chosen.selection;
-      const slipCopies = Object.fromEntries(selection.slips.map((line) => [String(line), nextCopy(current.events, "slip", line)]));
-      flushSync(() => setPaper({ selection, printedAt: new Date(serverNow()).toISOString(), noteCopy: selection.note ? nextCopy(current.events, "note", null) : null, slipCopies }));
-      void recordDeliveryPrint({ data: { orderNo, note: selection.note, slipLines: selection.slips } })
-        .then((result) => setView(result.view))
-        .catch(() => toast.error("This print could not be recorded"));
+      if (printsAllowed.current > 0) { printsAllowed.current -= 1; return; }
+      flushSync(() => setArmed(false));
     };
     window.addEventListener("beforeprint", onBeforePrint);
-    return () => window.removeEventListener("beforeprint", onBeforePrint);
-  }, [orderNo]);
+    return () => {
+      window.removeEventListener("beforeprint", onBeforePrint);
+      window.clearTimeout(disarmTimer.current);
+    };
+  }, []);
 
   const press = async (selection: Selection) => {
     setBusy(true);
@@ -104,8 +96,11 @@ function DeliveryNotePrintPage() {
       flushSync(() => {
         setView(next);
         setPaper({ selection, printedAt: record.printedAt, noteCopy: record.noteCopy, slipCopies: record.slipCopies });
+        setArmed(true);
       });
-      pressed.current = true;
+      printsAllowed.current = 1;
+      window.clearTimeout(disarmTimer.current);
+      disarmTimer.current = window.setTimeout(() => { printsAllowed.current = 0; setArmed(false); }, ARMED_MS);
       window.print();
     } catch (cause) {
       toast.error("Not printed", { description: cause instanceof Error ? cause.message : "The print could not be recorded" });
@@ -121,8 +116,9 @@ function DeliveryNotePrintPage() {
   const warnings = state && note ? paperWarnings(state) : [];
 
   return (
-    <div className="dn-root min-h-screen bg-stone-200 px-3 py-4 text-black sm:px-6">
+    <div className="dn-root min-h-screen bg-stone-200 px-3 py-4 text-black sm:px-6" data-armed={armed ? "yes" : "no"}>
       <style>{PRINT_CSS}</style>
+      <p className="dn-use-button hidden text-lg font-bold">Please use the Print button on this page. It checks the payment again and records the print time and copy number.</p>
       <div className="dn-screen-only mx-auto mb-4 max-w-[210mm] space-y-3 rounded-lg bg-white p-3 shadow-sm sm:p-4">
         <Link to="/admin/orders/$id" params={{ id: orderNo }} className="inline-flex items-center gap-1 text-sm font-semibold text-navy hover:text-gold">
           <ArrowLeft className="h-4 w-4" /> Back to order {orderNo}
@@ -158,14 +154,14 @@ function DeliveryNotePrintPage() {
               </div>
             )}
             <p className="text-xs text-slate">
-              The time on the paper is the moment you press Print. On a phone the print screen opens next: choose your printer or Save as PDF. If nothing opens, this browser cannot print from a page (some in-app browsers cannot): open the page in Chrome or Safari.
+              Each press of Print checks the payment with Zoho again, puts the exact time on the paper and counts as a copy, even if you then cancel the print screen. On a phone the print screen opens next: choose your printer or Save as PDF. If nothing opens, this browser cannot print from a page (some in-app browsers cannot): open the page in Chrome or Safari.
             </p>
           </>
         )}
       </div>
 
       {note && state && (
-        <div data-no-translate>
+        <div className="dn-docs" data-no-translate>
           <NoteSheet note={note} state={state} warnings={warnings} paper={paper} slipCount={slips.length} />
           {slips.map((slip) => <SlipSheet key={slip.slip} slip={slip} note={note} warnings={warnings} paper={paper} />)}
         </div>
@@ -285,6 +281,10 @@ function NoteSheet({ note, state, warnings, paper, slipCount }: { note: Delivery
 
       <table className="mt-4 w-full border-collapse text-left text-[13px]">
         <thead>
+          {/* Repeats on every page of a long note, so a loose page still says whose it is. */}
+          <tr className="text-[11px] font-semibold">
+            <th colSpan={hasStockNo ? 5 : 4} className="pb-1 font-semibold">{note.note_no} · Order {note.order_no}</th>
+          </tr>
           <tr className="border-y-2 border-black text-[11px] uppercase tracking-wider">
             <th className="py-1.5 pr-2 font-bold">#</th>
             <th className="py-1.5 pr-2 font-bold">Item</th>
@@ -316,7 +316,8 @@ function NoteSheet({ note, state, warnings, paper, slipCount }: { note: Delivery
         </tfoot>
       </table>
 
-      <div className="dn-keep mt-8 grid grid-cols-3 gap-4">
+      <p className="dn-keep mt-6 text-sm"><span className="font-semibold">Vehicle no.</span> ______________________</p>
+      <div className="dn-keep mt-6 grid grid-cols-3 gap-4">
         <Signature label="Prepared by" />
         <Signature label="Goods issued by (godown)" />
         <Signature label="Received by (customer)" />

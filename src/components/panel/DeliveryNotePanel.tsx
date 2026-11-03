@@ -7,7 +7,8 @@ import { Button } from "@/components/ui/button";
 import { inrPrecise } from "@/lib/data";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { copyLabel, gateWords, istDateTime, paperWarnings, type DeliveryNoteEvent, type DeliveryNoteView } from "@/lib/delivery-notes";
-import { generateDeliveryNote, getDeliveryNote } from "@/lib/delivery-notes.functions";
+import { generateDeliveryNote, getDeliveryNote, setDeliveryStop } from "@/lib/delivery-notes.functions";
+import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
 const TONES = {
@@ -24,7 +25,9 @@ function eventText(event: DeliveryNoteEvent) {
     const warned = event.gate_code && event.gate_code !== "paid" ? " (printed with a warning)" : "";
     return `${what} printed${who}: ${copyLabel(event.copy_no)}${warned}`;
   }
-  return event.kind === "invoice_changed" ? `Zoho invoice changed: ${event.detail}` : `Order changed: ${event.detail}`;
+  if (event.kind === "invoice_changed") return `Zoho invoice changed: ${event.detail}`;
+  if (event.kind === "order_changed") return `Order changed: ${event.detail}`;
+  return event.detail;
 }
 
 /**
@@ -34,13 +37,16 @@ function eventText(event: DeliveryNoteEvent) {
 export function DeliveryNotePanel({ orderNo, className = "" }: { orderNo: string; className?: string }) {
   const [view, setView] = useState<DeliveryNoteView | null>(null);
   const [failed, setFailed] = useState("");
-  const [busy, setBusy] = useState<"" | "check" | "generate">("");
+  const [busy, setBusy] = useState<"" | "check" | "generate" | "stop">("");
+  const [stopping, setStopping] = useState(false);
+  const [reason, setReason] = useState("");
 
-  const check = useCallback(async () => {
+  // Opening the page adds no Zoho call; Check again and Generate read Zoho now.
+  const check = useCallback(async (fresh: boolean) => {
     if (STATIC_DATA_MODE) return;
     setBusy("check");
     try {
-      setView(await getDeliveryNote({ data: { orderNo } }));
+      setView(await getDeliveryNote({ data: { orderNo, fresh } }));
       setFailed("");
     } catch (cause) {
       setFailed(cause instanceof Error ? cause.message : "Could not check the payment");
@@ -49,7 +55,21 @@ export function DeliveryNotePanel({ orderNo, className = "" }: { orderNo: string
     }
   }, [orderNo]);
 
-  useEffect(() => { void check(); }, [check]);
+  useEffect(() => { void check(false); }, [check]);
+
+  const changeStop = async (stopped: boolean) => {
+    setBusy("stop");
+    try {
+      setView(await setDeliveryStop({ data: { orderNo, stopped, reason } }));
+      setStopping(false);
+      setReason("");
+      toast.success(stopped ? "Delivery stopped" : "Stop lifted");
+    } catch (cause) {
+      toast.error("Could not change the stop", { description: cause instanceof Error ? cause.message : undefined });
+    } finally {
+      setBusy("");
+    }
+  };
 
   const generate = async () => {
     setBusy("generate");
@@ -79,14 +99,33 @@ export function DeliveryNotePanel({ orderNo, className = "" }: { orderNo: string
   const words = state ? gateWords(state) : null;
   const warnings = note && state ? paperWarnings(state) : [];
   const recheck = (
-    <Button size="sm" variant="outline" disabled={busy !== ""} onClick={() => void check()}>
+    <Button size="sm" variant="outline" disabled={busy !== ""} onClick={() => void check(true)}>
       <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", busy === "check" && "animate-spin")} /> Check again
     </Button>
   );
 
+  const stopControl = state && (
+    <div className="space-y-2 border-t border-border pt-3">
+      {stopping ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <Input aria-label={state.stopped ? "Why the stop is lifted" : "Why delivery is stopped"} value={reason} maxLength={300} onChange={(event) => setReason(event.target.value)}
+            placeholder={state.stopped ? "Why the stop is lifted" : "Reason, for example refunded on 3 Nov"} className="h-8 min-w-0 flex-1 text-xs sm:max-w-sm" />
+          <Button size="sm" className={state.stopped ? "bg-navy text-white hover:bg-navy/90" : "bg-danger text-white hover:bg-danger/90"} disabled={busy !== "" || reason.trim().length < 3} onClick={() => void changeStop(!state.stopped)}>
+            {state.stopped ? "Lift the stop" : "Stop delivery"}
+          </Button>
+          <Button size="sm" variant="outline" disabled={busy !== ""} onClick={() => setStopping(false)}>Back</Button>
+        </div>
+      ) : (
+        <button type="button" className="text-xs font-semibold text-danger hover:underline" onClick={() => setStopping(true)}>
+          {state.stopped ? "Lift the stop on this delivery" : "Stop delivery (refund or dispute)"}
+        </button>
+      )}
+    </div>
+  );
+
   return (
     <Panel title="Delivery note and slips" className={className}>
-      {!view && !failed && <p className="text-sm text-slate">Checking the payment with Zoho Books…</p>}
+      {!view && !failed && <p className="text-sm text-slate">Reading the order…</p>}
       {!view && failed && (
         <div className="space-y-2">
           <p className="text-sm text-danger">{failed}</p>
@@ -121,7 +160,8 @@ export function DeliveryNotePanel({ orderNo, className = "" }: { orderNo: string
               <Link to="/admin/payments" search={true} className="text-xs font-semibold text-gold hover:underline">Payments & Matching</Link>
             )}
           </div>
-          <p className="text-[11px] text-slate">Checked {istDateTime(view!.checkedAt)}</p>
+          <p className="text-[11px] text-slate">{view!.fresh ? `Zoho Books read ${istDateTime(view!.checkedAt)}` : "From what the website last read from Zoho. Generate and Check again read Zoho now."}</p>
+          {stopControl}
         </div>
       )}
 
@@ -143,9 +183,10 @@ export function DeliveryNotePanel({ orderNo, className = "" }: { orderNo: string
               <p className="mt-1">{words.detail}</p>
             </div>
           ) : (
-            <p className="flex items-center gap-1.5 text-sm font-semibold text-emerald-800"><CheckCircle2 className="h-4 w-4" /> Still paid in full as of {istDateTime(view!.checkedAt)}.</p>
+            <p className="flex items-center gap-1.5 text-sm font-semibold text-emerald-800"><CheckCircle2 className="h-4 w-4" /> {view!.fresh ? `Still paid in full as of ${istDateTime(view!.checkedAt)}.` : "Paid in full when the website last read Zoho. Printing reads Zoho again."}</p>
           )}
           {recheck}
+          {stopControl}
           {view!.events.length > 0 && (
             <div>
               <p className="text-xs font-bold uppercase tracking-wider text-slate">History</p>

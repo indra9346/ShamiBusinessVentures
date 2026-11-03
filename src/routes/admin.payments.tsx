@@ -375,10 +375,10 @@ function AdminPayments() {
             (() => {
               const order = orders.find((o) => o.id === confirmOrder);
               if (!order) return null;
-              const remaining = Math.max(
+              const remaining = toPaise(Math.max(
                 0,
                 order.amount - (order.paidAmount ?? (order.payment === "Paid" ? order.amount : 0)),
-              );
+              ));
               const percent = Math.min(100, Math.max(0, Number(advancePercent) || 0));
               // To paise, as the database checks it: whole rupees fell short of e.g. ₹677.25.
               const advance = Math.min(remaining, toPaise(order.amount * (percent / 100)));
