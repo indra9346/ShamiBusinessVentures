@@ -42,7 +42,7 @@ Read 2 Nov 2026 at <https://www.zoho.com/inventory/api/v1/purchaseorders/> and i
 | The item's name on the line | The doc's example sends `name` with `item_id`; a line's `name` is "Name of the line item." | Sent. The live test without it showed a line with only the description, so the vendor wouldn't see the item. The site flags a line that comes back with no name. **Not yet tried on real Zoho.** |
 | Must a line have `item_id`? | Line items have no required fields in the schema, and a live PO shows `non_catalog_items_count`. | The docs allow a line without one, but the code always sends it: without an item Zoho's stock and bills cannot follow the purchase. |
 | Rate | The doc's example has `purchase_rate` and `bcy_rate`. A live PO's line reports `rate` and `bcy_rate`, with no `purchase_rate`. | Sends both `rate` and `purchase_rate`, then compares what Zoho saved with what was confirmed. **To confirm on the first live test.** |
-| GST | `source_of_supply`: "If not given, place of contact given for the contact will be taken". `destination_of_supply`: "If not given, organisation's home state will be taken". | Both are sent, with `tax_id` on the line. See "GST on a purchase order" below. Zoho does not apply the item's tax by itself: the first live purchase order, sent without `tax_id`, came back with GST 0. |
+| GST | `source_of_supply`: "If not given, place of contact given for the contact will be taken". `destination_of_supply`: "If not given, organisation's home state will be taken". | Both are sent, with `tax_id` on the line. See "GST on a purchase order" below. The first live purchase order, sent without `tax_id` to a vendor Zoho marks as not registered, came back with GST 0. |
 | Location | `location_id`, at the top and on the line: "Location ID" | Sent in both places. A godown with no Zoho location is refused, because without one the stock would land at Head Office. |
 | Draft and issued | Create returns the document with `"status_formatted": "Draft"`, and "Mark as Issued" is a separate call. A live issued PO reads `status: "open"`. | Created as Draft; `open` shows as "Issued". |
 | Finding one again | The Inventory list documents only `page` and `per_page`. The Books list documents `reference_number`. | Tries `reference_number` for a quick yes. A "no" only counts after reading every page, matching the exact reference here. |
@@ -97,7 +97,7 @@ Asked for after the first live purchase order, on 3 Nov 2026, came back with GST
 **Which one.** The vendor's state is `place_of_contact` on their Zoho contact, and the godown's is `state_code` in Admin > Branches. The same state means `intra`, and different states mean `inter`. Both go on the purchase order as `source_of_supply` and `destination_of_supply`. Live purchase orders read on 3 Nov have this shape: a Maharashtra vendor shows MH to KA with IGST5, and a Karnataka vendor shows KA to KA with GST5.
 
 **When it can't be worked out, it stops**, and the screen says what to fix. Nothing goes to Zoho:
-- the vendor isn't shown as GST-registered, or has no GSTIN, or the GSTIN isn't valid
+- Zoho doesn't say plainly whether the vendor is registered (for example consumer, overseas or composition), or marks them registered with no GSTIN, or not registered with one, or the GSTIN isn't valid
 - the vendor has no state, or their GSTIN is from another state than Zoho shows
 - the godown has no state
 - the item has no tax for this route, or is marked not taxable
@@ -105,7 +105,7 @@ Asked for after the first live purchase order, on 3 Nov 2026, came back with GST
 
 A 0% tax set on the item itself (GST0 and IGST0) is an answer, not a gap: it goes ahead, and the confirm screen says so. An item marked not taxable stops, as does a new item added here with "Set GST later", until its tax is set in Zoho.
 
-**Vendors who aren't GST-registered can't have a purchase order raised here yet.** The website can't tell what such a purchase order should carry, and the rule is never to send GST 0 quietly. This is for the owner and accountant to decide.
+**A vendor Zoho marks as not registered gets no GST**, the owner's decision of 3 Nov 2026. That is `gst_treatment: business_none` with no GSTIN, and nothing else counts. The purchase order goes out with no `tax_id` and no states, and the review screen and the card say "No GST: vendor not registered". Any tax in Zoho's reply is flagged, however small. An item marked not taxable still stops, for any vendor: the owner hasn't decided that one.
 
 **On screen.** Pressing Review reads the vendor and item fresh from Zoho and shows the tax, the reason and the total with GST. Raising reads them again and refuses if the tax has changed since. Going back and pressing Review again reads it afresh. Afterwards the site reads the copy Zoho saved and flags any difference in the amount, the tax on the line or either state, and says so if that copy couldn't be read. The card shows the GST in Zoho.
 
