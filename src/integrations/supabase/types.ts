@@ -466,6 +466,30 @@ export type Database = {
         Update: { id?: string; branch_id?: string; effective_from?: string; shift_start?: string; shift_end?: string; late_grace_min?: number; late_counted_from?: string; early_grace_min?: number; half_day_below_min?: number; absent_below_min?: number; missed_checkout?: string; weekly_off?: number | null; radius_m?: number; gps_accuracy_limit_m?: number; require_device?: boolean; presence_interval_min?: number; presence_early_min?: number; presence_late_min?: number; leave_types?: string[]; leave_max_days?: number; leave_back_days?: number; leave_ahead_days?: number; leave_partner_required?: boolean; note?: string; created_by?: string | null; created_by_name?: string; created_at?: string; cancelled_at?: string | null; cancelled_by?: string | null }
         Relationships: []
       }
+      product_code_sets: {
+        Row: { id: string; category: string; prefix: string; first_label: string; second_label: string; brand: string; created_at: string; updated_at: string }
+        Insert: { category: string; id?: string; prefix?: string; first_label?: string; second_label?: string; brand?: string; created_at?: string; updated_at?: string }
+        Update: { id?: string; category?: string; prefix?: string; first_label?: string; second_label?: string; brand?: string; created_at?: string; updated_at?: string }
+        Relationships: []
+      }
+      product_code_methods: {
+        Row: { id: string; set_id: string; letter: string; name: string; sort_order: number; retired_at: string | null; created_at: string; updated_at: string }
+        Insert: { set_id: string; letter: string; name: string; id?: string; sort_order?: number; retired_at?: string | null; created_at?: string; updated_at?: string }
+        Update: { id?: string; set_id?: string; letter?: string; name?: string; sort_order?: number; retired_at?: string | null; created_at?: string; updated_at?: string }
+        Relationships: []
+      }
+      product_code_varieties: {
+        Row: { id: string; set_id: string; letter: string; name: string; sort_order: number; retired_at: string | null; created_at: string; updated_at: string }
+        Insert: { set_id: string; letter: string; name: string; id?: string; sort_order?: number; retired_at?: string | null; created_at?: string; updated_at?: string }
+        Update: { id?: string; set_id?: string; letter?: string; name?: string; sort_order?: number; retired_at?: string | null; created_at?: string; updated_at?: string }
+        Relationships: []
+      }
+      product_codes: {
+        Row: { id: string; set_id: string; method_id: string; variety_id: string; serial: number; code: string; name: string; description: string; subcategory: string; images: string[]; retired_at: string | null; retired_with_part: boolean; created_at: string; updated_at: string }
+        Insert: { set_id: string; method_id: string; variety_id: string; id?: string; serial?: number; code?: string; name?: string; description?: string; subcategory?: string; images?: string[]; retired_at?: string | null; retired_with_part?: boolean; created_at?: string; updated_at?: string }
+        Update: { id?: string; set_id?: string; method_id?: string; variety_id?: string; serial?: number; code?: string; name?: string; description?: string; subcategory?: string; images?: string[]; retired_at?: string | null; retired_with_part?: boolean; created_at?: string; updated_at?: string }
+        Relationships: []
+      }
       godown_holidays: {
         Row: { id: string; branch_id: string; holiday_date: string; name: string; created_by: string | null; created_by_name: string; created_at: string; removed_at: string | null; removed_by: string | null }
         Insert: { branch_id: string; holiday_date: string; name: string; id?: string; created_by?: string | null; created_by_name?: string; created_at?: string; removed_at?: string | null; removed_by?: string | null }
@@ -1254,6 +1278,7 @@ export type Database = {
       vendor_set_product_stock: { Args: { _product_id: string; _stock: number }; Returns: boolean }
       vendor_set_product_active: { Args: { _product_id: string; _active: boolean }; Returns: boolean }
       admin_set_branch_stock: { Args: { _branch_id: string; _product_id: string; _stock: number }; Returns: number }
+      admin_set_product_code: { Args: { _product_id: string; _code: string }; Returns: boolean }
       default_branch_id: { Args: Record<string, never>; Returns: string }
       admin_update_vendor_business: { Args: { _vendor_id: string; _gstin: string; _city: string; _address: string }; Returns: boolean }
       admin_update_order_status: { Args: { _order_no: string; _status: string }; Returns: boolean }
