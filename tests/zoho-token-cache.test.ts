@@ -9,6 +9,7 @@ import {
   isZohoTokenLimit,
   zohoTokenLifeMs,
 } from "../src/lib/zoho-token-cache.ts";
+import { isZohoDailyLimitError } from "../src/lib/zoho-sync-core.ts";
 
 const MINUTE = 60_000;
 
@@ -138,6 +139,74 @@ test("a failed request for another connection doesn't touch the kept token", asy
   assert.equal(await cache.get("A", ask("A")), "A-token-1");
 });
 
+test("the old connection's request finishing doesn't end the new one's", async () => {
+  const cache = createZohoTokenCache(() => 0);
+  let finishOld!: (value: { token: string; expiresIn: unknown }) => void;
+  let finishNew!: (value: { token: string; expiresIn: unknown }) => void;
+  let newAsks = 0;
+  const askNew = () => {
+    newAsks += 1;
+    return new Promise<{ token: string; expiresIn: unknown }>((resolve) => {
+      finishNew = resolve;
+    });
+  };
+  const oldAnswer = cache.get(
+    "OLD",
+    () =>
+      new Promise((resolve) => {
+        finishOld = resolve;
+      }),
+  );
+  const first = cache.get("NEW", askNew);
+  finishOld({ token: "old-token", expiresIn: 3600 });
+  await oldAnswer;
+  const second = cache.get("NEW", askNew);
+  finishNew({ token: "new-token", expiresIn: 3600 });
+  assert.deepEqual(await Promise.all([first, second]), ["new-token", "new-token"]);
+  assert.equal(newAsks, 1);
+});
+
+test("a failed renewal uses the kept token while it still has time, and only until it expires", async () => {
+  const { cache, ask, advance } = rig();
+  const refuse = async () => {
+    throw new Error(ZOHO_TOKEN_LIMIT_MESSAGE);
+  };
+  await cache.get("A", ask("A"));
+  advance(60 * MINUTE - ZOHO_TOKEN_RENEW_EARLY_MS);
+  assert.equal(await cache.get("A", refuse), "A-token-1", "renewal due, refused, token still good");
+  advance(ZOHO_TOKEN_RENEW_EARLY_MS - 1);
+  assert.equal(await cache.get("A", refuse), "A-token-1", "the last moment of its life");
+  advance(1);
+  await assert.rejects(cache.get("A", refuse), { message: ZOHO_TOKEN_LIMIT_MESSAGE });
+});
+
+test("a failed renewal never falls back to another connection's token, or one Zoho refused", async () => {
+  const { cache, ask, advance } = rig();
+  const fail = async () => {
+    throw new Error("no");
+  };
+  const token = await cache.get("A", ask("A"));
+  await assert.rejects(cache.get("B", fail), { message: "no" });
+  advance(ZOHO_TOKEN_KEEP_AFTER_REFUSAL_MS);
+  cache.refused(token);
+  await assert.rejects(cache.get("A", fail), { message: "no" });
+});
+
+test("a new reply with no usable expires_in also retires the token before it", async () => {
+  const reply: { expiresIn: unknown } = { expiresIn: 3600 };
+  const { cache, ask, advance } = rig(reply);
+  await cache.get("A", ask("A"));
+  advance(60 * MINUTE - ZOHO_TOKEN_RENEW_EARLY_MS);
+  reply.expiresIn = undefined;
+  assert.equal(await cache.get("A", ask("A")), "A-token-2");
+  await assert.rejects(
+    cache.get("A", async () => {
+      throw new Error("no");
+    }),
+    { message: "no" },
+  );
+});
+
 test("a reply with no usable expires_in is used once and not kept", async () => {
   for (const expiresIn of [undefined, null, 0, -5, "", "soon", NaN]) {
     const { cache, asked, ask } = rig({ expiresIn });
@@ -161,10 +230,12 @@ test("expires_in: seconds are read, a string number works, and an hour is the mo
 });
 
 test("a life shorter than the renew margin is used but never served again", async () => {
-  const { cache, asked, ask } = rig({ expiresIn: ZOHO_TOKEN_RENEW_EARLY_MS / 1000 });
-  await cache.get("A", ask("A"));
-  await cache.get("A", ask("A"));
-  assert.equal(asked.length, 2);
+  for (const expiresIn of [1, 60, ZOHO_TOKEN_RENEW_EARLY_MS / 1000]) {
+    const { cache, asked, ask } = rig({ expiresIn });
+    await cache.get("A", ask("A"));
+    await cache.get("A", ask("A"));
+    assert.equal(asked.length, 2, String(expiresIn));
+  }
 });
 
 test("a 401 drops the kept token, so the next call gets a new one instead of failing for up to an hour", async () => {
@@ -233,10 +304,10 @@ test("Zoho's limit reply is recognised, other refusals are not", () => {
 });
 
 test("the limit message doesn't send anyone to Reauthorize or into the daily-limit pause", () => {
-  // zohoPermissionHint in zoho-commerce.functions.ts and isZohoDailyLimitError read error text.
+  // Copied from zohoPermissionHint, which lives in zoho-commerce.functions.ts and can't load here.
   assert.doesNotMatch(
     ZOHO_TOKEN_LIMIT_MESSAGE,
     /not authori[sz]ed|invalid[_ ]?scope|oauth|permission/i,
   );
-  assert.doesNotMatch(ZOHO_TOKEN_LIMIT_MESSAGE, /maximum call rate limit/i);
+  assert.equal(isZohoDailyLimitError(ZOHO_TOKEN_LIMIT_MESSAGE), false);
 });

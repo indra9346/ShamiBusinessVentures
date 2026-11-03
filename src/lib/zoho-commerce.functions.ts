@@ -986,7 +986,7 @@ async function accessToken(region: Region, refreshToken: string) {
     });
     const data = (await response.json().catch(() => ({}))) as ZohoTokenReply;
     if (isZohoTokenLimit(response.status, data)) {
-      console.warn(zohoLogLine("zoho_token_limit", { status: response.status }));
+      console.warn(zohoLogLine("zoho_token_limit", { status: response.status, error: data.error, description: data.error_description }));
       throw new Error(ZOHO_TOKEN_LIMIT_MESSAGE);
     }
     if (!response.ok || !data.access_token)

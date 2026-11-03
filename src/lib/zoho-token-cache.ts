@@ -1,18 +1,21 @@
 /*
  * Keeps one Zoho access token instead of asking for a new one on every call. Zoho allows 10 new
  * access tokens per refresh token in 10 minutes, then answers "Access Denied"; a token lasts an
- * hour, so a site needs about one an hour. Memory only: each server process keeps its own and a
+ * hour, so a site needs only a couple an hour. Memory only: each server process keeps its own and a
  * restart asks again. Pure, so the node tests can load it.
  */
 
-/** Ask for a new token this long before the old one ends, so a run that is under way can finish on it. */
-export const ZOHO_TOKEN_RENEW_EARLY_MS = 10 * 60_000;
+/**
+ * Ask for a new token this long before the old one ends. A sync run keeps the token it was handed
+ * for all its jobs, so it has to start with plenty left. Two new tokens an hour is far inside the limit.
+ */
+export const ZOHO_TOKEN_RENEW_EARLY_MS = 30 * 60_000;
 /** Zoho's docs give an hour, so a reply never counts for longer than that. */
 export const ZOHO_TOKEN_MAX_LIFE_MS = 60 * 60_000;
 /**
- * A 401 can mean a dead token or a permission the connection lacks, and only the first is cured by a
- * new token. A token this new isn't dead, so it stays, or a missing permission would cost one new
- * token per refused call and bring back the limit.
+ * Zoho's docs give 401 for an invalid token. It may also answer 401 for a permission the connection
+ * lacks, which a new token doesn't cure. A token this new isn't dead, so it stays, or a missing
+ * permission would cost one new token per refused call and bring back the limit.
  */
 export const ZOHO_TOKEN_KEEP_AFTER_REFUSAL_MS = 5 * 60_000;
 
@@ -58,7 +61,13 @@ export type ZohoTokenCache = {
 };
 
 export function createZohoTokenCache(now: () => number = () => Date.now()): ZohoTokenCache {
-  let held: { owner: string; token: string; gotAt: number; renewAt: number } | null = null;
+  let held: {
+    owner: string;
+    token: string;
+    gotAt: number;
+    renewAt: number;
+    expiresAt: number;
+  } | null = null;
   let asking: { owner: string; answer: Promise<string> } | null = null;
   return {
     async get(owner, ask) {
@@ -78,10 +87,16 @@ export function createZohoTokenCache(now: () => number = () => Date.now()): Zoho
                     token,
                     gotAt: startedAt,
                     renewAt: startedAt + life - ZOHO_TOKEN_RENEW_EARLY_MS,
+                    expiresAt: startedAt + life,
                   }
                 : null;
             }
             return token;
+          })
+          .catch((cause: unknown) => {
+            // A failed renewal stops nothing while the kept token still has time left.
+            if (held?.owner === owner && now() < held.expiresAt) return held.token;
+            throw cause;
           })
           .finally(() => {
             if (asking === entry) asking = null;
