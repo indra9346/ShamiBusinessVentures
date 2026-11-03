@@ -11,7 +11,7 @@ import { bankDetailChanges, bankDetailsProblem, cleanBankDetails, EMPTY_BANK_DET
 import { inrPrecise } from "@/lib/data";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { DEFAULT_UPI_SETTINGS, isValidVpa, settingsProblem, upiPaymentUri, type UpiSettings } from "@/lib/upi-pay";
-import { loadBankAudit, loadBankSettings, loadUpiAudit, markUtrRefunded, reviewUpiPayment, saveBankDetails, saveUpiSettings, settleBankCredit, useUpiPayments, type BankAuditRow, type BankCredit, type UpiAuditRow } from "@/lib/upi-store";
+import { loadBankAudit, loadBankSettings, loadUpiAudit, markUtrRefunded, reopenBankCredit, reviewUpiPayment, saveBankDetails, saveUpiSettings, settleBankCredit, useUpiPayments, type BankAuditRow, type BankCredit, type UpiAuditRow } from "@/lib/upi-store";
 import { parseBankCredit } from "@/lib/bank-alert";
 import { AWAITING_PAYMENT, clockText, holdSecondsLeft } from "@/lib/payment-hold";
 import { CustomersPayingNow } from "@/components/panel/CustomersPayingNow";
@@ -206,7 +206,7 @@ function AdminUpiPayments() {
         <CustomersPayingNow />
       </Panel>
 
-      <BankAlertsPanel credits={credits} onDemoMatch={(amount) => {
+      <BankAlertsPanel credits={credits} checkingOrders={waiting.map((row) => row.orderNo)} onDemoMatch={(amount) => {
         const hold = awaiting.find((candidate) => Math.abs(candidate.amount - amount) < 0.005);
         if (hold) { simulateBankAlert(hold.orderNo); toast.success(`${hold.orderNo} paid and placed`); }
         else toast.message("No checkout is waiting for that amount", { description: "Kept as unmatched money." });
@@ -444,6 +444,7 @@ const CREDIT_STATUS: Record<BankCredit["status"], { label: string; tone: string 
   ambiguous: { label: "Several checkouts: waiting for the customer's UTR", tone: "text-amber-700" },
   mismatch: { label: "Wrong amount: you decide", tone: "text-danger" },
   late: { label: "Paid after time ran out: refund or place by hand", tone: "text-danger" },
+  balance: { label: "The exact balance: press Confirm paid above", tone: "text-amber-700" },
   settled: { label: "Settled", tone: "text-slate" },
 };
 
@@ -452,17 +453,17 @@ const CREDIT_STATUS: Record<BankCredit["status"], { label: string; tone: string 
  * amount and UTR and confirms the matching checkout. Shows the set-up, an SMS tester, and every
  * alert received, with the ones that need a person.
  */
-function BankAlertsPanel({ credits, onDemoMatch }: { credits: BankCredit[]; onDemoMatch: (amount: number) => void }) {
+function BankAlertsPanel({ credits, checkingOrders, onDemoMatch }: { credits: BankCredit[]; checkingOrders: string[]; onDemoMatch: (amount: number) => void }) {
   const [sample, setSample] = useState("");
   const [busy, setBusy] = useState("");
   const [suggestedKey, setSuggestedKey] = useState("");
   const parsed = sample.trim() ? parseBankCredit(sample) : null;
   const endpoint = typeof window === "undefined" ? "https://grainbazar.com/api/payments/bank-alert" : `${window.location.origin}/api/payments/bank-alert`;
   const lastAlert = credits[0]?.receivedAt;
-  const needsYou = credits.filter((credit) => ["ambiguous", "mismatch", "late"].includes(credit.status));
+  const needsYou = credits.filter((credit) => ["ambiguous", "mismatch", "late", "balance"].includes(credit.status));
 
   const settle = async (credit: BankCredit) => {
-    const note = window.prompt(`What was done about ₹${credit.amount} (UTR ${credit.utr})? For example: refunded on 28 Oct, or order placed by hand.`, "");
+    const note = window.prompt(`What was done about ₹${credit.amount} (UTR ${credit.utr})? For example: refunded on 28 Oct. A settled alert can pay for nothing, so if you placed the order by hand, record this payment on it instead.`, "");
     if (!note?.trim()) return;
     setBusy(credit.id);
     try {
@@ -470,6 +471,19 @@ function BankAlertsPanel({ credits, onDemoMatch }: { credits: BankCredit[]; onDe
       toast.success("Marked settled");
     } catch (cause) {
       toast.error("Could not settle", { description: cause instanceof Error ? cause.message : undefined });
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const reopen = async (credit: BankCredit) => {
+    if (!window.confirm(`Reopen the alert for ₹${credit.amount} (UTR ${credit.utr})? Do this only if it was settled by mistake: its money can then pay an order. Every admin is told.`)) return;
+    setBusy(credit.id);
+    try {
+      await reopenBankCredit(credit.id);
+      toast.success("Alert reopened");
+    } catch (cause) {
+      toast.error("Could not reopen", { description: cause instanceof Error ? cause.message : undefined });
     } finally {
       setBusy("");
     }
@@ -514,7 +528,7 @@ function BankAlertsPanel({ credits, onDemoMatch }: { credits: BankCredit[]; onDe
       </div>
 
       {needsYou.length > 0 && (
-        <p className="mt-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-800">{needsYou.length} payment{needsYou.length === 1 ? "" : "s"} need you: refund, or place the order by hand, then mark settled.</p>
+        <p className="mt-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-800">{needsYou.length} payment{needsYou.length === 1 ? "" : "s"} need you: confirm a balance above, or place the order by hand and record this payment on it, or refund it and mark settled.</p>
       )}
       {credits.length > 0 && (
         <div className="mt-4 overflow-x-auto">
@@ -532,11 +546,15 @@ function BankAlertsPanel({ credits, onDemoMatch }: { credits: BankCredit[]; onDe
                   <td className="px-2 py-2 text-xs">{credit.payer ?? credit.sender ?? "—"}</td>
                   <td className="px-2 py-2 font-mono text-xs">{credit.orderNo ?? "—"}</td>
                   <td className={cn("px-2 py-2 text-xs font-semibold", CREDIT_STATUS[credit.status].tone)}>
-                    {CREDIT_STATUS[credit.status].label}{credit.note ? ` · ${credit.note}` : ""}
+                    {credit.status === "balance" && !checkingOrders.includes(credit.orderNo ?? "") ? "The exact balance: its UTR is not waiting for a check" : CREDIT_STATUS[credit.status].label}{credit.note ? <> · <span>{credit.note}</span></> : null}
                   </td>
                   <td className="px-2 py-2">
-                    {["ambiguous", "mismatch", "late", "unmatched"].includes(credit.status) && (
+                    {/* While its UTR waits, a balance is answered by Confirm paid or Reject above: settling it would make Confirm refuse. */}
+                    {(["ambiguous", "mismatch", "late", "unmatched"].includes(credit.status) || (credit.status === "balance" && !checkingOrders.includes(credit.orderNo ?? ""))) && (
                       <Button size="sm" variant="outline" disabled={busy === credit.id} onClick={() => void settle(credit)}>Mark settled</Button>
+                    )}
+                    {credit.status === "settled" && (
+                      <Button size="sm" variant="ghost" disabled={busy === credit.id} onClick={() => void reopen(credit)}>Reopen</Button>
                     )}
                   </td>
                 </tr>

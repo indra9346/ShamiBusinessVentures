@@ -206,7 +206,7 @@ export async function loadUpiAudit(): Promise<UpiAuditRow[]> {
 
 export type BankCredit = {
   id: string; receivedAt: string; amount: number; utr: string; payer: string | null; sender: string | null;
-  status: "matched" | "unmatched" | "ambiguous" | "mismatch" | "late" | "settled"; orderNo: string | null; note: string | null; raw: string | null;
+  status: "matched" | "unmatched" | "ambiguous" | "mismatch" | "late" | "settled" | "balance"; orderNo: string | null; note: string | null; raw: string | null;
 };
 /** Admin: money-received SMS alerts from the company phone, newest first (customers see none). */
 export async function loadBankCredits(): Promise<BankCredit[]> {
@@ -223,6 +223,13 @@ export async function loadBankCredits(): Promise<BankCredit[]> {
 /** Admin: a credit that needed a person was dealt with (refunded, order placed by hand, not for the shop). */
 export async function settleBankCredit(id: string, note: string) {
   const { error } = await supabase.rpc("settle_bank_credit", { _credit_id: id, _note: note });
+  if (error) throw new Error(error.message);
+  changed();
+}
+
+/** Admin: an alert settled by mistake goes back to needing a person. A settled alert can pay for nothing. */
+export async function reopenBankCredit(id: string) {
+  const { error } = await supabase.rpc("reopen_bank_credit", { _credit_id: id });
   if (error) throw new Error(error.message);
   changed();
 }

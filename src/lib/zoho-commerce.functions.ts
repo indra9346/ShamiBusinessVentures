@@ -19,6 +19,7 @@ import {
   orderNeedsZohoInvoice, paymentsToRecord, roundingWriteOff,
   invoiceDecision, websiteInvoiceStatus, zohoInvoiceFacts, zohoInvoicesOf, type InvoiceRecord, type ZohoInvoiceFacts,
   DAILY_LIMIT_PAUSE_MINUTES, inboundPollDue, isZohoDailyLimitError, zohoPaused,
+  invoicePaidOf, invoicePaymentReview, paymentsGoneFromInvoice, paymentsToNoteAsPushed, ROUNDING_WRITE_OFF_LIMIT,
   indiaDate, nextZohoFulfilmentStep, zohoFulfilmentStatus, zohoPackagesOf, zohoStatusMovesForward,
   einvoiceProblems,
   sameZohoPlace, zohoAddressBody, zohoAddressesFromContact, zohoAddressesToUpdate, zohoInvoiceAddressesToCopy, zohoOrderAddress, zohoOrderAddressOpen, zohoOrderFinished, ZOHO_PLACE_CODES,
@@ -2475,8 +2476,12 @@ async function syncLinkedZohoOrder(
   } else if (!ZOHO_FINISHED_ORDER_STATES.includes(zohoStatus())) {
     const zohoTotal = Number(zoho["total"]);
     const invoiced = str(zoho["invoiced_status"]).toLowerCase();
-    if (Number.isFinite(zohoTotal) && Math.abs(zohoTotal - Number(order.total)) > 0.01) {
-      if (invoiced && invoiced !== "not_invoiced" && invoiced !== "null")
+    const hasInvoice = Boolean(invoiced) && invoiced !== "not_invoiced" && invoiced !== "null";
+    const paiseOff = Math.round(Math.abs(zohoTotal - Number(order.total)) * 100);
+    // Zoho rounds CGST and SGST apart, so a sales order can be a few paise off for ever. Once invoiced, up to the write-off
+    // limit is that rounding, not a change to the order; this stopped the sync before packing on about 1 order in 4 of 5% goods.
+    if (Number.isFinite(zohoTotal) && paiseOff > 1 && !(hasInvoice && paiseOff <= ROUNDING_WRITE_OFF_LIMIT * 100)) {
+      if (hasInvoice)
         throw new NeedsReviewError(`Grain Bazar order ${order.order_no} changed to ₹${Number(order.total).toFixed(2)}, but Zoho sales order ${str(zoho["salesorder_number"])} is already invoiced at ₹${zohoTotal.toFixed(2)}. Adjust the invoice in Zoho.`);
       const lines = await zohoLineItemsForOrder(db, region, organizationId, token, items);
       // Keep Zoho's line IDs for items still on the order so Zoho updates them in place.
@@ -2517,8 +2522,11 @@ async function syncLinkedZohoOrder(
   if (orderAddress.written) zoho = await load();
   // Confirmed by the admin: the Zoho Books invoice, with the verified payments recorded on it.
   let invoiceAddressProblem: string | null = null;
+  const moneyIssues: ZohoMoneyIssues = { review: [], retry: [] };
   if (orderNeedsZohoInvoice(order.order_status) && !["draft", ...ZOHO_CLOSED_ORDER_STATES].includes(zohoStatus())) {
-    if (await syncZohoOrderInvoice(db, region, organizationId, token, order, zoho, (problem) => { invoiceAddressProblem = problem; })) zoho = await load();
+    if (await syncZohoOrderInvoice(db, region, organizationId, token, order, zoho, (problem) => { invoiceAddressProblem = problem; }, moneyIssues)) zoho = await load();
+    // Now, in case packing below stops the sync first.
+    if (moneyIssues.review.length || moneyIssues.retry.length) await tellAdminsOfPaymentReview(db, order, [...moneyIssues.review, ...moneyIssues.retry].join(" "));
   }
   // Packed / Dispatched / Out for Delivery / Delivered on the website: package, shipment and
   // delivery in Zoho, at the sales order's godown location.
@@ -2527,6 +2535,9 @@ async function syncLinkedZohoOrder(
   }
   await saveZohoZohoState(db, order.id, zoho);
   await refreshSalesOrderSnapshotSafe(db, organizationId, zoho);
+  // Raised last: goods that have moved stay in step with Zoho whatever is wrong with the money.
+  if (moneyIssues.review.length) throw new NeedsReviewError(moneyIssues.review.join(" "));
+  if (moneyIssues.retry.length) throw new Error(moneyIssues.retry.join(" "));
   const finalTotal = Number(zoho["total"]);
   if (order.order_status !== "Cancelled" && Number.isFinite(finalTotal) && Math.abs(finalTotal - Number(order.total)) > 2)
     throw new NeedsReviewError(`Zoho sales order ${str(zoho["salesorder_number"])} totals ₹${finalTotal.toFixed(2)}; Grain Bazar order ${order.order_no} totals ₹${Number(order.total).toFixed(2)}. Review taxes, discount and shipping.`);
@@ -2590,7 +2601,9 @@ async function copyZohoAddressToInvoice(
  * Zoho Books invoice for a confirmed website order: converts its sales order to an invoice (Books
  * "invoices/fromsalesorder", so it gets the godown location's invoice series), marks it sent,
  * then records each verified website payment (by UTR) against it, so Books shows the order PAID.
- * Every step looks at Zoho first, so a retry never makes a second invoice or payment.
+ * Every step looks at Zoho first, so a retry never makes a second invoice or payment. A payment pushed once is never
+ * posted again. What a person must look at, and what Zoho refused or never answered, go into `moneyIssues`, raised at
+ * the end of the sync so goods that have moved stay in step with Zoho.
  */
 async function ensureZohoBooksInvoice(
   db: Awaited<ReturnType<typeof dbAdmin>>,
@@ -2600,14 +2613,18 @@ async function ensureZohoBooksInvoice(
   order: Database["public"]["Tables"]["orders"]["Row"],
   zoho: Record<string, unknown>,
   reportAddressProblem: (problem: string) => void,
+  moneyIssues: ZohoMoneyIssues,
 ) {
   const salesOrderId = order.zoho_salesorder_id!;
   const number = str(zoho["salesorder_number"]) || order.order_no;
-  const fail = (step: string, cause: unknown): never => {
+  const failure = (step: string, cause: unknown) => {
     const message = cause instanceof Error ? cause.message : String(cause);
-    throw new Error(`Zoho Books invoice for ${number}: ${step} failed: ${message}.${zohoPermissionHint(message)}`);
+    return `Zoho Books invoice for ${number}: ${step} failed: ${message}.${zohoPermissionHint(message)}`;
   };
-  type BooksInvoice = { invoice_id?: string; invoice_number?: string; status?: string; total?: number; balance?: number; customer_id?: string; customer_name?: string; gst_treatment?: string; gst_no?: string; place_of_supply?: string; billing_address?: unknown; shipping_address?: unknown };
+  const fail = (step: string, cause: unknown): never => {
+    throw new Error(failure(step, cause));
+  };
+  type BooksInvoice = { invoice_id?: string; invoice_number?: string; status?: string; total?: number; balance?: number; payment_made?: number | null; customer_id?: string; customer_name?: string; gst_treatment?: string; gst_no?: string; place_of_supply?: string; billing_address?: unknown; shipping_address?: unknown };
   const linked = (Array.isArray(zoho["invoices"]) ? zoho["invoices"] : []).map(plainObject)
     .filter((invoice) => str(invoice["invoice_id"]) && !["void"].includes(str(invoice["status"]).toLowerCase()));
   let invoiceId = str(linked[0]?.["invoice_id"]);
@@ -2668,26 +2685,43 @@ async function ensureZohoBooksInvoice(
     throw new NeedsReviewError(`Zoho Books invoice ${str(invoice.invoice_number)} totals ₹${invoiceTotal.toFixed(2)}; Grain Bazar order ${order.order_no} totals ₹${Number(order.total).toFixed(2)}. Payments were not recorded; correct the invoice in Zoho Books.`);
 
   // Verified website payments (admin-confirmed UTRs) not yet on the invoice.
-  const { data: payments, error } = await db.from("payments").select("amount,txn_ref,method,created_at,status")
+  const { data: payments, error } = await db.from("payments").select("id,amount,txn_ref,method,created_at,status,zoho_invoice_id,zoho_payment_id")
     .eq("order_id", order.id).eq("status", "Paid");
   if (error) throw new Error("Could not read the order's payments from Grain Bazar");
   if (!payments?.length) return invoice;
-  let recorded: string[] = [];
+  let onInvoice: { paymentId: string; reference: string; amount: number }[] = [];
   try {
-    const response = await booksRequest<{ payments?: { reference_number?: string }[] }>(region, organizationId, token, `invoices/${encodeURIComponent(invoiceId)}/payments`, "GET");
-    recorded = (response.payments ?? []).map((payment) => str(payment.reference_number));
+    const response = await booksRequest<{ payments?: { payment_id?: string; reference_number?: string; amount?: number }[] }>(region, organizationId, token, `invoices/${encodeURIComponent(invoiceId)}/payments`, "GET");
+    onInvoice = (response.payments ?? []).map((payment) => ({ paymentId: str(payment.payment_id), reference: str(payment.reference_number), amount: Number(payment.amount) || 0 }));
   } catch (cause) {
     fail("reading the invoice's payments", cause);
   }
-  const toRecord = paymentsToRecord(
-    payments.map((payment) => ({ amount: Number(payment.amount), txnRef: str(payment.txn_ref), method: payment.method, paidAt: payment.created_at })),
-    recorded,
-    Number(invoice.balance),
-  );
+  const website = payments.map((payment) => ({
+    id: payment.id, amount: Number(payment.amount), txnRef: str(payment.txn_ref), method: payment.method, paidAt: payment.created_at,
+    pushedToInvoice: payment.zoho_invoice_id, zohoPaymentId: payment.zoho_payment_id,
+  }));
+  // A note that cannot be written only delays it: Zoho shows the payment, so the next sync writes it and posts nothing.
+  const noteAsPushed = async (paymentId: string, zohoPaymentId: string | null) => {
+    const { error: noteError } = await db.from("payments")
+      .update({ zoho_invoice_id: invoiceId, zoho_payment_id: zohoPaymentId, zoho_pushed_at: new Date().toISOString() }).eq("id", paymentId);
+    if (noteError) console.warn(zohoLogLine("zoho_invoice_payment_note_failed", { order: number, error: noteError.message }));
+  };
+  for (const seen of paymentsToNoteAsPushed(website, onInvoice, invoiceId)) await noteAsPushed(seen.payment.id, seen.zohoPaymentId);
+  const gone = paymentsGoneFromInvoice(website, onInvoice);
+  const toRecord = paymentsToRecord(website, onInvoice.map((payment) => payment.reference), Number(invoice.balance));
   const customerId = str(invoice.customer_id) || str(zoho["customer_id"]);
   for (const payment of toRecord) {
+    // Claimed before the post, so two syncs at once can't both post it. A crash here leaves a review, not a second payment.
+    const pushed = website.find((row) => row.txnRef.trim() === payment.reference);
+    if (pushed) {
+      const { data: claimed, error: claimError } = await db.from("payments")
+        .update({ zoho_invoice_id: invoiceId, zoho_pushed_at: new Date().toISOString() }).eq("id", pushed.id).is("zoho_invoice_id", null).select("id");
+      if (claimError) throw new Error("Could not note the payment before sending it to Zoho");
+      if (!claimed?.length) continue;
+    }
+    let created: { payment?: { payment_id?: string } } | undefined;
     try {
-      await booksRequest(region, organizationId, token, "customerpayments", "POST", {
+      created = await booksRequest<{ payment?: { payment_id?: string } }>(region, organizationId, token, "customerpayments", "POST", {
         customer_id: customerId,
         payment_mode: payment.mode,
         amount: payment.amount,
@@ -2697,26 +2731,54 @@ async function ensureZohoBooksInvoice(
         invoices: [{ invoice_id: invoiceId, amount_applied: payment.amount }],
       });
     } catch (cause) {
-      fail(`recording payment ${payment.reference}`, cause);
+      // Not sent, or the reply was lost: the next sync reads Zoho first either way.
+      if (pushed) await db.from("payments").update({ zoho_invoice_id: null, zoho_pushed_at: null }).eq("id", pushed.id);
+      moneyIssues.retry.push(failure(`recording payment ${payment.reference}`, cause));
+      continue;
     }
+    if (pushed) await noteAsPushed(pushed.id, str(created?.payment?.payment_id) || null);
     console.info(zohoLogLine("zoho_invoice_payment_recorded", { order: number, amount: payment.amount }));
   }
   // Paid in full on the website, but Zoho's separate CGST/SGST rounding left a paisa or two on the
   // invoice: write that off so Books shows it PAID for exactly what the customer paid.
   const after = toRecord.length ? await readInvoice() : invoice;
-  const writeOff = roundingWriteOff(Number(order.total), Number(order.paid_amount), Number(after.balance));
+  const websitePaid = website.reduce((sum, payment) => sum + payment.amount, 0);
+  const label = str(after.invoice_number) || number;
+  // Zoho's own figure, or its list of payments if that says more: a credit applied from a void may show only there.
+  const listedMoney = onInvoice.reduce((sum, payment) => sum + payment.amount, 0) + toRecord.reduce((sum, payment) => sum + payment.amount, 0);
+  const moneyOn = (seen: BooksInvoice) => Math.max(invoicePaidOf(seen), listedMoney);
+  const reviewOf = (seen: BooksInvoice) => invoicePaymentReview(gone.length, websitePaid, Number(order.total), Number(seen.total), moneyOn(seen), Number(seen.balance));
+  // Nothing is written off while a pushed payment is missing: that ₹1 may be the payment.
+  const writeOff = reviewOf(after) === "gone" ? 0 : roundingWriteOff(Number(order.total), Number(order.paid_amount), Number(after.balance));
   if (writeOff > 0) {
     try {
       await booksRequest(region, organizationId, token, `invoices/${encodeURIComponent(invoiceId)}/writeoff`, "POST");
     } catch (cause) {
-      fail(`writing off the ₹${writeOff.toFixed(2)} GST rounding`, cause);
+      moneyIssues.retry.push(failure(`writing off the ₹${writeOff.toFixed(2)} GST rounding`, cause));
     }
     console.info(zohoLogLine("zoho_invoice_rounding_written_off", { order: number, amount: writeOff }));
   }
-  return writeOff > 0 ? await readInvoice() : after;
+  const final = writeOff > 0 ? await readInvoice() : after;
+  // Zoho refused or never answered: that is the reason, and the next sync tries again.
+  const review = moneyIssues.retry.length ? null : reviewOf(final);
+  if (review === "gone") {
+    const names = gone.map((payment) => `₹${payment.amount.toFixed(2)} (UTR ${payment.txnRef})`).join(", ");
+    const extra = linked.length > 1 ? ` This sales order has ${linked.length} invoices: void the extra one first.` : "";
+    moneyIssues.review.push(`Zoho Books invoice ${label} does not show ${names}, which Grain Bazar recorded for order ${order.order_no} and already sent to Zoho. It was not posted again, because that could count the money twice.${extra} If it is in Zoho as the customer's credit (voiding an invoice leaves it there), apply it to this invoice. If it was removed by mistake, record it in Zoho Books with that UTR as the reference. Then Retry. If the money went back to the customer, the website still shows it as paid: tell the office before the goods go.`);
+  } else if (review === "short") {
+    moneyIssues.review.push(`Zoho Books invoice ${label} holds ₹${moneyOn(final).toFixed(2)} in payments, but Grain Bazar recorded ₹${websitePaid.toFixed(2)} for order ${order.order_no}. If a credit note or write-off closed it, the money may have gone back: check before the goods go. Otherwise correct the payment in Zoho Books. Then Retry.`);
+  } else if (review === "over") {
+    moneyIssues.review.push(`Zoho Books invoice ${label} holds ₹${moneyOn(final).toFixed(2)} in payments, more than the ₹${websitePaid.toFixed(2)} Grain Bazar recorded for order ${order.order_no}. If one transfer was entered twice, remove the extra in Zoho Books. If the money came in, record it on the website. Then Retry.`);
+  } else if (review === "above") {
+    moneyIssues.review.push(`Zoho Books invoice ${label} totals ₹${Number(final.total).toFixed(2)}, more than Grain Bazar order ${order.order_no} at ₹${Number(order.total).toFixed(2)}, so ₹${Number(final.balance).toFixed(2)} stays due after the customer paid in full. Re-sync cannot clear this: correct the invoice in Zoho Books, then Retry.`);
+  }
+  return final;
 }
 
 type InvoiceRow = Database["public"]["Tables"]["zoho_order_invoices"]["Row"];
+
+/** What went wrong with an order's money during a sync: `review` needs a person, `retry` the next sync tries again. */
+type ZohoMoneyIssues = { review: string[]; retry: string[] };
 
 async function readInvoiceRecord(db: Awaited<ReturnType<typeof dbAdmin>>, orderId: string) {
   const { data, error } = await db.from("zoho_order_invoices").select("*").eq("order_id", orderId).maybeSingle();
@@ -2759,6 +2821,10 @@ async function recordZohoInvoiceState(
     const { invoice } = decision;
     const status = websiteInvoiceStatus(invoice.status);
     if (row?.zoho_invoice_id === invoice.invoiceId && row.status === status && Number(row.balance) === invoice.balance) return;
+    // More is due than before: a payment was removed in Zoho. A delivered order gets no other sync, so ask for one.
+    if (row?.zoho_invoice_id === invoice.invoiceId && row.balance != null && invoice.balance != null && invoice.balance > Number(row.balance) + 0.005) {
+      await db.rpc("enqueue_zoho_sync", { _entity_type: "order", _entity_id: order.id });
+    }
     await saveInvoiceRecord(db, order, {
       zoho_invoice_id: invoice.invoiceId, invoice_number: invoice.number, status,
       total: invoice.total, balance: invoice.balance,
@@ -2786,6 +2852,7 @@ async function syncZohoOrderInvoice(
   order: Database["public"]["Tables"]["orders"]["Row"],
   zoho: Record<string, unknown>,
   reportAddressProblem: (problem: string) => void,
+  moneyIssues: ZohoMoneyIssues,
 ) {
   const row = await readInvoiceRecord(db, order.id);
   const decision = invoiceDecision(asInvoiceRecord(row), zohoInvoicesOf(zoho) ?? []);
@@ -2799,7 +2866,7 @@ async function syncZohoOrderInvoice(
     }
     return false;
   }
-  const invoice = await ensureZohoBooksInvoice(db, region, organizationId, token, order, zoho, reportAddressProblem);
+  const invoice = await ensureZohoBooksInvoice(db, region, organizationId, token, order, zoho, reportAddressProblem, moneyIssues);
   const created = decision.action === "create";
   await saveInvoiceRecord(db, order, {
     zoho_invoice_id: str(invoice.invoice_id) || null,
@@ -2814,6 +2881,27 @@ async function syncZohoOrderInvoice(
     } : {}),
   });
   return true;
+}
+
+/**
+ * A money problem on an order's invoice reaches the admins' bell, not only the Zoho queue: once a day at most, however
+ * often the order syncs. Never stops the sync. Not on the invoice row: customers and vendors can read that.
+ */
+async function tellAdminsOfPaymentReview(db: Awaited<ReturnType<typeof dbAdmin>>, order: { id: string; order_no: string }, reason: string) {
+  const title = "Zoho payment needs you";
+  try {
+    const { data: told, error: toldError } = await db.from("notifications").select("id").eq("order_no", order.order_no).eq("title", title).eq("message", reason)
+      .gte("created_at", new Date(Date.now() - 24 * 3_600_000).toISOString()).limit(1);
+    if (toldError) throw new Error(toldError.message);
+    if (told?.length) return;
+    const { data: admins } = await db.from("user_roles").select("user_id").eq("role", "admin");
+    const { error } = await db.from("notifications").insert((admins ?? []).map((admin) => ({
+      order_no: order.order_no, order_id: order.id, recipient_id: admin.user_id, recipient_role: "admin", title, message: reason, status: "payment",
+    })));
+    if (error) throw new Error(error.message);
+  } catch (cause) {
+    console.warn(zohoLogLine("zoho_payment_review_notice_failed", { order: order.order_no, error: cause instanceof Error ? cause.message : String(cause) }));
+  }
 }
 
 /** Records Zoho's status and change time on the Grain Bazar order (shown in the admin). */
@@ -4112,6 +4200,11 @@ async function processZohoSyncOutboxRun(
     if (status === "complete") console.info(log); else console.warn(log);
     const { error: finishError } = await db.rpc("finish_zoho_sync_job", { _id: job.id, _status: status, _error: errorMessage });
     if (finishError) throw new Error(`Zoho job ${job.id} was processed but its result could not be recorded`);
+    // A clean run answers this order's rows from before it: they would still tell a person to enter money that is back.
+    if (status === "complete" && job.entity_type === "order") {
+      await db.from("zoho_sync_outbox").update({ status: "complete", last_error: null, updated_at: new Date().toISOString() })
+        .eq("entity_type", "order").eq("entity_id", job.entity_id).in("status", ["needs_review", "failed"]).lt("updated_at", new Date(startedAt).toISOString());
+    }
     if (job.entity_type === "order" && status === "needs_review" && asksAboutUnansweredCreate(errorMessage)) await settleZohoQuestion(db, job.entity_id);
     if (status === "complete") summary.complete += 1;
     else if (status === "failed") summary.failed += 1;

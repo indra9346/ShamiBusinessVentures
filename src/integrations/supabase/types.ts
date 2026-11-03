@@ -919,6 +919,9 @@ export type Database = {
           txn_ref: string | null
           updated_at: string
           user_id: string | null
+          zoho_invoice_id: string | null
+          zoho_payment_id: string | null
+          zoho_pushed_at: string | null
         }
         Insert: {
           amount?: number
@@ -932,6 +935,9 @@ export type Database = {
           txn_ref?: string | null
           updated_at?: string
           user_id?: string | null
+          zoho_invoice_id?: string | null
+          zoho_payment_id?: string | null
+          zoho_pushed_at?: string | null
         }
         Update: {
           amount?: number
@@ -945,6 +951,9 @@ export type Database = {
           txn_ref?: string | null
           updated_at?: string
           user_id?: string | null
+          zoho_invoice_id?: string | null
+          zoho_payment_id?: string | null
+          zoho_pushed_at?: string | null
         }
         Relationships: [
           {
@@ -1270,6 +1279,7 @@ export type Database = {
       cancel_payment_hold: { Args: { _order_no: string }; Returns: boolean }
       record_bank_credit: { Args: { _utr: string; _amount: number; _payer?: string; _raw?: string; _source?: string; _sender?: string }; Returns: Json }
       settle_bank_credit: { Args: { _credit_id: string; _note: string }; Returns: { id: string; status: string; note: string | null } }
+      reopen_bank_credit: { Args: { _credit_id: string }; Returns: { id: string; status: string; note: string | null } }
       submit_upi_utr: { Args: { _order_no: string; _utr: string }; Returns: { id: string; order_id: string; order_no: string; user_id: string | null; customer_name: string; amount: number; utr: string; status: string; note: string | null; submitted_at: string; reviewed_at: string | null; reviewed_by: string | null } }
       admin_end_payment_hold: { Args: { _order_no: string }; Returns: boolean }
       mark_utr_refunded: { Args: { _order_no: string }; Returns: boolean }

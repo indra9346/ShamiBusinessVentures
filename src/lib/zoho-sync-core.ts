@@ -543,8 +543,38 @@ export function zohoPaymentMode(method: string | null | undefined) {
   return "Bank Transfer";
 }
 
-export type WebsitePayment = { amount: number; txnRef: string; method: string | null; paidAt: string };
+export type WebsitePayment = { amount: number; txnRef: string; method: string | null; paidAt: string; pushedToInvoice?: string | null; zohoPaymentId?: string | null };
 export type PaymentToRecord = { amount: number; reference: string; date: string; mode: string; method: string };
+export type InvoicePayment = { paymentId: string; reference: string; amount?: number };
+
+/**
+ * One reference read the way the database reads a UTR (private.utr_form and same_utr): a 12-digit number standing alone
+ * is the transfer, O and 0, I and 1, L and 1 are alike, and one that is exactly 12 digits matches a longer one ending in
+ * it. Below a bank UTR's 12 characters only the same text counts: RCPT1 and RCPTI are different money.
+ */
+const lookAlike = (text: string) => text.toUpperCase().replace(/O/g, "0").replace(/[IL]/g, "1");
+function referenceForm(reference: string) {
+  const standing = /(?:^|[^0-9A-Za-z])([0-9]{12})(?:$|[^0-9A-Za-z])/.exec(reference)?.[1];
+  return lookAlike(standing ?? reference.replace(/[^0-9A-Za-z]/g, ""));
+}
+/** Runs of 12 to 22 letters and digits standing alone, with at least 8 digits: each could be the UTR (private.utr_tokens). */
+function referenceTokens(reference: string) {
+  return [...reference.matchAll(/(?:^|[^0-9A-Za-z])([0-9A-Za-z]{12,22})(?=$|[^0-9A-Za-z])/g)]
+    .map((match) => match[1]!).filter((token) => token.replace(/[^0-9]/g, "").length >= 8).map(lookAlike);
+}
+export function sameReference(a: string, b: string) {
+  const [x, y] = [referenceForm(a), referenceForm(b)];
+  const twelve = /^[0-9]{12}$/;
+  if (x.length >= 12 && y.length >= 12) {
+    if (x === y || (twelve.test(x) && y.endsWith(x)) || (twelve.test(y) && x.endsWith(y))) return true;
+    const [tokensA, tokensB] = [referenceTokens(a), referenceTokens(b)];
+    if (tokensA.some((token) => tokensB.includes(token))) return true;
+    const endsIn = (token: string, form: string, others: string[]) => twelve.test(token) && (form.endsWith(token) || others.some((other) => other.endsWith(token)));
+    return tokensA.some((token) => endsIn(token, y, tokensB)) || tokensB.some((token) => endsIn(token, x, tokensA));
+  }
+  const plain = (text: string) => text.replace(/\s/g, "").toUpperCase();
+  return plain(a) !== "" && plain(a) === plain(b);
+}
 
 /** yyyy-mm-dd of a timestamp in India time (Books dates are the organization's local dates). */
 export function indiaDate(timestamp: string) {
@@ -557,21 +587,77 @@ export function indiaDate(timestamp: string) {
  * The website payments still to record in Books against an invoice: each verified payment whose
  * UTR is not already on the invoice (case-insensitive), oldest first, never more than the
  * invoice's balance. Re-running after a partial failure therefore never records a payment twice.
+ * One pushed to Zoho before is never posted again, on any invoice: if it is gone, it was removed there, or voiding an
+ * invoice left it as the customer's credit, and posting it would count the money twice (see paymentsGoneFromInvoice).
  */
 export function paymentsToRecord(payments: WebsitePayment[], recordedReferences: string[], invoiceBalance: number): PaymentToRecord[] {
-  const recorded = new Set(recordedReferences.map((ref) => ref.trim().toLowerCase()).filter(Boolean));
+  const recorded = [...recordedReferences];
   let balance = Math.round(Math.max(0, invoiceBalance) * 100);
   const result: PaymentToRecord[] = [];
   for (const payment of [...payments].sort((a, b) => Date.parse(a.paidAt) - Date.parse(b.paidAt))) {
     const reference = payment.txnRef.trim();
     const amount = Math.round(Number(payment.amount) * 100);
-    if (!reference || !(amount > 0) || recorded.has(reference.toLowerCase()) || balance <= 0) continue;
+    if (!reference || !(amount > 0) || balance <= 0 || payment.pushedToInvoice) continue;
+    if (recorded.some((ref) => sameReference(ref, reference))) continue;
     const applied = Math.min(amount, balance);
     balance -= applied;
-    recorded.add(reference.toLowerCase());
+    recorded.push(reference);
     result.push({ amount: applied / 100, reference, date: indiaDate(payment.paidAt), mode: zohoPaymentMode(payment.method), method: payment.method ?? "" });
   }
   return result;
+}
+
+/** The row of Zoho's list of an invoice's payments for this website payment: by Zoho's id (a reference can be edited there) or its UTR. */
+function rowOnInvoice(payment: WebsitePayment, onInvoice: InvoicePayment[]) {
+  return onInvoice.find((row) => payment.zohoPaymentId && row.paymentId === payment.zohoPaymentId)
+    ?? onInvoice.find((row) => sameReference(row.reference, payment.txnRef));
+}
+
+/** Pushed to Zoho before and not on this invoice now: removed in Zoho, or left as the customer's credit when an invoice was voided. */
+export function paymentsGoneFromInvoice<T extends WebsitePayment>(payments: T[], onInvoice: InvoicePayment[]): T[] {
+  return payments.filter((payment) => payment.pushedToInvoice && !rowOnInvoice(payment, onInvoice));
+}
+
+/**
+ * Website payments on this invoice not yet noted against it: the note was lost after the post, the payment was pushed
+ * before notes were kept, or someone moved it here in Zoho. Noting them keeps them from ever being posted again.
+ */
+export function paymentsToNoteAsPushed<T extends WebsitePayment>(payments: T[], onInvoice: InvoicePayment[], invoiceId: string): { payment: T; zohoPaymentId: string | null }[] {
+  return payments.flatMap((payment) => {
+    const row = payment.pushedToInvoice === invoiceId ? undefined : rowOnInvoice(payment, onInvoice);
+    return row ? [{ payment, zohoPaymentId: row.paymentId || payment.zohoPaymentId || null }] : [];
+  });
+}
+
+export type InvoicePaymentReview = "gone" | "short" | "over" | "above" | null;
+
+/**
+ * The money on a Books invoice: its `payment_made`, because "paid" can also mean a credit note or a write-off. Total
+ * less balance only when Zoho does not say.
+ */
+export function invoicePaidOf(invoice: { total?: number | null; balance?: number | null; payment_made?: number | null }) {
+  const made = invoice.payment_made;
+  return made != null && String(made).trim() !== "" && Number.isFinite(Number(made)) ? Number(made) : Number(invoice.total) - Number(invoice.balance);
+}
+
+/**
+ * What a person must look at once the payments are on the invoice, in paise so floats can't decide it. "gone": a pushed
+ * payment is missing and the invoice really is short of it (re-entered under another reference, nothing is missing).
+ * "short": Books holds more than ₹1 less money than the website recorded, with no missing payment to blame. An invoice
+ * for less than the website can hold no more than its total. "over": Books holds more than ₹1 more than the website
+ * recorded, so one transfer may be entered twice. "above": paid in full here, but the invoice's own total leaves more
+ * than ₹1 due: Re-sync can't clear that.
+ */
+export function invoicePaymentReview(goneCount: number, websitePaid: number, orderTotal: number, invoiceTotal: number, invoicePaid: number, invoiceBalance: number): InvoicePaymentReview {
+  if (![websitePaid, orderTotal, invoiceTotal, invoicePaid, invoiceBalance].every(Number.isFinite)) return null;
+  const paise = (value: number) => Math.round(value * 100);
+  const missing = Math.min(paise(websitePaid), paise(invoiceTotal)) - paise(invoicePaid);
+  const limit = paise(ROUNDING_WRITE_OFF_LIMIT);
+  if (goneCount > 0 && missing > 0) return "gone";
+  if (missing > limit) return "short";
+  if (paise(invoicePaid) - paise(websitePaid) > limit) return "over";
+  if (paise(websitePaid) >= paise(orderTotal) && paise(invoiceBalance) > limit) return "above";
+  return null;
 }
 
 /** Zoho rounds CGST and SGST separately (₹51.225 → ₹51.23 each), so its invoice can exceed the website total by a paisa or two. */

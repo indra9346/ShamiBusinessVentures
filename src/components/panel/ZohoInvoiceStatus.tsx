@@ -77,7 +77,7 @@ export function ZohoInvoiceStatus({ orderNo, audience, className }: { orderNo: s
       await syncNow();
       toast.success("Approved: the new invoice was created in Zoho Books");
     } catch (cause) {
-      toast.error("Could not create the new invoice", { description: cause instanceof Error ? cause.message : undefined });
+      toast.error("Check the new invoice", { description: cause instanceof Error ? cause.message : undefined });
     } finally {
       setBusy("");
       void load();
