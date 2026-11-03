@@ -541,11 +541,18 @@ await test("the customer's UTR with bank letters is theirs: another order is not
   assert.equal(await received(b), 0);
   assert.equal((await orderRow(b)).order_status, "Awaiting Payment");
 });
-await test("the right amount with bank letters confirms a held checkout, and an exact balance is a balance", async () => {
+await test("the right amount with bank letters waits for an admin's Confirm, and an exact balance is a balance", async () => {
   const a = await checkout([{ product_id: "PA", qty: 6 }], "NEFT"), ref = utr();
   await submit(a, `SBIN${ref}`);
-  assert.equal((await sms(ref, 6000)).status, "matched");
+  assert.equal((await sms(ref, 6000)).status, "balance", "only the UTR exactly as the bank gave it confirms by itself");
+  assert.equal((await orderRow(a)).order_status, "Awaiting Payment");
+  await review(a, `SBIN${ref}`);
   assert.equal((await orderRow(a)).payment_status, "Paid");
+  assert.equal((await credit(ref)).status, "matched");
+  const first = await checkout([{ product_id: "PA", qty: 27 }], "NEFT"), ref1 = utr();
+  await sms(ref1, 27000);
+  await submit(first, `SBIN${ref1}`);
+  assert.equal((await orderRow(first)).order_status, "Awaiting Payment", "the same when the SMS comes first");
   const b = await placed({ payment_method: "NEFT" });
   await confirm(b, 1000, utr());
   const ref2 = utr();

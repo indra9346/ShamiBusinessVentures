@@ -336,6 +336,7 @@ DECLARE
   recorded numeric;
   orders_paid integer;
   sent integer;
+  sent_utr text;
 BEGIN
   SELECT * INTO c FROM public.bank_credits WHERE id = _credit_id FOR UPDATE;
   IF NOT FOUND OR c.status NOT IN ('unmatched', 'ambiguous') THEN
@@ -438,13 +439,16 @@ BEGIN
   IF FOUND THEN
     PERFORM 1 FROM public.orders WHERE id = o.id FOR UPDATE;
     SELECT * INTO o FROM public.orders WHERE id = o.id;
-    IF o.order_status = 'Awaiting Payment' AND c.amount = o.total - o.paid_amount THEN
+    SELECT s.utr INTO sent_utr FROM public.upi_payment_submissions s WHERE s.order_id = o.id AND s.status = 'submitted';
+    -- Only the UTR exactly as the bank gave it confirms by itself. One that only ends in these digits waits for an admin below.
+    IF o.order_status = 'Awaiting Payment' AND c.amount = o.total - o.paid_amount AND sent_utr = c.utr THEN
       PERFORM private.confirm_held_payment(o.id, c.utr, 'Confirmed automatically from the bank alert');
       UPDATE public.bank_credits SET status = 'matched', order_id = o.id, order_no = o.order_no, note = NULL WHERE id = c.id;
       RETURN jsonb_build_object('status', 'matched', 'order_no', o.order_no);
     END IF;
-    -- The exact balance of an order already placed: nothing to refund. An admin confirms it, as with any such UTR.
-    IF o.order_status NOT IN ('Awaiting Payment', 'Payment Expired', 'Cancelled') AND o.total - o.paid_amount > 0 AND c.amount = o.total - o.paid_amount THEN
+    -- The exact balance of an order already placed, or of a checkout whose UTR has other letters: nothing to refund. An admin confirms it, as with any such UTR.
+    IF (o.order_status NOT IN ('Awaiting Payment', 'Payment Expired', 'Cancelled') OR (o.order_status = 'Awaiting Payment' AND sent_utr IS DISTINCT FROM c.utr))
+       AND o.total - o.paid_amount > 0 AND c.amount = o.total - o.paid_amount THEN
       UPDATE public.bank_credits SET order_id = o.id, order_no = o.order_no, status = 'balance', note = format('The balance of %s', o.order_no)
         WHERE id = c.id RETURNING * INTO c;
       PERFORM private.alert_admins_about_credit(c, 'Balance to confirm',
