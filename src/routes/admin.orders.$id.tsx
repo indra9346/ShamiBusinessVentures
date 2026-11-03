@@ -132,11 +132,9 @@ function AdminOrderDetail() {
   ));
   const currentIdx = orderStages.indexOf(order.status);
 
-  // Retrieve customer details including GSTIN
-  const matchedCustomer = customers.find(
-    (c) => c.id === order.customerId || c.name === order.customer || c.email === order.email,
-  );
-  const customerGstin = order.gstin || matchedCustomer?.gst || "29AAACB2026D1Z5";
+  // Only this order's or this customer's own GSTIN: a shared name or a blank email is not the same person.
+  const matchedCustomer = customers.find((c) => c.id === order.customerId);
+  const customerGstin = order.gstin || matchedCustomer?.gst;
 
   // Retrieve vendor records involved in this order
   const orderVendors = vendors.filter((v) =>
@@ -523,10 +521,12 @@ function AdminOrderDetail() {
                 {order.email}
               </dd>
             </div>
-            <div className="flex justify-between border-t border-border pt-1.5">
-              <dt className="text-slate">GSTIN</dt>
-              <dd className="font-mono font-semibold text-navy">{customerGstin}</dd>
-            </div>
+            {customerGstin && (
+              <div className="flex justify-between border-t border-border pt-1.5">
+                <dt className="text-slate">GSTIN</dt>
+                <dd className="font-mono font-semibold text-navy">{customerGstin}</dd>
+              </div>
+            )}
             <div className="flex justify-between">
               <dt className="text-slate">Customer ID</dt>
               <dd className="font-mono text-xs text-slate">{order.customerId}</dd>

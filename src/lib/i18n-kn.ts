@@ -1526,6 +1526,7 @@ export const kn: Record<string, string> = {
   "Settings → Workflow Rules → New Workflow Rule · Module: Sales Order · Event Based · Created or Edited · When any field is updated · Edited each time.": "Settings → Workflow Rules → New Workflow Rule · Module: Sales Order · Event Based · Created or Edited · When any field is updated · Edited each time.",
   "Sync from Zoho": "Zoho ದಿಂದ ಸಿಂಕ್ ಮಾಡಿ",
   "The order could not be saved.": "ಆರ್ಡರ್ ಉಳಿಸಲು ಸಾಧ್ಯವಾಗಲಿಲ್ಲ.",
+  "This customer has no saved addresses.": "ಈ ಗ್ರಾಹಕರ ಬಳಿ ಉಳಿಸಿದ ವಿಳಾಸಗಳಿಲ್ಲ.",
   "This customer has no saved address yet. Ask them to add one in My Account → Addresses.": "ಈ ಗ್ರಾಹಕರು ಇನ್ನೂ ಯಾವುದೇ ವಿಳಾಸ ಉಳಿಸಿಲ್ಲ. ನನ್ನ ಖಾತೆ → ವಿಳಾಸಗಳು ನಲ್ಲಿ ಒಂದನ್ನು ಸೇರಿಸಲು ಅವರಿಗೆ ತಿಳಿಸಿ.",
   "This customer has no saved address. Ask them to add one in My Account → Addresses, then try again.": "ಈ ಗ್ರಾಹಕರು ಯಾವುದೇ ವಿಳಾಸ ಉಳಿಸಿಲ್ಲ. ನನ್ನ ಖಾತೆ → ವಿಳಾಸಗಳು ನಲ್ಲಿ ಒಂದನ್ನು ಸೇರಿಸಲು ಅವರಿಗೆ ತಿಳಿಸಿ, ನಂತರ ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ.",
   "this godown": "ಈ ಗೋದಾಮು",
