@@ -1,12 +1,16 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { DataTable, Panel, StatusBadge } from "@/components/panel/widgets";
 import { adminNav } from "@/lib/panel-nav";
 import { inr } from "@/lib/data";
 import { useApp } from "@/lib/store";
+import { supabase } from "@/integrations/supabase/client";
+import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { CustomerDataPanel } from "@/components/customers/CustomerDataPanel";
 
 export const Route = createFileRoute("/admin/customers/$id")({
   head: ({ params }) => ({
@@ -39,9 +43,51 @@ export const Route = createFileRoute("/admin/customers/$id")({
   ),
 });
 
+// The store's `addresses` are only the signed-in person's own, so a customer's are read for that customer.
+function CustomerAddresses({ customerId }: { customerId: string }) {
+  type SavedAddress = { id: string; label: string; line: string; city: string; state: string; pin: string; is_default: boolean };
+  const [saved, setSaved] = useState<SavedAddress[] | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
+  useEffect(() => {
+    if (STATIC_DATA_MODE) {
+      setSaved([]);
+      return;
+    }
+    let active = true;
+    void supabase.from("addresses").select("id,label,line,city,state,pin,is_default").eq("user_id", customerId)
+      .order("is_default", { ascending: false }).order("created_at", { ascending: true })
+      .then(({ data, error }) => {
+        if (!active) return;
+        if (error) {
+          console.error("Could not load saved addresses", error);
+          setLoadFailed(true);
+          return;
+        }
+        setSaved(data ?? []);
+      });
+    return () => { active = false; };
+  }, [customerId]);
+
+  if (loadFailed) return <p className="text-sm text-danger">Could not load saved addresses</p>;
+  if (!saved) return <p className="text-sm text-slate">Loading saved addresses…</p>;
+  if (!saved.length) return <p className="text-sm text-slate">This customer has no saved addresses.</p>;
+  return (
+    <DataTable
+      columns={["Label", "Line", "City", "State", "PIN"]}
+      rows={saved.map((a) => [
+        <>{a.label}{a.is_default ? " (default)" : ""}</>,
+        a.line,
+        a.city,
+        a.state,
+        a.pin,
+      ])}
+    />
+  );
+}
+
 function AdminCustomerDetail() {
   const { id } = Route.useParams();
-  const { customers, orders, reviews, addresses, products, setCustomerStatus } = useApp();
+  const { customers, orders, reviews, setCustomerStatus } = useApp();
   const customer = customers.find((c) => c.id === id);
 
   if (!customer) {
@@ -64,7 +110,6 @@ function AdminCustomerDetail() {
 
   const custOrders = orders.filter((o) => o.customerId === customer.id);
   const custReviews = reviews.filter((r) => r.customerId === customer.id);
-  const wishlist = products.slice(0, 4);
   const completedOrders = custOrders.filter((o) => o.status !== "Cancelled");
   const totalPurchase = completedOrders.reduce((sum, order) => sum + order.amount, 0);
   const totalPaid = completedOrders.reduce(
@@ -127,7 +172,7 @@ function AdminCustomerDetail() {
 
       <Panel
         title="Profile"
-        action={
+        action={customer.status === "deleted" ? undefined : (
           <Button
             variant="outline"
             size="sm"
@@ -138,7 +183,7 @@ function AdminCustomerDetail() {
           >
             {customer.status === "blocked" ? "Unblock Customer" : "Block Customer"}
           </Button>
-        }
+        )}
       >
         <div className="flex flex-wrap items-center gap-4">
           <span className="grid h-14 w-14 shrink-0 place-items-center rounded-full bg-navy/10 text-lg font-bold text-navy">
@@ -182,7 +227,7 @@ function AdminCustomerDetail() {
         </div>
       </Panel>
 
-      <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Panel title="Total Orders">
           <p className="text-2xl font-bold text-navy">{completedOrders.length}</p>
         </Panel>
@@ -197,7 +242,7 @@ function AdminCustomerDetail() {
         </Panel>
       </div>
 
-      <div className="mt-5 grid gap-5 xl:grid-cols-2">
+      <div className="mt-5 grid grid-cols-1 gap-5 xl:grid-cols-2">
         <Panel title="Monthly Purchase Activity">
           {monthlyPerformance.length ? (
             <div className="space-y-3">
@@ -242,11 +287,10 @@ function AdminCustomerDetail() {
 
       <div className="mt-6">
         <Tabs defaultValue="orders">
-          <TabsList>
+          <TabsList className="h-auto flex-wrap justify-start">
             <TabsTrigger value="orders">Orders</TabsTrigger>
             <TabsTrigger value="payments">Payments</TabsTrigger>
             <TabsTrigger value="addresses">Addresses</TabsTrigger>
-            <TabsTrigger value="wishlist">Wishlist</TabsTrigger>
             <TabsTrigger value="reviews">Reviews</TabsTrigger>
             <TabsTrigger value="activity">Activity</TabsTrigger>
           </TabsList>
@@ -298,19 +342,7 @@ function AdminCustomerDetail() {
 
           <TabsContent value="addresses">
             <Panel>
-              <DataTable
-                columns={["Label", "Line", "City", "State", "PIN"]}
-                rows={addresses.map((a) => [a.label, a.line, a.city, a.state, a.pin])}
-              />
-            </Panel>
-          </TabsContent>
-
-          <TabsContent value="wishlist">
-            <Panel>
-              <DataTable
-                columns={["Product", "Category", "Price"]}
-                rows={wishlist.map((p) => [p.name, p.category, inr(p.price)])}
-              />
+              <CustomerAddresses key={customer.id} customerId={customer.id} />
             </Panel>
           </TabsContent>
 
@@ -353,6 +385,8 @@ function AdminCustomerDetail() {
           </TabsContent>
         </Tabs>
       </div>
+
+      <CustomerDataPanel key={customer.id} customerId={customer.id} customerName={customer.name} deleted={customer.status === "deleted"} />
     </PanelLayout>
   );
 }

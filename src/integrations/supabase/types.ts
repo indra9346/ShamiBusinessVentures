@@ -1028,9 +1028,9 @@ export type Database = {
         Relationships: []
       }
       return_requests: {
-        Row: { id: string; order_id: string; order_item_id: string; customer_id: string; product_id: string; vendor_id: string; quantity: number; amount: number; reason: string; status: string; refund_status: string; created_at: string; updated_at: string }
-        Insert: { id?: string; order_id: string; order_item_id: string; customer_id: string; product_id: string; vendor_id: string; quantity: number; amount: number; reason: string; status?: string; refund_status?: string; created_at?: string; updated_at?: string }
-        Update: { id?: string; order_id?: string; order_item_id?: string; customer_id?: string; product_id?: string; vendor_id?: string; quantity?: number; amount?: number; reason?: string; status?: string; refund_status?: string; created_at?: string; updated_at?: string }
+        Row: { id: string; order_id: string; order_item_id: string; customer_id: string | null; product_id: string; vendor_id: string; quantity: number; amount: number; reason: string; status: string; refund_status: string; created_at: string; updated_at: string }
+        Insert: { id?: string; order_id: string; order_item_id: string; customer_id?: string | null; product_id: string; vendor_id: string; quantity: number; amount: number; reason: string; status?: string; refund_status?: string; created_at?: string; updated_at?: string }
+        Update: { id?: string; order_id?: string; order_item_id?: string; customer_id?: string | null; product_id?: string; vendor_id?: string; quantity?: number; amount?: number; reason?: string; status?: string; refund_status?: string; created_at?: string; updated_at?: string }
         Relationships: []
       }
       vendor_payout_requests: {
@@ -1043,6 +1043,12 @@ export type Database = {
         Row: { vendor_id: string; key: string; value: Json; updated_at: string }
         Insert: { vendor_id: string; key: string; value?: Json; updated_at?: string }
         Update: { vendor_id?: string; key?: string; value?: Json; updated_at?: string }
+        Relationships: []
+      }
+      customer_data_requests: {
+        Row: { id: string; kind: string; customer_id: string; customer_label: string; actor_id: string | null; actor_name: string; actor_email: string; summary: Json; login_removed_at: string | null; created_at: string }
+        Insert: { id?: string; kind: string; customer_id: string; customer_label?: string; actor_id?: string | null; actor_name?: string; actor_email?: string; summary?: Json; login_removed_at?: string | null; created_at?: string }
+        Update: { id?: string; kind?: string; customer_id?: string; customer_label?: string; actor_id?: string | null; actor_name?: string; actor_email?: string; summary?: Json; login_removed_at?: string | null; created_at?: string }
         Relationships: []
       }
       customer_settings: {
@@ -1287,6 +1293,9 @@ export type Database = {
         Returns: { order_item_id: string; order_no: string; placed_at: string; order_status: string; payment_status: string; customer_name: string; pin: string; product_name: string; qty: number; line_total: number; kind: string; rate: number; amount: number; status: string; partner_id: string }[]
       }
       admin_update_payout: { Args: { _id: string; _status: string; _reference?: string | null }; Returns: boolean }
+      admin_export_customer_data: { Args: { _customer_id: string }; Returns: Json }
+      admin_customer_deletion_preview: { Args: { _customer_id: string }; Returns: Json }
+      admin_delete_customer_data: { Args: { _customer_id: string; _confirmation: string; _retry?: boolean }; Returns: Json }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
