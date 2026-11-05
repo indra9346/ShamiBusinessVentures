@@ -139,6 +139,42 @@ export function productPatchFromFields(fields: TradeFieldsState, { keepBlankBran
   } satisfies Partial<Product>;
 }
 
+const WEIGHT_UNITS = ["kg", "g", "L", "ml", "pcs"];
+
+/** "850 ml" splits into number and unit. Other wording, such as "4 x 5 L (20 Litres)", stays as typed. */
+function splitWeight(text: string) {
+  const match = text.trim().match(/^(\d+(?:\.\d*)?)\s*([a-zA-Z]+)$/);
+  const unit = match ? WEIGHT_UNITS.find((u) => u.toLowerCase() === match[2]!.toLowerCase()) : undefined;
+  return match && unit ? { amount: match[1]!, unit } : { amount: text, unit: "" };
+}
+
+/** A number on its own, such as "850", doesn't say whether it means grams or millilitres. */
+export function weightNeedsUnit(text: string) {
+  return /^\d+(\.\d+)?$/.test(text.trim());
+}
+
+export function WeightInput({ value, onChange, placeholder }: { value: string; onChange: (weight: string) => void; placeholder?: string }) {
+  const { amount, unit } = splitWeight(value);
+  return (
+    <div className="flex items-center gap-2">
+      <Input
+        value={amount}
+        placeholder={placeholder}
+        onChange={(e) => onChange(unit && e.target.value.trim() ? `${e.target.value.trim()} ${unit}` : e.target.value)}
+      />
+      <select
+        aria-label="Weight unit"
+        className="h-9 w-24 shrink-0 rounded-md border border-input bg-background px-2 text-sm"
+        value={unit}
+        onChange={(e) => onChange(e.target.value ? `${amount.trim()} ${e.target.value}` : amount)}
+      >
+        <option value="">Unit</option>
+        {WEIGHT_UNITS.map((option) => <option key={option} value={option}>{option}</option>)}
+      </select>
+    </div>
+  );
+}
+
 function UnitSelect({ id, value, onChange, label }: { id: string; value: MeasureUnit; onChange: (unit: MeasureUnit) => void; label: string }) {
   return (
     <select
