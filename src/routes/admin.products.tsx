@@ -1747,7 +1747,7 @@ function AdminProductsPanel() {
                   toast.error("Enter valid prices; selling price must not exceed MRP");
                   return;
                 }
-                const tradePatch = productPatchFromFields(editTrade);
+                const tradePatch = productPatchFromFields(editTrade, { keepBlankBrand: true });
                 const saved = await updateProduct(editing.id, {
                   ...tradePatch,
                   name: editForm.name,

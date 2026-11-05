@@ -123,12 +123,16 @@ export function validateTradeFields(fields: TradeFieldsState): string | null {
   return null;
 }
 
-/** The Product fields these inputs set, ready to merge into a new or updated product. */
-export function productPatchFromFields(fields: TradeFieldsState) {
+/**
+ * The Product fields these inputs set, ready to merge into a new or updated product.
+ * A new product with no brand takes the house brand. An edit keeps a blank brand blank,
+ * so a product made by someone else, such as one from Zoho, isn't labelled as ours.
+ */
+export function productPatchFromFields(fields: TradeFieldsState, { keepBlankBrand = false } = {}) {
   const pricing = ratePricingFromFields(fields);
   return {
     ratePricing: pricing ?? undefined,
-    brand: fields.brand.trim() || "Shami Select",
+    brand: fields.brand.trim() || (keepBlankBrand ? "" : "Shami Select"),
     manufacturer: fields.manufacturer.trim() || undefined,
     unit: fields.unit.trim() || undefined,
     hsn: fields.hsn.trim() || undefined,
