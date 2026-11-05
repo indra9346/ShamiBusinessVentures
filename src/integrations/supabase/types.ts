@@ -214,6 +214,17 @@ export type Database = {
       }
       batches: {
         Row: {
+          unit_cost_ex_gst: number | null
+          unit_cost_inc_gst: number | null
+          cost_basis: string | null
+          zoho_bill_id: string
+          zoho_bill_line_id: string
+          zoho_bill_number: string
+          zoho_bill_modified: string
+          zoho_bill_total: number | null
+          bill_flag: string
+          bill_flag_at: string | null
+          bill_checked_at: string | null
           branch_id: string | null
           source: string
           supplier: string
@@ -246,6 +257,17 @@ export type Database = {
           warehouse: string | null
         }
         Insert: {
+          unit_cost_ex_gst?: number | null
+          unit_cost_inc_gst?: number | null
+          cost_basis?: string | null
+          zoho_bill_id?: string
+          zoho_bill_line_id?: string
+          zoho_bill_number?: string
+          zoho_bill_modified?: string
+          zoho_bill_total?: number | null
+          bill_flag?: string
+          bill_flag_at?: string | null
+          bill_checked_at?: string | null
           branch_id?: string | null
           source?: string
           supplier?: string
@@ -278,6 +300,17 @@ export type Database = {
           warehouse?: string | null
         }
         Update: {
+          unit_cost_ex_gst?: number | null
+          unit_cost_inc_gst?: number | null
+          cost_basis?: string | null
+          zoho_bill_id?: string
+          zoho_bill_line_id?: string
+          zoho_bill_number?: string
+          zoho_bill_modified?: string
+          zoho_bill_total?: number | null
+          bill_flag?: string
+          bill_flag_at?: string | null
+          bill_checked_at?: string | null
           branch_id?: string | null
           source?: string
           supplier?: string
@@ -1301,6 +1334,9 @@ export type Database = {
       }
       record_batch_adjustments: { Args: { _rows: Json; _created_by: string | null; _created_by_name: string }; Returns: number }
       apply_zoho_batches: { Args: { _rows: Json }; Returns: Json }
+      create_batches_from_bill: { Args: { _branch_id: string; _bill: Json; _lines: Json; _cost_basis: string; _by: string | null; _by_name: string }; Returns: Json }
+      admin_delete_batch: { Args: { _batch_id: string }; Returns: Json }
+      flag_batch_bill_changes: { Args: { _rows: Json }; Returns: number }
       link_zoho_batch: { Args: { _batch_id: string; _zoho_batch_id: string; _zoho_adjustment_id: string }; Returns: undefined }
       admin_update_batch: { Args: { _batch_id: string; _unit_cost: number; _supplier: string; _purchase_ref: string; _notes: string; _mfg_date: string | null; _expiry_date: string | null }; Returns: undefined }
       order_item_batches: { Args: { _order_id: string }; Returns: { order_item_id: string; batch_code: string; qty: number }[] }

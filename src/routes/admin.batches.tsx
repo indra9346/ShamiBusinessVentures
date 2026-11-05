@@ -2,8 +2,8 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import {
-  ArrowLeft, ChevronRight, Clock3, FileSpreadsheet, IndianRupee, Layers, Mail, MapPin, PackageCheck, PackagePlus, Pencil,
-  Phone, RefreshCw, Search, ShoppingCart, TrendingDown, TrendingUp, UserRound, Warehouse,
+  AlertTriangle, ArrowLeft, ChevronRight, Clock3, FileSpreadsheet, IndianRupee, Layers, Mail, MapPin, PackageCheck, PackagePlus, Pencil,
+  Phone, RefreshCw, Search, ShoppingCart, Trash2, TrendingDown, TrendingUp, UserRound, Warehouse,
 } from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { Panel, scrollToSection, StatCard } from "@/components/panel/widgets";
@@ -14,14 +14,16 @@ import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { downloadXlsx } from "@/lib/xlsx";
 import { supabase } from "@/integrations/supabase/client";
 import {
-  adjustmentReasonLabel, batchAdjustmentSheet, batchReportSheets, buildBatchReport, formatBatchCode, godownCodeOf, isBatchCode, istDate,
-  normalizeBatchCode, searchBatchReport, sumTotals, type BatchAdjustment, type BatchReport, type BatchReportRow, type BatchSale,
+  adjustmentReasonLabel, batchAdjustmentSheet, batchReportSheets, buildBatchReport, costBasesOf, costBasisName, formatBatchCode, istDate,
+  searchBatchReport, sumTotals, type BatchAdjustment, type BatchReport, type BatchReportRow, type BatchSale,
 } from "@/lib/batches";
 import type { BatchData } from "@/lib/batches.functions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { ReceiveFromBillDialog } from "@/components/batches/ReceiveFromBill";
+import { batchDeleteBlocker } from "@/lib/bill-batches";
 import { cn } from "@/lib/utils";
 
 type Search = { godown?: string | undefined; batch?: string | undefined; order?: string | undefined; customer?: string | undefined; tab?: "batches" | "trace" | undefined; q?: string | undefined };
@@ -49,7 +51,8 @@ const todayIst = () => istDate(new Date().toISOString());
  * Admin > Batches: every purchase batch (stock number) per godown — purchased, sold, delivered,
  * lost, available, sales, profit and days to sell out — with step-by-step drill-down
  * (godown > batch > order > customer) and back-tracking (customer or order > batches).
- * "Receive purchase" records a new batch (and sends it to Zoho); Excel downloads the lot.
+ * "Receive purchase" makes a batch per line of a Zoho bill (stock comes only from the bill, so batches never change
+ * stock); Excel downloads the lot.
  */
 function AdminBatches() {
   const search = Route.useSearch();
@@ -83,6 +86,17 @@ function AdminBatches() {
     }
   }, []);
   useEffect(() => { void load(); }, [load]);
+  // Bills edited, voided or deleted in Zoho after their batches were made: flagged on the batches (at most every 30 minutes).
+  useEffect(() => {
+    if (STATIC_DATA_MODE) return;
+    void (async () => {
+      try {
+        const { checkBatchBills } = await import("@/lib/zoho-commerce.functions");
+        const result = await checkBatchBills();
+        if (result.checked) await load();
+      } catch { /* the flags wait for the next visit; the page works without them */ }
+    })();
+  }, [load]);
   useEffect(() => {
     if (STATIC_DATA_MODE) return;
     let timer: number | null = null;
@@ -159,13 +173,14 @@ function AdminBatches() {
         search.tab === "trace"
           ? <TraceView report={report} search={search} go={go} />
           : selected
-            ? <BatchDetail row={selected} report={report} adjustments={data.adjustments} orderId={search.order} go={go} onEdit={() => setEditRow(selected)} />
+            ? <BatchDetail row={selected} report={report} data={data} adjustments={data.adjustments} orderId={search.order} go={go} onEdit={() => setEditRow(selected)}
+                onDeleted={async () => { go({ batch: undefined, order: undefined }); await load(); }} />
             : <BatchList report={report} data={data} search={search} go={go} status={status} setStatus={setStatus}
                 productFilter={productFilter} setProductFilter={setProductFilter} />
       )}
 
-      {data && <ReceiveDialog open={receiveOpen} onOpenChange={setReceiveOpen} data={data} defaultGodown={search.godown}
-        onSaved={async (batchId) => { await load(); go({ tab: undefined, batch: batchId, order: undefined, customer: undefined }); }} />}
+      {data && <ReceiveFromBillDialog open={receiveOpen} onOpenChange={setReceiveOpen} godowns={data.godowns.filter((g) => g.active)} defaultGodown={search.godown}
+        onSaved={async (batchId) => { await load(); if (batchId) go({ tab: undefined, batch: batchId, order: undefined, customer: undefined }); }} />}
       {editRow && <EditDialog row={editRow} onClose={() => setEditRow(null)} onSaved={async () => { setEditRow(null); await load(); }} />}
     </PanelLayout>
   );
@@ -204,6 +219,16 @@ function BatchList({ report, data, search, go, status, setStatus, productFilter,
         <StatCard onClick={() => openList("lost")} compact label="Stock lost" value={money(totals.lossValue)} icon={TrendingDown} description={`${units(totals.lost)} units (counts, damage)`} />
         <StatCard onClick={() => openList("soldout")} compact label="Avg. days to sell out" value={totals.averageDaysToSellOut === null ? "—" : String(totals.averageDaysToSellOut)} icon={Clock3} description="sold-out batches" />
       </div>
+
+      {(() => {
+        const bases = costBasesOf(search.godown ? report.rows.filter((r) => r.batch.branch_id === search.godown) : report.rows);
+        return bases.length > 1 ? (
+          <p className="flex gap-2 rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900">
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+            {`These totals add up batches costed differently (${bases.map((basis) => costBasisName({ cost_basis: basis === "typed" ? null : basis }).toLowerCase()).join(", ")}). Each batch shows which cost it uses.`}
+          </p>
+        ) : null;
+      })()}
 
       {!search.godown && (
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
@@ -338,6 +363,10 @@ function FlowBar({ row, large }: { row: BatchReportRow; large?: boolean }) {
 }
 
 function ZohoBadge({ row }: { row: BatchReportRow }) {
+  if (row.batch.bill_flag)
+    return <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800" title={row.batch.bill_flag}>Bill changed</span>;
+  if (row.batch.zoho_bill_id)
+    return <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-800" title={costBasisName(row.batch)}>{`Bill ${row.batch.zoho_bill_number || row.batch.purchase_ref}`}</span>;
   if (!row.batch.zoho_batch_id)
     return <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate">{row.batch.zoho_adjustment_id ? "Zoho stock" : "Website"}</span>;
   if (row.zohoGap !== null && Math.abs(row.zohoGap) > 0.001)
@@ -347,10 +376,30 @@ function ZohoBadge({ row }: { row: BatchReportRow }) {
 
 // ------------------------------------------------------------------ step 3 + 4: batch, order, customer
 
-function BatchDetail({ row, report, adjustments, orderId, go, onEdit }: {
-  row: BatchReportRow; report: BatchReport; adjustments: BatchAdjustment[]; orderId?: string | undefined;
-  go: (next: Partial<Search>) => void; onEdit: () => void;
+function BatchDetail({ row, report, data, adjustments, orderId, go, onEdit, onDeleted }: {
+  row: BatchReportRow; report: BatchReport; data: BatchData; adjustments: BatchAdjustment[]; orderId?: string | undefined;
+  go: (next: Partial<Search>) => void; onEdit: () => void; onDeleted: () => Promise<void>;
 }) {
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  // The same rule as admin_delete_batch in the database, which has the last word.
+  const deleteBlocker = batchDeleteBlocker(row.batch, data.allocations.filter((a) => a.batch_id === row.batch.id),
+    adjustments.filter((a) => a.batch_id === row.batch.id).length);
+  const remove = async (): Promise<void> => {
+    setDeleting(true);
+    const { data: gone, error } = await supabase.rpc("admin_delete_batch", { _batch_id: row.batch.id });
+    setDeleting(false);
+    if (error) return void toast.error("Could not delete the batch", { description: error.message });
+    const adjustment = String((gone as { zoho_adjustment_id?: string } | null)?.zoho_adjustment_id ?? "");
+    toast.success(`Batch ${row.batch.batch_code} deleted`, {
+      description: adjustment
+        ? `Stock is unchanged. This batch once posted a Zoho stock adjustment (${row.batch.batch_code}); delete that adjustment in Zoho yourself if it is still there.`
+        : "Stock is unchanged.",
+      duration: adjustment ? 15000 : 5000,
+    });
+    setConfirmDelete(false);
+    await onDeleted();
+  };
   const sales = report.sales.filter((s) => s.batchId === row.batch.id);
   const order = orderId ? sales.find((s) => s.orderId === orderId) : undefined;
   // Step 4 opens below the batch summary: bring it into view.
@@ -374,7 +423,9 @@ function BatchDetail({ row, report, adjustments, orderId, go, onEdit }: {
             {b.purchase_ref && <span>{`Bill / PO ${b.purchase_ref}`}</span>}
           </p>
           <p className="flex flex-wrap gap-x-2 text-xs text-slate [&>span+span]:before:mr-2 [&>span+span]:before:content-['·']">
-            <span>{`Cost ${money(b.unit_cost)} per unit`}</span>
+            <span>{`${costBasisName(b)}: ${money(b.unit_cost)} per unit`}</span>
+            {b.cost_basis && b.unit_cost_ex_gst !== null && b.unit_cost_ex_gst !== undefined && b.unit_cost_inc_gst !== null && b.unit_cost_inc_gst !== undefined
+              && <span>{b.cost_basis === "inc_gst" ? `Without GST ${money(Number(b.unit_cost_ex_gst))}` : `With GST ${money(Number(b.unit_cost_inc_gst))}`}</span>}
             {b.received_by_name && <span>{`Received by ${b.received_by_name}`}</span>}
             {b.source === "zoho" && <span>Made in Zoho</span>}
             {b.expiry_date && <span>{`Expiry ${day(b.expiry_date)}`}</span>}
@@ -383,8 +434,38 @@ function BatchDetail({ row, report, adjustments, orderId, go, onEdit }: {
         <div className="flex flex-col items-end gap-2">
           <ZohoBadge row={row} />
           <Button size="sm" variant="outline" onClick={onEdit}><Pencil className="mr-1.5 h-3.5 w-3.5" />Edit details</Button>
+          {deleteBlocker
+            ? <p className="max-w-[220px] text-right text-[11px] text-slate">{deleteBlocker}</p>
+            : <Button size="sm" variant="outline" className="border-red-200 text-red-700 hover:bg-red-50" onClick={() => setConfirmDelete(true)}><Trash2 className="mr-1.5 h-3.5 w-3.5" />Delete batch</Button>}
         </div>
       </div>
+
+      {b.bill_flag && (
+        <p className="flex gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          <span>{`${b.bill_flag}. This batch was not changed: check bill ${b.zoho_bill_number || b.purchase_ref} in Zoho and decide what to do with the batch.`}</span>
+        </p>
+      )}
+
+      <Dialog open={confirmDelete} onOpenChange={setConfirmDelete}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{`Delete batch ${b.batch_code}?`}</DialogTitle>
+            <DialogDescription>Nothing has been sold or reserved from it. Deleting it removes only the batch record: stock does not change, here or in Zoho.</DialogDescription>
+          </DialogHeader>
+          {b.zoho_adjustment_id && (
+            <p className="flex gap-2 rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900">
+              <AlertTriangle className="h-4 w-4 shrink-0" />
+              {`This batch was received the old way and posted a Zoho stock adjustment (reference ${b.batch_code}). The website does not delete anything in Zoho: delete that adjustment in Zoho yourself if it is still there.`}
+            </p>
+          )}
+          {b.zoho_bill_id && <p className="text-xs text-slate">{`Bill ${b.zoho_bill_number || b.purchase_ref} stays in Zoho; its line can be made into a batch again.`}</p>}
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setConfirmDelete(false)}>Keep it</Button>
+            <Button className="bg-red-700 text-white hover:bg-red-800" disabled={deleting} onClick={() => void remove()}>{deleting ? "Deleting…" : "Delete batch"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Panel title="Stock flow">
         <div className="grid gap-4 p-4">
@@ -400,7 +481,7 @@ function BatchDetail({ row, report, adjustments, orderId, go, onEdit }: {
           <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-5">
             <Figure label="Purchase value" value={money(row.purchaseValue)} />
             <Figure label="Sales (excl. GST)" value={money(row.sales)} />
-            <Figure label="Cost of sold" value={money(row.costOfSold)} />
+            <Figure label={b.cost_basis === "inc_gst" ? "Cost of sold (with GST)" : b.cost_basis === "ex_gst" ? "Cost of sold (without GST)" : "Cost of sold"} value={money(row.costOfSold)} />
             <Figure label="Stock lost" value={money(row.lossValue)} tone={row.lossValue > 0 ? "bad" : undefined} />
             <Figure label={row.profit < 0 ? "Loss" : "Profit"} value={money(row.profit)} tone={row.profit < 0 ? "bad" : "good"} />
           </div>
@@ -609,101 +690,6 @@ function TraceView({ report, search, go }: { report: BatchReport; search: Search
 
 // ------------------------------------------------------------------ receive a purchase
 
-function ReceiveDialog({ open, onOpenChange, data, defaultGodown, onSaved }: {
-  open: boolean; onOpenChange: (open: boolean) => void; data: BatchData; defaultGodown?: string | undefined; onSaved: (batchId: string) => Promise<void>;
-}) {
-  const godowns = data.godowns.filter((g) => g.active);
-  const [form, setForm] = useState({ branchId: "", productId: "", quantity: "", unitCost: "", purchaseDate: todayIst(), batchCode: "", supplier: "", purchaseRef: "", mfgDate: "", expiryDate: "", notes: "" });
-  const [busy, setBusy] = useState(false);
-  // A cost the admin typed is kept when the product changes; otherwise the product's purchase rate fills it.
-  const [costTyped, setCostTyped] = useState(false);
-  useEffect(() => {
-    // Only an active godown (the select lists only those).
-    const usable = (id?: string) => (id && godowns.some((g) => g.id === id) ? id : "");
-    if (open) setForm((f) => ({ ...f, branchId: usable(f.branchId) || usable(defaultGodown) || godowns.find((g) => g.zohoLinked)?.id || godowns[0]?.id || "" }));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
-  const product = data.products.find((p) => p.id === form.productId);
-  const godown = data.godowns.find((g) => g.id === form.branchId);
-  const autoCode = godown ? (() => {
-    const prefix = formatBatchCode(godownCodeOf(godown), form.purchaseDate, 1).slice(0, -2);
-    const used = [...data.batches.map((b) => b.batch_code), ...data.reservedCodes].map((c) => c.toUpperCase()).filter((c) => c.startsWith(prefix)).map((c) => Number(c.slice(prefix.length))).filter(Number.isFinite);
-    return `${prefix}${String((used.length ? Math.max(...used) : 0) + 1).padStart(2, "0")}`;
-  })() : "";
-  const zohoNote = !product || !godown ? "" : !data.zohoStockMaster || !product.zohoLinked || !godown.zohoLinked
-    ? "Website only: this product or godown is not linked to Zoho stock, so the stock goes to Zoho with the next sync."
-    : product.zohoTracksBatches
-      ? `Zoho tracks batches for this item: Zoho gets batch ${normalizeBatchCode(form.batchCode) || autoCode} at ${godown.name}.`
-      : `Zoho gets the stock at ${godown.name}, with the batch number on the Zoho stock adjustment and on the sales orders, invoices and packages of orders from this batch.`;
-  const set = (key: keyof typeof form) => (e: { target: { value: string } }) => setForm((f) => ({ ...f, [key]: e.target.value }));
-  const submit = async (): Promise<void> => {
-    const quantity = Number(form.quantity), unitCost = Number(form.unitCost);
-    if (!form.branchId || !form.productId) return void toast.error("Choose the godown and the product");
-    if (!(quantity > 0)) return void toast.error("Enter the quantity received");
-    if (!(unitCost >= 0) || form.unitCost === "") return void toast.error("Enter the purchase cost per unit");
-    if (form.batchCode && !isBatchCode(form.batchCode)) return void toast.error("Batch number: 2-40 letters, digits, - / _ .");
-    setBusy(true);
-    try {
-      const { receiveBatchPurchase } = await import("@/lib/zoho-commerce.functions");
-      const saved = await receiveBatchPurchase({ data: {
-        branchId: form.branchId, productId: form.productId, quantity, unitCost, purchaseDate: form.purchaseDate,
-        batchCode: form.batchCode, supplier: form.supplier, purchaseRef: form.purchaseRef, notes: form.notes,
-        mfgDate: form.mfgDate || null, expiryDate: form.expiryDate || null,
-      } });
-      toast.success(`Batch ${saved.batchCode} received`, {
-        description: saved.zoho === "batch" ? "Zoho has the batch at this godown." : saved.zoho === "stock" ? "Zoho has the stock at this godown." : "Website only; Zoho gets the stock at the next sync.",
-      });
-      onOpenChange(false);
-      setCostTyped(false);
-      setForm((f) => ({ ...f, productId: "", quantity: "", unitCost: "", batchCode: "", supplier: "", purchaseRef: "", mfgDate: "", expiryDate: "", notes: "" }));
-      await onSaved(saved.batchId);
-    } catch (cause) {
-      toast.error("Could not receive the purchase", { description: cause instanceof Error ? cause.message : String(cause) });
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-xl">
-        <DialogHeader>
-          <DialogTitle>Receive purchase</DialogTitle>
-          <DialogDescription>One purchase = one batch with its own stock number. Orders from this godown take the oldest batch first.</DialogDescription>
-        </DialogHeader>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Godown"><select value={form.branchId} onChange={set("branchId")} className="h-10 w-full rounded-md border border-input bg-white px-2 text-sm">{godowns.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}</select></Field>
-          <Field label="Purchase date"><Input type="date" value={form.purchaseDate} max={todayIst()} onChange={set("purchaseDate")} /></Field>
-          <Field label="Product" wide>
-            <select value={form.productId} onChange={(e) => { const p = data.products.find((x) => x.id === e.target.value); setForm((f) => ({ ...f, productId: e.target.value, unitCost: costTyped ? f.unitCost : (p?.purchasePrice ? String(p.purchasePrice) : "") })); }} className="h-10 w-full rounded-md border border-input bg-white px-2 text-sm">
-              <option value="">Choose a product…</option>
-              {data.products.map((p) => <option key={p.id} value={p.id}>{p.name}{p.sku ? ` (${p.sku})` : ""}</option>)}
-            </select>
-            {product && godown && <span className="mt-1 block text-xs text-slate">{`Now at ${godown.name}: ${units(product.stock[godown.id] ?? 0)}`}</span>}
-          </Field>
-          <Field label="Quantity received"><Input type="number" min="0" step="any" value={form.quantity} onChange={set("quantity")} placeholder="e.g. 50" /></Field>
-          <Field label="Purchase cost per unit (₹)"><Input type="number" min="0" step="0.01" value={form.unitCost} onChange={(e) => { setCostTyped(e.target.value !== ""); set("unitCost")(e); }} placeholder="landing cost" /></Field>
-          <Field label="Batch / stock no." wide>
-            <Input value={form.batchCode} onChange={set("batchCode")} placeholder={autoCode ? `${autoCode} (automatic)` : "automatic"} className="font-mono uppercase placeholder:normal-case" />
-          </Field>
-          <Field label="Supplier"><Input value={form.supplier} onChange={set("supplier")} placeholder="optional" /></Field>
-          <Field label="Bill / PO no."><Input value={form.purchaseRef} onChange={set("purchaseRef")} placeholder="optional" /></Field>
-          <Field label="Manufactured on"><Input type="date" value={form.mfgDate} onChange={set("mfgDate")} /></Field>
-          <Field label="Expiry date"><Input type="date" value={form.expiryDate} onChange={set("expiryDate")} /></Field>
-          <Field label="Notes" wide><Textarea rows={2} value={form.notes} onChange={set("notes")} placeholder="optional" /></Field>
-        </div>
-        {zohoNote && <p className="rounded-md border border-border bg-ivory p-2 text-xs text-charcoal">{zohoNote}</p>}
-        {product && Number(form.quantity) > 0 && Number(form.unitCost) >= 0 && (
-          <p className="text-sm font-semibold">{`Purchase value: ${money(Number(form.quantity) * Number(form.unitCost))}`}</p>
-        )}
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button className="bg-navy text-white" disabled={busy} onClick={() => void submit()}>{busy ? "Saving…" : "Receive batch"}</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 function Field({ label, wide, children }: { label: string; wide?: boolean; children: ReactNode }) {
   return <label className={cn("grid gap-1 text-xs font-semibold text-slate", wide && "sm:col-span-2")}>{label}{children}</label>;
 }
@@ -712,6 +698,8 @@ function EditDialog({ row, onClose, onSaved }: { row: BatchReportRow; onClose: (
   const b = row.batch;
   const [form, setForm] = useState({ unitCost: String(b.unit_cost), supplier: b.supplier, purchaseRef: b.purchase_ref, notes: b.notes, mfgDate: b.mfg_date ?? "", expiryDate: b.expiry_date ?? "" });
   const [busy, setBusy] = useState(false);
+  // A batch made from a Zoho bill takes its cost, supplier and bill number from the bill.
+  const fromBill = Boolean(b.zoho_bill_id);
   const set = (key: keyof typeof form) => (e: { target: { value: string } }) => setForm((f) => ({ ...f, [key]: e.target.value }));
   const save = async (): Promise<void> => {
     const cost = Number(form.unitCost);
@@ -731,12 +719,14 @@ function EditDialog({ row, onClose, onSaved }: { row: BatchReportRow; onClose: (
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Batch {b.batch_code}</DialogTitle>
-          <DialogDescription>Quantities change only through orders, receipts and stock counts. A new cost also updates the profit of sales already made.</DialogDescription>
+          <DialogDescription>{fromBill
+            ? `Cost, supplier and bill number come from bill ${b.zoho_bill_number || b.purchase_ref} (${costBasisName(b).toLowerCase()}). Correct the bill in Zoho to change them.`
+            : "Quantities change only through orders and stock counts. A new cost also updates the profit of sales already made."}</DialogDescription>
         </DialogHeader>
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Purchase cost per unit (₹)"><Input type="number" min="0" step="0.01" value={form.unitCost} onChange={set("unitCost")} /></Field>
-          <Field label="Supplier"><Input value={form.supplier} onChange={set("supplier")} /></Field>
-          <Field label="Bill / PO no."><Input value={form.purchaseRef} onChange={set("purchaseRef")} /></Field>
+          <Field label="Purchase cost per unit (₹)"><Input type="number" min="0" step="0.01" value={form.unitCost} onChange={set("unitCost")} disabled={fromBill} /></Field>
+          <Field label="Supplier"><Input value={form.supplier} onChange={set("supplier")} disabled={fromBill} /></Field>
+          <Field label="Bill / PO no."><Input value={form.purchaseRef} onChange={set("purchaseRef")} disabled={fromBill} /></Field>
           <Field label="Manufactured on"><Input type="date" value={form.mfgDate} onChange={set("mfgDate")} /></Field>
           <Field label="Expiry date"><Input type="date" value={form.expiryDate} onChange={set("expiryDate")} /></Field>
           <Field label="Notes" wide><Textarea rows={2} value={form.notes} onChange={set("notes")} /></Field>
