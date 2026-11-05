@@ -10,6 +10,7 @@ import {
   batchLineText, isBatchCode, normalizeBatchCode, packageLinesWithBatches, planBatchGain, planBatchLoss, planZohoBatchIn, planZohoBatchOut,
   zohoBatchesAtLocation, zohoTracksBatches, type BatchShare, type StockBatch, type ZohoBatch,
 } from "@/lib/batches";
+import { awaitingImportApproval, zohoItemAsHiddenProduct, zohoItemImportable } from "@/lib/zoho-item-import";
 import {
   cleanEmailList, godownPricesFromPricebook, godownStockFromZohoItem, mergeGodownPrices, newOrderEmail, parseZohoItemSyncVendorIds, pendingOrderQty, sameGodownPrices,
   zohoPricebookItemsFor, reconcileCatalog, reconcileCustomers, reconcileOrders, shouldRetryZohoCall,
@@ -1964,6 +1965,9 @@ async function syncZohoCatalogItem(
   const link = savedLink as ZohoItemLink | null;
   const fingerprint = await catalogFingerprint(product);
 
+  // A new Zoho item waiting for an admin stays as it is in Zoho: the rule below would switch it off there.
+  if (awaitingImportApproval(product.status, product.payload)) return;
+
   // A rejected or disabled marketplace product must never be sold as an
   // active item through Zoho. Existing links are retained for audit/recovery.
   if (product.status !== "approved" || !product.active) {
@@ -3335,13 +3339,71 @@ export async function handleZohoItemWebhook(itemId: string) {
   const { data: link } = await db.from("zoho_item_links")
     .select("product_id,zoho_item_id,updated_at,last_polled_at,last_zoho_modified_at,app_fingerprint")
     .eq("zoho_item_id", itemId).maybeSingle();
-  if (!link) return "not_grain_bazar";
   const { region, organizationId, token } = await zohoOrderContext(db);
   const response = await inventoryRequest<{ item?: Record<string, unknown> }>(
     region, organizationId, token, `items/${encodeURIComponent(itemId)}`, "GET",
   );
-  if (!response.item) return "missing";
+  if (!response.item) return link ? "missing" : "not_grain_bazar";
+  if (!link) return importNewZohoItem(db, response.item);
   return applyZohoItemChange(db, link as ZohoItemLink, response.item, { region, organizationId, token });
+}
+
+/** A new Zoho item becomes a hidden website product, linked so its later edits and stock come in too. */
+async function importNewZohoItem(db: Awaited<ReturnType<typeof dbAdmin>>, item: Record<string, unknown>) {
+  if (!zohoItemImportable(item)) return "not_grain_bazar" as const;
+  const [vendorId] = await zohoItemSyncVendorIds(db);
+  if (!vendorId) return "not_grain_bazar" as const;
+  const { data: sibling } = await db.from("catalog_products").select("payload").eq("vendor_id", vendorId).limit(1).maybeSingle();
+  const row = zohoItemAsHiddenProduct(item, vendorId, str(plainObject(sibling?.payload)["vendor"]));
+  // Two products with one SKU would push different stock to one Zoho item. A person has to sort that out.
+  const { data: sameSku } = await db.from("catalog_products").select("id,vendor_id").eq("payload->>sku", row.payload.sku);
+  if ((sameSku ?? []).some((other) => !other.vendor_id.startsWith("zoho:"))) {
+    console.warn(zohoLogLine("zoho_item_import_skipped", { zohoId: str(item["item_id"]), reason: "SKU already on a website product" }));
+    return "sku_in_use" as const;
+  }
+  const now = new Date().toISOString();
+  const { data: created, error } = await db.rpc("import_zoho_catalog_item", {
+    _id: row.id,
+    _vendor_id: row.vendor_id,
+    _category: row.category,
+    _payload: row.payload as Json,
+    _zoho_item_id: str(item["item_id"]),
+    _zoho_modified_at: str(item["last_modified_time"]) || now,
+    _fingerprint: await catalogFingerprint({ ...row, payload: row.payload as Json, created_at: now, updated_at: now } as CatalogProduct),
+  });
+  if (error) throw new Error("Could not bring the new Zoho item into Grain Bazar");
+  if (!created) return "not_grain_bazar" as const;
+  console.info(zohoLogLine("zoho_item_imported_hidden", { zohoId: str(item["item_id"]), productId: row.id }));
+  return "imported_hidden" as const;
+}
+
+/** Catch-up for new Zoho items: an edit in Zoho Commerce, for one, doesn't reach the webhook. */
+async function importNewZohoItems(db: Awaited<ReturnType<typeof dbAdmin>>, region: Region, organizationId: string, token: string) {
+  const rows: Record<string, unknown>[] = [];
+  for (let page = 1; page <= 5; page += 1) {
+    const result = await inventoryRequest<{ items?: Record<string, unknown>[] }>(
+      region, organizationId, token, "items", "GET", undefined, { page: String(page), per_page: "200" },
+    );
+    rows.push(...(result.items ?? []));
+    if ((result.items ?? []).length < 200) break;
+  }
+  const fresh = rows.filter(zohoItemImportable);
+  const summary = { found: fresh.length, imported: 0, failed: 0 };
+  if (!fresh.length) return summary;
+  const { data: links } = await db.from("zoho_item_links").select("zoho_item_id").in("zoho_item_id", fresh.map((row) => str(row["item_id"])));
+  const linked = new Set((links ?? []).map((link) => link.zoho_item_id));
+  for (const row of fresh.filter((candidate) => !linked.has(str(candidate["item_id"]))).slice(0, 20)) {
+    try {
+      const full = await inventoryRequest<{ item?: Record<string, unknown> }>(
+        region, organizationId, token, `items/${encodeURIComponent(str(row["item_id"]))}`, "GET",
+      );
+      if (full.item && await importNewZohoItem(db, full.item) === "imported_hidden") summary.imported += 1;
+    } catch (cause) {
+      summary.failed += 1;
+      console.warn(`Could not bring in Zoho item ${str(row["item_id"])}:`, cause);
+    }
+  }
+  return summary;
 }
 
 /** Catch-up for Zoho -> Grain Bazar items: applies the most recently changed linked items. */
@@ -4228,6 +4290,8 @@ async function processZohoSyncOutboxRun(
       .then(() => pollZohoOrderFulfillment(db, region, connection.organization_id, token, limit))),
     withZohoPurpose("Hourly check: products", () => pollZohoCatalogChanges(db, region, connection.organization_id, token, limit)),
   ]);
+  const newItems = await withZohoPurpose("Hourly check: new items", () => importNewZohoItems(db, region, connection.organization_id, token))
+    .catch((cause: unknown) => ({ found: 0, imported: 0, failed: 1, errors: [cause instanceof Error ? cause.message : String(cause)] }));
   // Godown prices (Zoho price lists) and godown stock (Zoho locations), both ways. After the
   // catalogue pull, so new item links are in place; after the order jobs, so new sales orders
   // already hold their stock in Zoho.
@@ -4244,6 +4308,7 @@ async function processZohoSyncOutboxRun(
     inboundContacts: contacts,
     inboundFulfillment: fulfillment,
     inboundCatalog: catalog,
+    newItems,
     godownPrices,
     godownStock,
   };
