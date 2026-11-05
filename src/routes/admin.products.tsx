@@ -24,6 +24,8 @@ import {
   ProductTradeFields,
   emptyTradeFields,
   productPatchFromFields,
+  WeightInput,
+  weightNeedsUnit,
   ratePricingFromFields,
   tradeFieldsFromProduct,
   validateTradeFields,
@@ -583,6 +585,10 @@ function AdminProductsPanel() {
       return;
     }
     const id = `P-${crypto.randomUUID()}`;
+    if (weightNeedsUnit(form.weight)) {
+      toast.error("Choose kg, g, L, ml or pcs beside the weight");
+      return;
+    }
     const tradePatch = productPatchFromFields(trade);
     if (!codeDuplicateOk && duplicatesToConfirm(products, formCode, { weight: form.weight.trim(), ratePricing: tradePatch.ratePricing }).length > 0) {
       toast.error(`An active product already has code ${formCode} in this pack size`, { description: "Look at the warning under Product code, and tick it if you do want both." });
@@ -1115,9 +1121,9 @@ function AdminProductsPanel() {
                   />
                   <div>
                     <Label>Weight / Capacity</Label>
-                    <Input
+                    <WeightInput
                       value={form.weight}
-                      onChange={(e) => setForm({ ...form, weight: e.target.value })}
+                      onChange={(weight) => setForm((current) => ({ ...current, weight }))}
                       placeholder="e.g. 25 kg bag"
                     />
                   </div>
@@ -1574,9 +1580,9 @@ function AdminProductsPanel() {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <Label>Weight / Capacity</Label>
-                <Input
+                <WeightInput
                   value={editForm.weight}
-                  onChange={(e) => setEditForm({ ...editForm, weight: e.target.value })}
+                  onChange={(weight) => setEditForm((current) => ({ ...current, weight }))}
                 />
               </div>
               <div>
@@ -1709,6 +1715,10 @@ function AdminProductsPanel() {
               disabled={editImageUploading}
               onClick={async () => {
                 if (!editing) return;
+                if (weightNeedsUnit(editForm.weight)) {
+                  toast.error("Choose kg, g, L, ml or pcs beside the weight");
+                  return;
+                }
                 if (editCodeBox && editCodeBox !== editForm.productCode) {
                   toast.error(`“${editCodeBox}” in the code box is not a code you can use`, { description: "Correct it, or clear the box to go on." });
                   return;
