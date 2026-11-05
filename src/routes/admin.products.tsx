@@ -382,6 +382,7 @@ function AdminProductsPanel() {
     requiredStock: "",
     status: "approved" as "approved" | "pending" | "rejected",
     pricingDisplayMode: DEFAULT_PRICING_DISPLAY_MODE as PricingDisplayMode,
+    category: "",
     subcategory: "",
     productCode: "",
   });
@@ -1368,6 +1369,7 @@ function AdminProductsPanel() {
                       requiredStock: String(p.requiredStock ?? 0),
                       status: p.status,
                       pricingDisplayMode: getPricingDisplayMode(p),
+                      category: p.category,
                       subcategory: p.subcategory,
                       productCode: p.productCode ?? "",
                     };
@@ -1439,7 +1441,7 @@ function AdminProductsPanel() {
             {editing && (
               <ProductCodePicker
                 mode="edit"
-                category={editing.category}
+                category={editForm.category}
                 value={editForm.productCode}
                 onSelect={(fill) => setEditForm((current) => ({ ...current, productCode: fill.code }))}
                 onClear={() => { setEditForm((current) => ({ ...current, productCode: "" })); setEditCodeDuplicateOk(false); }}
@@ -1449,11 +1451,59 @@ function AdminProductsPanel() {
                 onUse={(patch) => setEditForm((current) => ({ ...current, ...patch }))}
                 pack={{ weight: editForm.weight, ratePricing: ratePricingFromFields(editTrade) ?? undefined }}
                 excludeProductId={editing.id}
-                subcategories={categoryChoices.find((c) => c.name === editing.category)?.subs ?? []}
+                subcategories={categoryChoices.find((c) => c.name === editForm.category)?.subs ?? []}
                 duplicateOk={editCodeDuplicateOk}
                 onDuplicateOk={setEditCodeDuplicateOk}
               />
             )}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>Category</Label>
+                <Select
+                  value={editForm.category}
+                  onValueChange={(v) => {
+                    // Codes belong to one category, so a new category takes the code off.
+                    setEditCodeDuplicateOk(false);
+                    setEditForm((current) => ({
+                      ...current,
+                      category: v,
+                      subcategory: categoryChoices.find((c) => c.name === v)?.subs[0] ?? v,
+                      productCode: v === current.category ? current.productCode : "",
+                    }));
+                  }}
+                >
+                  <SelectTrigger aria-label="Category">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {/* A product can hold a category that isn't on the list, such as Uncategorized from Zoho. */}
+                    {[...new Set([...categoryChoices.map((c) => c.name), editForm.category].filter(Boolean))].map((name) => (
+                      <SelectItem key={name} value={name}>
+                        {name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Subcategory</Label>
+                <Select
+                  value={editForm.subcategory}
+                  onValueChange={(v) => setEditForm((current) => ({ ...current, subcategory: v }))}
+                >
+                  <SelectTrigger aria-label="Subcategory">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {[...new Set([...(categoryChoices.find((c) => c.name === editForm.category)?.subs ?? []), editForm.subcategory].filter(Boolean))].map((name) => (
+                      <SelectItem key={name} value={name}>
+                        {name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
             <div>
               <Label>Name</Label>
               <Input
@@ -1714,11 +1764,12 @@ function AdminProductsPanel() {
                   requiredStock: Number(editForm.requiredStock),
                   status: editForm.status,
                   pricingDisplayMode: editForm.pricingDisplayMode,
+                  category: editForm.category,
                   subcategory: editForm.subcategory,
                 });
                 if (saved) {
                   if (codeChanged && !(await setProductCode(editing.id, editForm.productCode || undefined))) return;
-                  if (editForm.subcategory !== editing.subcategory) await ensureSubcategory(editing.category, editForm.subcategory);
+                  if (editForm.subcategory !== editing.subcategory) await ensureSubcategory(editForm.category, editForm.subcategory);
                   toast.success(`${editForm.name} updated`);
                   setEditing(null);
                 }
