@@ -1249,6 +1249,7 @@ export type Database = {
       apply_zoho_branch_prices: { Args: { _branch_id: string; _pricebook_name: string; _prices: Json; _read_at: string }; Returns: number }
       apply_zoho_branch_stock: { Args: { _branch_id: string; _product_id: string; _stock: number; _read_at: string }; Returns: number | null }
       branch_pending_order_qty: { Args: { _branch_id: string }; Returns: { product_id: string; qty: number }[] }
+      import_zoho_catalog_item: { Args: { _id: string; _vendor_id: string; _category: string; _payload: Json; _zoho_item_id: string; _zoho_modified_at: string; _fingerprint: string }; Returns: boolean }
       apply_zoho_catalog_item: { Args: { _product_id: string; _item: Json; _expected_updated_at: string }; Returns: undefined }
       finish_zoho_sync_job: { Args: { _id: string; _status: string; _error?: string | null }; Returns: undefined }
       submit_contact_enquiry: { Args: { _name: string; _email: string; _phone: string | null; _message: string; _metadata?: Json }; Returns: string }
