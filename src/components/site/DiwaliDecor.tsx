@@ -133,6 +133,85 @@ export function HeaderCrackers() {
   );
 }
 
+type LanternColour = "saffron" | "marigold" | "kumkum" | "rose";
+// [left %, width, seconds to rise, start offset s, sideways drift px, sway seconds, colour]
+type Lantern = [number, number, number, number, number, number, LanternColour];
+// Header (home page): small lanterns drifting up behind the search and icons (kept clear of the logo, and on phones
+// only on the right half, where the logo is not). Width in px.
+const HEADER_LANTERNS: Lantern[] = [
+  [6, 15, 12, 2, 10, 4.4, "saffron"], [2, 12, 14, 9, -8, 5.1, "marigold"], [33, 17, 11, 5, 12, 4.0, "kumkum"],
+  [47, 13, 13, 11, -10, 4.8, "saffron"], [61, 16, 12, 1, 8, 5.4, "rose"], [74, 12, 14, 7, -12, 4.2, "marigold"],
+  [88, 15, 11, 4, 10, 4.9, "saffron"], [96, 11, 13, 10, -6, 5.2, "kumkum"],
+];
+// Side margins beside the garlands (wide screens). Width in % of the margin, capped in CSS.
+const SIDE_LANTERNS: { side: "l" | "r"; items: Lantern[] }[] = [
+  { side: "l", items: [[12, 46, 19, 3, 14, 4.6, "saffron"], [50, 36, 23, 12, -10, 5.3, "marigold"], [28, 40, 21, 18, 8, 4.1, "kumkum"]] },
+  { side: "r", items: [[44, 46, 20, 8, -12, 4.9, "marigold"], [12, 38, 22, 1, 10, 5.5, "rose"], [32, 40, 18, 15, -8, 4.3, "saffron"]] },
+];
+
+function LanternGroup({ items, unit }: { items: Lantern[]; unit: "px" | "%" }) {
+  return (
+    <>
+      {items.map(([left, width, rise, offset, drift, sway, colour], i) => (
+        <span
+          key={i}
+          className={cn("gb-lantern", unit === "px" && left < 50 && "max-sm:hidden")}
+          style={{ left: `${left}%`, width: unit === "px" ? `calc(${width}px * var(--lantern-scale, 1))` : `${width}%`, "--t": `${rise}s`, "--d": `${offset}s`, "--drift": `${drift}px`, "--sway": `${sway}s` } as CSSProperties}
+        >
+          <span className="gb-lantern-sway">
+            <span className="gb-lantern-halo" />
+            <img src={`${ART}/lantern-${colour}.webp`} alt="" width={168} height={252} decoding="async" draggable={false} className="gb-lantern-img" />
+            <span className="gb-lantern-flame" />
+          </span>
+        </span>
+      ))}
+    </>
+  );
+}
+
+/**
+ * Deepavali sky lanterns: ribbed paper balloons, each lit by a clay diya in its bamboo ring (pictures drawn by
+ * scripts/build-diwali-lanterns.py), rising slowly with a gentle sway and fading away as they climb, the diya's light
+ * flickering. "header" runs behind the home page header; "sides" in the margins beside the offers band's garlands on
+ * wide screens (the parent must be `relative` and clip). They start only after the page has loaded, pause when out of
+ * view, and stay off for reduced motion or data saver. The admin festival switch removes them with the rest.
+ */
+export function DiwaliLanterns({ place }: { place: "header" | "sides" }) {
+  const [ready, setReady] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+    if ((navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData) return;
+    return afterPageLoad(() => setReady(true));
+  }, []);
+  useEffect(() => {
+    const el = box.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    const seen = new IntersectionObserver((entries) => {
+      el.toggleAttribute("data-run", !!entries[entries.length - 1]?.isIntersecting);
+    });
+    seen.observe(el);
+    return () => seen.disconnect();
+  }, [ready]);
+  if (!ready) return null;
+  if (place === "header") {
+    return (
+      <div ref={box} aria-hidden className="gb-festive gb-lanterns gb-lanterns-header pointer-events-none absolute inset-0 -z-10 overflow-hidden">
+        <LanternGroup items={HEADER_LANTERNS} unit="px" />
+      </div>
+    );
+  }
+  return (
+    <div ref={box} aria-hidden className="gb-festive gb-lanterns gb-lanterns-sides pointer-events-none absolute inset-0 -z-10 overflow-hidden">
+      {SIDE_LANTERNS.map(({ side, items }) => (
+        <div key={side} className={cn("gb-lantern-margin", side === "l" ? "left-0" : "right-0")}>
+          <LanternGroup items={items} unit="%" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /** A thin glowing gold "zari" line along the bottom of the header. */
 export function HeaderZari() {
   return <span aria-hidden className="gb-festive gb-zari pointer-events-none absolute inset-x-0 bottom-0 h-[2px]" />;

@@ -4,7 +4,7 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useLiveAdBanners, type AdBanner } from "@/lib/ad-banners";
 import { flickStep, stripCopies, wrapStrip } from "@/lib/ad-banner-rules";
 import { useFestiveTheme } from "@/lib/festive";
-import { DiwaliBackdrop, DiwaliToran, SideGarlands } from "@/components/site/DiwaliDecor";
+import { DiwaliBackdrop, DiwaliLanterns, DiwaliToran, SideGarlands } from "@/components/site/DiwaliDecor";
 import { cn } from "@/lib/utils";
 import { responsiveImage, showOriginalImage } from "@/lib/image-url";
 import { afterPageLoad } from "@/lib/storefront-snapshot";
@@ -574,7 +574,7 @@ export function AdShowcase({ children }: { children?: ReactNode }) {
       <div aria-hidden className="absolute -left-24 -top-24 -z-10 h-72 w-72 rounded-full bg-gold/20 blur-3xl" />
       <div aria-hidden className="absolute -bottom-24 -right-16 -z-10 h-72 w-72 rounded-full bg-emerald-700/10 blur-3xl" />
       {/* Festival dates: warm Deepavali light and a marigold toran hanging in the band's top padding. */}
-      {festive.on && <><DiwaliBackdrop /><DiwaliToran /></>}
+      {festive.on && <><DiwaliBackdrop /><DiwaliLanterns place="sides" /><DiwaliToran /></>}
 
       <div className="mx-auto max-w-7xl px-4 pt-3 sm:px-6 sm:pt-5">
         <div className={cn("relative grid gap-3", withTiles && "lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]")}>
