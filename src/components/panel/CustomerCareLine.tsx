@@ -9,7 +9,7 @@ export function CustomerCareLine() {
   return (
     <p className="mt-6 flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-border pt-4 text-sm text-slate">
       <Phone className="h-4 w-4 shrink-0 text-gold" />
-      <span>Head office and customer care:</span>
+      <span>Customer care:</span>
       <a href={telHref(phone)} className="font-semibold text-navy hover:underline">{phone}</a>
     </p>
   );

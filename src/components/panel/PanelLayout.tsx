@@ -16,6 +16,7 @@ import { adminActivityKey, clearAdminIdleClock } from "@/lib/admin-idle";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { AdminBranchSelect } from "@/components/panel/AdminBranchSelect";
 import { CustomerCareLine } from "@/components/panel/CustomerCareLine";
+import { AccountMenu } from "@/components/panel/AccountMenu";
 import { useBranches } from "@/lib/branches";
 import {
   activeNavTarget,
@@ -89,6 +90,14 @@ export function PanelLayout({
   } = useApp();
   const branchState = useBranches();
   const navigate = useNavigate();
+  /** Log out of this browser only (other browsers stay signed in), from the side menu or the account menu. */
+  const signOutHere = async () => {
+    if (user?.id) clearAdminIdleClock(user.id);
+    forgetPanelAccess();
+    await supabase.auth.signOut({ scope: "local" });
+    logout();
+    navigate({ to: "/" });
+  };
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   // The menu item for this page, also on pages inside it (an order lights up Orders).
   const activeTo = useMemo(() => activeNavTarget(pathname, items), [pathname, items]);
@@ -584,13 +593,7 @@ export function PanelLayout({
           );
         })}
         <button
-          onClick={async () => {
-            if (user?.id) clearAdminIdleClock(user.id);
-            forgetPanelAccess();
-            await supabase.auth.signOut({ scope: "local" });
-            logout();
-            navigate({ to: "/" });
-          }}
+          onClick={() => void signOutHere()}
           title={rail ? "Logout" : undefined}
           className={cn(
             "mt-2 w-full rounded-lg font-medium text-white/70 transition-colors hover:bg-white/5 hover:text-danger",
@@ -833,14 +836,7 @@ export function PanelLayout({
                   </>
                 )}
               </div>
-              <div className="flex items-center gap-2 rounded-full border border-border py-1 pr-1 pl-1 sm:pr-3">
-                <span className="grid h-7 w-7 place-items-center rounded-full bg-navy text-[11px] font-bold text-white">
-                  {(user?.name ?? tone).slice(0, 2).toUpperCase()}
-                </span>
-                <span className="hidden text-xs font-semibold text-navy sm:inline">
-                  {user?.name ?? `Demo ${tone}`}
-                </span>
-              </div>
+              <AccountMenu tone={tone} user={user} onSignOut={signOutHere} />
             </div>
           </div>
           {/* On phones the branch picker gets its own row so the title and icons still fit. */}

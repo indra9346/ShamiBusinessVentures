@@ -8,6 +8,7 @@ import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { AWAITING_PAYMENT, clockText, holdSecondsLeft, holdView, type PaymentHold } from "@/lib/payment-hold";
 import { serverNow, useServerNow } from "@/lib/server-clock";
 import { useApp } from "@/lib/store";
+import { CancelCheckoutButton } from "@/components/site/CancelCheckoutButton";
 import { normaliseUtr, upiPaymentUri, utrProblem, type UpiSettings } from "@/lib/upi-pay";
 import { UpiAppButtons } from "@/components/site/UpiAppButtons";
 import { BankTransferDetails, BankUtrForm } from "@/components/site/BankTransferPay";
@@ -208,9 +209,7 @@ export function HeldCheckoutPay({ settings, orderNo, amount, holdUntil, customer
           <div className="mt-4 border-t border-border pt-4">
             <BankUtrForm orderNo={orderNo} amount={amount} method={method} customer={customer} submission={submission} />
             <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-              <button type="button" onClick={() => void cancelPaymentHold(orderNo)} className="text-xs font-semibold text-slate underline hover:text-navy">
-                Cancel: I don't want to pay now
-              </button>
+              {submission?.status !== "submitted" && <CancelCheckoutButton orderNo={orderNo} byBank={byBank} />}
               {STATIC_DATA_MODE && (
                 <button type="button" onClick={() => simulateBankAlert(orderNo)} className="text-xs font-semibold text-gold underline">
                   Demo only: the admin confirms this payment
@@ -258,9 +257,7 @@ export function HeldCheckoutPay({ settings, orderNo, amount, holdUntil, customer
             </div>
             {error && <p className="mt-1.5 text-xs font-semibold text-danger">{error}</p>}
             <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-              <button type="button" onClick={() => void cancelPaymentHold(orderNo)} className="text-xs font-semibold text-slate underline hover:text-navy">
-                Cancel: I don't want to pay now
-              </button>
+              {submission?.status !== "submitted" && <CancelCheckoutButton orderNo={orderNo} byBank={byBank} />}
               {STATIC_DATA_MODE && (
                 <button type="button" onClick={() => simulateBankAlert(orderNo)} className="text-xs font-semibold text-gold underline">
                   Demo only: the bank SMS for this payment arrives

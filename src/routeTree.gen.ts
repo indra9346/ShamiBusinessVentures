@@ -55,6 +55,7 @@ import { Route as AdminPayoutsRouteImport } from './routes/admin.payouts'
 import { Route as AdminPricingRouteImport } from './routes/admin.pricing'
 import { Route as AdminProductCodesRouteImport } from './routes/admin.product-codes'
 import { Route as AdminProductsRouteImport } from './routes/admin.products'
+import { Route as AdminProfileRouteImport } from './routes/admin.profile'
 import { Route as AdminReportsRouteImport } from './routes/admin.reports'
 import { Route as AdminReturnsRouteImport } from './routes/admin.returns'
 import { Route as AdminReviewsRouteImport } from './routes/admin.reviews'
@@ -332,6 +333,11 @@ const AdminProductCodesRoute = AdminProductCodesRouteImport.update({
 const AdminProductsRoute = AdminProductsRouteImport.update({
   id: '/admin/products',
   path: '/admin/products',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminProfileRoute = AdminProfileRouteImport.update({
+  id: '/admin/profile',
+  path: '/admin/profile',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AdminReportsRoute = AdminReportsRouteImport.update({
@@ -622,6 +628,7 @@ export interface FileRoutesByFullPath {
   '/admin/pricing': typeof AdminPricingRoute
   '/admin/product-codes': typeof AdminProductCodesRoute
   '/admin/products': typeof AdminProductsRouteWithChildren
+  '/admin/profile': typeof AdminProfileRoute
   '/admin/reports': typeof AdminReportsRoute
   '/admin/returns': typeof AdminReturnsRoute
   '/admin/reviews': typeof AdminReviewsRoute
@@ -717,6 +724,7 @@ export interface FileRoutesByTo {
   '/admin/pricing': typeof AdminPricingRoute
   '/admin/product-codes': typeof AdminProductCodesRoute
   '/admin/products': typeof AdminProductsRouteWithChildren
+  '/admin/profile': typeof AdminProfileRoute
   '/admin/reports': typeof AdminReportsRoute
   '/admin/returns': typeof AdminReturnsRoute
   '/admin/reviews': typeof AdminReviewsRoute
@@ -814,6 +822,7 @@ export interface FileRoutesById {
   '/admin/pricing': typeof AdminPricingRoute
   '/admin/product-codes': typeof AdminProductCodesRoute
   '/admin/products': typeof AdminProductsRouteWithChildren
+  '/admin/profile': typeof AdminProfileRoute
   '/admin/reports': typeof AdminReportsRoute
   '/admin/returns': typeof AdminReturnsRoute
   '/admin/reviews': typeof AdminReviewsRoute
@@ -912,6 +921,7 @@ export interface FileRouteTypes {
     | '/admin/pricing'
     | '/admin/product-codes'
     | '/admin/products'
+    | '/admin/profile'
     | '/admin/reports'
     | '/admin/returns'
     | '/admin/reviews'
@@ -1007,6 +1017,7 @@ export interface FileRouteTypes {
     | '/admin/pricing'
     | '/admin/product-codes'
     | '/admin/products'
+    | '/admin/profile'
     | '/admin/reports'
     | '/admin/returns'
     | '/admin/reviews'
@@ -1103,6 +1114,7 @@ export interface FileRouteTypes {
     | '/admin/pricing'
     | '/admin/product-codes'
     | '/admin/products'
+    | '/admin/profile'
     | '/admin/reports'
     | '/admin/returns'
     | '/admin/reviews'
@@ -1192,6 +1204,7 @@ export interface RootRouteChildren {
   AdminPricingRoute: typeof AdminPricingRoute
   AdminProductCodesRoute: typeof AdminProductCodesRoute
   AdminProductsRoute: typeof AdminProductsRouteWithChildren
+  AdminProfileRoute: typeof AdminProfileRoute
   AdminReportsRoute: typeof AdminReportsRoute
   AdminReturnsRoute: typeof AdminReturnsRoute
   AdminReviewsRoute: typeof AdminReviewsRoute
@@ -1554,6 +1567,13 @@ declare module '@tanstack/react-router' {
       path: '/admin/products'
       fullPath: '/admin/products'
       preLoaderRoute: typeof AdminProductsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/profile': {
+      id: '/admin/profile'
+      path: '/admin/profile'
+      fullPath: '/admin/profile'
+      preLoaderRoute: typeof AdminProfileRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/admin/reports': {
@@ -2080,6 +2100,7 @@ const rootRouteChildren: RootRouteChildren = {
   AdminPricingRoute: AdminPricingRoute,
   AdminProductCodesRoute: AdminProductCodesRoute,
   AdminProductsRoute: AdminProductsRouteWithChildren,
+  AdminProfileRoute: AdminProfileRoute,
   AdminReportsRoute: AdminReportsRoute,
   AdminReturnsRoute: AdminReturnsRoute,
   AdminReviewsRoute: AdminReviewsRoute,
