@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Package } from "lucide-react";
 import { toast } from "sonner";
 import { PanelLayout } from "@/components/panel/PanelLayout";
+import { CancelCheckoutButton } from "@/components/site/CancelCheckoutButton";
 import { DataTable, FilterNote, Panel, scrollToSection, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { Pager } from "@/components/panel/pager";
 import { accountNav } from "@/lib/account-nav";
@@ -167,7 +168,10 @@ function AccountOrders() {
                       : left === 0 ? "time is up"
                       : byBank ? `enter UTR within ${clockText(left)}` : `pay within ${clockText(left)}`}</p>
                   </div>
-                  <Link to="/account/orders/$id" params={{ id: hold.orderNo }} search={true} className="rounded-md bg-gold px-4 py-2 text-sm font-bold text-midnight hover:bg-gold-light">{utrSent || left === 0 ? "View" : byBank ? "Enter UTR" : "Pay now"}</Link>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {!utrSent && left > 0 && <CancelCheckoutButton orderNo={hold.orderNo} byBank={byBank} />}
+                    <Link to="/account/orders/$id" params={{ id: hold.orderNo }} search={true} className="rounded-md bg-gold px-4 py-2 text-sm font-bold text-midnight hover:bg-gold-light">{utrSent || left === 0 ? "View" : byBank ? "Enter UTR" : "Pay now"}</Link>
+                  </div>
                 </li>
               );
             })}
