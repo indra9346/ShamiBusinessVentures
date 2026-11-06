@@ -15,6 +15,7 @@ import { DEFAULT_UPI_SETTINGS, isValidVpa, settingsProblem, upiPaymentUri, type 
 import { loadBankAudit, loadBankSettings, loadUpiAudit, markUtrRefunded, reopenBankCredit, reviewUpiPayment, saveBankDetails, saveUpiSettings, settleBankCredit, useUpiPayments, type BankAuditRow, type BankCredit, type UpiAuditRow } from "@/lib/upi-store";
 import { parseBankCredit, parseCreditWithoutReference } from "@/lib/bank-alert";
 import { CreditHint, CreditsWithoutUtrPanel } from "@/components/panel/CreditsWithoutUtr";
+import { SameUtrBadge, UtrChecksPanel, useUtrChecks } from "@/components/panel/UtrChecksPanel";
 import { AWAITING_PAYMENT, clockText, holdSecondsLeft } from "@/lib/payment-hold";
 import { CustomersPayingNow } from "@/components/panel/CustomersPayingNow";
 import { ResizableTable } from "@/hooks/use-column-resize";
@@ -38,6 +39,7 @@ const istTime = (iso: string) => new Date(iso).toLocaleString("en-IN", { timeZon
  */
 function AdminUpiPayments() {
   const { settings, submissions, credits, creditsWithoutUtr } = useUpiPayments();
+  const utrChecks = useUtrChecks();
   const { confirmPayment, paymentHolds, orders, simulateBankAlert } = useApp();
   const methodOf = (orderNo: string) => paymentHolds.find((hold) => hold.orderNo === orderNo)?.method ?? orders.find((order) => order.id === orderNo)?.method ?? "UPI";
   const awaiting = paymentHolds.filter((hold) => hold.status === AWAITING_PAYMENT);
@@ -140,6 +142,8 @@ function AdminUpiPayments() {
         <StatCard onClick={() => openDone("rejected")} label="Rejected" value={String(done.filter((s) => s.status === "rejected").length)} icon={XCircle} description="Customer asked to correct" />
       </div>
 
+      <UtrChecksPanel checks={utrChecks.checks} error={utrChecks.error} onChange={utrChecks.refresh} />
+
       {lapsed.length > 0 && (
         <Panel title="Not checked in time" className="mb-6">
           <p className="mb-3 text-sm text-red-800">These customers sent a UTR and nobody checked it within 24 hours, so the stock was released. Check the bank account. If the money came, ask the customer to press Reorder and send the same UTR. If you refund it instead, press Refunded.</p>
@@ -193,6 +197,7 @@ function AdminUpiPayments() {
                         <Button size="sm" variant="outline" className="text-danger" disabled={busy === s.orderNo} onClick={() => void reject(s.orderNo, s.utr)}>Reject</Button>
                       </div>
                       <CreditHint payment={s} credits={creditsWithoutUtr} />
+                      <SameUtrBadge orderNo={s.orderNo} checks={utrChecks.checks} />
                     </td>
                   </tr>
                   );
