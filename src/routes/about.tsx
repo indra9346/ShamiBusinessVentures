@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { pageHead, SITE_NAME } from "@/lib/seo";
 import { Building2, Factory, Globe2, Users } from "lucide-react";
 import { SiteLayout, Breadcrumbs, SectionHeading } from "@/components/site/SiteLayout";
-import { LogoMark } from "@/components/brand/Logo";
+import { BrandLogo } from "@/components/brand/Logo";
 import { useSiteDetails } from "@/lib/site-details";
 
 export const Route = createFileRoute("/about")({
@@ -59,7 +59,7 @@ function About() {
         </div>
 
         <aside className="h-max rounded-lg border border-border bg-ivory p-6 shadow-card">
-          <LogoMark className="h-14" />
+          <BrandLogo shape="full" className="h-auto w-44" sizes="176px" />
           <div className="hairline-gold my-5" />
           <dl className="space-y-4 text-sm">
             {[

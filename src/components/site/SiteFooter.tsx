@@ -32,7 +32,7 @@ export function SiteFooter() {
       <div className="mx-auto max-w-7xl px-6 py-14">
         <div className="grid gap-10 md:grid-cols-2 lg:grid-cols-4">
           <div>
-            <Logo />
+            <Logo layout="full" />
             <p className="mt-5 max-w-xs text-sm leading-relaxed">
               A premium multi-vendor marketplace for sugar and everyday essentials, operated by Shami
               Business Ventures Pvt. Ltd. with verified mills and institutional-grade logistics.

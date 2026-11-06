@@ -79,7 +79,7 @@ function ResetPasswordPage() {
     try {
       const { error } = await supabase.auth.updateUser({ password });
       if (error) throw error;
-      await supabase.auth.signOut();
+      await supabase.auth.signOut({ scope: "global" });
       setScreen("done");
       toast.success("Password set successfully. Sign in with your new password.");
     } catch (error) {

@@ -1055,7 +1055,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // refresh would restart customer verification and flash the secure sign-in
   // screen while navigating between account pages.
   const logout = useCallback(() => {
-    void supabase.auth.signOut();
+    void supabase.auth.signOut({ scope: "local" });
     setUser(null);
     setAddresses([]);
     setCart([]);

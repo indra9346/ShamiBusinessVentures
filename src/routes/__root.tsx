@@ -112,12 +112,14 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
         rel: "stylesheet",
         href: appCss,
       },
-      // Grain Bazar GB mark. Google shows a square icon in multiples of 48 px next to results.
-      { rel: "icon", href: "/favicon.ico", sizes: "48x48" },
-      { rel: "icon", href: "/favicon-96x96.png", type: "image/png", sizes: "96x96" },
-      { rel: "icon", href: "/icon-192x192.png", type: "image/png", sizes: "192x192" },
-      { rel: "apple-touch-icon", href: "/apple-touch-icon.png", sizes: "180x180" },
-      { rel: "manifest", href: "/site.webmanifest" },
+      // Grain Bazar GB ring on a white coin, sharp at every tab size (it shows on light and dark tabs alike).
+      // Google shows a square icon in multiples of 48 px next to results. ?v=2 makes browsers drop the old icon.
+      { rel: "icon", href: "/favicon.ico?v=2", sizes: "16x16 32x32 48x48" },
+      { rel: "icon", href: "/favicon-32x32.png?v=2", type: "image/png", sizes: "32x32" },
+      { rel: "icon", href: "/favicon-96x96.png?v=2", type: "image/png", sizes: "96x96" },
+      { rel: "icon", href: "/icon-192x192.png?v=2", type: "image/png", sizes: "192x192" },
+      { rel: "apple-touch-icon", href: "/apple-touch-icon.png?v=2", sizes: "180x180" },
+      { rel: "manifest", href: "/site.webmanifest?v=2" },
       ...(SUPABASE_ORIGIN
         ? [
             { rel: "preconnect", href: SUPABASE_ORIGIN },

@@ -1,7 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { ArrowLeft, LogOut, RefreshCw } from "lucide-react";
-import { LogoMark } from "@/components/brand/Logo";
+import { BrandLogo, LogoMark } from "@/components/brand/Logo";
 import { AttendanceManager } from "@/components/attendance/AttendanceManager";
 import { StockCountLog } from "@/components/stock/StockCountLog";
 import { supabase } from "@/integrations/supabase/client";
@@ -25,7 +25,7 @@ function PartnerAttendance() {
       const userId = session.session?.user.id;
       if (!userId) { navigate({ to: "/partner/login", replace: true }); return; }
       const { data: partner } = await supabase.from("channel_partners").select("name,branch_id,status").eq("user_id", userId).maybeSingle();
-      if (!partner || partner.status !== "active") { await supabase.auth.signOut(); navigate({ to: "/partner/login", replace: true }); return; }
+      if (!partner || partner.status !== "active") { await supabase.auth.signOut({ scope: "local" }); navigate({ to: "/partner/login", replace: true }); return; }
       const { data: branch } = await supabase.from("branches").select("name").eq("id", partner.branch_id).maybeSingle();
       setMe({ name: partner.name, branchId: partner.branch_id, godown: branch?.name ?? partner.branch_id });
     })();
@@ -40,7 +40,8 @@ function PartnerAttendance() {
       <header className="sticky top-0 z-30 border-b border-border bg-card/95 backdrop-blur">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-3">
           <div className="flex items-center gap-3">
-            <LogoMark className="h-9 w-9 rounded-lg bg-card p-1 object-contain shadow-sm" />
+            <LogoMark className="h-10 w-10 shrink-0 sm:hidden" />
+            <BrandLogo shape="wide" className="hidden h-10 w-auto shrink-0 sm:block" sizes="187px" />
             <div>
               <p className="text-sm font-extrabold tracking-wide text-navy">Godown Attendance & Stock</p>
               <p className="text-xs text-slate">{me.name} · {me.godown}</p>
@@ -50,7 +51,7 @@ function PartnerAttendance() {
             <Link to="/partner" className="inline-flex h-9 items-center gap-1.5 rounded-md border border-border px-3 text-sm text-navy hover:border-gold hover:text-gold">
               <ArrowLeft className="h-4 w-4" /> Commission dashboard
             </Link>
-            <button type="button" onClick={async () => { await supabase.auth.signOut(); navigate({ to: "/partner/login" }); }}
+            <button type="button" onClick={async () => { await supabase.auth.signOut({ scope: "local" }); navigate({ to: "/partner/login" }); }}
               className="inline-flex h-9 items-center gap-1.5 rounded-md border border-border px-3 text-sm text-navy hover:border-gold hover:text-gold">
               <LogOut className="h-4 w-4" /> Sign out
             </button>

@@ -46,7 +46,7 @@ function StaffLogin() {
       }
       const { data: employee } = await supabase.from("staff_employees").select("status").eq("user_id", data.user.id).maybeSingle();
       if (!employee || employee.status !== "active") {
-        await supabase.auth.signOut();
+        await supabase.auth.signOut({ scope: "local" });
         showAuthNotice(employee ? "Your staff login is deactivated" : "This is not a godown staff login", "Contact the Grain Bazar office.");
         return;
       }

@@ -56,12 +56,12 @@ function LoginPage() {
         .maybeSingle();
 
       if (profileError || !profile) {
-        await supabase.auth.signOut();
+        await supabase.auth.signOut({ scope: "local" });
         showAuthNotice("Could not verify your customer profile", profileError?.message ?? "Contact Shami support to restore your account profile.");
         return;
       }
       if (!["active", "approved"].includes((profile.status ?? "").trim().toLowerCase())) {
-        await supabase.auth.signOut();
+        await supabase.auth.signOut({ scope: "local" });
         showAuthNotice("This customer account is not active", "Contact Shami support if you think this is a mistake.");
         return;
       }

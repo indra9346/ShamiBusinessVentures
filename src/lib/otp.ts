@@ -189,7 +189,7 @@ export function useEmailOtp({ shouldCreateUser = true, requiredRole }: OtpOption
         await new Promise((resolve) => setTimeout(resolve, 350));
       }
       if (!hasAuthorizedRole) {
-        await supabase.auth.signOut();
+        await supabase.auth.signOut({ scope: "local" });
         showAuthNotice(`This account is not authorized for ${requiredRole} access`);
         return false;
       }

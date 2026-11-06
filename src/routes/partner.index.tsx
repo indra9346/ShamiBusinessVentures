@@ -1,7 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { CalendarCheck, IndianRupee, LogOut, RefreshCw, Target, Timer, Trophy } from "lucide-react";
-import { LogoMark } from "@/components/brand/Logo";
+import { BrandLogo, LogoMark } from "@/components/brand/Logo";
 import { FilterNote, Panel, scrollToSection, StatCard } from "@/components/panel/widgets";
 import { CommissionLinesTable, PartnerLeaderboard, TargetBar, commissionTotals, usePartnerData } from "@/components/partners/PartnerWidgets";
 import { MyPartnerReport } from "@/components/partners/MyPartnerReport";
@@ -40,7 +40,7 @@ function PartnerDashboard() {
       const userId = session.session?.user.id;
       if (!userId) { navigate({ to: "/partner/login", replace: true }); return; }
       const { data: partner } = await supabase.from("channel_partners").select("id,name,branch_id,status").eq("user_id", userId).maybeSingle();
-      if (!partner || partner.status !== "active") { await supabase.auth.signOut(); navigate({ to: "/partner/login", replace: true }); return; }
+      if (!partner || partner.status !== "active") { await supabase.auth.signOut({ scope: "local" }); navigate({ to: "/partner/login", replace: true }); return; }
       const { data: branch } = await supabase.from("branches").select("name").eq("id", partner.branch_id).maybeSingle();
       setMe({ id: partner.id, name: partner.name, branchId: partner.branch_id, godown: branch?.name ?? partner.branch_id });
       const { data: rules } = await supabase.from("partner_commission_rules").select("product_id,kind,value").eq("branch_id", partner.branch_id);
@@ -73,7 +73,8 @@ function PartnerDashboard() {
       <header className="sticky top-0 z-30 border-b border-border bg-card/95 backdrop-blur">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-3">
           <div className="flex items-center gap-3">
-            <LogoMark className="h-9 w-9 rounded-lg bg-card p-1 object-contain shadow-sm" />
+            <LogoMark className="h-10 w-10 shrink-0 sm:hidden" />
+            <BrandLogo shape="wide" className="hidden h-10 w-auto shrink-0 sm:block" sizes="187px" />
             <div>
               <p className="text-sm font-extrabold tracking-wide text-navy">Channel Partner Commission Platform</p>
               <p className="text-xs text-slate">{me.name} · {me.godown}</p>
@@ -86,7 +87,7 @@ function PartnerDashboard() {
             <Link to="/partner/attendance" className="inline-flex h-9 items-center gap-1.5 rounded-md bg-navy px-3 text-sm font-semibold text-white hover:bg-midnight">
               <CalendarCheck className="h-4 w-4" /> Attendance & stock
             </Link>
-            <button type="button" onClick={async () => { await supabase.auth.signOut(); navigate({ to: "/partner/login" }); }}
+            <button type="button" onClick={async () => { await supabase.auth.signOut({ scope: "local" }); navigate({ to: "/partner/login" }); }}
               className="inline-flex h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-border px-3 text-sm text-navy hover:border-gold hover:text-gold">
               <LogOut className="h-4 w-4" /> Sign out
             </button>

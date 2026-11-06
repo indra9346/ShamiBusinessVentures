@@ -11,7 +11,7 @@ export async function signInProvisionedAccount(email: string, password: string, 
   try {
     const { data: sessionData } = await supabase.auth.getSession();
     if (sessionData.session?.user) {
-      await supabase.auth.signOut();
+      await supabase.auth.signOut({ scope: "local" });
     }
 
     const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
@@ -36,7 +36,7 @@ export async function signInProvisionedAccount(email: string, password: string, 
     ]);
 
     if (roleResult.error || !roleResult.data) {
-      await supabase.auth.signOut();
+      await supabase.auth.signOut({ scope: "local" });
       authenticated = false;
       showAuthNotice(`This account is not authorized for ${role} access`);
       return null;
@@ -44,7 +44,7 @@ export async function signInProvisionedAccount(email: string, password: string, 
 
     const profile = profileResult.data;
     if (profileResult.error || !profile || (role === "vendor" && !profile.vendor_id)) {
-      await supabase.auth.signOut();
+      await supabase.auth.signOut({ scope: "local" });
       authenticated = false;
       showAuthNotice("This account’s profile is incomplete", role === "vendor"
           ? "Ask an administrator to assign a unique vendor ID before signing in."
@@ -53,7 +53,7 @@ export async function signInProvisionedAccount(email: string, password: string, 
     }
 
     if (role === "vendor" && !["active", "approved"].includes((profile.status ?? "").trim().toLowerCase())) {
-      await supabase.auth.signOut();
+      await supabase.auth.signOut({ scope: "local" });
       authenticated = false;
       showAuthNotice("This vendor account is not active");
       return null;
@@ -66,7 +66,7 @@ export async function signInProvisionedAccount(email: string, password: string, 
       ...(profile.phone ? { phone: profile.phone } : {}),
     };
   } catch {
-    if (authenticated) await supabase.auth.signOut();
+    if (authenticated) await supabase.auth.signOut({ scope: "local" });
     showAuthNotice("Unable to verify this staff account", "Check your connection and try again. If the problem continues, contact the administrator.");
     return null;
   }

@@ -91,7 +91,7 @@ function StaffHome() {
       const userId = session.session?.user.id;
       if (!userId) { navigate({ to: "/staff/login", replace: true }); return; }
       const { data: employee } = await supabase.from("staff_employees").select("*").eq("user_id", userId).maybeSingle();
-      if (!employee || employee.status !== "active") { await supabase.auth.signOut(); navigate({ to: "/staff/login", replace: true }); return; }
+      if (!employee || employee.status !== "active") { await supabase.auth.signOut({ scope: "local" }); navigate({ to: "/staff/login", replace: true }); return; }
       const [{ data: branch }] = await Promise.all([
         supabase.from("branches").select("name,latitude,longitude").eq("id", employee.branch_id).maybeSingle(),
         load(employee as Employee),
@@ -143,7 +143,7 @@ function StaffHome() {
     }
   };
 
-  const signOut = async () => { await supabase.auth.signOut(); navigate({ to: "/staff/login" }); };
+  const signOut = async () => { await supabase.auth.signOut({ scope: "local" }); navigate({ to: "/staff/login" }); };
 
   if (!me) {
     return <div className="grid min-h-screen place-items-center bg-panel text-sm text-slate"><span className="inline-flex items-center gap-2"><RefreshCw className="h-4 w-4 animate-spin" /> Opening attendance…</span></div>;
@@ -154,7 +154,7 @@ function StaffHome() {
       <header className="sticky top-0 z-30 border-b border-border bg-card/95 backdrop-blur">
         <div className="mx-auto flex max-w-md items-center justify-between gap-2 px-4 py-3">
           <div className="flex min-w-0 items-center gap-2">
-            <LogoMark className="h-9 w-9 shrink-0 rounded-lg bg-card p-1 object-contain shadow-sm" />
+            <LogoMark className="h-10 w-10 shrink-0" />
             <div className="min-w-0">
               <p className="truncate text-sm font-extrabold text-navy">{me.name}</p>
               <p className="truncate text-xs text-slate">{godown?.name ?? me.branch_id}{me.designation ? ` · ${me.designation}` : ""}</p>

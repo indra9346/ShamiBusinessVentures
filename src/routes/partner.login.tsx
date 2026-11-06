@@ -43,7 +43,7 @@ function PartnerLogin() {
       }
       const { data: partner } = await supabase.from("channel_partners").select("status").eq("user_id", data.user.id).maybeSingle();
       if (!partner || partner.status !== "active") {
-        await supabase.auth.signOut();
+        await supabase.auth.signOut({ scope: "local" });
         toast.error(partner ? "This channel partner login is suspended" : "This account is not a channel partner login", {
           description: "Contact the Grain Bazar office.",
         });
