@@ -163,7 +163,8 @@ assert.equal((await orderOf(second)).order_status, "Awaiting Payment");
 const third = await record("000900", 2484, sms("000900", "2,484", "4,54,445.38"), 454445.38);
 assert.equal(third.status, "recorded");
 assert.equal(third.waiting_orders, 1, "only the second checkout still waits for Rs 2,484");
-await assert.rejects(confirmWith(third.id, order, ref), /no UTR waiting for a check/);
+// (Since 20261106220000 a credit can also pay a checkout with no UTR; a paid order is still refused.)
+await assert.rejects(confirmWith(third.id, order, ref), /is not waiting for a payment/);
 
 // ---------------------------------------------------------------- not a website payment
 await as(ADMIN);

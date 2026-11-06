@@ -512,6 +512,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
               status: row.order_status as PaymentHold["status"], holdUntil: row.payment_hold_until ?? null, outcome: (row.payment_hold_outcome ?? null) as PaymentHold["outcome"],
               method: row.payment_method ?? "UPI",
               lines: (itemsByOrder.get(row.id) ?? []).map((item) => ({ productId: item.product_id, qty: Number(item.qty), name: item.product_name ?? undefined })),
+              moneySeenAt: row.bank_credit_seen_at ?? null,
             })));
             setOrders((orderRows ?? []).filter((row) => !isHeldStatus(row.order_status)).map((row) => {
               const orderDate = new Date(row.created_at);
@@ -1723,7 +1724,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       ordersLoaded: STATIC_DATA_MODE || ordersLoadedFor === (user?.id ?? null),
       refreshHeldCheckouts: async (orderNos) => {
         if (STATIC_DATA_MODE || orderNos.length === 0) return;
-        const { data } = await supabase.from("orders").select("order_no, order_status, payment_hold_until, payment_hold_outcome").in("order_no", orderNos);
+        const { data } = await supabase.from("orders").select("order_no, order_status, payment_hold_until, payment_hold_outcome, bank_credit_seen_at").in("order_no", orderNos);
         if (!data) return;
         const byNo = new Map(data.map((row) => [row.order_no, row]));
         setPaymentHolds((list) => list.flatMap((item) => {
@@ -1731,7 +1732,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           const row = byNo.get(item.orderNo);
           if (!row) return [];
           if (!isHeldStatus(row.order_status)) return [{ ...item, status: "Payment Confirmed" as const, holdUntil: null }];
-          return [{ ...item, status: row.order_status as PaymentHold["status"], holdUntil: row.payment_hold_until ?? null, outcome: (row.payment_hold_outcome ?? null) as PaymentHold["outcome"] }];
+          return [{ ...item, status: row.order_status as PaymentHold["status"], holdUntil: row.payment_hold_until ?? null, outcome: (row.payment_hold_outcome ?? null) as PaymentHold["outcome"], moneySeenAt: row.bank_credit_seen_at ?? null }];
         }));
       },
       forgetOrder: (orderNo) => {

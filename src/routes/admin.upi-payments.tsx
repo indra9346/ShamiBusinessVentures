@@ -209,7 +209,7 @@ function AdminUpiPayments() {
       </Panel>
       </div>
 
-      <CreditsWithoutUtrPanel credits={creditsWithoutUtr} submissions={submissions} />
+      <CreditsWithoutUtrPanel credits={creditsWithoutUtr} submissions={submissions} checkouts={paymentHolds} />
 
       <Panel title="Waiting for payment (not orders yet)" className="mb-6">
         <p className="mb-3 text-xs text-slate">Checkouts whose customer has not paid yet. Their stock is held; they become orders when the bank alert (UPI) or your confirmation matches the payment, and end on their own when the time is up. NEFT and RTGS always wait for your confirmation: an amount alone never confirms them.</p>

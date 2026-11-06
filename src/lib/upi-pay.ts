@@ -39,6 +39,20 @@ export function isValidVpa(vpa: string) {
 export function normaliseUtr(text: string) {
   return text.replace(/\s+/g, "");
 }
+/**
+ * The UTR in whatever the customer pasted: the whole "Share receipt" text of PhonePe, Google Pay or Paytm, or just the
+ * number with spaces. A number labelled UTR / UPI Ref / UPI transaction ID wins; otherwise the only 12-digit number in
+ * the text. App transaction IDs (PhonePe's T2611... has 22 digits) are never taken. Null when unsure.
+ */
+export function utrFromText(text: string): string | null {
+  const flat = text.replace(/[ \s]+/g, " ");
+  const labelled = flat.match(/(?:UTR|UPI\s*Ref(?:erence)?(?:\s*No\.?)?|UPI\s*transaction\s*ID|Ref(?:erence)?\s*No\.?|RRN)\s*[:#-]?\s*((?:\d[ -]?){11}\d)(?!\d)/i);
+  if (labelled) return labelled[1]!.replace(/\D/g, "");
+  const plain = [...flat.matchAll(/(?<![\dA-Za-z])((?:\d[ -]?){11}\d)(?![\dA-Za-z])/g)].map((match) => match[1]!.replace(/\D/g, ""));
+  const unique = [...new Set(plain)];
+  return unique.length === 1 ? unique[0]! : null;
+}
+
 export function utrProblem(text: string): string | null {
   const utr = normaliseUtr(text);
   if (!utr) return "Enter the 12-digit UTR / UPI reference number from your UPI app";

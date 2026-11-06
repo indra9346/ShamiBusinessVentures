@@ -1017,7 +1017,7 @@ function Checkout() {
                           <span className="flex items-center gap-2 font-semibold text-navy"><CreditCard className="h-4 w-4 shrink-0" /> {methodLabel(option)}</span>
                           <span className="mt-0.5 block text-slate">
                             {option === "UPI"
-                              ? "Pay now with Google Pay, PhonePe, Paytm or any UPI app, no extra charges. Your order is placed the moment the payment reaches us."
+                              ? "Pay now with Google Pay, PhonePe, Paytm or any UPI app, no extra charges. Scan the QR: the amount fills in by itself. Your order is placed as soon as we confirm the payment."
                               : "Transfer from your bank to our account, then enter the UTR in your order details within 1 hour. Your order is placed once we check it against our bank account."}
                           </span>
                         </span>
@@ -1121,7 +1121,7 @@ function Checkout() {
                       ? `Total ${inrPrecise(summary.total)} paid by ${placedMethod}. `
                       : isBankMethod(placedMethod)
                         ? `Total ${inrPrecise(summary.total)}. Prices and stock are held for you: transfer the money and enter the UTR within the time shown. The order is placed once we check it. `
-                        : `Total ${inrPrecise(summary.total)}. Prices and stock are held for you while you pay; the order is placed and confirmed the moment the payment reaches us. `}
+                        : `Total ${inrPrecise(summary.total)}. Prices and stock are held for you while you pay; the order is placed as soon as we confirm the payment in our bank. `}
                     {fulfil === "Pickup" ? "We will let you know when it is ready to collect." : "Delivery in 2–4 business days after payment."}
                   </p>
                 )}
