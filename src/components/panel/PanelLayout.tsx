@@ -1,6 +1,6 @@
-import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
+import { Link, useNavigate, useRouter, useRouterState } from "@tanstack/react-router";
 import { AlertTriangle, Bell, ChevronsLeft, ChevronsRight, LogOut, Menu, RefreshCw, Search, X } from "lucide-react";
-import { useState, useMemo, useEffect, type ReactNode } from "react";
+import { useState, useMemo, useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
 import { toast } from "sonner";
 import { BrandLogo, LogoMark } from "@/components/brand/Logo";
 import { useApp } from "@/lib/store";
@@ -17,6 +17,15 @@ import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { AdminBranchSelect } from "@/components/panel/AdminBranchSelect";
 import { CustomerCareLine } from "@/components/panel/CustomerCareLine";
 import { useBranches } from "@/lib/branches";
+import {
+  activeNavTarget,
+  forgetPanelAccess,
+  hasRecentPanelAccess,
+  keepInView,
+  readMenuScroll,
+  rememberMenuScroll,
+  rememberPanelAccess,
+} from "@/lib/panel-menu";
 
 export type NavItem = {
   label: string;
@@ -51,10 +60,12 @@ export function PanelLayout({
   const [open, setOpen] = useState(false);
   // Desktop sidebar: full width, or a narrow rail of icons with small labels (like Zoho). Remembered
   // on this device.
-  const [collapsed, setCollapsed] = useState(false);
-  useEffect(() => {
-    try { setCollapsed(localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1"); } catch { /* storage blocked */ }
-  }, []);
+  // Read before the first paint, so a folded menu does not open wide and then snap shut on every page. The menu
+  // only draws after the sign-in check, which never happens on the server, so this cannot upset hydration.
+  const [collapsed, setCollapsed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    try { return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1"; } catch { return false; /* storage blocked */ }
+  });
   const toggleCollapsed = () => {
     const next = !collapsed;
     setCollapsed(next);
@@ -79,7 +90,12 @@ export function PanelLayout({
   const branchState = useBranches();
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
-  const [verifiedRole, setVerifiedRole] = useState(false);
+  // The menu item for this page, also on pages inside it (an order lights up Orders).
+  const activeTo = useMemo(() => activeNavTarget(pathname, items), [pathname, items]);
+  // Passed the sign-in check a moment ago in this tab: draw the page at once, the check runs again behind it.
+  // Who passed the check: the signed-in account (the preview demo has no account id, so its email).
+  const accessKey = user?.id || user?.email || undefined;
+  const [verifiedRole, setVerifiedRole] = useState(() => hasRecentPanelAccess(accessKey, tone));
   const [roleCheckError, setRoleCheckError] = useState("");
   const [verificationAttempt, setVerificationAttempt] = useState(0);
   const [adminIdleTimeoutMinutes, setAdminIdleTimeoutMinutes] = useState(30);
@@ -141,6 +157,7 @@ export function PanelLayout({
       const lastActivity = Number(localStorage.getItem(key) ?? 0);
       if (signingOut || !lastActivity || Date.now() - lastActivity < timeoutMs) return;
       signingOut = true;
+      forgetPanelAccess();
       void supabase.auth.signOut({ scope: "local" }).finally(() => {
         localStorage.removeItem(key);
         logout();
@@ -175,19 +192,28 @@ export function PanelLayout({
     let active = true;
     let profileChannel: ReturnType<typeof supabase.channel> | undefined;
     let accountBlocked = false;
-    setVerifiedRole(false);
+    if (!hasRecentPanelAccess(accessKey, tone)) setVerifiedRole(false);
     setRoleCheckError("");
+    // Anything short of a clear pass shows the check screen again and forgets the earlier pass.
+    const deny = () => {
+      forgetPanelAccess();
+      setVerifiedRole(false);
+    };
     if (!hydrated)
       return () => {
         active = false;
       };
     if (STATIC_DATA_MODE) {
-      if (user?.role === tone) setVerifiedRole(true);
-      else
+      if (user?.role === tone) {
+        if (accessKey) rememberPanelAccess(accessKey, tone);
+        setVerifiedRole(true);
+      } else {
+        deny();
         navigate({
           to: tone === "admin" ? "/admin/login" : tone === "vendor" ? "/vendor/login" : "/login",
           replace: true,
         });
+      }
       return () => {
         active = false;
       };
@@ -198,6 +224,7 @@ export function PanelLayout({
       if (!active) return;
       verificationTimedOut = true;
       verificationAbort.abort();
+      deny();
       setRoleCheckError(
         "The secure sign-in check took too long. Your session is still saved; check your connection and try again.",
       );
@@ -209,6 +236,7 @@ export function PanelLayout({
       } = await supabase.auth.getSession();
       if (!active || verificationTimedOut) return;
       if (sessionError) {
+        deny();
         setRoleCheckError(
           "We could not verify your sign-in right now. Your session has been kept; try again when your connection is available.",
         );
@@ -217,6 +245,7 @@ export function PanelLayout({
       if (!session?.user) {
         // No session at all (e.g. signed out in another tab) but the app still remembers a user:
         // clear it, or the login page would bounce straight back here.
+        deny();
         if (user) logout();
         navigate({
           to: tone === "admin" ? "/admin/login" : tone === "vendor" ? "/vendor/login" : "/login",
@@ -247,6 +276,7 @@ export function PanelLayout({
       if (!active || verificationTimedOut) return;
       const { data: roleRecord, error } = roleResult;
       if (error) {
+        deny();
         setRoleCheckError(
           "We could not confirm this account’s panel access. Your sign-in has been kept; try again when your connection is available.",
         );
@@ -257,6 +287,7 @@ export function PanelLayout({
         // do not sign out, since the session is shared by every tab; show this panel's login.
         // If the app still believes this user HAS the role, the session is stale (expired or
         // replaced): sign out, or the login page would send the user straight back here.
+        deny();
         if (user?.role === tone) logout();
         navigate({
           to: tone === "admin" ? "/admin/login" : tone === "vendor" ? "/vendor/login" : "/login",
@@ -267,6 +298,7 @@ export function PanelLayout({
       const signOutBlockedAccount = (message: string) => {
         if (!active || accountBlocked) return;
         accountBlocked = true;
+        deny();
         logout();
         toast.error(message, {
           description: "Contact Shami support if you think this is a mistake.",
@@ -275,6 +307,7 @@ export function PanelLayout({
       };
       if (tone === "customer") {
         if (profileResult.error) {
+          deny();
           setRoleCheckError(
             "We could not verify that this customer account is active. Your sign-in has been kept; try again when your connection is available.",
           );
@@ -311,9 +344,11 @@ export function PanelLayout({
               });
           });
       }
+      rememberPanelAccess(authUser.id, tone);
       setVerifiedRole(true);
     })().catch(() => {
       if (active && !verificationTimedOut) {
+        deny();
         setRoleCheckError(
           "We could not verify your sign-in. Your session has been kept; retry the access check.",
         );
@@ -325,7 +360,7 @@ export function PanelLayout({
       verificationAbort.abort();
       if (profileChannel) void supabase.removeChannel(profileChannel);
     };
-  }, [hydrated, tone, logout, navigate, user?.role, verificationAttempt]);
+  }, [hydrated, tone, logout, navigate, accessKey, user?.role, verificationAttempt]);
 
   const relevantNotifs = useMemo(() => {
     return notifications.filter((n) => {
@@ -397,6 +432,60 @@ export function PanelLayout({
     ].slice(0, 8);
   }, [globalQuery, products, categories, customers, vendors, orders, tone, user]);
 
+  // Side menu scroll: each page builds the menu again, so remember where it was scrolled to (per panel, and per
+  // wide, folded and phone menu) and put it back before the page paints. Then bring this page's item into view,
+  // moving the menu only as far as needed, so the admin always sees where they are.
+  const sideMenu = useRef<HTMLElement | null>(null);
+  const drawerMenu = useRef<HTMLElement | null>(null);
+  const pendingScroll = useRef<{ key: string; top: number } | null>(null);
+  const menuKey = (place: "side" | "drawer") => `${tone}:${place === "drawer" ? "drawer" : collapsed ? "rail" : "full"}`;
+  const menuShown = hydrated && verifiedRole;
+  const placeMenus = (restore: boolean) => {
+    for (const [menu, place] of [[sideMenu.current, "side"], [drawerMenu.current, "drawer"]] as const) {
+      if (!menu || menu.clientHeight === 0) continue; // the wide menu is hidden on phones; the drawer may be shut
+      const key = menuKey(place);
+      if (restore) {
+        // A scroll the admin just made and that is not saved yet wins over the saved one.
+        const pending = pendingScroll.current;
+        menu.scrollTop = pending && pending.key === key ? pending.top : readMenuScroll(key);
+      }
+      const item = menu.querySelector<HTMLElement>("[data-nav-active]");
+      if (item) keepInView(menu, item);
+      rememberMenuScroll(key, menu.scrollTop);
+    }
+  };
+  useLayoutEffect(() => {
+    if (!menuShown) return;
+    placeMenus(true);
+    // Once more after the page has drawn, in case its layout moved: only brings the item in, never back to the top.
+    const settle = window.requestAnimationFrame(() => placeMenus(false));
+    return () => window.cancelAnimationFrame(settle);
+    // placeMenus only reads tone and collapsed, both listed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [menuShown, collapsed, open, activeTo, tone]);
+  // The router's own scroll memory (scrollRestoration in router.tsx) also puts every box that was scrolled back where
+  // it was, once the new page has finished loading. For the menu that copy is often stale (the top) and it lands after
+  // the placing above, which is what made the menu jump. So place the menu again straight after the router has.
+  const router = useRouter();
+  // Subscribed while this page draws, so the router's first "rendered" signal for it is not missed.
+  useLayoutEffect(() => {
+    if (!menuShown) return;
+    return router.subscribe("onRendered", () => placeMenus(true));
+    // placeMenus only reads tone and collapsed, both listed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [router, menuShown, collapsed, tone]);
+  const saveMenuScroll = (place: "side" | "drawer", menu: HTMLElement) => {
+    // Read now (a menu taken off the page reads 0), save once per frame.
+    const first = pendingScroll.current === null;
+    pendingScroll.current = { key: menuKey(place), top: menu.scrollTop };
+    if (!first) return;
+    window.requestAnimationFrame(() => {
+      const latest = pendingScroll.current;
+      pendingScroll.current = null;
+      if (latest) rememberMenuScroll(latest.key, latest.top);
+    });
+  };
+
   // Keep hooks above this guard. React requires the same hooks on the initial
   // loading render and on the later authenticated render.
   if (!hydrated || !verifiedRole) {
@@ -437,8 +526,12 @@ export function PanelLayout({
     tone === "customer" ? "bg-navy" : tone === "vendor" ? "bg-midnight" : "bg-midnight";
   const pageBg = tone === "admin" ? "bg-[oklch(0.972_0.004_258)]" : "bg-panel";
 
-  const renderSidebar = (rail: boolean) => (
-    <div className={cn("flex h-full flex-col transition-[width] duration-200 ease-out", rail ? "w-[88px]" : "w-64", sidebarBg)}>
+  const renderSidebar = (rail: boolean, place: "side" | "drawer") => (
+    <div
+      className={cn("flex h-full flex-col transition-[width] duration-200 ease-out", rail ? "w-[88px]" : "w-64", sidebarBg)}
+      // Folding or unfolding re-flows the labels, so bring this page's item into view again once it has settled.
+      onTransitionEnd={(event) => { if (event.propertyName === "width" && event.target === event.currentTarget) placeMenus(false); }}
+    >
       <div className={cn("flex items-center gap-2 border-b border-white/10 py-4", rail ? "justify-center px-2" : "justify-between px-4")}>
         <Link to="/" className="flex min-w-0 items-center" title="Grain Bazar" aria-label="Grain Bazar home">
           {/* White and gold on the dark menu, like Flipkart's header: the ring alone when the menu is folded. */}
@@ -459,13 +552,17 @@ export function PanelLayout({
           {tone} panel
         </p>
       )}
-      <nav className={cn("flex-1 overflow-x-hidden overflow-y-auto pb-6", rail ? "space-y-0.5 px-1 pt-3 [scrollbar-width:thin]" : "space-y-1 px-3")}>
+      <nav
+        ref={place === "side" ? sideMenu : drawerMenu}
+        onScroll={(event) => saveMenuScroll(place, event.currentTarget)}
+        className={cn("flex-1 overflow-x-hidden overflow-y-auto pb-6", rail ? "space-y-0.5 px-1 pt-3 [scrollbar-width:thin]" : "space-y-1 px-3")}>
         {items.map((item) => {
-          const active = pathname === item.to;
+          const active = item.to === activeTo;
           return (
             <Link
               key={item.to}
               to={item.to}
+              data-nav-active={active ? "" : undefined}
               onClick={() => setOpen(false)}
               title={rail ? item.label : undefined}
               aria-label={rail ? item.label : undefined}
@@ -489,6 +586,7 @@ export function PanelLayout({
         <button
           onClick={async () => {
             if (user?.id) clearAdminIdleClock(user.id);
+            forgetPanelAccess();
             await supabase.auth.signOut({ scope: "local" });
             logout();
             navigate({ to: "/" });
@@ -520,10 +618,10 @@ export function PanelLayout({
 
   return (
     <div className={cn("flex min-h-screen w-full", pageBg)}>
-      <aside className="sticky top-0 hidden h-screen shrink-0 lg:block">{renderSidebar(collapsed)}</aside>
+      <aside className="sticky top-0 hidden h-screen shrink-0 lg:block">{renderSidebar(collapsed, "side")}</aside>
       {open && (
         <div className="fixed inset-0 z-50 flex lg:hidden">
-          <div className="animate-rise">{renderSidebar(false)}</div>
+          <div className="animate-rise">{renderSidebar(false, "drawer")}</div>
           <button
             className="flex-1 bg-midnight/60"
             onClick={() => setOpen(false)}
