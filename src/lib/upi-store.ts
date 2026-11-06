@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import type { Json } from "@/integrations/supabase/types";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
+import { EMPTY_UTR_CHECKS, type UtrChecks } from "@/lib/utr-checks";
 import { BANK_SETTINGS_KEY, EMPTY_BANK_DETAILS, REFUNDED_UTR_NOTE, type BankDetails } from "@/lib/payment-rules";
 import {
   DEFAULT_UPI_SETTINGS, UPI_SETTINGS_KEY, normaliseUtr, reviewSubmission, upsertSubmission,
@@ -22,6 +23,8 @@ const DEMO_SETTINGS = "gb-demo-upi-settings";
 const DEMO_SUBMISSIONS = "gb-demo-upi-submissions";
 /** Demo: sample bank credits without a UTR, kept in this browser like the demo's UTRs. */
 const DEMO_CREDITS_WITHOUT_UTR = "gb-demo-credits-without-utr";
+/** Demo: sample UTR checks, kept in this browser. */
+const DEMO_UTR_CHECKS = "gb-demo-utr-checks";
 const DEMO_BANK = "gb-demo-bank-details";
 const DEMO_BANK_DETAILS: BankDetails = { accountName: "Shami Business Ventures Pvt. Ltd.", accountNumber: "50100123456789", ifsc: "HDFC0001234", bankName: "HDFC Bank (demo)", branch: "Challakere" };
 const CHANGED = "gb-upi-changed";
@@ -42,6 +45,9 @@ const writeJson = (key: string, value: unknown) => {
   }
 };
 const changed = () => window.dispatchEvent(new Event(CHANGED));
+/** A table or function the live database does not have yet (code going live before its database change). */
+export const isMissingInDatabase = (error: { code?: string; message?: string } | null | undefined) =>
+  !!error && (["PGRST202", "PGRST205", "42P01", "42883"].includes(error.code ?? "") || /could not find the (function|table)|does not exist/i.test(error.message ?? ""));
 
 type SubmissionRow = {
   order_no: string; amount: number | string; utr: string; customer_name: string; submitted_at: string;
@@ -157,8 +163,18 @@ export async function submitUpiPayment(submission: { orderNo: string; amount: nu
     changed();
     return;
   }
-  const { error } = await supabase.rpc("submit_upi_utr", { _order_no: submission.orderNo, _utr: normaliseUtr(submission.utr) });
+  // Through send_payment_utr, which records every UTR sent (refused ones too) for the admin's UTR checks.
+  const { data, error } = await supabase.rpc("send_payment_utr", { _order_no: submission.orderNo, _utr: normaliseUtr(submission.utr) });
+  if (error && isMissingInDatabase(error)) {
+    // The database change is not applied yet: the UTR still goes through, as it did before.
+    const { error: oldError } = await supabase.rpc("submit_upi_utr", { _order_no: submission.orderNo, _utr: normaliseUtr(submission.utr) });
+    if (oldError) throw new Error(oldError.message);
+    changed();
+    return;
+  }
   if (error) throw new Error(error.message);
+  const result = (data ?? {}) as { ok?: boolean; error?: string };
+  if (!result.ok) throw new Error(result.error || "Could not send the UTR");
   changed();
 }
 
@@ -246,6 +262,8 @@ export async function loadCreditsWithoutUtr(): Promise<CreditWithoutUtr[]> {
   const { data, error } = await supabase.from("bank_credits_without_reference")
     .select("id,received_at,credited_at,amount,account_ending,balance,sender,raw,status,order_no,decided_at,note")
     .order("received_at", { ascending: false }).limit(100);
+  // Not set up in the database yet: nothing to show, and nothing to retry every few seconds.
+  if (error && isMissingInDatabase(error)) return [];
   if (error) throw new Error(error.message);
   return (data ?? []).map((row) => ({
     id: row.id, receivedAt: row.received_at, creditedAt: row.credited_at, amount: Number(row.amount), accountEnding: row.account_ending,
@@ -274,6 +292,23 @@ export async function dismissCreditWithoutUtr(creditId: string, note: string) {
 export async function reopenCreditWithoutUtr(creditId: string) {
   if (STATIC_DATA_MODE) throw new Error("Not in the demo");
   const { error } = await supabase.rpc("reopen_bank_credit_without_reference", { _credit_id: creditId });
+  if (error) throw new Error(error.message);
+  changed();
+}
+
+/** Admin: transfers on more than one order or account, accounts with refused UTRs, and the latest refused tries. */
+export async function loadUtrChecks(): Promise<UtrChecks> {
+  if (STATIC_DATA_MODE) return readJson<UtrChecks>(DEMO_UTR_CHECKS, EMPTY_UTR_CHECKS);
+  const { data, error } = await supabase.rpc("admin_utr_conflicts", { _days: 90 });
+  if (error) throw new Error(error.message);
+  const value = (data ?? {}) as Partial<UtrChecks>;
+  return { groups: value.groups ?? [], accounts: value.accounts ?? [], tries: value.tries ?? [], since: value.since ?? "" };
+}
+
+/** Admin: says what was found or done about a group; anything newer brings it back. */
+export async function reviewUtrConflict(key: string, note: string) {
+  if (STATIC_DATA_MODE) throw new Error("Not in the demo");
+  const { error } = await supabase.rpc("review_utr_conflict", { _key: key, _note: note });
   if (error) throw new Error(error.message);
   changed();
 }

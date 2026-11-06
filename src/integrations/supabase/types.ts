@@ -601,6 +601,18 @@ export type Database = {
         Update: never
         Relationships: []
       }
+      utr_attempts: {
+        Row: { id: string; at: string; user_id: string | null; order_id: string | null; order_no: string; utr: string; utr_key: string; amount: number | null; method: string | null; outcome: string; reason: string | null }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
+      utr_conflict_reviews: {
+        Row: { utr_key: string; reviewed_by: string | null; reviewed_at: string; note: string }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
       bank_credits_without_reference: {
         Row: { id: string; received_at: string; credited_at: string | null; sender: string | null; raw: string; fingerprint: string; account_ending: string; amount: number; balance: number | null; status: string; order_no: string | null; decided_by: string | null; decided_at: string | null; note: string | null }
         Insert: never
@@ -1321,6 +1333,9 @@ export type Database = {
       record_bank_credit: { Args: { _utr: string; _amount: number; _payer?: string; _raw?: string; _source?: string; _sender?: string }; Returns: Json }
       settle_bank_credit: { Args: { _credit_id: string; _note: string }; Returns: { id: string; status: string; note: string | null } }
       reopen_bank_credit: { Args: { _credit_id: string }; Returns: { id: string; status: string; note: string | null } }
+      send_payment_utr: { Args: { _order_no: string; _utr: string }; Returns: Json }
+      admin_utr_conflicts: { Args: { _days?: number }; Returns: Json }
+      review_utr_conflict: { Args: { _key: string; _note: string }; Returns: Json }
       record_bank_credit_without_reference: { Args: { _account_ending: string; _amount: number; _credited_at: string | null; _balance: number | null; _raw: string; _sender?: string }; Returns: Json }
       confirm_order_with_bank_credit: { Args: { _credit_id: string; _order_no: string; _expected_utr: string }; Returns: Json }
       dismiss_bank_credit_without_reference: { Args: { _credit_id: string; _note: string }; Returns: Json }
