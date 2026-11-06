@@ -12,7 +12,7 @@ import { bankDetailChanges, bankDetailsProblem, cleanBankDetails, EMPTY_BANK_DET
 import { inrPrecise } from "@/lib/data";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { DEFAULT_UPI_SETTINGS, isValidVpa, settingsProblem, upiPaymentUri, type UpiSettings } from "@/lib/upi-pay";
-import { loadBankAudit, loadBankSettings, loadUpiAudit, markUtrRefunded, reopenBankCredit, reviewUpiPayment, saveBankDetails, saveUpiSettings, settleBankCredit, useUpiPayments, type BankAuditRow, type BankCredit, type UpiAuditRow } from "@/lib/upi-store";
+import { loadBankAudit, loadBankSettings, loadUpiAudit, markUtrRefunded, reopenBankCredit, reviewUpiPayment, saveBankDetails, saveUpiSettings, settleBankCredit, useUpiPayments, type BankAuditRow, type BankCredit, type UpiAuditRow, type CreditWithoutUtr } from "@/lib/upi-store";
 import { parseBankCredit, parseCreditWithoutReference } from "@/lib/bank-alert";
 import { CreditHint, CreditsWithoutUtrPanel } from "@/components/panel/CreditsWithoutUtr";
 import { SameUtrBadge, UtrChecksPanel, useUtrChecks } from "@/components/panel/UtrChecksPanel";
@@ -221,7 +221,7 @@ function AdminUpiPayments() {
         <EndedCheckouts />
       </Panel>
 
-      <BankAlertsPanel credits={credits} checkingOrders={waiting.map((row) => row.orderNo)} onDemoMatch={(amount) => {
+      <BankAlertsPanel credits={credits} creditsWithoutUtr={creditsWithoutUtr} checkingOrders={waiting.map((row) => row.orderNo)} onDemoMatch={(amount) => {
         const hold = awaiting.find((candidate) => Math.abs(candidate.amount - amount) < 0.005);
         if (hold) { simulateBankAlert(hold.orderNo); toast.success(`${hold.orderNo} paid and placed`); }
         else toast.message("No checkout is waiting for that amount", { description: "Kept as unmatched money." });
@@ -464,18 +464,23 @@ const CREDIT_STATUS: Record<BankCredit["status"], { label: string; tone: string 
 };
 
 /**
- * Automatic capture: the company phone forwards each bank SMS to the website, which reads the
- * amount and UTR and confirms the matching checkout. Shows the set-up, an SMS tester, and every
- * alert received, with the ones that need a person.
+ * Automatic capture: the company phone forwards each bank SMS to the website. An SMS with a UTR confirms the matching
+ * checkout; one without (IDFC FIRST) is kept for the only checkout waiting for its amount, for an admin to confirm under
+ * "Bank credits without a UTR". Shows the set-up, an SMS tester, and every alert with a UTR, with the ones that need a person.
  */
-function BankAlertsPanel({ credits, checkingOrders, onDemoMatch }: { credits: BankCredit[]; checkingOrders: string[]; onDemoMatch: (amount: number) => void }) {
+function BankAlertsPanel({ credits, creditsWithoutUtr = [], checkingOrders, onDemoMatch }: {
+  credits: BankCredit[]; creditsWithoutUtr?: readonly CreditWithoutUtr[]; checkingOrders: string[]; onDemoMatch: (amount: number) => void;
+}) {
   const [sample, setSample] = useState("");
   const [busy, setBusy] = useState("");
   const [suggestedKey, setSuggestedKey] = useState("");
   const parsed = sample.trim() ? parseBankCredit(sample) : null;
   const withoutUtr = sample.trim() && !parsed ? parseCreditWithoutReference(sample) : null;
   const endpoint = typeof window === "undefined" ? "https://grainbazar.com/api/payments/bank-alert" : `${window.location.origin}/api/payments/bank-alert`;
-  const lastAlert = credits[0]?.receivedAt;
+  // The newest SMS of either kind: IDFC FIRST's have no UTR and are kept apart, so they count too.
+  const lastAlert = [credits[0]?.receivedAt, creditsWithoutUtr[0]?.receivedAt]
+    .filter((at): at is string => Boolean(at))
+    .sort((a, b) => Date.parse(b) - Date.parse(a))[0];
   const needsYou = credits.filter((credit) => ["ambiguous", "mismatch", "late", "balance"].includes(credit.status));
 
   const settle = async (credit: BankCredit) => {
@@ -512,10 +517,12 @@ function BankAlertsPanel({ credits, checkingOrders, onDemoMatch }: { credits: Ba
           <p className="flex items-center gap-2 font-semibold text-navy"><Smartphone className="h-4 w-4 text-gold" /> Set up once on the company phone (the SIM that gets the bank's credit SMS)</p>
           <ol className="list-decimal space-y-1 pl-5 text-[13px]">
             <li>Install a free SMS-forwarding app (for example <b>SMS to URL Forwarder</b> on Android) and allow it to read SMS.</li>
-            <li>Make a long random key (button below) and save it in Hostinger as the environment variable <code className="rounded bg-muted px-1">BANK_ALERT_KEY</code>, then redeploy.</li>
-            <li>In the app, forward the bank's SMS sender (e.g. SBIUPI, HDFCBK, IDFCFB) to this address with method POST:
+            <li>Make a long random key (button below) and save it in Hostinger as the environment variable <code className="rounded bg-muted px-1">BANK_ALERT_KEY</code>. Also add <code className="rounded bg-muted px-1">BANK_ALERT_SENDERS</code> with the bank's SMS sender (<code className="rounded bg-muted px-1">IDFCFB</code> for IDFC FIRST). Then redeploy.</li>
+            <li>In the app, forward SMS from that sender to this address with method POST, and put the key in the header <code className="rounded bg-muted px-1">X-Bank-Alert-Key</code>:
+              <code className="mt-1 block break-all rounded bg-muted px-2 py-1 text-[12px]">{endpoint}</code>
+              <span className="mt-1 block text-[11px] text-slate">No header field in the app? Use this address instead (the key then shows in the server's access logs):</span>
               <code className="mt-1 block break-all rounded bg-muted px-2 py-1 text-[12px]">{endpoint}?key=YOUR_KEY</code></li>
-            <li>Send yourself ₹1 by UPI to the business UPI ID: the alert appears below within a minute.</li>
+            <li>Pay the ₹1 test QR on this page. Within a minute the SMS shows under "Bank credits without a UTR" (IDFC FIRST sends no UTR), or in the list below for banks whose SMS has one.</li>
           </ol>
           <div className="flex flex-wrap items-center gap-2 pt-1">
             <Button size="sm" variant="outline" onClick={() => {
@@ -526,7 +533,7 @@ function BankAlertsPanel({ credits, checkingOrders, onDemoMatch }: { credits: Ba
             {suggestedKey && <code className="break-all rounded bg-muted px-2 py-1 text-[12px]">{suggestedKey}</code>}
           </div>
           <p className="text-[11px] text-slate">The key is shown only here and is not saved by this page. Keep it private: anyone with it could send fake alerts.</p>
-          <p className="text-xs text-slate">Last alert received: <b>{lastAlert ? istTime(lastAlert) : "none yet"}</b></p>
+          <p className="text-xs text-slate">Last bank SMS received: <b>{lastAlert ? istTime(lastAlert) : "none yet"}</b></p>
         </div>
         <div className="space-y-2">
           <p className="flex items-center gap-2 text-sm font-semibold text-navy"><MessageSquare className="h-4 w-4 text-gold" /> Test a bank SMS</p>
@@ -537,7 +544,7 @@ function BankAlertsPanel({ credits, checkingOrders, onDemoMatch }: { credits: Ba
           ) : withoutUtr ? (
             <p className="rounded-md bg-sky-50 p-2 text-sm text-sky-900">
               <span>Read as <b>{inrPrecise(withoutUtr.amount)}</b> credited to <b>{`A/C …${withoutUtr.accountEnding}`}</b>, with no UTR.</span>{" "}
-              <span>Kept only when it is the company's account, for you to match to a waiting UTR under "Bank credits without a UTR".</span>
+              <span>Kept only when it is the company's account. If exactly one checkout waits for this amount, the money is kept for it and you confirm it under "Bank credits without a UTR".</span>
             </p>
           ) : (
             <p className="rounded-md bg-amber-50 p-2 text-sm text-amber-900">Not read as a payment (a debit, or no amount / 12-digit UTR). Such SMS are ignored.</p>
