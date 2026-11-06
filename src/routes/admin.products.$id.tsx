@@ -208,7 +208,7 @@ function AdminProductDetail() {
       </div>
 
       <div className="mt-6 grid gap-6 xl:grid-cols-2">
-        <GodownPricesPanel productId={product.id} basePrice={product.price} />
+        <GodownPricesPanel productId={product.id} basePrice={product.price} status={product.status} active={product.active} />
         <Panel title={`Reviews (${productReviews.length})`}>
           {productReviews.length === 0 ? (
             <p className="text-sm text-slate">No reviews for this product yet.</p>

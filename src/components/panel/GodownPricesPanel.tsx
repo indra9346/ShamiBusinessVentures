@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { Panel } from "@/components/panel/widgets";
 import { branchStockOf, reloadBranches, useBranches } from "@/lib/branches";
 import { inr } from "@/lib/data";
+import { godownPricesNote } from "@/lib/godown-products";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,7 +14,7 @@ import { Switch } from "@/components/ui/switch";
  * edited here; the change is saved at once, waits for Zoho, and is sent to the price list by the
  * next sync (or "Sync with Zoho now" on the Godowns page). Edits made in Zoho come back the same way.
  */
-export function GodownPricesPanel({ productId, basePrice }: { productId: string; basePrice: number }) {
+export function GodownPricesPanel({ productId, basePrice, status, active }: { productId: string; basePrice: number; status: string; active: boolean }) {
   const state = useBranches();
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
@@ -34,6 +35,9 @@ export function GodownPricesPanel({ productId, basePrice }: { productId: string;
   return (
     <Panel title="Godown prices and stock">
       <div className="space-y-2 text-sm">
+        {godownPricesNote({ status, active }) && (
+          <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">{godownPricesNote({ status, active })}</p>
+        )}
         {godowns.map((branch) => {
           const entry = state.prices.get(productId)?.get(branch.id);
           const stock = branchStockOf(state, productId, branch.id);

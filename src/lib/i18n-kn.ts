@@ -4946,6 +4946,19 @@ export const kn: Record<string, string> = {
   "These totals add up batches costed differently ({0}). Each batch shows which cost it uses.": "ಈ ಒಟ್ಟುಗಳು ಬೇರೆ ಬೇರೆ ವೆಚ್ಚದ ಬ್ಯಾಚ್‌ಗಳನ್ನು ಸೇರಿಸುತ್ತವೆ ({0}). ಪ್ರತಿ ಬ್ಯಾಚ್ ತಾನು ಬಳಸುವ ವೆಚ್ಚವನ್ನು ತೋರಿಸುತ್ತದೆ.",
   "Cost, supplier and bill number come from bill {0} ({1}). Correct the bill in Zoho to change them.": "ವೆಚ್ಚ, ಪೂರೈಕೆದಾರ ಮತ್ತು ಬಿಲ್ ಸಂಖ್ಯೆ ಬಿಲ್ {0} ({1}) ನಿಂದ ಬರುತ್ತವೆ. ಬದಲಿಸಲು Zoho ದಲ್ಲಿ ಬಿಲ್ ಸರಿಪಡಿಸಿ.",
   "Quantities change only through orders and stock counts. A new cost also updates the profit of sales already made.": "ಪ್ರಮಾಣಗಳು ಆರ್ಡರ್‌ಗಳು ಮತ್ತು ದಾಸ್ತಾನು ಎಣಿಕೆಗಳಿಂದ ಮಾತ್ರ ಬದಲಾಗುತ್ತವೆ. ಹೊಸ ವೆಚ್ಚ ಈಗಾಗಲೇ ಆದ ಮಾರಾಟಗಳ ಲಾಭವನ್ನೂ ನವೀಕರಿಸುತ್ತದೆ.",
+  "On the shop": "ಅಂಗಡಿಯಲ್ಲಿ ಮಾರಾಟದಲ್ಲಿದೆ",
+  "On the shop, not on this godown's price list": "ಅಂಗಡಿಯಲ್ಲಿದೆ, ಆದರೆ ಈ ಗೋದಾಮಿನ ಬೆಲೆ ಪಟ್ಟಿಯಲ್ಲಿ ಇಲ್ಲ",
+  "Waiting for approval (hidden on the shop)": "ಅನುಮೋದನೆಗಾಗಿ ಕಾಯುತ್ತಿದೆ (ಅಂಗಡಿಯಿಂದ ಮರೆಮಾಡಲಾಗಿದೆ)",
+  "Hidden on the shop": "ಅಂಗಡಿಯಿಂದ ಮರೆಮಾಡಲಾಗಿದೆ",
+  "Rejected (hidden on the shop)": "ತಿರಸ್ಕರಿಸಲಾಗಿದೆ (ಅಂಗಡಿಯಿಂದ ಮರೆಮಾಡಲಾಗಿದೆ)",
+  "Not on this godown's price list": "ಈ ಗೋದಾಮಿನ ಬೆಲೆ ಪಟ್ಟಿಯಲ್ಲಿ ಇಲ್ಲ",
+  "This product is no longer on the website: this rate earns nothing.": "ಈ ಉತ್ಪನ್ನ ಈಗ ವೆಬ್‌ಸೈಟ್‌ನಲ್ಲಿ ಇಲ್ಲ: ಈ ದರದಿಂದ ಯಾವುದೇ ಗಳಿಕೆ ಇಲ್ಲ.",
+  "Hidden on the shop: this rate earns nothing until the product is switched on.": "ಅಂಗಡಿಯಿಂದ ಮರೆಮಾಡಲಾಗಿದೆ: ಉತ್ಪನ್ನವನ್ನು ಆನ್ ಮಾಡುವವರೆಗೆ ಈ ದರದಿಂದ ಯಾವುದೇ ಗಳಿಕೆ ಇಲ್ಲ.",
+  "Not on this godown's price list: this rate earns nothing until the product is sold here.": "ಈ ಗೋದಾಮಿನ ಬೆಲೆ ಪಟ್ಟಿಯಲ್ಲಿ ಇಲ್ಲ: ಉತ್ಪನ್ನ ಇಲ್ಲಿ ಮಾರಾಟವಾಗುವವರೆಗೆ ಈ ದರದಿಂದ ಯಾವುದೇ ಗಳಿಕೆ ಇಲ್ಲ.",
+  "Hidden on the shop. Prices saved here are used once it is switched on.": "ಅಂಗಡಿಯಿಂದ ಮರೆಮಾಡಲಾಗಿದೆ. ಇಲ್ಲಿ ಉಳಿಸಿದ ಬೆಲೆಗಳು ಅದನ್ನು ಆನ್ ಮಾಡಿದ ನಂತರ ಬಳಕೆಯಾಗುತ್ತವೆ.",
+  "Waiting for approval, so hidden on the shop. Prices saved here are used once it is switched on.": "ಅನುಮೋದನೆಗಾಗಿ ಕಾಯುತ್ತಿದೆ, ಆದ್ದರಿಂದ ಅಂಗಡಿಯಿಂದ ಮರೆಮಾಡಲಾಗಿದೆ. ಇಲ್ಲಿ ಉಳಿಸಿದ ಬೆಲೆಗಳು ಅದನ್ನು ಆನ್ ಮಾಡಿದ ನಂತರ ಬಳಕೆಯಾಗುತ್ತವೆ.",
+  "Rejected, so hidden on the shop. Prices saved here are used only if it is approved and switched on.": "ತಿರಸ್ಕರಿಸಲಾಗಿದೆ, ಆದ್ದರಿಂದ ಅಂಗಡಿಯಿಂದ ಮರೆಮಾಡಲಾಗಿದೆ. ಅನುಮೋದಿಸಿ ಆನ್ ಮಾಡಿದರೆ ಮಾತ್ರ ಇಲ್ಲಿ ಉಳಿಸಿದ ಬೆಲೆಗಳು ಬಳಕೆಯಾಗುತ್ತವೆ.",
+  "Hidden products are listed too, so a rate can be ready before the product goes on the shop.": "ಮರೆಮಾಡಿದ ಉತ್ಪನ್ನಗಳೂ ಪಟ್ಟಿಯಲ್ಲಿವೆ, ಆದ್ದರಿಂದ ಉತ್ಪನ್ನ ಅಂಗಡಿಗೆ ಬರುವ ಮೊದಲೇ ದರವನ್ನು ಸಿದ್ಧಪಡಿಸಬಹುದು.",
 };
 
 /** Word-level fallbacks for text that isn't in the dictionary (product names, specs from the database). */
