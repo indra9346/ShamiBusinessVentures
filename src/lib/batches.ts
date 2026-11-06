@@ -212,6 +212,14 @@ export type BatchRecord = {
   zoho_checked_at: string | null;
   depleted_at: string | null;
   created_at: string;
+  /** Batches from a Zoho bill (5 Nov 2026): both costs from the bill line, and the one chosen for unit_cost. */
+  unit_cost_ex_gst?: number | null;
+  unit_cost_inc_gst?: number | null;
+  cost_basis?: string | null;
+  zoho_bill_id?: string;
+  zoho_bill_number?: string;
+  bill_flag?: string;
+  bill_flag_at?: string | null;
 };
 export type BatchAllocation = { id: string; order_item_id: string; batch_id: string; reserved_quantity: number; released_quantity: number; unit_cost: number; created_at: string };
 export type BatchOrderItem = { id: string; order_id: string; product_id: string | null; product_name: string; qty: number; unit_price: number; gst_rate: number };
@@ -422,6 +430,23 @@ export function buildBatchReport(input: {
 
 export type BatchReport = ReturnType<typeof buildBatchReport>;
 
+// ------------------------------------------------------------------ which cost a batch's profit uses
+
+/** "ex_gst" / "inc_gst" for a batch made from a bill; "typed" for one whose cost was typed in (before 5 Nov 2026). */
+export type BatchCostBasis = "ex_gst" | "inc_gst" | "typed";
+export const batchCostBasis = (batch: Pick<BatchRecord, "cost_basis">): BatchCostBasis =>
+  batch.cost_basis === "inc_gst" ? "inc_gst" : batch.cost_basis === "ex_gst" ? "ex_gst" : "typed";
+export const costBasisName = (batch: Pick<BatchRecord, "cost_basis">) =>
+  ({ ex_gst: "Cost without GST", inc_gst: "Cost with GST", typed: "Cost typed in" } as const)[batchCostBasis(batch)];
+
+/**
+ * The cost bases among some batches. More than one means their cost and profit totals add up costs measured
+ * differently (with GST and without), which a screen must say rather than add up silently.
+ */
+export function costBasesOf(rows: { batch: Pick<BatchRecord, "cost_basis"> }[]) {
+  return [...new Set(rows.map((row) => batchCostBasis(row.batch)))].sort();
+}
+
 /** Batches, orders and customers matching a search: batch number, product, order number, customer name / phone / email. */
 export function searchBatchReport(report: BatchReport, query: string) {
   const q = query.trim().toLowerCase();
@@ -454,6 +479,7 @@ export const BATCH_COLUMNS: [string, (row: BatchReportRow) => string | number | 
   ["Supplier", (r) => r.batch.supplier],
   ["Bill / PO no.", (r) => r.batch.purchase_ref],
   ["Cost per unit (₹)", (r) => r.batch.unit_cost],
+  ["Cost basis", (r) => costBasisName(r.batch)],
   ["Purchased", (r) => r.purchased],
   ["Sold", (r) => r.sold],
   ["Delivered", (r) => r.delivered],

@@ -31,6 +31,7 @@ import {
   ZOHO_CALL_DEFAULT_PURPOSE, ZOHO_CALL_LOG_SETTING, describeZohoCall, mergeZohoCalls, type ZohoCall, type ZohoCallLog,
 } from "@/lib/zoho-call-log";
 import { ZOHO_TOKEN_LIMIT_MESSAGE, createZohoTokenCache, isZohoTokenLimit, type ZohoTokenCache, type ZohoTokenReply } from "@/lib/zoho-token-cache";
+import { billChange, billPlan, billSummary, lineBlocker } from "@/lib/bill-batches";
 
 // ---------------------------------------------------------------- Zoho API call log
 // Every Zoho API call made from this file is noted with what it was for, and saved to
@@ -407,7 +408,7 @@ export const startZohoAuthorization = createServerFn({ method: "POST" })
       response_type: "code",
       client_id: reqEnv("ZOHO_CLIENT_ID"),
       scope:
-        "ZohoCommerce.items.READ,ZohoCommerce.items.CREATE,ZohoCommerce.items.UPDATE,ZohoCommerce.coupons.READ,ZohoCommerce.coupons.CREATE,ZohoCommerce.coupons.UPDATE,ZohoCommerce.salesorders.READ,ZohoCommerce.salesorders.CREATE,ZohoCommerce.salesorders.UPDATE,ZohoCommerce.settings.READ,ZohoCommerce.settings.UPDATE,ZohoCommerce.sitesIndex.READ,ZohoCommerce.webhooks.READ,ZohoCommerce.webhooks.CREATE,ZohoInventory.contacts.READ,ZohoInventory.contacts.CREATE,ZohoInventory.contacts.UPDATE,ZohoInventory.items.READ,ZohoInventory.items.CREATE,ZohoInventory.items.UPDATE,ZohoInventory.salesorders.READ,ZohoInventory.salesorders.CREATE,ZohoInventory.salesorders.UPDATE,ZohoInventory.inventoryadjustments.READ,ZohoInventory.inventoryadjustments.CREATE,ZohoInventory.settings.READ,ZohoInventory.settings.UPDATE,ZohoBooks.salesorders.CREATE,ZohoBooks.invoices.READ,ZohoBooks.invoices.CREATE,ZohoBooks.customerpayments.READ,ZohoBooks.customerpayments.CREATE,ZohoInventory.packages.READ,ZohoInventory.packages.CREATE,ZohoInventory.shipmentorders.READ,ZohoInventory.shipmentorders.CREATE,ZohoInventory.shipmentorders.UPDATE,ZohoInventory.purchaseorders.READ,ZohoInventory.purchaseorders.CREATE,ZohoBooks.invoices.UPDATE",
+        "ZohoCommerce.items.READ,ZohoCommerce.items.CREATE,ZohoCommerce.items.UPDATE,ZohoCommerce.coupons.READ,ZohoCommerce.coupons.CREATE,ZohoCommerce.coupons.UPDATE,ZohoCommerce.salesorders.READ,ZohoCommerce.salesorders.CREATE,ZohoCommerce.salesorders.UPDATE,ZohoCommerce.settings.READ,ZohoCommerce.settings.UPDATE,ZohoCommerce.sitesIndex.READ,ZohoCommerce.webhooks.READ,ZohoCommerce.webhooks.CREATE,ZohoInventory.contacts.READ,ZohoInventory.contacts.CREATE,ZohoInventory.contacts.UPDATE,ZohoInventory.items.READ,ZohoInventory.items.CREATE,ZohoInventory.items.UPDATE,ZohoInventory.salesorders.READ,ZohoInventory.salesorders.CREATE,ZohoInventory.salesorders.UPDATE,ZohoInventory.inventoryadjustments.READ,ZohoInventory.inventoryadjustments.CREATE,ZohoInventory.settings.READ,ZohoInventory.settings.UPDATE,ZohoBooks.salesorders.CREATE,ZohoBooks.invoices.READ,ZohoBooks.invoices.CREATE,ZohoBooks.customerpayments.READ,ZohoBooks.customerpayments.CREATE,ZohoInventory.packages.READ,ZohoInventory.packages.CREATE,ZohoInventory.shipmentorders.READ,ZohoInventory.shipmentorders.CREATE,ZohoInventory.shipmentorders.UPDATE,ZohoInventory.purchaseorders.READ,ZohoInventory.purchaseorders.CREATE,ZohoInventory.bills.READ,ZohoBooks.invoices.UPDATE",
       redirect_uri: redirectUri,
       access_type: "offline",
       prompt: "consent",
@@ -5975,114 +5976,203 @@ async function packageBatchInputs(
   return { reserved, zohoBatchesByItem };
 }
 
-/**
- * Admin > Batches > Receive purchase. A purchase at a godown becomes one batch (number given, or
- * the next CLK-DDMMYY-NN). With Zoho as the stock master and the product linked, Zoho gets the
- * stock first: an inventory adjustment at the godown's location (a named batch for an item with
- * "Track batches"). Only when Zoho accepted it is the batch saved and the godown's website stock
- * raised, so the two never disagree. Without a Zoho link the batch is website-only and the stock
- * goes to Zoho with the next sync.
+/*
+ * Admin > Batches > Receive purchase, from a Zoho bill (client request, 5 Nov 2026). Stock comes in only through
+ * Zoho bills, so nothing here posts a Zoho adjustment or changes stock on either side: a batch records which bill
+ * line the units came from and what they cost. Zoho calls are kept low: the recent-bills list is one call, a bill's
+ * lines are one call when it is picked, and creating batches reads the bill once more (never trusting the browser).
  */
-export const receiveBatchPurchase = createServerFn({ method: "POST" })
+const BILL_LIST_SIZE = 50;
+const BILL_CHECK_SETTING = "batch_bill_check";
+const BILL_CHECK_MINUTES = 30;
+/** Bills Zoho no longer lists are looked up one by one: at most this many per check. */
+const BILL_CHECK_LOOKUPS = 10;
+
+function billsPermissionHint(message: string) {
+  return /scope|not authorized|unauthori[sz]ed|permission|57\b/i.test(message)
+    ? " Zoho has not allowed the website to read bills yet: press Reauthorize Zoho in Admin > Zoho, then try again."
+    : "";
+}
+
+async function batchGodown(db: Awaited<ReturnType<typeof dbAdmin>>, branchId: string) {
+  const { data: branch } = await db.from("branches").select("id,name,code,zoho_location_id,active,vendor_id").eq("id", branchId).maybeSingle();
+  if (!branch?.active || branch.vendor_id) throw new Error("Choose an active godown");
+  return branch as { id: string; name: string; code: string; zoho_location_id: string; active: boolean; vendor_id: string | null };
+}
+
+/** The bill and, per line, its website product, Zoho batch tracking and any batch already made from it. */
+async function billWithLines(db: Awaited<ReturnType<typeof dbAdmin>>, billId: string) {
+  const { region, organizationId, token } = await zohoOrderContext(db);
+  let raw: Record<string, unknown> | undefined;
+  try {
+    raw = (await inventoryRequest<{ bill?: Record<string, unknown> }>(region, organizationId, token, `bills/${encodeURIComponent(billId)}`, "GET")).bill;
+  } catch (cause) {
+    const message = cause instanceof Error ? cause.message : String(cause);
+    throw new Error(`Could not read the bill from Zoho (${message}).${billsPermissionHint(message)}`);
+  }
+  if (!raw) throw new Error("Zoho did not return the bill");
+  const plan = billPlan(raw);
+  const itemIds = [...new Set(plan.lines.map((line) => line.itemId).filter(Boolean))];
+  const [{ data: links }, { data: done }] = await Promise.all([
+    itemIds.length ? db.from("zoho_item_links").select("product_id,zoho_item_id,track_batches").in("zoho_item_id", itemIds) : Promise.resolve({ data: [] }),
+    db.from("batches").select("id,batch_code,zoho_bill_line_id").eq("zoho_bill_id", plan.billId),
+  ]);
+  const linkOf = new Map(((links ?? []) as { product_id: string; zoho_item_id: string; track_batches: boolean }[]).map((link) => [link.zoho_item_id, link]));
+  const doneOf = new Map(((done ?? []) as { id: string; batch_code: string; zoho_bill_line_id: string }[]).map((row) => [row.zoho_bill_line_id, row]));
+  const productIds = [...new Set([...linkOf.values()].map((link) => link.product_id))];
+  const { data: products } = productIds.length
+    ? await db.from("catalog_products").select("id,vendor_id,payload").in("id", productIds)
+    : { data: [] };
+  const productOf = new Map(((products ?? []) as { id: string; vendor_id: string | null; payload: Record<string, unknown> | null }[])
+    .filter((p) => !str(p.vendor_id).startsWith("zoho:")).map((p) => [p.id, str(p.payload?.["name"]) || p.id]));
+  const lines = plan.lines.map((line) => {
+    const link = linkOf.get(line.itemId);
+    const productId = link && productOf.has(link.product_id) ? link.product_id : "";
+    const batch = doneOf.get(line.lineId);
+    const info = { productId, zohoTracksBatches: Boolean(link?.track_batches), batchCode: batch?.batch_code ?? "" };
+    return { ...line, productId, productName: productId ? productOf.get(productId) ?? "" : "", batchId: batch?.id ?? "", batchCode: info.batchCode, blocker: lineBlocker(line, info) };
+  });
+  return { plan: { ...plan, lines }, bill: raw };
+}
+
+export type BatchBillLine = Awaited<ReturnType<typeof billWithLines>>["plan"]["lines"][number];
+export type BatchBill = Awaited<ReturnType<typeof billWithLines>>["plan"];
+
+/** Recent Zoho bills at a godown, newest first, with how many of their lines already have a batch. One Zoho call. */
+export const listBatchBills = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator(z.object({ branchId: z.string().trim().min(1).max(40) }))
+  .handler(async ({ data, context }) => withZohoPurpose("Batches: recent bills", async () => {
+    await ensureAdmin(context.supabase, context.userId);
+    const db = await dbAdmin();
+    const branch = await batchGodown(db, data.branchId);
+    const { region, organizationId, token } = await zohoOrderContext(db);
+    let list: Record<string, unknown>[] = [];
+    try {
+      const response = await inventoryRequest<{ bills?: Record<string, unknown>[] }>(region, organizationId, token, "bills", "GET", undefined,
+        { per_page: String(BILL_LIST_SIZE), sort_column: "date", sort_order: "D" });
+      list = response.bills ?? [];
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      throw new Error(`Could not read bills from Zoho (${message}).${billsPermissionHint(message)}`);
+    }
+    // A bill names its location when the organisation uses locations; one without a location could be anywhere.
+    const bills = list.map(billSummary).filter((bill) => bill.status !== "void" && (!bill.locationId || !branch.zoho_location_id || bill.locationId === branch.zoho_location_id));
+    const ids = bills.map((bill) => bill.billId);
+    const { data: batched } = ids.length ? await db.from("batches").select("zoho_bill_id").in("zoho_bill_id", ids) : { data: [] };
+    const count = new Map<string, number>();
+    for (const row of (batched ?? []) as { zoho_bill_id: string }[]) count.set(row.zoho_bill_id, (count.get(row.zoho_bill_id) ?? 0) + 1);
+    return {
+      godown: { id: branch.id, name: branch.name, zohoLinked: Boolean(branch.zoho_location_id) },
+      bills: bills.map((bill) => ({ ...bill, batchedLines: count.get(bill.billId) ?? 0, otherLocation: false })),
+    };
+  }));
+
+/** One bill with every line's price breakup, product and whether it has a batch. One Zoho call. */
+export const getBatchBill = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator(z.object({ branchId: z.string().trim().min(1).max(40), billId: z.string().trim().min(1).max(40) }))
+  .handler(async ({ data, context }) => withZohoPurpose("Batches: one bill", async () => {
+    await ensureAdmin(context.supabase, context.userId);
+    const db = await dbAdmin();
+    const branch = await batchGodown(db, data.branchId);
+    const { plan } = await billWithLines(db, data.billId);
+    const otherGodown = Boolean(plan.locationId && branch.zoho_location_id && plan.locationId !== branch.zoho_location_id);
+    return { bill: plan, otherGodown };
+  }));
+
+/**
+ * One batch per chosen bill line, all or none. The bill is read from Zoho again here, so the costs are Zoho's, not
+ * the browser's. Nothing is sent to Zoho and no stock changes.
+ */
+export const createBatchesFromBill = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator(z.object({
     branchId: z.string().trim().min(1).max(40),
-    productId: z.string().trim().min(1).max(100),
-    quantity: z.number().positive().max(1_000_000),
-    unitCost: z.number().min(0).max(100_000_000),
-    purchaseDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-    batchCode: z.string().trim().max(40).default(""),
-    supplier: z.string().trim().max(120).default(""),
-    purchaseRef: z.string().trim().max(80).default(""),
-    notes: z.string().trim().max(300).default(""),
-    mfgDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().default(null),
-    expiryDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().default(null),
+    billId: z.string().trim().min(1).max(40),
+    costBasis: z.enum(["ex_gst", "inc_gst"]),
+    lines: z.array(z.object({
+      lineId: z.string().trim().min(1).max(40),
+      mfgDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().default(null),
+      expiryDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().default(null),
+      notes: z.string().trim().max(300).default(""),
+    })).min(1).max(200),
   }))
-  .handler(async ({ data, context }) => withZohoPurpose("Batch purchase receipt", async () => {
+  .handler(async ({ data, context }) => withZohoPurpose("Batches: from a bill", async () => {
     await ensureAdmin(context.supabase, context.userId);
     const db = await dbAdmin();
-    if (data.purchaseDate > todayInIndia()) throw new Error("The purchase date is in the future");
-    const [{ data: branch }, { data: product }, { data: link }, { data: profile }] = await Promise.all([
-      db.from("branches").select("id,name,code,zoho_location_id,active,vendor_id").eq("id", data.branchId).maybeSingle(),
-      db.from("catalog_products").select("id,vendor_id,payload").eq("id", data.productId).maybeSingle(),
-      db.from("zoho_item_links").select("zoho_item_id").eq("product_id", data.productId).maybeSingle(),
-      db.from("profiles").select("full_name").eq("id", context.userId).maybeSingle(),
-    ]);
-    if (!branch?.active || branch.vendor_id) throw new Error("Choose an active godown");
-    if (!product || str(product.vendor_id).startsWith("zoho:")) throw new Error("Product not found");
-    let code = normalizeBatchCode(data.batchCode);
-    if (code && !isBatchCode(code)) throw new Error("Batch number: 2-40 letters, digits, - / _ .");
-    if (!code) {
-      const { data: next, error } = await db.rpc("next_batch_code", { _branch_id: branch.id, _purchase_date: data.purchaseDate });
-      if (error || !next) throw new Error("Could not number the batch. Try again.");
-      code = next;
-    }
-    // Numbers are stored upper-case (record_batch_receipt), so an exact match finds a clash.
-    const { count } = await db.from("batches").select("id", { count: "exact", head: true }).eq("batch_code", code);
-    if (count) throw new Error(`Batch number ${code} is already used. Each purchase needs its own number.`);
-
-    const productName = str((product.payload as Record<string, unknown> | null)?.["name"]) || product.id;
-    const zohoItemId = link?.zoho_item_id ?? "";
-    const zohoReady = Boolean(zohoItemId && str(branch.zoho_location_id) && (await isZohoStockMaster(db)));
-    let tracked = false, adjustmentId = "", zohoBatchId = "";
-    if (zohoReady) {
-      const { region, organizationId, token } = await zohoOrderContext(db);
-      const item = (await inventoryRequest<{ item?: Record<string, unknown> }>(
-        region, organizationId, token, `items/${encodeURIComponent(zohoItemId)}`, "GET",
-      )).item ?? {};
-      tracked = zohoTracksBatches(item);
-      const batch = {
-        batch_number: code, in_quantity: data.quantity,
-        ...(data.mfgDate ? { manufacturer_date: data.mfgDate } : {}),
-        ...(data.expiryDate ? { expiry_date: data.expiryDate } : {}),
+    const branch = await batchGodown(db, data.branchId);
+    const { plan } = await billWithLines(db, data.billId);
+    if (plan.status === "void") throw new Error("This bill is void in Zoho. Batches cannot be made from it.");
+    if (plan.locationId && branch.zoho_location_id && plan.locationId !== branch.zoho_location_id)
+      throw new Error(`Bill ${plan.billNumber} is for another godown in Zoho, not ${branch.name}.`);
+    const byId = new Map(plan.lines.map((line) => [line.lineId, line]));
+    const rows = data.lines.map((pick) => {
+      const line = byId.get(pick.lineId);
+      if (!line) throw new Error("A chosen line is no longer on the bill. Open the bill again.");
+      if (line.blocker) throw new Error(`${line.name}: ${line.blocker}`);
+      if (pick.mfgDate && pick.expiryDate && pick.expiryDate < pick.mfgDate) throw new Error(`${line.name}: the expiry date is before the manufacture date`);
+      return {
+        line_id: line.lineId, product_id: line.productId, zoho_item_id: line.itemId, qty: line.qty,
+        unit_ex_gst: line.unitExGst, unit_inc_gst: line.unitIncGst,
+        mfg_date: pick.mfgDate, expiry_date: pick.expiryDate, notes: pick.notes,
       };
-      const from = data.supplier ? ` from ${data.supplier}` : "";
-      const ref = data.purchaseRef ? ` (bill/PO ${data.purchaseRef})` : "";
-      const adjustment = await inventoryRequest<{ inventory_adjustment?: Record<string, unknown> }>(
-        region, organizationId, token, "inventoryadjustments", "POST", {
-          date: data.purchaseDate,
-          reason: "Grain Bazar purchase batch",
-          adjustment_type: "quantity",
-          reference_number: code.slice(0, 50),
-          description: `Purchase batch ${code}: ${data.quantity} x ${productName} received at ${branch.name}${from}${ref}`.slice(0, 480),
-          location_id: branch.zoho_location_id,
-          line_items: [{
-            item_id: zohoItemId, quantity_adjusted: data.quantity, location_id: branch.zoho_location_id,
-            ...(tracked ? { batches: [batch] } : {}),
-          }],
-        },
-      );
-      adjustmentId = str(adjustment.inventory_adjustment?.["inventory_adjustment_id"]);
-      const lines = Array.isArray(adjustment.inventory_adjustment?.["line_items"])
-        ? adjustment.inventory_adjustment!["line_items"] as Record<string, unknown>[] : [];
-      const made = Array.isArray(lines[0]?.["batches"]) ? lines[0]["batches"] as Record<string, unknown>[] : [];
-      zohoBatchId = str((made.find((b) => normalizeBatchCode(str(b["batch_number"])) === code) ?? made[0])?.["batch_id"]);
-      if (tracked && !zohoBatchId) {
-        // Zoho has the stock now: a failed lookup must not stop the website from saving the batch
-        // (the 15-minute sync links it by number).
+    });
+    const { data: profile } = await db.from("profiles").select("full_name").eq("id", context.userId).maybeSingle();
+    const { data: made, error } = await db.rpc("create_batches_from_bill", {
+      _branch_id: branch.id,
+      _bill: { bill_id: plan.billId, bill_number: plan.billNumber, vendor_name: plan.vendorName, date: plan.date, modified: plan.modifiedAt, total: plan.total },
+      _lines: rows, _cost_basis: data.costBasis, _by: context.userId, _by_name: str(profile?.full_name),
+    });
+    if (error) throw new Error(error.message);
+    return { made: (made ?? []) as { line_id: string; batch_id: string; batch_code: string }[], billNumber: plan.billNumber };
+  }));
+
+/**
+ * Flags batches whose bill was edited, voided or deleted in Zoho since the batches were made. Runs when the Batches
+ * page opens, at most every 30 minutes: one bills list call, plus one call per bill Zoho no longer lists (at most 10).
+ * Batches are never changed, only flagged.
+ */
+export const checkBatchBills = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => withZohoPurpose("Batches: bill check", async () => {
+    await ensureAdmin(context.supabase, context.userId);
+    const db = await dbAdmin();
+    const { data: setting } = await db.from("settings").select("value").eq("key", BILL_CHECK_SETTING).maybeSingle();
+    const last = Date.parse(str(plainObject(setting?.value)["at"]));
+    if (Number.isFinite(last) && Date.now() - last < BILL_CHECK_MINUTES * 60_000) return { checked: false as const, flagged: 0 };
+    const { data: rows } = await db.from("batches").select("zoho_bill_id,zoho_bill_modified,zoho_bill_total").neq("zoho_bill_id", "");
+    const stored = new Map<string, { modifiedAt: string; total: number }>();
+    for (const row of (rows ?? []) as { zoho_bill_id: string; zoho_bill_modified: string; zoho_bill_total: number | null }[])
+      if (!stored.has(row.zoho_bill_id)) stored.set(row.zoho_bill_id, { modifiedAt: row.zoho_bill_modified, total: Number(row.zoho_bill_total) || 0 });
+    await db.from("settings").upsert({ key: BILL_CHECK_SETTING, value: { at: new Date().toISOString() } as Json, is_public: false, updated_at: new Date().toISOString() });
+    if (!stored.size) return { checked: true as const, flagged: 0 };
+    const { region, organizationId, token } = await zohoOrderContext(db);
+    const list = (await inventoryRequest<{ bills?: Record<string, unknown>[] }>(region, organizationId, token, "bills", "GET", undefined,
+      { per_page: "200", sort_column: "last_modified_time", sort_order: "D" })).bills ?? [];
+    const seen = new Map(list.map(billSummary).map((bill) => [bill.billId, bill]));
+    const flags: { bill_id: string; flag: string }[] = [];
+    let lookups = 0;
+    for (const [billId, was] of stored) {
+      let now: { status: string; modifiedAt: string; total: number } | null | undefined = seen.get(billId);
+      if (!now) {
+        // Not among the 200 most recently changed bills: unchanged, voided far back, or deleted. Ask Zoho, a few at a time.
+        if (lookups >= BILL_CHECK_LOOKUPS) continue;
+        lookups += 1;
         try {
-          const found = zohoBatchesAtLocation(await zohoItemBatches(region, organizationId, token, zohoItemId), branch.zoho_location_id)
-            .find((b) => normalizeBatchCode(b.batchNumber) === code);
-          zohoBatchId = found?.batchId ?? "";
+          const bill = (await inventoryRequest<{ bill?: Record<string, unknown> }>(region, organizationId, token, `bills/${encodeURIComponent(billId)}`, "GET")).bill;
+          now = bill ? billSummary(bill) : null;
         } catch (cause) {
-          console.warn(zohoLogLine("batch_link_deferred", { message: (cause instanceof Error ? cause.message : String(cause)).slice(0, 200) }));
+          const message = cause instanceof Error ? cause.message : String(cause);
+          if (!/does not exist|not found|invalid.*bill|1002/i.test(message)) continue;
+          now = null;
         }
       }
+      flags.push({ bill_id: billId, flag: billChange(was, now) });
     }
-    const { data: batchId, error } = await db.rpc("record_batch_receipt", {
-      _batch_code: code, _branch_id: branch.id, _product_id: product.id, _quantity: data.quantity, _unit_cost: data.unitCost,
-      _purchase_date: data.purchaseDate, _mfg_date: data.mfgDate, _expiry_date: data.expiryDate, _supplier: data.supplier,
-      _purchase_ref: data.purchaseRef, _notes: data.notes, _zoho_item_id: zohoItemId, _zoho_batch_id: zohoBatchId,
-      _zoho_adjustment_id: adjustmentId, _zoho_done: zohoReady, _received_by: context.userId, _received_by_name: str(profile?.full_name),
-    });
-    if (error || !batchId) {
-      const message = error?.message ?? "unknown error";
-      if (!zohoReady) throw new Error(message);
-      throw new Error(tracked
-        ? `Zoho has batch ${code} at ${branch.name}, but the website could not save it (${message}). It appears here with the next Zoho sync (within 15 minutes); do not enter it again.`
-        : `Zoho has the stock at ${branch.name}, but the website could not save the batch (${message}). Do not enter it again; tell head office.`);
-    }
-    return { batchId, batchCode: code, zoho: zohoReady ? (tracked ? "batch" as const : "stock" as const) : "website" as const, adjustmentId };
+    const { data: flagged, error } = await db.rpc("flag_batch_bill_changes", { _rows: flags });
+    if (error) throw new Error(error.message);
+    return { checked: true as const, flagged: Number(flagged) || 0 };
   }));
 
 /**

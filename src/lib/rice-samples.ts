@@ -35,6 +35,7 @@ export type RiceSample = {
 export type RiceTest = {
   id: string; sample_id: string; tested_at: string; tested_by_name: string; score: number;
   grain: GrainResult; swelling: SwellingResult; taste: TasteResult; broken: BrokenResult; notes: string; recorded_at: string;
+  moisture_percent: number | null; glazing: string;
 };
 export type RiceEvent = {
   id: number; sample_id: string; action: string; from_status: string | null; to_status: string | null;
@@ -78,6 +79,42 @@ export function riceTextOptions(samples: Pick<RiceSample, "variety" | "method">[
 }
 
 /** The newest test decides a sample's score: a later retest replaces the earlier opinion, and the earlier one stays on record. */
+export type TestMeasureFilter = { moistureFrom: string; moistureTo: string; glazing: string };
+export const NO_MEASURE_FILTER: TestMeasureFilter = { moistureFrom: "", moistureTo: "", glazing: "" };
+
+/** What was typed for moisture: blank is fine, and a value must be a percentage. */
+export function parseMoisture(text: string): number | null | "bad" {
+  const clean = text.trim();
+  if (!clean) return null;
+  const value = Number(clean);
+  return Number.isFinite(value) && value >= 0 && value <= 100 ? value : "bad";
+}
+
+/** Filters read the sample's newest test. A sample with no reading doesn't match a filter that asks for one. */
+export function testMatchesMeasures(test: Pick<RiceTest, "moisture_percent" | "glazing"> | null | undefined, filter: TestMeasureFilter) {
+  const from = parseMoisture(filter.moistureFrom);
+  const to = parseMoisture(filter.moistureTo);
+  const wantsMoisture = typeof from === "number" || typeof to === "number";
+  if (wantsMoisture) {
+    const moisture = test?.moisture_percent;
+    if (moisture === null || moisture === undefined) return false;
+    if (typeof from === "number" && Number(moisture) < from) return false;
+    if (typeof to === "number" && Number(moisture) > to) return false;
+  }
+  if (filter.glazing && (test?.glazing ?? "").trim().toLowerCase() !== filter.glazing.trim().toLowerCase()) return false;
+  return true;
+}
+
+/** Glazing values already used, so the same word is picked again and filters stay clean. */
+export function glazingChoices(tests: Pick<RiceTest, "glazing">[]) {
+  const seen = new Map<string, string>();
+  for (const test of tests) {
+    const value = (test.glazing ?? "").trim();
+    if (value && !seen.has(value.toLowerCase())) seen.set(value.toLowerCase(), value);
+  }
+  return [...seen.values()].sort((a, b) => a.localeCompare(b));
+}
+
 export function latestTest(tests: RiceTest[]): RiceTest | null {
   let newest: RiceTest | null = null;
   for (const test of tests) {

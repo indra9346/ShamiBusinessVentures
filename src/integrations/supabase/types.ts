@@ -27,7 +27,7 @@ export type Database = {
         Relationships: []
       }
       rice_sample_tests: {
-        Row: { id: string; sample_id: string; tested_at: string; tested_by_name: string; score: number; grain: string; swelling: string; taste: string; broken: string; notes: string; recorded_by: string | null; recorded_at: string }
+        Row: { moisture_percent: number | null; glazing: string; id: string; sample_id: string; tested_at: string; tested_by_name: string; score: number; grain: string; swelling: string; taste: string; broken: string; notes: string; recorded_by: string | null; recorded_at: string }
         Insert: never
         Update: never
         Relationships: []
@@ -214,6 +214,17 @@ export type Database = {
       }
       batches: {
         Row: {
+          unit_cost_ex_gst: number | null
+          unit_cost_inc_gst: number | null
+          cost_basis: string | null
+          zoho_bill_id: string
+          zoho_bill_line_id: string
+          zoho_bill_number: string
+          zoho_bill_modified: string
+          zoho_bill_total: number | null
+          bill_flag: string
+          bill_flag_at: string | null
+          bill_checked_at: string | null
           branch_id: string | null
           source: string
           supplier: string
@@ -246,6 +257,17 @@ export type Database = {
           warehouse: string | null
         }
         Insert: {
+          unit_cost_ex_gst?: number | null
+          unit_cost_inc_gst?: number | null
+          cost_basis?: string | null
+          zoho_bill_id?: string
+          zoho_bill_line_id?: string
+          zoho_bill_number?: string
+          zoho_bill_modified?: string
+          zoho_bill_total?: number | null
+          bill_flag?: string
+          bill_flag_at?: string | null
+          bill_checked_at?: string | null
           branch_id?: string | null
           source?: string
           supplier?: string
@@ -278,6 +300,17 @@ export type Database = {
           warehouse?: string | null
         }
         Update: {
+          unit_cost_ex_gst?: number | null
+          unit_cost_inc_gst?: number | null
+          cost_basis?: string | null
+          zoho_bill_id?: string
+          zoho_bill_line_id?: string
+          zoho_bill_number?: string
+          zoho_bill_modified?: string
+          zoho_bill_total?: number | null
+          bill_flag?: string
+          bill_flag_at?: string | null
+          bill_checked_at?: string | null
           branch_id?: string | null
           source?: string
           supplier?: string
@@ -1217,6 +1250,7 @@ export type Database = {
     Functions: {
       rice_sample_save: { Args: { _id: string | null; _arrival_date: string; _variety: string; _method: string; _price_per_qntl: number; _quantity_qntl: number; _party_role: string; _party_name: string; _party_phone: string; _seller_name: string; _notes: string }; Returns: string }
       rice_sample_add_test: { Args: { _sample_id: string; _tested_at: string | null; _tested_by_name: string; _score: number; _grain: string; _swelling: string; _taste: string; _broken: string; _notes: string }; Returns: string }
+      rice_sample_add_measured_test: { Args: { _moisture_percent: number | null; _glazing: string; _sample_id: string; _tested_at: string | null; _tested_by_name: string; _score: number; _grain: string; _swelling: string; _taste: string; _broken: string; _notes: string }; Returns: string }
       rice_sample_set_status: { Args: { _sample_id: string; _action: string; _reason: string }; Returns: string }
       rice_sample_po_claim: { Args: { _sample_id: string; _attempt_id: string; _reference: string; _snapshot: Json; _user: string; _user_name: string }; Returns: Json }
       rice_sample_po_takeover: { Args: { _sample_id: string; _expected_attempt: string; _attempt_id: string; _snapshot: Json; _user: string; _user_name: string }; Returns: Json }
@@ -1283,6 +1317,8 @@ export type Database = {
       reopen_bank_credit: { Args: { _credit_id: string }; Returns: { id: string; status: string; note: string | null } }
       submit_upi_utr: { Args: { _order_no: string; _utr: string }; Returns: { id: string; order_id: string; order_no: string; user_id: string | null; customer_name: string; amount: number; utr: string; status: string; note: string | null; submitted_at: string; reviewed_at: string | null; reviewed_by: string | null } }
       admin_end_payment_hold: { Args: { _order_no: string }; Returns: boolean }
+      order_delete_blocker: { Args: { _order_no: string }; Returns: string | null }
+      admin_delete_order: { Args: { _order_no: string; _reason: string }; Returns: Json }
       mark_utr_refunded: { Args: { _order_no: string }; Returns: boolean }
       delivery_note_check: { Args: { _order_no: string; _zoho: Json | null }; Returns: Json }
       issue_delivery_note: { Args: { _order_no: string; _zoho: Json; _actor: string; _actor_name: string }; Returns: Json }
@@ -1301,6 +1337,9 @@ export type Database = {
       }
       record_batch_adjustments: { Args: { _rows: Json; _created_by: string | null; _created_by_name: string }; Returns: number }
       apply_zoho_batches: { Args: { _rows: Json }; Returns: Json }
+      create_batches_from_bill: { Args: { _branch_id: string; _bill: Json; _lines: Json; _cost_basis: string; _by: string | null; _by_name: string }; Returns: Json }
+      admin_delete_batch: { Args: { _batch_id: string }; Returns: Json }
+      flag_batch_bill_changes: { Args: { _rows: Json }; Returns: number }
       link_zoho_batch: { Args: { _batch_id: string; _zoho_batch_id: string; _zoho_adjustment_id: string }; Returns: undefined }
       admin_update_batch: { Args: { _batch_id: string; _unit_cost: number; _supplier: string; _purchase_ref: string; _notes: string; _mfg_date: string | null; _expiry_date: string | null }; Returns: undefined }
       order_item_batches: { Args: { _order_id: string }; Returns: { order_item_id: string; batch_code: string; qty: number }[] }

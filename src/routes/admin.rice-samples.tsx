@@ -16,7 +16,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
-  BROKEN_LABELS, GRAIN_LABELS, NO_GST_WORDS, PO_DEATH_WORDS, RICE_PO_SETTINGS_KEY, SORT_LABELS, STATUS_LABELS, SWELLING_LABELS, TASTE_LABELS, bestInComparison, canCancelPo, inPlay, poDeathReason, poTaxAmount, poTaxLabel, poTaxReason, isBulkUnit, isSamplePhone, latestTest, phoneLinks, planPoLine,
+  BROKEN_LABELS, GRAIN_LABELS, NO_GST_WORDS, PO_DEATH_WORDS, RICE_PO_SETTINGS_KEY, SORT_LABELS, STATUS_LABELS, SWELLING_LABELS, TASTE_LABELS, bestInComparison, canCancelPo, inPlay, poDeathReason, poTaxAmount, poTaxLabel, poTaxReason, isBulkUnit, isSamplePhone, glazingChoices, latestTest, NO_MEASURE_FILTER, parseMoisture, testMatchesMeasures, type TestMeasureFilter, phoneLinks, planPoLine,
   poLineProblem, poReference, priceUnitWarning, riceTextOptions, sampleLabel, sortSamples, testsBySample, zohoPoUrl, zohoStatusLabel,
   type BrokenResult, type GrainResult, type PoTax, type RetiredPo, type PartyRole, type RaiseResult, type RicePo, type RiceSample, type RiceTest, type SampleSort, type SampleStatus, type SwellingResult, type TasteResult, type ZohoItemMatch, type ZohoVendorMatch,
 } from "@/lib/rice-samples";
@@ -59,7 +59,7 @@ const demoDesk = (): RiceDesk => {
     notes: "", status, status_reason: status === "unavailable" ? "Broker says the lot is sold" : "", status_changed_at: `${arrival}T10:00:00Z`, created_by_name: "Head Office", created_at: `${arrival}T10:00:00Z`, updated_at: `${arrival}T10:00:00Z`, deleted_at: null, deleted_by_name: "", deleted_reason: "",
   });
   const test = (sampleId: string, score: number, grain: GrainResult, taste: TasteResult, broken: BrokenResult): RiceTest => ({
-    id: `T-${sampleId}`, sample_id: sampleId, tested_at: "2026-11-02T06:00:00Z", tested_by_name: "Godown team", score, grain, swelling: "good", taste, broken, notes: "Good smell, cooked in 15 minutes", recorded_at: "2026-11-02T06:05:00Z",
+    id: `T-${sampleId}`, sample_id: sampleId, tested_at: "2026-11-02T06:00:00Z", tested_by_name: "Godown team", score, grain, swelling: "good", taste, broken, notes: "Good smell, cooked in 15 minutes", moisture_percent: 12.5, glazing: "Silky", recorded_at: "2026-11-02T06:05:00Z",
   });
   return {
     samples: [
@@ -99,6 +99,7 @@ function AdminRiceSamples() {
   const [filter, setFilter] = useState<ListFilter>("in_play");
   const [sort, setSort] = useState<SampleSort>("score");
   const [search, setSearch] = useState("");
+  const [measures, setMeasures] = useState<TestMeasureFilter>(NO_MEASURE_FILTER);
   const [compareIds, setCompareIds] = useState<string[]>([]);
   const [sampleForm, setSampleForm] = useState<SampleForm | null>(null);
   const [testing, setTesting] = useState<RiceSample | null>(null);
@@ -170,8 +171,9 @@ function AdminRiceSamples() {
   const shown = useMemo(() => {
     const term = search.trim().toLowerCase();
     const list = samples.filter((s) => (filter === "deleted" ? Boolean(s.deleted_at) : !s.deleted_at && matchesFilter(s.status, filter)) && (!term || `${s.variety} ${s.method} ${s.party_name} ${s.seller_name}`.toLowerCase().includes(term)));
-    return sortSamples(list, sort, tests);
-  }, [samples, filter, search, sort, tests]);
+    const measured = list.filter((s) => testMatchesMeasures(latestTest(tests.get(s.id) ?? []), measures));
+    return sortSamples(measured, sort, tests);
+  }, [samples, filter, search, sort, tests, measures]);
   const compared = useMemo(() => compareIds.map((id) => onCards.find((s) => s.id === id)).filter((s): s is RiceSample => Boolean(s)), [compareIds, onCards]);
   const openList = (next: ListFilter) => { setFilter(next); scrollToSection("rice-sample-list"); };
   // The purchase order screen must see the sample as it is now, not as it was when the screen opened.
@@ -225,6 +227,23 @@ function AdminRiceSamples() {
             <Input className={inputClass} placeholder="Variety, broker or seller" value={search} onChange={(event) => setSearch(event.target.value)} />
           </div>
         </div>
+        <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <div className="grid gap-1"><Label className="text-[11px] text-slate">Moisture from %</Label>
+            <Input aria-label="Moisture from percent" className={inputClass} type="number" min="0" max="100" step="0.01" value={measures.moistureFrom} onChange={(event) => setMeasures((m) => ({ ...m, moistureFrom: event.target.value }))} />
+          </div>
+          <div className="grid gap-1"><Label className="text-[11px] text-slate">Moisture to %</Label>
+            <Input aria-label="Moisture to percent" className={inputClass} type="number" min="0" max="100" step="0.01" value={measures.moistureTo} onChange={(event) => setMeasures((m) => ({ ...m, moistureTo: event.target.value }))} />
+          </div>
+          <div className="grid gap-1"><Label className="text-[11px] text-slate">Glazing</Label>
+            <select aria-label="Filter by glazing" className="h-10 min-w-0 rounded-md border border-input bg-white px-2 text-sm" value={measures.glazing} onChange={(event) => setMeasures((m) => ({ ...m, glazing: event.target.value }))}>
+              <option value="">Any glazing</option>
+              {glazingChoices([...tests.values()].flat()).map((value) => <option key={value} value={value}>{value}</option>)}
+            </select>
+          </div>
+          <div className="flex items-end">
+            <Button type="button" variant="outline" className="h-10 w-full" disabled={!measures.moistureFrom && !measures.moistureTo && !measures.glazing} onClick={() => setMeasures(NO_MEASURE_FILTER)}>Clear test filters</Button>
+          </div>
+        </div>
         {filter !== "in_play" && filter !== "all" && <FilterNote label={FILTER_LABELS[filter]} onClear={() => setFilter("all")} />}
         {loadError ? (
           <p className="text-sm text-danger">Samples could not be loaded: {loadError}</p>
@@ -270,7 +289,7 @@ function AdminRiceSamples() {
       )}
 
       {sampleForm && desk && <SampleFormDialog form={sampleForm} onForm={setSampleForm} samples={samples} onClose={() => setSampleForm(null)} onSaved={load} />}
-      {testing && desk && <TestDialog sample={testing} adminName={desk.adminName} onClose={() => setTesting(null)} onSaved={load} />}
+      {testing && desk && <TestDialog glazingOptions={glazingChoices([...tests.values()].flat())} sample={testing} adminName={desk.adminName} onClose={() => setTesting(null)} onSaved={load} />}
       {changing && <StatusDialog sample={changing.sample} action={changing.action} onClose={() => setChanging(null)} onSaved={load} />}
       {cancelling && <CancelPoDialog sample={cancelling.sample} po={cancelling.po} onClose={() => setCancelling(null)} onDone={load} />}
       {buyingNow && desk && <BuyDialog sample={buyingNow} tests={tests.get(buyingNow.id) ?? []} desk={desk} po={pos.get(buyingNow.id) ?? null} onReload={load} onClose={() => { setBuying(null); void load(); }} />}
@@ -347,6 +366,7 @@ function SampleCard({ sample, tests, po, zoho, compared, onCompare, onTest, onBu
       {latest && (
         <p className="mt-3 rounded-md bg-navy/5 px-2 py-1.5 text-xs text-navy">
           <span className="font-semibold">Latest test:</span> Grain {GRAIN_LABELS[latest.grain].toLowerCase()}, swelling {SWELLING_LABELS[latest.swelling].toLowerCase()}, taste {TASTE_LABELS[latest.taste].toLowerCase()}, {BROKEN_LABELS[latest.broken].toLowerCase()} broken. {latest.tested_by_name}, {when(latest.tested_at)}.
+          {(latest.moisture_percent !== null || latest.glazing) && <span className="mt-1 block">{measureText(latest)}</span>}
           {latest.taste === "off" && <span className="mt-1 block font-semibold text-danger">Off taste or smell</span>}
           {latest.notes && <span className="mt-1 block break-words text-slate">{latest.notes}</span>}
         </p>
@@ -578,6 +598,8 @@ function CompareTable({ samples, tests, pos, onTest, onBuy }: { samples: RiceSam
                 {cell("Swelling", latest ? SWELLING_LABELS[latest.swelling] : "—")}
                 {cell("Taste and smell", latest ? <span className={latest.taste === "off" ? "text-danger" : ""}>{TASTE_LABELS[latest.taste]}</span> : "—")}
                 {cell("Broken grains", latest ? BROKEN_LABELS[latest.broken] : "—")}
+                {cell("Moisture", latest && latest.moisture_percent !== null ? `${Number(latest.moisture_percent)}%` : "—")}
+                {cell("Glazing", latest?.glazing || "—")}
                 {cell("Tests", String(list.length))}
                 {cell("Arrived", day(sample.arrival_date))}
                 {cell(PARTY_LABEL[sample.party_role], sample.party_name)}
@@ -712,12 +734,18 @@ function Choice<T extends string>({ label, value, options, onChange }: { label: 
  * grains stay separate (what customers notice first), swelling (how far a bag goes), taste and smell (off means old or badly stored,
  * whatever the score), and broken grains (what the price should reflect). The reasoning is in docs/rice-samples.md.
  */
-function TestDialog({ sample, adminName, onClose, onSaved }: { sample: RiceSample; adminName: string; onClose: () => void; onSaved: () => Promise<void> }) {
+function measureText(test: Pick<RiceTest, "moisture_percent" | "glazing">) {
+  return [test.moisture_percent !== null ? `Moisture ${Number(test.moisture_percent)}%` : "", test.glazing ? `Glazing ${test.glazing}` : ""].filter(Boolean).join(", ");
+}
+
+function TestDialog({ sample, adminName, glazingOptions, onClose, onSaved }: { sample: RiceSample; glazingOptions: string[]; adminName: string; onClose: () => void; onSaved: () => Promise<void> }) {
   const [score, setScore] = useState(0);
   const [grain, setGrain] = useState<GrainResult | "">("");
   const [swelling, setSwelling] = useState<SwellingResult | "">("");
   const [taste, setTaste] = useState<TasteResult | "">("");
   const [broken, setBroken] = useState<BrokenResult | "">("");
+  const [moisture, setMoisture] = useState("");
+  const [glazing, setGlazing] = useState("");
   const [notes, setNotes] = useState("");
   const [testedBy, setTestedBy] = useState(adminName);
   const [testedAt, setTestedAt] = useState(nowLocal());
@@ -726,10 +754,12 @@ function TestDialog({ sample, adminName, onClose, onSaved }: { sample: RiceSampl
     if (!score) { toast.error("Choose a score from 1 to 10"); return; }
     if (!grain || !swelling || !taste || !broken) { toast.error("Choose grain, swelling, taste and broken grains"); return; }
     if (!testedBy.trim()) { toast.error("Enter who tested it"); return; }
+    const moistureValue = parseMoisture(moisture);
+    if (moistureValue === "bad") { toast.error("Enter moisture as a percentage from 0 to 100"); return; }
     if (STATIC_DATA_MODE) { toast("Preview only: nothing is saved"); onClose(); return; }
     setSaving(true);
-    const { error } = await supabase.rpc("rice_sample_add_test", {
-      _sample_id: sample.id, _tested_at: testedAt ? new Date(testedAt).toISOString() : null, _tested_by_name: testedBy, _score: score, _grain: grain, _swelling: swelling, _taste: taste, _broken: broken, _notes: notes,
+    const { error } = await supabase.rpc("rice_sample_add_measured_test", {
+      _moisture_percent: moistureValue, _glazing: glazing.trim(), _sample_id: sample.id, _tested_at: testedAt ? new Date(testedAt).toISOString() : null, _tested_by_name: testedBy, _score: score, _grain: grain, _swelling: swelling, _taste: taste, _broken: broken, _notes: notes,
     });
     setSaving(false);
     if (error) { toast.error("Could not save the test", { description: error.message }); return; }
@@ -757,6 +787,15 @@ function TestDialog({ sample, adminName, onClose, onSaved }: { sample: RiceSampl
           <Choice label="Swelling after cooking" value={swelling} options={SWELLING_LABELS} onChange={setSwelling} />
           <Choice label="Taste and smell" value={taste} options={TASTE_LABELS} onChange={setTaste} />
           <Choice label="Broken grains" value={broken} options={BROKEN_LABELS} onChange={setBroken} />
+          <div className="grid grid-cols-2 gap-3">
+            <div className="grid gap-1"><Label className="text-xs text-slate">Moisture %</Label>
+              <Input className={inputClass} type="number" inputMode="decimal" min="0" max="100" step="0.01" placeholder="e.g. 12.5" value={moisture} onChange={(event) => setMoisture(event.target.value)} />
+            </div>
+            <div className="grid gap-1"><Label className="text-xs text-slate">Glazing</Label>
+              <Input className={inputClass} list="rice-glazing-options" maxLength={60} placeholder="Type or pick" value={glazing} onChange={(event) => setGlazing(event.target.value)} />
+              <datalist id="rice-glazing-options">{glazingOptions.map((value) => <option key={value} value={value} />)}</datalist>
+            </div>
+          </div>
           <div className="grid gap-1"><Label className="text-xs text-slate">Notes</Label>
             <Textarea rows={2} className="bg-white text-base sm:text-sm" placeholder="Water used, cooking time, anything else" value={notes} onChange={(event) => setNotes(event.target.value)} />
           </div>
@@ -834,6 +873,7 @@ function HistoryDialog({ sample, tests, events, po, onClose }: { sample: RiceSam
                 <li key={test.id} className="rounded-md bg-ivory px-3 py-2 text-xs text-navy">
                   <p className="text-sm font-bold">{test.score}/10 <span className="text-xs font-normal text-slate">{test.tested_by_name}, {when(test.tested_at)}</span></p>
                   <p>Grain {GRAIN_LABELS[test.grain].toLowerCase()}, swelling {SWELLING_LABELS[test.swelling].toLowerCase()}, taste {TASTE_LABELS[test.taste].toLowerCase()}, {BROKEN_LABELS[test.broken].toLowerCase()} broken</p>
+                  {(test.moisture_percent !== null || test.glazing) && <p>{measureText(test)}</p>}
                   {test.notes && <p className="mt-0.5 break-words text-slate">{test.notes}</p>}
                 </li>
               ))}

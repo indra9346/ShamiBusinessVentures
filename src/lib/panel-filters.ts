@@ -112,7 +112,7 @@ export const MONEY_RECEIVED = "Money received";
 /** Payment filter: every order with money still to come (what the Pending card adds up). */
 export const UNPAID = "Unpaid";
 
-const PAYMENT_FILTERS = ["Successful", "Pending", "Overdue", "Partially Paid", "Failed", "Refunded", MONEY_RECEIVED, UNPAID];
+const PAYMENT_FILTERS = ["Successful", "Pending", "Overdue", "Partially Paid", "Failed", "Refunded", "Cancelled", MONEY_RECEIVED, UNPAID];
 
 /** The payment filter a link asked for, or "All" when it is not one the list offers. */
 export const paymentFilterOf = (value: unknown): string =>
@@ -122,7 +122,7 @@ export const isUnpaid = (payment: string) => payment !== "Paid" && payment !== "
 
 export const matchesPaymentFilter = (txn: { status: string; payment: string; paid: number }, filter: string) =>
   filter === "All"
-    || (filter === MONEY_RECEIVED ? txn.paid > 0 : filter === UNPAID ? isUnpaid(txn.payment) : txn.status === filter);
+    || (filter === MONEY_RECEIVED ? txn.paid > 0 : filter === UNPAID ? isUnpaid(txn.payment) && txn.status !== "Cancelled" : txn.status === filter);
 
 /** Payout filter: requests still open, neither paid nor rejected. */
 export const OPEN_PAYOUTS = "Open";
