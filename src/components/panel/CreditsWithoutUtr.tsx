@@ -141,6 +141,7 @@ export function CreditsWithoutUtrPanel({ credits, submissions, checkouts = [] }:
                       <span className="text-slate">{`(the only checkout waiting for this amount; made ${istTime(kept.createdAt)})`}</span>
                     </span>
                     <ConfirmWithCredit credit={credit} orderNo={kept.orderNo} utr={null} />
+                    {kept.gstBillTo && <p className="w-full text-[11px] font-semibold text-amber-900">{`GST bill to ${kept.gstBillTo}: check that the payer in your bank app is this firm.`}</p>}
                   </div>
                 ) : choices === 0 ? (
                   <p className="mt-2 text-xs text-slate">No checkout or UTR is waiting for this amount. If it isn't a website payment, mark it so.</p>

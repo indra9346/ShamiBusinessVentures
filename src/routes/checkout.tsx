@@ -24,7 +24,7 @@ import { isOutsideServiceArea } from "@/lib/godown-rules";
 import { useBankDetails, useUpiPayments } from "@/lib/upi-store";
 import { isBankMethod, lapsedTransfer, methodLabel, methodsForOrders, pickMethod, UPI_BELOW, type PayMethod } from "@/lib/payment-rules";
 import { settingsProblem } from "@/lib/upi-pay";
-import { businessDetailsProblem, normaliseGstin } from "@/lib/gstin";
+import { GST_BILL_PAY_NOTE, gstBillProblem, normaliseGstin } from "@/lib/gstin";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import {
   addressChangeBetween, addressChangeText, addressEditPatch, addressFieldsOf, addressFormProblem, addressLockReason, cleanAddressFields, lineProblems, lineProblemText,
@@ -165,18 +165,18 @@ function Checkout() {
   const [chosenMethod, setChosenMethod] = useState<PayMethod | null>(null);
   // A coupon applied on the cart page carries over.
   const [couponCode, setCouponCode] = useState(cartCoupon?.trim().toUpperCase() ?? "");
-  // Company details on the invoice: company name (required) and GSTIN (optional) go on the order, its
-  // Zoho Books invoice and, with a GSTIN, the e-invoice.
+  // GST bill (client's rule): ticked, the bill is to the firm, with its name and GSTIN (both required), on the order,
+  // its Zoho Books invoice and the e-invoice. Not ticked: no GST bill, the bill is in the customer's own name.
   const [isBusiness, setIsBusiness] = useState(false);
   const [bizGstin, setBizGstin] = useState("");
   const [bizName, setBizName] = useState("");
   const [bizTouched, setBizTouched] = useState(false);
   useEffect(() => {
-    // A customer whose last order was for their company gets the company name and GSTIN filled in.
+    // A customer whose last order had a GST bill gets the firm name and GSTIN filled in.
     if (STATIC_DATA_MODE || !user?.id) return;
     let active = true;
     void supabase.from("profiles").select("gstin,company").eq("id", user.id).maybeSingle().then(({ data }) => {
-      if (!active || !data?.company?.trim()) return;
+      if (!active || !data?.company?.trim() || !data.gstin?.trim()) return;
       setBizGstin(data.gstin ?? "");
       setBizName(data.company);
       setIsBusiness(true);
@@ -420,14 +420,14 @@ function Checkout() {
       void navigate({ to: "/cart" });
       return;
     }
-    // Company details are checked against the address they will be billed to (GSTIN state = address state).
+    // GST bill details are checked against the address they will be billed to (GSTIN state = address state).
     if ((step === 0 || step === 3) && isBusiness) {
       const billingState = step === 0 && addressFormOpen ? addressForm.state : selectedAddress?.state;
-      const problem = businessDetailsProblem(bizGstin, bizName, billingState);
+      const problem = gstBillProblem(bizGstin, bizName, billingState);
       if (problem) {
         setBizTouched(true);
         if (step === 3) setStep(0);
-        toast.error("Check the company details", { description: problem });
+        toast.error("Check the GST bill details", { description: problem });
         return;
       }
     }
@@ -894,7 +894,7 @@ function Checkout() {
               )}
                 {!addressOutside && (() => {
                   const billingState = addressFormOpen ? addressForm.state : selectedAddress?.state;
-                  const problem = isBusiness ? businessDetailsProblem(bizGstin, bizName, billingState) : null;
+                  const problem = isBusiness ? gstBillProblem(bizGstin, bizName, billingState) : null;
                   const gstin = normaliseGstin(bizGstin);
                   return (
                     <div className="mt-5 rounded-lg border border-border bg-ivory/50 p-3 sm:p-4">
@@ -906,27 +906,33 @@ function Checkout() {
                           className="mt-0.5 h-4 w-4 shrink-0 accent-[#2f5d46]"
                         />
                         <span>
-                          <span className="font-semibold text-navy">I want to include my company name and GST details in the invoice</span>
-                          <span className="block text-xs text-slate">Your invoice is made out to your company. Add your GSTIN to claim input tax credit.</span>
+                          <span className="font-semibold text-navy">I need a GST bill</span>
+                          <span className="block text-xs text-slate">A tax invoice in your firm's name with its GSTIN, to claim input tax credit. Leave it unticked for a bill in your own name, without GST details.</span>
                         </span>
                       </label>
+                      {!isBusiness && (
+                        <p className="mt-2 text-xs text-charcoal">
+                          <span className="font-semibold">No GST bill.</span>{" "}
+                          <span>{`Bill to: ${(user?.name || selectedAddress?.name || "your name").trim()}`}</span>
+                        </p>
+                      )}
                       {isBusiness && (
                         <div className="mt-3 grid gap-3 sm:grid-cols-2">
                           <div>
-                            <label className="mb-1 block text-xs font-semibold text-charcoal" htmlFor="biz-name">Company name *</label>
+                            <label className="mb-1 block text-xs font-semibold text-charcoal" htmlFor="biz-name">Firm name *</label>
                             <input
                               id="biz-name"
                               value={bizName}
                               maxLength={150}
                               autoComplete="organization"
-                              placeholder="Company name"
+                              placeholder="Firm name, as on the GST certificate"
                               onChange={(e) => setBizName(e.target.value)}
                               onBlur={() => setBizTouched(true)}
                               className={cn("h-10 w-full rounded-md border bg-white px-3 text-sm", bizTouched && bizName.trim().length < 2 ? "border-danger" : "border-border")}
                             />
                           </div>
                           <div>
-                            <label className="mb-1 block text-xs font-semibold text-charcoal" htmlFor="biz-gstin">GST number (optional)</label>
+                            <label className="mb-1 block text-xs font-semibold text-charcoal" htmlFor="biz-gstin">GSTIN *</label>
                             <input
                               id="biz-gstin"
                               value={bizGstin}
@@ -1099,11 +1105,10 @@ function Checkout() {
                   <div>{payMethod && isBankMethod(payMethod)
                     ? `Payment: ${methodLabel(payMethod)} (our bank details are on the next step; enter the UTR within 1 hour)`
                     : payMethod === "UPI" ? "Payment: UPI (pay on the next step; the order is placed when paid)" : "Payment: not available yet"}</div>
-                  {isBusiness && !businessDetailsProblem(bizGstin, bizName, selectedAddress?.state) && (
-                    normaliseGstin(bizGstin)
-                      ? <div>Invoice to: {bizName.trim()} · GSTIN {normaliseGstin(bizGstin)}</div>
-                      : <div>Invoice to: {bizName.trim()} (no GSTIN)</div>
-                  )}
+                  {isBusiness && !gstBillProblem(bizGstin, bizName, selectedAddress?.state)
+                    ? <div><span>GST bill to:</span> <span>{`${bizName.trim()} · GSTIN ${normaliseGstin(bizGstin)}`}</span></div>
+                    : !isBusiness && <div><span>Bill to:</span> <span>{(user?.name || selectedAddress?.name || "").trim()}</span> <span>(no GST bill)</span></div>}
+                  {isBusiness && <div className="font-semibold text-amber-900">{GST_BILL_PAY_NOTE}</div>}
                   {appliedCoupon && <div>Coupon: {appliedCoupon.code}</div>}
                 </dl>
               </>
