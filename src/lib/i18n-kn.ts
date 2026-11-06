@@ -1279,6 +1279,8 @@ export const kn: Record<string, string> = {
   "Date Window:": "ದಿನಾಂಕ ಅವಧಿ:",
   "Latest Orders ({0})": "ಇತ್ತೀಚಿನ ಆರ್ಡರ್‌ಗಳು ({0})",
   "Lifetime Net Receipts": "ಒಟ್ಟು ನಿವ್ವಳ ಸ್ವೀಕೃತಿಗಳು",
+  "Net Money Received (All Time)": "ನಿವ್ವಳ ಸ್ವೀಕರಿಸಿದ ಹಣ (ಇಲ್ಲಿಯವರೆಗೆ)",
+  "{0} paid − {1} refunded − {2} to sellers (website records)": "{0} ಪಾವತಿ − {1} ಮರುಪಾವತಿ − {2} ಮಾರಾಟಗಾರರಿಗೆ (ವೆಬ್‌ಸೈಟ್ ದಾಖಲೆಗಳು)",
   "LOW STOCK ALERTS": "ಕಡಿಮೆ ದಾಸ್ತಾನು ಎಚ್ಚರಿಕೆಗಳು",
   "Low Stock Products": "ಕಡಿಮೆ ದಾಸ್ತಾನಿರುವ ಉತ್ಪನ್ನಗಳು",
   "No order value in this date range.": "ಈ ದಿನಾಂಕ ಅವಧಿಯಲ್ಲಿ ಯಾವುದೇ ಆರ್ಡರ್ ಮೌಲ್ಯವಿಲ್ಲ.",
