@@ -8,7 +8,7 @@ import { inr, isStorefrontProduct } from "@/lib/data";
 import { LanguageSwitcher } from "@/components/site/LanguageSwitcher";
 
 import { SearchAutosuggest } from "@/components/site/SearchAutosuggest";
-import { HeaderCrackers, HeaderZari } from "@/components/site/DiwaliDecor";
+import { DiwaliLanterns, HeaderCrackers, HeaderZari } from "@/components/site/DiwaliDecor";
 import { useFestiveTheme } from "@/lib/festive";
 
 const nav = [
@@ -33,7 +33,7 @@ export function SiteHeader() {
     <header className="sticky top-0 z-50 w-full">
       {/* With the festival crackers playing the header is solid (no live blur under a moving video). */}
       <div className={`relative isolate border-b border-white/10 ${festiveHere ? "bg-navy" : "bg-navy/95 backdrop-blur-md"}`}>
-        {festiveHere && <><HeaderCrackers /><HeaderZari /></>}
+        {festiveHere && <><HeaderCrackers /><DiwaliLanterns place="header" /><HeaderZari /></>}
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-3.5 py-2.5 sm:px-6 sm:py-3">
           {/* Over the festival drawings a soft shadow keeps the white and gold letters clear. */}
           <Logo className={festiveHere ? "[&_img]:drop-shadow-[0_1px_2px_rgba(0,0,0,0.6)]" : ""} />
