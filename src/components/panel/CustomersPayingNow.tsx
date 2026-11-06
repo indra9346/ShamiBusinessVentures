@@ -73,6 +73,7 @@ export function CustomersPayingNow({ compact = false }: { compact?: boolean }) {
                     <span className="font-semibold text-navy">{(hold.customer || "Customer").slice(0, 60)}</span>
                     <span className="ml-2 font-mono text-xs text-slate">{hold.orderNo}</span>
                     <span className="ml-2 rounded bg-muted px-1.5 py-0.5 text-[10px] font-bold text-slate">{hold.method ?? "UPI"}</span>
+                    {hold.gstBillTo && <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-900" title={`GST bill to ${hold.gstBillTo}: the money should come from the firm's account`}>GST bill</span>}
                   </span>
                   <span className="font-semibold tabular-nums text-navy">{inrPrecise(hold.amount)}</span>
                   <span className={cn("inline-flex min-w-[118px] items-center justify-end gap-1 font-mono text-sm font-bold tabular-nums",

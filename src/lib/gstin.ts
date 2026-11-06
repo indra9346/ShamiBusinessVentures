@@ -42,3 +42,17 @@ export function businessDetailsProblem(rawGstin: string, legalName: string, addr
   }
   return null;
 }
+
+/** The wording the payment page shows when the customer chose a GST bill (client's note, 6 Nov 2026). */
+export const GST_BILL_PAY_NOTE = "You have selected a GST invoice. Please make the payment from your registered firm / business account.";
+
+/**
+ * A GST bill (client's rule, 6 Nov 2026): the bill is made out to the firm, so both the firm name and its GSTIN are
+ * required, and the GSTIN must be valid and of the billing address's state. Without a GST bill the bill is in the
+ * customer's own name and nothing here is asked.
+ */
+export function gstBillProblem(rawGstin: string, firmName: string, addressState?: string | null): string | null {
+  if (firmName.trim().length < 2) return "Enter your firm name for the GST bill";
+  if (!normaliseGstin(rawGstin)) return "Enter your firm's GSTIN for the GST bill";
+  return businessDetailsProblem(rawGstin, firmName, addressState);
+}

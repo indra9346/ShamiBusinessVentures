@@ -10,6 +10,7 @@ import { serverNow, useServerNow } from "@/lib/server-clock";
 import { useApp } from "@/lib/store";
 import { CancelCheckoutButton } from "@/components/site/CancelCheckoutButton";
 import { normaliseUtr, upiPaymentUri, utrFromText, utrProblem, type UpiSettings } from "@/lib/upi-pay";
+import { GST_BILL_PAY_NOTE } from "@/lib/gstin";
 import { UpiAppButtons } from "@/components/site/UpiAppButtons";
 import { BankTransferDetails, BankUtrForm } from "@/components/site/BankTransferPay";
 import { ReorderButton } from "@/components/site/ReorderButton";
@@ -33,7 +34,7 @@ export function HeldCheckoutPay({ settings, orderNo, amount, holdUntil, customer
   const submission = submissions.find((item) => item.orderNo === orderNo);
   const storeHold = paymentHolds.find((hold) => hold.orderNo === orderNo);
   // Read straight from the database too, so the screen moves on even if the live feed is slow.
-  const [liveStatus, setLiveStatus] = useState<{ status: string; outcome: string | null; holdUntil: string | null; moneySeenAt: string | null } | null>(null);
+  const [liveStatus, setLiveStatus] = useState<{ status: string; outcome: string | null; holdUntil: string | null; moneySeenAt: string | null; gstBillTo: string | null; gstin: string | null } | null>(null);
   // The database decides when the hold ends, so the countdown runs on the server's clock.
   const now = useServerNow();
   const [utr, setUtr] = useState("");
@@ -65,8 +66,12 @@ export function HeldCheckoutPay({ settings, orderNo, amount, holdUntil, customer
     const check = async () => {
       // Past the time: let the database end it (stock back) before reading the status.
       if (holdSecondsLeft(endsAt, serverNow()) === 0) await supabase.rpc("expire_payment_holds");
-      const { data } = await supabase.from("orders").select("order_status,payment_hold_outcome,payment_hold_until,bank_credit_seen_at").eq("order_no", orderNo).maybeSingle();
-      if (!stopped && data) setLiveStatus({ status: data.order_status, outcome: data.payment_hold_outcome ?? null, holdUntil: data.payment_hold_until ?? null, moneySeenAt: data.bank_credit_seen_at ?? null });
+      const { data } = await supabase.from("orders").select("order_status,payment_hold_outcome,payment_hold_until,bank_credit_seen_at,is_b2b,customer_gstin,business_legal_name").eq("order_no", orderNo).maybeSingle();
+      if (!stopped && data) setLiveStatus({
+        status: data.order_status, outcome: data.payment_hold_outcome ?? null, holdUntil: data.payment_hold_until ?? null, moneySeenAt: data.bank_credit_seen_at ?? null,
+        // A GST bill: the bill is to the firm, so the money should come from the firm's own account.
+        gstBillTo: data.is_b2b && data.customer_gstin ? (data.business_legal_name || "your firm") : null, gstin: data.customer_gstin ?? null,
+      });
     };
     void check();
     // The moment the payment is matched (or the hold ends) the database row changes: show it at once.
@@ -195,6 +200,12 @@ export function HeldCheckoutPay({ settings, orderNo, amount, holdUntil, customer
         </span>
       </div>
 
+      {(liveStatus?.gstBillTo ?? storeHold?.gstBillTo) && view !== "received" && view !== "verifying" && (
+        <div className="mt-4 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
+          <p className="font-semibold">{GST_BILL_PAY_NOTE}</p>
+          <p className="mt-0.5 text-xs">{`GST bill to: ${liveStatus?.gstBillTo ?? storeHold?.gstBillTo}${liveStatus?.gstin ? ` · GSTIN ${liveStatus.gstin}` : ""}`}</p>
+        </div>
+      )}
       {view === "received" ? (
         <div className="mt-4 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
           <p className="flex items-center gap-2 font-semibold"><CheckCircle2 className="h-4 w-4" /> We have received your payment</p>

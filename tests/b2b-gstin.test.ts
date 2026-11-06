@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { businessDetailsProblem, gstStateCodeOf, normaliseGstin } from "../src/lib/gstin.ts";
+import { businessDetailsProblem, GST_BILL_PAY_NOTE, gstBillProblem, gstStateCodeOf, normaliseGstin } from "../src/lib/gstin.ts";
 import { einvoiceProblems, zohoGstFields } from "../src/lib/zoho-sync-core.ts";
 import { sellerAddressLines } from "../src/lib/invoice-seller.ts";
 
@@ -71,4 +71,14 @@ test("invoice: Sold by prints the order's godown address, else the company's", (
   assert.deepEqual(sellerAddressLines("Pavagada Road, Challakere, Karnataka 577522", company), ["Pavagada Road, Challakere, Karnataka 577522"]);
   assert.deepEqual(sellerAddressLines(" Line one \n\n Line two ", company), ["Line one", "Line two"]);
   for (const none of ["", "   ", null, undefined]) assert.deepEqual(sellerAddressLines(none, company), company);
+});
+
+test("a GST bill needs both the firm name and its GSTIN (client's rule, 6 Nov 2026)", () => {
+  assert.equal(gstBillProblem("29ABCDE1234F1Z5", "Kiran Traders", "Karnataka"), null);
+  assert.match(gstBillProblem("", "Kiran Traders", "Karnataka")!, /Enter your firm's GSTIN/);
+  assert.match(gstBillProblem("29ABCDE1234F1Z5", "", "Karnataka")!, /Enter your firm name/);
+  assert.match(gstBillProblem("29ABCDE1234F1X5", "Kiran Traders", "Karnataka")!, /not a valid GSTIN/);
+  assert.match(gstBillProblem("27ABCDE1234F1Z5", "Kiran Traders", "Karnataka")!, /state code 27/);
+  // The payment page's wording, as the client wrote it.
+  assert.match(GST_BILL_PAY_NOTE, /GST invoice.*registered firm \/ business account/);
 });

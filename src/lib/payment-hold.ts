@@ -45,6 +45,8 @@ export type PaymentHold = {
   lines: { productId: string; qty: number; name?: string | undefined }[];
   /** When the bank's SMS showed this checkout's money (kept for it, an admin confirms); null until then. */
   moneySeenAt?: string | null | undefined;
+  /** A GST bill: the firm it is made out to (the money should come from the firm's account); null for a personal bill. */
+  gstBillTo?: string | null | undefined;
 };
 
 /** What the customer should see for a held request right now. */

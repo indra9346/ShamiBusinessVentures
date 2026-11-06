@@ -513,6 +513,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
               method: row.payment_method ?? "UPI",
               lines: (itemsByOrder.get(row.id) ?? []).map((item) => ({ productId: item.product_id, qty: Number(item.qty), name: item.product_name ?? undefined })),
               moneySeenAt: row.bank_credit_seen_at ?? null,
+              gstBillTo: row.is_b2b && row.customer_gstin ? (row.business_legal_name || row.customer_name || null) : null,
             })));
             setOrders((orderRows ?? []).filter((row) => !isHeldStatus(row.order_status)).map((row) => {
               const orderDate = new Date(row.created_at);
