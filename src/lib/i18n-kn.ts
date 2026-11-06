@@ -3780,7 +3780,7 @@ export const kn: Record<string, string> = {
   "UTR {0} rejected at {1}: the customer can send the right one until {2}. To stop it now, press End checkout.": "UTR {0} ಅನ್ನು {1} ಕ್ಕೆ ತಿರಸ್ಕರಿಸಲಾಗಿದೆ: ಗ್ರಾಹಕರು {2} ರವರೆಗೆ ಸರಿಯಾದದ್ದನ್ನು ಕಳುಹಿಸಬಹುದು. ಈಗಲೇ ನಿಲ್ಲಿಸಲು End checkout ಒತ್ತಿ.",
   "UTR {0} rejected: the customer can send the right one until {1}. To stop it now, press End checkout.": "UTR {0} ತಿರಸ್ಕರಿಸಲಾಗಿದೆ: ಗ್ರಾಹಕರು {1} ರವರೆಗೆ ಸರಿಯಾದದ್ದನ್ನು ಕಳುಹಿಸಬಹುದು. ಈಗಲೇ ನಿಲ್ಲಿಸಲು End checkout ಒತ್ತಿ.",
   "Kept:": "ಉಳಿಸಲಾಗಿದೆ:",
-  "A UTR on this checkout still waits for a check.": "ಈ ಚೆಕ್‌ಔಟ್‌ನ UTR ಇನ್ನೂ ಪರಿಶೀಲನೆಗಾಗಿ ಕಾಯುತ್ತಿದೆ.",
+  "A UTR on this checkout still waits for a check, so it stays.": "ಈ ಚೆಕ್‌ಔಟ್‌ನ UTR ಇನ್ನೂ ಪರಿಶೀಲನೆಗಾಗಿ ಕಾಯುತ್ತಿದೆ, ಆದ್ದರಿಂದ ಇದು ಉಳಿಯುತ್ತದೆ.",
   "Money came for this checkout and was refunded, so it stays for the accounts.": "ಈ ಚೆಕ್‌ಔಟ್‌ಗೆ ಹಣ ಬಂದು ಹಿಂತಿರುಗಿಸಲಾಗಿದೆ, ಆದ್ದರಿಂದ ಇದು ಲೆಕ್ಕಪತ್ರಕ್ಕಾಗಿ ಉಳಿಯುತ್ತದೆ.",
   "Nobody checked the customer's UTR against the bank. Check the bank for that transfer first, then confirm it on a new order, or refund it and mark it refunded.": "ಗ್ರಾಹಕರ UTR ಅನ್ನು ಬ್ಯಾಂಕ್‌ನೊಂದಿಗೆ ಯಾರೂ ಪರಿಶೀಲಿಸಿಲ್ಲ. ಮೊದಲು ಆ ವರ್ಗಾವಣೆಗಾಗಿ ಬ್ಯಾಂಕ್ ಪರಿಶೀಲಿಸಿ, ನಂತರ ಹೊಸ ಆರ್ಡರ್‌ನಲ್ಲಿ ದೃಢೀಕರಿಸಿ, ಅಥವಾ ಹಣ ಹಿಂತಿರುಗಿಸಿ ಹಿಂತಿರುಗಿಸಲಾಗಿದೆ ಎಂದು ಗುರುತಿಸಿ.",
   "Awaiting payment · held until {0}": "ಪಾವತಿಗಾಗಿ ಕಾಯುತ್ತಿದೆ · {0} ರವರೆಗೆ ಕಾಯ್ದಿರಿಸಲಾಗಿದೆ",

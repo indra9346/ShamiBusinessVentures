@@ -42,7 +42,7 @@ const istTime = (iso: string) => new Date(iso).toLocaleString("en-IN", { timeZon
 function AdminUpiPayments() {
   const { settings, submissions, credits, creditsWithoutUtr } = useUpiPayments();
   const utrChecks = useUtrChecks();
-  const { confirmPayment, paymentHolds, orders, simulateBankAlert } = useApp();
+  const { confirmPayment, paymentHolds, orders, simulateBankAlert, refreshHeldCheckouts } = useApp();
   const methodOf = (orderNo: string) => paymentHolds.find((hold) => hold.orderNo === orderNo)?.method ?? orders.find((order) => order.id === orderNo)?.method ?? "UPI";
   const awaiting = paymentHolds.filter((hold) => hold.status === AWAITING_PAYMENT);
   const [form, setForm] = useState<UpiSettings>(DEFAULT_UPI_SETTINGS);
@@ -118,6 +118,8 @@ function AdminUpiPayments() {
     try {
       if (choice === "end-checkout") {
         await rejectUtrAndEndCheckout(orderNo, utr, note || undefined);
+        // Moves it to "Ended without payment" at once, without waiting for the live feed.
+        void refreshHeldCheckouts([orderNo]);
         toast.message(`${orderNo}: UTR rejected and checkout ended`, { description: "Its stock is back on sale. The customer is told it was not placed." });
         return;
       }
