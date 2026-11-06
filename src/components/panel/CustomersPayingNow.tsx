@@ -8,7 +8,7 @@ import { inrPrecise } from "@/lib/data";
 import { AWAITING_PAYMENT, clockText, holdSecondsLeft } from "@/lib/payment-hold";
 import { useServerNow } from "@/lib/server-clock";
 import { useApp } from "@/lib/store";
-import { endPaymentHold } from "@/lib/upi-store";
+import { endPaymentHold, useUpiPayments } from "@/lib/upi-store";
 import { cn } from "@/lib/utils";
 
 /**
@@ -16,8 +16,11 @@ import { cn } from "@/lib/utils";
  * countdown the customer sees (server clock, every second). They are not orders yet; each one
  * becomes an order the moment its payment is matched, or ends when its time is up.
  */
+const clock = (iso: string) => new Date(iso).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" });
+
 export function CustomersPayingNow({ compact = false }: { compact?: boolean }) {
   const { paymentHolds, refreshHeldCheckouts } = useApp();
+  const { submissions } = useUpiPayments();
   const now = useServerNow();
   const paying = paymentHolds
     .filter((hold) => hold.status === AWAITING_PAYMENT)
@@ -61,6 +64,8 @@ export function CustomersPayingNow({ compact = false }: { compact?: boolean }) {
             const left = holdSecondsLeft(hold.holdUntil, now);
             const total = Math.max(1, (Date.parse(hold.holdUntil ?? "") - Date.parse(hold.createdAt)) / 1000);
             const share = Math.min(100, Math.max(0, (left / total) * 100));
+            // A rejected UTR gives the customer more time, so the timer starts again: say so.
+            const rejected = submissions.find((item) => item.orderNo === hold.orderNo && item.status === "rejected");
             return (
               <li key={hold.orderNo} className="py-2">
                 <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-sm">
@@ -78,6 +83,11 @@ export function CustomersPayingNow({ compact = false }: { compact?: boolean }) {
                     <button type="button" onClick={() => void endHold(hold.orderNo)} className="text-xs font-semibold text-danger underline">End checkout</button>
                   )}
                 </div>
+                {rejected && left > 0 && (
+                  <p className="mt-0.5 text-[11px] font-semibold text-amber-800">
+                    {`UTR ${rejected.utr} rejected${rejected.reviewedAt ? ` at ${clock(rejected.reviewedAt)}` : ""}: the customer can send the right one until ${clock(hold.holdUntil ?? "")}. To stop it now, press End checkout.`}
+                  </p>
+                )}
                 <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted" aria-hidden>
                   <div className={cn("h-full rounded-full transition-[width] duration-1000 ease-linear", left <= 60 ? "bg-red-500" : "bg-amber-500")} style={{ width: `${share}%` }} />
                 </div>

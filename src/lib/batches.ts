@@ -229,6 +229,8 @@ export type BatchOrder = {
   id: string; order_no: string; created_at: string; order_status: string; payment_status: string; branch_id: string | null;
   user_id: string | null; customer_name: string | null; customer_email: string | null; customer_phone: string | null;
   shipping_address: JsonLike; subtotal: number; discount: number;
+  /** A held checkout: until when its stock stays put aside. */
+  payment_hold_until?: string | null;
 };
 export type BatchAdjustment = { id: string; batch_id: string; qty: number; reason: string; note: string; unit_cost: number; created_at: string; created_by_name: string };
 export type BatchGodown = { id: string; name: string; code?: string | null };
@@ -244,6 +246,8 @@ export type BatchSale = {
   batchId: string; batchCode: string; orderItemId: string; orderId: string; orderNo: string; orderDate: string; orderStatus: string; held: boolean;
   customerKey: string; customerName: string; customerPhone: string; customerEmail: string; customerAddress: string;
   productName: string; qty: number; rate: number; value: number; cost: number; profit: number;
+  /** Held (awaiting payment): when the hold ends, if known. */
+  holdUntil?: string | null;
 };
 
 export type BatchTotals = {
@@ -350,6 +354,7 @@ export function buildBatchReport(input: {
         customerPhone: order.customer_phone ?? "", customerEmail: order.customer_email ?? "", customerAddress: addressLine(order.shipping_address),
         productName: item.product_name || batch.product_name, qty: net, rate: paise(num(item.unit_price) * share), value, cost,
         profit: held ? 0 : paise(value - cost),
+        holdUntil: held ? order.payment_hold_until ?? null : null,
       });
       if (held) {
         t.held = qty(t.held + net);

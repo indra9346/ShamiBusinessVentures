@@ -45,6 +45,10 @@ const money = (n: number) => inrPrecise(n);
 const units = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(2));
 const day = (iso: string | null) => (iso ? new Date(`${iso.slice(0, 10)}T00:00:00Z`).toLocaleDateString("en-IN", { timeZone: "UTC", day: "2-digit", month: "short", year: "numeric" }) : "—");
 const when = (iso: string) => new Date(iso).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+/** A held sale: the checkout is waiting for payment, and its stock stays put aside until then. */
+const heldLabel = (until?: string | null) => until
+  ? `Awaiting payment · held until ${new Date(until).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}`
+  : "Awaiting Payment";
 const todayIst = () => istDate(new Date().toISOString());
 
 /**
@@ -522,7 +526,7 @@ function BatchDetail({ row, report, data, adjustments, orderId, go, onEdit, onDe
                     className={cn("cursor-pointer border-t border-border hover:bg-ivory/60", s.orderId === orderId && "bg-gold/10")}>
                     <td className="px-3 py-2 font-mono text-xs font-semibold text-navy">{s.orderNo}</td>
                     <td className="whitespace-nowrap px-3 py-2 text-slate">{when(s.orderDate)}</td>
-                    <td className="px-3 py-2">{s.held ? "Awaiting Payment" : s.orderStatus}</td>
+                    <td className="px-3 py-2">{s.held ? heldLabel(s.holdUntil) : s.orderStatus}</td>
                     <td className="px-3 py-2">{s.customerName || "—"}</td>
                     <td className="px-3 py-2 text-slate">{s.customerPhone || "—"}</td>
                     <td className="px-3 py-2 text-right">{units(s.qty)}</td>
@@ -582,7 +586,7 @@ function OrderCustomer({ sale, report, go }: { sale: BatchSale; report: BatchRep
     <div className="grid gap-4 lg:grid-cols-2">
       <Panel title={`Order ${sale.orderNo}`} action={<Link to="/admin/orders/$id" params={{ id: sale.orderNo }} className="text-xs font-semibold text-navy hover:underline">Open order</Link>}>
         <div className="grid gap-2 p-4 text-sm">
-          <p className="text-slate">{when(sale.orderDate)} · <span className="font-semibold text-charcoal">{sale.held ? "Awaiting Payment" : sale.orderStatus}</span></p>
+          <p className="text-slate">{when(sale.orderDate)} · <span className="font-semibold text-charcoal">{sale.held ? heldLabel(sale.holdUntil) : sale.orderStatus}</span></p>
           <ul className="divide-y divide-border rounded-md border border-border">
             {lines.map((l) => (
               <li key={`${l.orderItemId}-${l.batchId}`} className="flex items-center justify-between gap-2 px-3 py-2">

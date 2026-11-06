@@ -12,7 +12,9 @@ import { bankDetailChanges, bankDetailsProblem, cleanBankDetails, EMPTY_BANK_DET
 import { inrPrecise } from "@/lib/data";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { DEFAULT_UPI_SETTINGS, isValidVpa, settingsProblem, upiPaymentUri, type UpiSettings } from "@/lib/upi-pay";
-import { loadBankAudit, loadBankSettings, loadUpiAudit, markUtrRefunded, reopenBankCredit, reviewUpiPayment, saveBankDetails, saveUpiSettings, settleBankCredit, useUpiPayments, type BankAuditRow, type BankCredit, type UpiAuditRow, type CreditWithoutUtr } from "@/lib/upi-store";
+import { RejectUtrDialog, type RejectChoice } from "@/components/panel/RejectUtrDialog";
+import { isBankMethod } from "@/lib/payment-rules";
+import { loadBankAudit, loadBankSettings, loadUpiAudit, markUtrRefunded, rejectUtrAndEndCheckout, reopenBankCredit, reviewUpiPayment, saveBankDetails, saveUpiSettings, settleBankCredit, useUpiPayments, type BankAuditRow, type BankCredit, type UpiAuditRow, type CreditWithoutUtr } from "@/lib/upi-store";
 import { parseBankCredit, parseCreditWithoutReference } from "@/lib/bank-alert";
 import { CreditHint, CreditsWithoutUtrPanel } from "@/components/panel/CreditsWithoutUtr";
 import { SameUtrBadge, UtrChecksPanel, useUtrChecks } from "@/components/panel/UtrChecksPanel";
@@ -108,16 +110,23 @@ function AdminUpiPayments() {
       setBusy("");
     }
   };
-  const reject = async (orderNo: string, utr: string) => {
-    const note = window.prompt("Why is this UTR not accepted? The customer sees this.", "No matching credit in the bank account");
-    if (note === null) return;
+  // Rejecting asks what happens to the checkout: give the customer time to correct the UTR, or end it now.
+  const [rejecting, setRejecting] = useState<{ orderNo: string; utr: string } | null>(null);
+  const reject = (orderNo: string, utr: string) => setRejecting({ orderNo, utr });
+  const doReject = async (orderNo: string, utr: string, choice: RejectChoice, note: string) => {
     setBusy(orderNo);
     try {
-      const rejections = await reviewUpiPayment(orderNo, "rejected", utr, note.trim() || undefined);
+      if (choice === "end-checkout") {
+        await rejectUtrAndEndCheckout(orderNo, utr, note || undefined);
+        toast.message(`${orderNo}: UTR rejected and checkout ended`, { description: "Its stock is back on sale. The customer is told it was not placed." });
+        return;
+      }
+      const rejections = await reviewUpiPayment(orderNo, "rejected", utr, note || undefined);
       if (rejections >= 3 && awaiting.some((hold) => hold.orderNo === orderNo)) toast.message(`${orderNo}: third wrong UTR`, { description: "The checkout has ended and its stock is back on sale. The customer is told." });
       else toast.message(`${orderNo}: UTR rejected`, { description: "The customer is told and can send a corrected UTR." });
     } catch (cause) {
       toast.error("Could not reject", { description: cause instanceof Error ? cause.message : undefined });
+      throw cause;
     } finally {
       setBusy("");
     }
@@ -125,6 +134,17 @@ function AdminUpiPayments() {
 
   return (
     <PanelLayout items={adminNav} tone="admin" title="UPI & Bank Payments" subtitle="UPI, NEFT and RTGS straight to the company's bank account">
+      {rejecting && (
+        <RejectUtrDialog
+          orderNo={rejecting.orderNo}
+          utr={rejecting.utr}
+          byBank={isBankMethod(methodOf(rejecting.orderNo))}
+          waiting={awaiting.some((hold) => hold.orderNo === rejecting.orderNo)}
+          windowMinutes={settings?.payWindowMinutes ?? DEFAULT_UPI_SETTINGS.payWindowMinutes}
+          onClose={() => setRejecting(null)}
+          onReject={(choice, note) => doReject(rejecting.orderNo, rejecting.utr, choice, note)}
+        />
+      )}
       {STATIC_DATA_MODE ? (
         <p className="mb-4 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950">
           <ShieldAlert className="mr-1 inline h-4 w-4" /> Demo / mock: settings and payments here are kept only in this browser. No real money moves.
@@ -194,7 +214,7 @@ function AdminUpiPayments() {
                     <td className="px-2 py-2">
                       <div className="flex gap-2">
                         <Button size="sm" className="bg-emerald-600 text-white hover:bg-emerald-700" disabled={busy === s.orderNo} onClick={() => void confirm(s.orderNo, s.amount, s.utr)}>Confirm paid</Button>
-                        <Button size="sm" variant="outline" className="text-danger" disabled={busy === s.orderNo} onClick={() => void reject(s.orderNo, s.utr)}>Reject</Button>
+                        <Button size="sm" variant="outline" className="text-danger" disabled={busy === s.orderNo} onClick={() => reject(s.orderNo, s.utr)}>Reject</Button>
                       </div>
                       <CreditHint payment={s} credits={creditsWithoutUtr} />
                       <SameUtrBadge orderNo={s.orderNo} checks={utrChecks.checks} />

@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { supabase } from "@/integrations/supabase/client";
+import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { Link } from "@tanstack/react-router";
 import { Trash2 } from "lucide-react";
 import { inrPrecise } from "@/lib/data";
@@ -19,6 +21,18 @@ export function EndedCheckouts({ compact = false }: { compact?: boolean }) {
   const ended = paymentHolds
     .filter((hold) => hold.status === PAYMENT_EXPIRED)
     .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+  // Why a row cannot be deleted (the database's own check), so the list says it instead of offering a Delete that fails.
+  const [kept, setKept] = useState<Record<string, string>>({});
+  const endedKey = ended.map((hold) => hold.orderNo).join(",");
+  useEffect(() => {
+    if (compact || STATIC_DATA_MODE || !endedKey) return;
+    let active = true;
+    void Promise.all(endedKey.split(",").map(async (orderNo) => {
+      const { data, error } = await supabase.rpc("order_delete_blocker", { _order_no: orderNo });
+      return [orderNo, error ? "" : (data as string | null) ?? ""] as const;
+    })).then((rows) => { if (active) setKept(Object.fromEntries(rows.filter(([, why]) => why))); });
+    return () => { active = false; };
+  }, [compact, endedKey]);
   if (compact) {
     if (ended.length === 0) return null;
     return (
@@ -46,9 +60,13 @@ export function EndedCheckouts({ compact = false }: { compact?: boolean }) {
               </span>
               <span className="font-semibold tabular-nums text-navy">{inrPrecise(hold.amount)}</span>
               <span className="rounded bg-red-50 px-2 py-0.5 text-xs font-semibold text-red-700">{closedPaymentLabel(PAYMENT_EXPIRED)}</span>
-              <button type="button" onClick={() => setDeleting(hold)} className="inline-flex items-center gap-1 text-xs font-semibold text-danger underline">
-                <Trash2 className="h-3.5 w-3.5" />Delete
-              </button>
+              {kept[hold.orderNo] ? (
+                <span className="max-w-xs text-right text-[11px] text-slate"><span className="font-semibold">Kept:</span> <span>{kept[hold.orderNo]}</span></span>
+              ) : (
+                <button type="button" onClick={() => setDeleting(hold)} className="inline-flex items-center gap-1 text-xs font-semibold text-danger underline">
+                  <Trash2 className="h-3.5 w-3.5" />Delete
+                </button>
+              )}
             </li>
           ))}
         </ul>

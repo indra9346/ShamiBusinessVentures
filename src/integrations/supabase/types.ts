@@ -1348,6 +1348,7 @@ export type Database = {
       reopen_bank_credit_without_reference: { Args: { _credit_id: string }; Returns: Json }
       submit_upi_utr: { Args: { _order_no: string; _utr: string }; Returns: { id: string; order_id: string; order_no: string; user_id: string | null; customer_name: string; amount: number; utr: string; status: string; note: string | null; submitted_at: string; reviewed_at: string | null; reviewed_by: string | null } }
       admin_end_payment_hold: { Args: { _order_no: string }; Returns: boolean }
+      admin_reject_utr_and_end_checkout: { Args: { _order_no: string; _note: string; _expected_utr?: string | null }; Returns: boolean }
       order_delete_blocker: { Args: { _order_no: string }; Returns: string | null }
       admin_delete_order: { Args: { _order_no: string; _reason: string }; Returns: Json }
       mark_utr_refunded: { Args: { _order_no: string }; Returns: boolean }
