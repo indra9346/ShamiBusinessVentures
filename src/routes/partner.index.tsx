@@ -1,7 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { CalendarCheck, IndianRupee, LogOut, RefreshCw, Target, Timer, Trophy } from "lucide-react";
-import { LogoMark } from "@/components/brand/Logo";
+import { BrandLogo, LogoMark } from "@/components/brand/Logo";
 import { FilterNote, Panel, scrollToSection, StatCard } from "@/components/panel/widgets";
 import { CommissionLinesTable, PartnerLeaderboard, TargetBar, commissionTotals, usePartnerData } from "@/components/partners/PartnerWidgets";
 import { MyPartnerReport } from "@/components/partners/MyPartnerReport";
@@ -73,7 +73,8 @@ function PartnerDashboard() {
       <header className="sticky top-0 z-30 border-b border-border bg-card/95 backdrop-blur">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-3">
           <div className="flex items-center gap-3">
-            <LogoMark className="h-9 w-9 rounded-lg bg-card p-1 object-contain shadow-sm" />
+            <LogoMark className="h-10 w-10 shrink-0 sm:hidden" />
+            <BrandLogo shape="wide" className="hidden h-10 w-auto shrink-0 sm:block" sizes="187px" />
             <div>
               <p className="text-sm font-extrabold tracking-wide text-navy">Channel Partner Commission Platform</p>
               <p className="text-xs text-slate">{me.name} · {me.godown}</p>

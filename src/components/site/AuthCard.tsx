@@ -16,7 +16,7 @@ export function AuthCard({
   return (
     <div className="grid min-h-screen bg-hero-gradient lg:grid-cols-2">
       <div className="relative hidden flex-col justify-between p-12 lg:flex">
-        <Logo variant="light" />
+        <Logo variant="light" layout="full" />
         <div>
           <h2 className="max-w-md text-3xl leading-tight font-extrabold text-white">
             Grain Bazar for <span className="text-gold">business essentials</span>

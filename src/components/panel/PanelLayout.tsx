@@ -2,7 +2,7 @@ import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { AlertTriangle, Bell, ChevronsLeft, ChevronsRight, LogOut, Menu, RefreshCw, Search, X } from "lucide-react";
 import { useState, useMemo, useEffect, type ReactNode } from "react";
 import { toast } from "sonner";
-import { LogoMark } from "@/components/brand/Logo";
+import { BrandLogo, LogoMark } from "@/components/brand/Logo";
 import { useApp } from "@/lib/store";
 import { getProductImageFallback, isStorefrontProduct } from "@/lib/data";
 import { orderBelongsToUser } from "@/lib/account-identity";
@@ -439,10 +439,12 @@ export function PanelLayout({
 
   const renderSidebar = (rail: boolean) => (
     <div className={cn("flex h-full flex-col transition-[width] duration-200 ease-out", rail ? "w-[88px]" : "w-64", sidebarBg)}>
-      <div className={cn("flex items-center border-b border-white/10 py-4", rail ? "justify-center px-2" : "justify-between px-5")}>
-        <Link to="/" className="flex items-center" title="Grain Bazar">
-          <LogoMark className="h-9 w-9 rounded-lg bg-card p-1.5 object-contain shadow-sm" />
-          {!rail && <span className="ml-2 text-sm font-extrabold tracking-wide text-white">GRAIN BAZAR</span>}
+      <div className={cn("flex items-center gap-2 border-b border-white/10 py-4", rail ? "justify-center px-2" : "justify-between px-4")}>
+        <Link to="/" className="flex min-w-0 items-center" title="Grain Bazar" aria-label="Grain Bazar home">
+          {/* White and gold on the dark menu, like Flipkart's header: the ring alone when the menu is folded. */}
+          {rail
+            ? <LogoMark onDark className="h-11 w-11" />
+            : <BrandLogo shape="wide" onDark eager className="h-10 w-auto" sizes="187px" />}
         </Link>
         <button
           onClick={() => setOpen(false)}
