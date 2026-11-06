@@ -9,6 +9,7 @@ const MENU_ALIASES: Record<string, string> = {
   "/admin/delivery-note": "/admin/delivery-notes",
   "/admin/returns": "/admin/orders",
   "/admin/reviews": "/admin/products",
+  "/admin/profile": "/admin/settings",
 };
 
 function within(path: string, base: string): boolean {
