@@ -14,6 +14,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
+import { ZohoItemsNotOnWebsite } from "@/components/panel/ZohoItemsNotOnWebsite";
 import { DataTable, FilterNote, Panel, scrollToSection, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { matchesStockBand } from "@/lib/panel-filters";
 import { Pager } from "@/components/panel/pager";
@@ -704,6 +705,7 @@ function AdminProductsPanel() {
         <StatCard onClick={() => openList("out")} label="Out of Stock" value={String(outStock)} icon={PackageX} />
         <StatCard link={{ to: "/admin/vendors" }} label="Total Vendors" value={String(vendors.length)} icon={Boxes} />
       </div>
+      <ZohoItemsNotOnWebsite />
 
       <Panel
         id="catalogue"

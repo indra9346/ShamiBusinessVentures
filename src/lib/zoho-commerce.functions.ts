@@ -10,7 +10,7 @@ import {
   batchLineText, isBatchCode, normalizeBatchCode, packageLinesWithBatches, planBatchGain, planBatchLoss, planZohoBatchIn, planZohoBatchOut,
   zohoBatchesAtLocation, zohoTracksBatches, type BatchShare, type StockBatch, type ZohoBatch,
 } from "@/lib/batches";
-import { awaitingImportApproval, zohoItemAsHiddenProduct, zohoItemImportable } from "@/lib/zoho-item-import";
+import { awaitingImportApproval, zohoItemAsHiddenProduct, zohoItemImportable, zohoItemSaleProblem, zohoItemsNotOnWebsite } from "@/lib/zoho-item-import";
 import {
   cleanEmailList, godownPricesFromPricebook, godownStockFromZohoItem, mergeGodownPrices, newOrderEmail, parseZohoItemSyncVendorIds, pendingOrderQty, sameGodownPrices,
   zohoPricebookItemsFor, reconcileCatalog, reconcileCustomers, reconcileOrders, shouldRetryZohoCall,
@@ -3349,9 +3349,12 @@ export async function handleZohoItemWebhook(itemId: string) {
   return applyZohoItemChange(db, link as ZohoItemLink, response.item, { region, organizationId, token });
 }
 
-/** A new Zoho item becomes a hidden website product, linked so its later edits and stock come in too. */
-async function importNewZohoItem(db: Awaited<ReturnType<typeof dbAdmin>>, item: Record<string, unknown>) {
-  if (!zohoItemImportable(item)) return "not_grain_bazar" as const;
+/**
+ * A new Zoho item becomes a hidden website product, linked so its later edits and stock come in too.
+ * `onRequest`: an admin asked for this item by hand, so it may be older than the date new items come in from.
+ */
+async function importNewZohoItem(db: Awaited<ReturnType<typeof dbAdmin>>, item: Record<string, unknown>, options: { onRequest?: boolean } = {}) {
+  if (options.onRequest ? zohoItemSaleProblem(item) !== null : !zohoItemImportable(item)) return "not_grain_bazar" as const;
   const [vendorId] = await zohoItemSyncVendorIds(db);
   if (!vendorId) return "not_grain_bazar" as const;
   const { data: sibling } = await db.from("catalog_products").select("payload").eq("vendor_id", vendorId).limit(1).maybeSingle();
@@ -3377,6 +3380,67 @@ async function importNewZohoItem(db: Awaited<ReturnType<typeof dbAdmin>>, item: 
   console.info(zohoLogLine("zoho_item_imported_hidden", { zohoId: str(item["item_id"]), productId: row.id }));
   return "imported_hidden" as const;
 }
+
+/** Every Zoho item (up to 1,000), one call per 200. */
+async function allZohoItems(region: Region, organizationId: string, token: string) {
+  const rows: Record<string, unknown>[] = [];
+  for (let page = 1; page <= 5; page += 1) {
+    const result = await inventoryRequest<{ items?: Record<string, unknown>[] }>(
+      region, organizationId, token, "items", "GET", undefined, { page: String(page), per_page: "200" },
+    );
+    rows.push(...(result.items ?? []));
+    if ((result.items ?? []).length < 200) break;
+  }
+  return rows;
+}
+
+/**
+ * Admin → Products: Zoho items that have no website product, such as ones made in Zoho before new items
+ * came in by themselves. Read only when the admin opens the list (one Zoho call per 200 items).
+ */
+export const listZohoItemsNotOnWebsite = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    await ensureAdmin(context.supabase, context.userId);
+    const db = await dbAdmin();
+    const { region, organizationId, token } = await zohoOrderContext(db);
+    const [items, { data: links, error: linkError }, { data: products, error: productError }] = await Promise.all([
+      allZohoItems(region, organizationId, token),
+      db.from("zoho_item_links").select("zoho_item_id"),
+      db.from("catalog_products").select("vendor_id,payload"),
+    ]);
+    if (linkError || productError) throw new Error("Could not read the website's products");
+    const skus = new Set((products ?? []).filter((row) => !row.vendor_id.startsWith("zoho:"))
+      .map((row) => str(plainObject(row.payload)["sku"]).trim().toLowerCase()).filter(Boolean));
+    return zohoItemsNotOnWebsite(items, new Set((links ?? []).map((link) => link.zoho_item_id)), skus);
+  });
+
+/**
+ * Admin → Products: brings one Zoho item onto the website the same way a new item comes in: a hidden
+ * product waiting for approval, linked to the Zoho item. Nothing is sent to Zoho; the product goes on the
+ * shop only when an admin switches it on.
+ */
+export const bringZohoItemOntoWebsite = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator(z.object({ itemId: z.string().trim().regex(/^\d{6,25}$/) }))
+  .handler(async ({ data, context }) => {
+    await ensureAdmin(context.supabase, context.userId);
+    const db = await dbAdmin();
+    const { data: link } = await db.from("zoho_item_links").select("product_id").eq("zoho_item_id", data.itemId).maybeSingle();
+    if (link) throw new Error("This Zoho item is already on the website");
+    const { region, organizationId, token } = await zohoOrderContext(db);
+    const response = await inventoryRequest<{ item?: Record<string, unknown> }>(
+      region, organizationId, token, `items/${encodeURIComponent(data.itemId)}`, "GET",
+    );
+    if (!response.item) throw new Error("Zoho has no item with this number");
+    const problem = zohoItemSaleProblem(response.item);
+    if (problem) throw new Error(problem);
+    const result = await importNewZohoItem(db, response.item, { onRequest: true });
+    console.info(zohoLogLine("zoho_item_brought_in_by_admin", { zohoId: data.itemId, result, by: context.userId }));
+    if (result === "sku_in_use") throw new Error("A website product already uses this item's SKU, so it can't come in twice");
+    if (result !== "imported_hidden") throw new Error("It could not come in: it is already on the website, or it was deleted there");
+    return { productId: `ZI-${data.itemId}`, name: str(response.item["name"]) };
+  });
 
 /** Catch-up for new Zoho items: an edit in Zoho Commerce, for one, doesn't reach the webhook. */
 async function importNewZohoItems(db: Awaited<ReturnType<typeof dbAdmin>>, region: Region, organizationId: string, token: string) {
