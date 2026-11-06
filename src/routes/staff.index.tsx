@@ -7,6 +7,7 @@ import { LanguageSwitcher } from "@/components/site/LanguageSwitcher";
 import { AttendanceStatusBadge, DecisionChips, RuleList } from "@/components/attendance/AttendanceBits";
 import { SelfieCamera } from "@/components/attendance/SelfieCamera";
 import { StaffStockCount } from "@/components/attendance/StaffStockCount";
+import { StaffFollowUps } from "@/components/attendance/StaffFollowUps";
 import { getBestFix } from "@/components/attendance/geolocation";
 import { useGodownDevice, type GodownDevice } from "@/components/attendance/godownDevice";
 import { Input } from "@/components/ui/input";
@@ -187,6 +188,8 @@ function StaffHome() {
         )}
 
         <LeaveCard leaves={leaves} today={today} rules={rulesToday} versions={versions} holidays={holidays} onChange={() => load(me)} />
+
+        <StaffFollowUps />
 
         <StaffStockCount branchId={me.branch_id} />
 

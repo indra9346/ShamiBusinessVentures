@@ -613,6 +613,12 @@ export type Database = {
         Update: never
         Relationships: []
       }
+      follow_up_tasks: {
+        Row: { id: string; title: string; details: string; kind: string; employee_id: string | null; branch_id: string | null; due_on: string; repeat_every: string; remind_days: number; status: string; done_at: string | null; done_by: string | null; done_note: string; next_task_id: string | null; created_by: string | null; created_at: string; updated_at: string }
+        Insert: { title: string; due_on: string; details?: string; kind?: string; employee_id?: string | null; branch_id?: string | null; repeat_every?: string; remind_days?: number; status?: string; id?: string }
+        Update: { title?: string; due_on?: string; details?: string; kind?: string; employee_id?: string | null; branch_id?: string | null; repeat_every?: string; remind_days?: number; status?: string }
+        Relationships: []
+      }
       bank_credits_without_reference: {
         Row: { id: string; received_at: string; credited_at: string | null; sender: string | null; raw: string; fingerprint: string; account_ending: string; amount: number; balance: number | null; status: string; order_no: string | null; decided_by: string | null; decided_at: string | null; note: string | null; suggested_order_no: string | null }
         Insert: never
@@ -1348,6 +1354,7 @@ export type Database = {
       reopen_bank_credit_without_reference: { Args: { _credit_id: string }; Returns: Json }
       submit_upi_utr: { Args: { _order_no: string; _utr: string }; Returns: { id: string; order_id: string; order_no: string; user_id: string | null; customer_name: string; amount: number; utr: string; status: string; note: string | null; submitted_at: string; reviewed_at: string | null; reviewed_by: string | null } }
       admin_end_payment_hold: { Args: { _order_no: string }; Returns: boolean }
+      complete_follow_up_task: { Args: { _id: string; _note?: string }; Returns: Json }
       admin_reject_utr_and_end_checkout: { Args: { _order_no: string; _note: string; _expected_utr?: string | null }; Returns: boolean }
       order_delete_blocker: { Args: { _order_no: string }; Returns: string | null }
       admin_delete_order: { Args: { _order_no: string; _reason: string }; Returns: Json }

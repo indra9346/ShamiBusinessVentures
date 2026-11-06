@@ -1,4 +1,5 @@
 import { CustomersPayingNow } from "@/components/panel/CustomersPayingNow";
+import { FollowUpsDue } from "@/components/panel/FollowUpsDue";
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -373,6 +374,7 @@ function AdminDashboard() {
       subtitle="Platform overview · All vendors"
     >
       <CustomersPayingNow compact />
+      <FollowUpsDue />
       {/* Time Filter Selector (Today, Week, Month, Year, Custom Range) */}
       <div className="flex flex-col gap-3">
         <Filters<TimeFilterOption>
