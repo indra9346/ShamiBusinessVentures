@@ -119,10 +119,10 @@ export function CreditsWithoutUtrPanel({ credits, submissions }: { credits: read
                     <span>{`credited to A/C …${credit.accountEnding}`}</span>
                     <span className="text-xs text-slate">{credit.creditedAt ? `Bank's time: ${creditTime(credit)}` : `SMS received ${creditTime(credit)}`}</span>
                   </p>
-                  <Button size="sm" variant="ghost" className="h-7 text-slate" disabled={busy === credit.id} onClick={() => void dismiss(credit)}>Dismiss</Button>
+                  <Button size="sm" variant="ghost" className="h-7 text-slate" disabled={busy === credit.id} onClick={() => void dismiss(credit)}>Not a website payment</Button>
                 </div>
                 {matches.length === 0 ? (
-                  <p className="mt-2 text-xs text-slate">No UTR is waiting for this amount. If it isn't a website payment, dismiss it.</p>
+                  <p className="mt-2 text-xs text-slate">No UTR is waiting for this amount. If it isn't a website payment, mark it so.</p>
                 ) : (
                   <ul className="mt-2 space-y-2">
                     {matches.length > 1 && <li className="text-xs font-semibold text-amber-800">More than one order waits for this amount: check which UTR the bank shows.</li>}

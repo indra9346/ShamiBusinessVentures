@@ -20,6 +20,8 @@ import {
 
 const DEMO_SETTINGS = "gb-demo-upi-settings";
 const DEMO_SUBMISSIONS = "gb-demo-upi-submissions";
+/** Demo: sample bank credits without a UTR, kept in this browser like the demo's UTRs. */
+const DEMO_CREDITS_WITHOUT_UTR = "gb-demo-credits-without-utr";
 const DEMO_BANK = "gb-demo-bank-details";
 const DEMO_BANK_DETAILS: BankDetails = { accountName: "Shami Business Ventures Pvt. Ltd.", accountNumber: "50100123456789", ifsc: "HDFC0001234", bankName: "HDFC Bank (demo)", branch: "Challakere" };
 const CHANGED = "gb-upi-changed";
@@ -240,7 +242,7 @@ export type CreditWithoutUtr = {
 };
 /** Admin: bank credits whose SMS has no UTR (IDFC FIRST), for the company's account only, newest first. */
 export async function loadCreditsWithoutUtr(): Promise<CreditWithoutUtr[]> {
-  if (STATIC_DATA_MODE) return [];
+  if (STATIC_DATA_MODE) return readJson<CreditWithoutUtr[]>(DEMO_CREDITS_WITHOUT_UTR, []);
   const { data, error } = await supabase.from("bank_credits_without_reference")
     .select("id,received_at,credited_at,amount,account_ending,balance,sender,raw,status,order_no,decided_at,note")
     .order("received_at", { ascending: false }).limit(100);
