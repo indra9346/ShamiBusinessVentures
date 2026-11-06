@@ -1,3 +1,4 @@
+import { EndedCheckouts } from "@/components/panel/EndedCheckouts";
 import { CustomersPayingNow } from "@/components/panel/CustomersPayingNow";
 import { createFileRoute, Link, Outlet, useRouterState } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
@@ -369,6 +370,7 @@ function AdminOrders() {
       subtitle="All orders across every vendor"
     >
       <CustomersPayingNow compact />
+      <EndedCheckouts compact />
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard onClick={() => openList("all")} label="Total Orders" value={String(total)} icon={ShoppingCart} highlight />
         <StatCard onClick={() => openList(OPEN_ORDERS)} label="Pending" value={String(pending)} icon={PackageX} />

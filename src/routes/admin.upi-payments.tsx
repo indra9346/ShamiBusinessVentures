@@ -1,3 +1,4 @@
+import { EndedCheckouts } from "@/components/panel/EndedCheckouts";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { renderSVG } from "uqr";
@@ -204,6 +205,11 @@ function AdminUpiPayments() {
       <Panel title="Waiting for payment (not orders yet)" className="mb-6">
         <p className="mb-3 text-xs text-slate">Checkouts whose customer has not paid yet. Their stock is held; they become orders when the bank alert (UPI) or your confirmation matches the payment, and end on their own when the time is up. NEFT and RTGS always wait for your confirmation: an amount alone never confirms them.</p>
         <CustomersPayingNow />
+      </Panel>
+
+      <Panel title="Ended without payment" className="mb-6">
+        <p className="mb-3 text-xs text-slate">Checkouts whose payment window ran out, or that were ended. They are not orders and owe nothing. Delete one only when it is no longer wanted.</p>
+        <EndedCheckouts />
       </Panel>
 
       <BankAlertsPanel credits={credits} checkingOrders={waiting.map((row) => row.orderNo)} onDemoMatch={(amount) => {

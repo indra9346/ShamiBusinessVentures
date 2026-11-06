@@ -1,3 +1,4 @@
+import { paymentClosed } from "@/lib/order-payment-state";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -311,7 +312,7 @@ function AdminCustomerDetail() {
                   o.items.length,
                   inr(o.amount),
                   inr(o.paidAmount ?? (o.payment === "Paid" || o.payment === "COD" ? o.amount : 0)),
-                  inr(
+                  paymentClosed(o) ? "—" : inr(
                     Math.max(
                       0,
                       o.amount -

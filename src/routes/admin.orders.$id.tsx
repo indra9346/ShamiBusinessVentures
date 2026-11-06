@@ -52,6 +52,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
+import { DeleteOrderButton } from "@/components/panel/DeleteOrderDialog";
 import { InvoicePreviewButton } from "@/components/site/InvoicePreviewDialog";
 import { ResizableTable } from "@/hooks/use-column-resize";
 import { ItemBatchCodes, useOrderItemBatches } from "@/components/batches/OrderItemBatches";
@@ -262,6 +263,7 @@ function AdminOrderDetail() {
               </AlertDialogFooter>
             </AlertDialogContent>
           </AlertDialog>
+          {isCancelled && <DeleteOrderButton orderNo={order.id} />}
         </div>
       </div>
 

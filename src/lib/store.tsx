@@ -218,6 +218,10 @@ type AppState = {
   /** This customer's orders and checkouts have been read (a page can tell "loading" from "not found"). */
   ordersLoaded: boolean;
   cancelPaymentHold: (orderNo: string) => Promise<boolean>;
+  /** Re-reads these checkouts after the database ended some (time up), so admin lists move on at once. */
+  refreshHeldCheckouts: (orderNos: string[]) => Promise<void>;
+  /** An admin deleted this order or checkout: drop it from the lists on this page. */
+  forgetOrder: (orderNo: string) => void;
   /** An unpaid checkout's items back in the cart, as far as they are on sale today. */
   reorderLines: (lines: ReorderLine[]) => ReorderPlan & { outOfArea: boolean };
   /** Static demo only: the bank SMS for this held checkout "arrives". */
@@ -1717,6 +1721,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
       },
       paymentHolds,
       ordersLoaded: STATIC_DATA_MODE || ordersLoadedFor === (user?.id ?? null),
+      refreshHeldCheckouts: async (orderNos) => {
+        if (STATIC_DATA_MODE || orderNos.length === 0) return;
+        const { data } = await supabase.from("orders").select("order_no, order_status, payment_hold_until, payment_hold_outcome").in("order_no", orderNos);
+        if (!data) return;
+        const byNo = new Map(data.map((row) => [row.order_no, row]));
+        setPaymentHolds((list) => list.flatMap((item) => {
+          if (!orderNos.includes(item.orderNo)) return [item];
+          const row = byNo.get(item.orderNo);
+          if (!row) return [];
+          if (!isHeldStatus(row.order_status)) return [{ ...item, status: "Payment Confirmed" as const, holdUntil: null }];
+          return [{ ...item, status: row.order_status as PaymentHold["status"], holdUntil: row.payment_hold_until ?? null, outcome: (row.payment_hold_outcome ?? null) as PaymentHold["outcome"] }];
+        }));
+      },
+      forgetOrder: (orderNo) => {
+        setPaymentHolds((list) => list.filter((item) => item.orderNo !== orderNo));
+        setOrders((list) => list.filter((order) => order.id !== orderNo));
+      },
       cancelPaymentHold: async (orderNo) => {
         if (!STATIC_DATA_MODE) {
           const { error } = await supabase.rpc("cancel_payment_hold", { _order_no: orderNo });

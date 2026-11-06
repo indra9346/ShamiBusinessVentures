@@ -17,7 +17,7 @@ import { cn } from "@/lib/utils";
  * becomes an order the moment its payment is matched, or ends when its time is up.
  */
 export function CustomersPayingNow({ compact = false }: { compact?: boolean }) {
-  const { paymentHolds } = useApp();
+  const { paymentHolds, refreshHeldCheckouts } = useApp();
   const now = useServerNow();
   const paying = paymentHolds
     .filter((hold) => hold.status === AWAITING_PAYMENT)
@@ -28,7 +28,8 @@ export function CustomersPayingNow({ compact = false }: { compact?: boolean }) {
   useEffect(() => {
     if (STATIC_DATA_MODE || !anyOver || now - lastSweep.current < 30000) return;
     lastSweep.current = now;
-    void supabase.rpc("expire_payment_holds").then(() => undefined);
+    const overdue = paying.filter((hold) => holdSecondsLeft(hold.holdUntil, now) === 0).map((hold) => hold.orderNo);
+    void supabase.rpc("expire_payment_holds").then(() => refreshHeldCheckouts(overdue));
   }, [anyOver, now]);
   if (compact && paying.length === 0) return null;
   const endHold = async (orderNo: string) => {
@@ -71,7 +72,7 @@ export function CustomersPayingNow({ compact = false }: { compact?: boolean }) {
                   <span className="font-semibold tabular-nums text-navy">{inrPrecise(hold.amount)}</span>
                   <span className={cn("inline-flex min-w-[118px] items-center justify-end gap-1 font-mono text-sm font-bold tabular-nums",
                     left === 0 ? "text-slate" : left <= 60 ? "text-red-700" : "text-amber-700")}>
-                    {left > 0 ? <><Clock className="h-3.5 w-3.5" />{clockText(left)} left</> : <><ShieldCheck className="h-3.5 w-3.5" /> time up · checking</>}
+                    {left > 0 ? <><Clock className="h-3.5 w-3.5" />{clockText(left)} left</> : <><ShieldCheck className="h-3.5 w-3.5" /> time up · check the bank</>}
                   </span>
                   {!compact && !STATIC_DATA_MODE && (
                     <button type="button" onClick={() => void endHold(hold.orderNo)} className="text-xs font-semibold text-danger underline">End checkout</button>

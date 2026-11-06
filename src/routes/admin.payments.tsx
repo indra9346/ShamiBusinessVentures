@@ -8,6 +8,7 @@ import { adminNav } from "@/lib/panel-nav";
 import { inr, inrPrecise } from "@/lib/data";
 import { loadAdvancePercent } from "@/lib/business-rules";
 import { isUnpaid, matchesPaymentFilter, MONEY_RECEIVED, paymentFilterOf, UNPAID } from "@/lib/panel-filters";
+import { paymentClosed } from "@/lib/order-payment-state";
 import { toPaise } from "@/lib/pricing";
 import { useApp } from "@/lib/store";
 import { Input } from "@/components/ui/input";
@@ -59,7 +60,8 @@ function AdminPayments() {
         due: o.paymentDueDate ?? "—",
         method: o.method,
         date: o.date,
-        status:
+        // A cancelled or expired order with nothing paid owes nothing: no Pending, no Confirm payment.
+        status: paymentClosed(o) ? "Cancelled" :
           o.paymentDueDate &&
           new Date(`${o.paymentDueDate}T23:59:59`).getTime() < Date.now() &&
           (o.paidAmount ?? 0) < o.amount
@@ -107,7 +109,7 @@ function AdminPayments() {
   const stats = useMemo(() => {
     const collected = txns.reduce((s, t) => s + t.paid, 0);
     const pending = orders
-      .filter((o) => isUnpaid(o.payment))
+      .filter((o) => isUnpaid(o.payment) && !paymentClosed(o))
       .reduce((s, o) => s + Math.max(0, o.amount - (o.paidAmount ?? 0)), 0);
     const failed = txns.filter((t) => t.status === "Failed").length;
     const refunded = txns.filter((t) => t.status === "Refunded").reduce((s, t) => s + t.amount, 0);
@@ -214,6 +216,7 @@ function AdminPayments() {
                 <SelectItem value={UNPAID}>Unpaid</SelectItem>
                 <SelectItem value="Successful">Successful</SelectItem>
                 <SelectItem value="Pending">Pending</SelectItem>
+                <SelectItem value="Cancelled">Cancelled, not paid</SelectItem>
                 <SelectItem value="Overdue">Overdue</SelectItem>
                 <SelectItem value="Partially Paid">Partially Paid</SelectItem>
                 <SelectItem value="Failed">Failed</SelectItem>
@@ -249,7 +252,7 @@ function AdminPayments() {
             t.vendor,
             inrPrecise(t.amount),
             inrPrecise(t.paid),
-            inrPrecise(Math.max(0, t.amount - t.paid)),
+            t.status === "Cancelled" ? "—" : inrPrecise(Math.max(0, t.amount - t.paid)),
             t.utr || "—",
             t.method,
             <StatusBadge status={t.status} />,
