@@ -40,7 +40,7 @@ function PartnerDashboard() {
       const userId = session.session?.user.id;
       if (!userId) { navigate({ to: "/partner/login", replace: true }); return; }
       const { data: partner } = await supabase.from("channel_partners").select("id,name,branch_id,status").eq("user_id", userId).maybeSingle();
-      if (!partner || partner.status !== "active") { await supabase.auth.signOut(); navigate({ to: "/partner/login", replace: true }); return; }
+      if (!partner || partner.status !== "active") { await supabase.auth.signOut({ scope: "local" }); navigate({ to: "/partner/login", replace: true }); return; }
       const { data: branch } = await supabase.from("branches").select("name").eq("id", partner.branch_id).maybeSingle();
       setMe({ id: partner.id, name: partner.name, branchId: partner.branch_id, godown: branch?.name ?? partner.branch_id });
       const { data: rules } = await supabase.from("partner_commission_rules").select("product_id,kind,value").eq("branch_id", partner.branch_id);
@@ -86,7 +86,7 @@ function PartnerDashboard() {
             <Link to="/partner/attendance" className="inline-flex h-9 items-center gap-1.5 rounded-md bg-navy px-3 text-sm font-semibold text-white hover:bg-midnight">
               <CalendarCheck className="h-4 w-4" /> Attendance & stock
             </Link>
-            <button type="button" onClick={async () => { await supabase.auth.signOut(); navigate({ to: "/partner/login" }); }}
+            <button type="button" onClick={async () => { await supabase.auth.signOut({ scope: "local" }); navigate({ to: "/partner/login" }); }}
               className="inline-flex h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-border px-3 text-sm text-navy hover:border-gold hover:text-gold">
               <LogOut className="h-4 w-4" /> Sign out
             </button>

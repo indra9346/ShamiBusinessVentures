@@ -141,7 +141,7 @@ export function PanelLayout({
       const lastActivity = Number(localStorage.getItem(key) ?? 0);
       if (signingOut || !lastActivity || Date.now() - lastActivity < timeoutMs) return;
       signingOut = true;
-      void supabase.auth.signOut().finally(() => {
+      void supabase.auth.signOut({ scope: "local" }).finally(() => {
         localStorage.removeItem(key);
         logout();
         navigate({ to: "/admin/login", replace: true });
@@ -487,7 +487,7 @@ export function PanelLayout({
         <button
           onClick={async () => {
             if (user?.id) clearAdminIdleClock(user.id);
-            await supabase.auth.signOut();
+            await supabase.auth.signOut({ scope: "local" });
             logout();
             navigate({ to: "/" });
           }}

@@ -91,7 +91,7 @@ function StaffHome() {
       const userId = session.session?.user.id;
       if (!userId) { navigate({ to: "/staff/login", replace: true }); return; }
       const { data: employee } = await supabase.from("staff_employees").select("*").eq("user_id", userId).maybeSingle();
-      if (!employee || employee.status !== "active") { await supabase.auth.signOut(); navigate({ to: "/staff/login", replace: true }); return; }
+      if (!employee || employee.status !== "active") { await supabase.auth.signOut({ scope: "local" }); navigate({ to: "/staff/login", replace: true }); return; }
       const [{ data: branch }] = await Promise.all([
         supabase.from("branches").select("name,latitude,longitude").eq("id", employee.branch_id).maybeSingle(),
         load(employee as Employee),
@@ -143,7 +143,7 @@ function StaffHome() {
     }
   };
 
-  const signOut = async () => { await supabase.auth.signOut(); navigate({ to: "/staff/login" }); };
+  const signOut = async () => { await supabase.auth.signOut({ scope: "local" }); navigate({ to: "/staff/login" }); };
 
   if (!me) {
     return <div className="grid min-h-screen place-items-center bg-panel text-sm text-slate"><span className="inline-flex items-center gap-2"><RefreshCw className="h-4 w-4 animate-spin" /> Opening attendance…</span></div>;
