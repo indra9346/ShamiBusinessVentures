@@ -24,3 +24,37 @@ export function suggestPaymentsForCredit<T extends PaymentToMatch>(credit: Credi
     .sort((a, b) => a.gap - b.gap)
     .map(({ payment }) => payment);
 }
+
+export type CheckoutToMatch = {
+  orderNo: string; amount: number; status: string; method?: string | undefined; createdAt: string;
+  /** Set when a bank credit is already kept for it: then it is no choice for another credit. */
+  moneySeenAt?: string | null | undefined;
+};
+
+/**
+ * UPI checkouts still waiting for exactly this amount, with no UTR sent, made within a day before the credit (or after
+ * it, for a customer who pressed Reorder after paying for a checkout that ended): the closest in time first. The
+ * database keeps a credit for the checkout by itself only when exactly one was open when the money came.
+ */
+export function suggestCheckoutsForCredit<T extends CheckoutToMatch>(
+  credit: CreditToMatch, checkouts: readonly T[], utrSentFor: ReadonlySet<string> = new Set(),
+): T[] {
+  const at = Date.parse(credit.creditedAt ?? credit.receivedAt);
+  if (!Number.isFinite(at)) return [];
+  const window = MATCH_WINDOW_HOURS * 60 * 60 * 1000;
+  return checkouts
+    .filter((checkout) => checkout.status === "Awaiting Payment" && !checkout.moneySeenAt && !["NEFT", "RTGS"].includes(checkout.method ?? "UPI")
+      && !utrSentFor.has(checkout.orderNo) && cents(checkout.amount) === cents(credit.amount))
+    .map((checkout) => ({ checkout, gap: Math.abs(Date.parse(checkout.createdAt) - at) }))
+    .filter(({ gap }) => Number.isFinite(gap) && gap <= window)
+    .sort((a, b) => a.gap - b.gap)
+    .map(({ checkout }) => checkout);
+}
+
+/** True when the checkout was made after the money came in (fine after a Reorder, but worth a second look). */
+export function madeAfterCredit(credit: CreditToMatch, checkout: { createdAt: string }) {
+  const at = Date.parse(credit.creditedAt ?? credit.receivedAt);
+  const made = Date.parse(checkout.createdAt);
+  // The SMS time is to the minute.
+  return Number.isFinite(at) && Number.isFinite(made) && made - at >= 60_000;
+}

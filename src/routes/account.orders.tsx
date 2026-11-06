@@ -161,7 +161,10 @@ function AccountOrders() {
               const byBank = isBankMethod(hold.method);
               const utrSent = submissions.some((item) => item.orderNo === hold.orderNo && item.status === "submitted");
               const method = byBank ? `${hold.method ?? "NEFT"} bank transfer` : "UPI";
-              const state = utrSent
+              const moneyCame = Boolean(hold.moneySeenAt);
+              const state = moneyCame
+                ? { tone: "bg-emerald-50 text-emerald-900", title: "Payment received", text: "Our bank shows your payment. Our team is confirming it; your order is placed as soon as they do. Please do not pay again." }
+                : utrSent
                 ? { tone: "bg-sky-50 text-sky-900", title: "Checking your payment", text: "We have your UTR and are matching it with our bank. Your order is placed as soon as the money shows. Nothing more to do." }
                 : left === 0
                   ? { tone: "bg-slate-100 text-charcoal", title: "Time to pay is over", text: "It will be cancelled on its own and you pay nothing. If money already left your account, call us with the UTR." }
@@ -184,8 +187,8 @@ function AccountOrders() {
                   <div className="mt-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
                     <p className="text-[11px] text-slate">{`Order no. ${hold.orderNo}`}</p>
                     <div className="flex flex-wrap items-center gap-3">
-                      {!utrSent && left > 0 && <CancelCheckoutButton orderNo={hold.orderNo} byBank={byBank} small />}
-                      <Link to="/account/orders/$id" params={{ id: hold.orderNo }} search={true} className="rounded-md bg-gold px-4 py-2 text-sm font-bold text-midnight hover:bg-gold-light">{utrSent || left === 0 ? "View details" : byBank ? "Enter UTR" : "Pay now"}</Link>
+                      {!utrSent && !moneyCame && left > 0 && <CancelCheckoutButton orderNo={hold.orderNo} byBank={byBank} small />}
+                      <Link to="/account/orders/$id" params={{ id: hold.orderNo }} search={true} className="rounded-md bg-gold px-4 py-2 text-sm font-bold text-midnight hover:bg-gold-light">{utrSent || moneyCame || left === 0 ? "View details" : byBank ? "Enter UTR" : "Pay now"}</Link>
                     </div>
                   </div>
                 </li>

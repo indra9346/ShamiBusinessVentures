@@ -9,7 +9,7 @@ import { AWAITING_PAYMENT, clockText, holdSecondsLeft, holdView, type PaymentHol
 import { serverNow, useServerNow } from "@/lib/server-clock";
 import { useApp } from "@/lib/store";
 import { CancelCheckoutButton } from "@/components/site/CancelCheckoutButton";
-import { normaliseUtr, upiPaymentUri, utrProblem, type UpiSettings } from "@/lib/upi-pay";
+import { normaliseUtr, upiPaymentUri, utrFromText, utrProblem, type UpiSettings } from "@/lib/upi-pay";
 import { UpiAppButtons } from "@/components/site/UpiAppButtons";
 import { BankTransferDetails, BankUtrForm } from "@/components/site/BankTransferPay";
 import { ReorderButton } from "@/components/site/ReorderButton";
@@ -18,8 +18,9 @@ import { submitUpiPayment, useBankDetails, useUpiPayments } from "@/lib/upi-stor
 import { cn } from "@/lib/utils";
 
 /**
- * Pay first, then the order is placed. UPI: the QR and app buttons; the bank alert confirms it
- * automatically (usually within a minute) and the customer may also type the UTR. NEFT and RTGS: the
+ * Pay first, then the order is placed. UPI: the QR (amount and order number filled in) and app buttons. When the bank's
+ * SMS shows exactly this amount the screen says the money has reached us, and an admin confirms it; the customer may
+ * also paste or type the UTR. NEFT and RTGS: the
  * company's bank details and the UTR box; an admin checks the UTR. Either way the screen follows it live,
  * and an unpaid checkout ends when its time is up, with a Reorder button for the same items.
  */
@@ -32,7 +33,7 @@ export function HeldCheckoutPay({ settings, orderNo, amount, holdUntil, customer
   const submission = submissions.find((item) => item.orderNo === orderNo);
   const storeHold = paymentHolds.find((hold) => hold.orderNo === orderNo);
   // Read straight from the database too, so the screen moves on even if the live feed is slow.
-  const [liveStatus, setLiveStatus] = useState<{ status: string; outcome: string | null; holdUntil: string | null } | null>(null);
+  const [liveStatus, setLiveStatus] = useState<{ status: string; outcome: string | null; holdUntil: string | null; moneySeenAt: string | null } | null>(null);
   // The database decides when the hold ends, so the countdown runs on the server's clock.
   const now = useServerNow();
   const [utr, setUtr] = useState("");
@@ -52,7 +53,8 @@ export function HeldCheckoutPay({ settings, orderNo, amount, holdUntil, customer
       : storeHold && storeHold.status !== AWAITING_PAYMENT
         ? storeHold
         : { status: AWAITING_PAYMENT, holdUntil: endsAt };
-  const view = holdView(hold, submission?.status === "submitted", now);
+  const moneySeenAt = liveStatus?.moneySeenAt ?? storeHold?.moneySeenAt ?? null;
+  const view = holdView({ ...hold, moneySeenAt: hold.status === AWAITING_PAYMENT ? moneySeenAt : null }, submission?.status === "submitted", now);
   const left = holdSecondsLeft(hold.holdUntil ?? endsAt, now);
 
   const finished = view === "confirmed" || view === "expired" || view === "dropped";
@@ -63,8 +65,8 @@ export function HeldCheckoutPay({ settings, orderNo, amount, holdUntil, customer
     const check = async () => {
       // Past the time: let the database end it (stock back) before reading the status.
       if (holdSecondsLeft(endsAt, serverNow()) === 0) await supabase.rpc("expire_payment_holds");
-      const { data } = await supabase.from("orders").select("order_status,payment_hold_outcome,payment_hold_until").eq("order_no", orderNo).maybeSingle();
-      if (!stopped && data) setLiveStatus({ status: data.order_status, outcome: data.payment_hold_outcome ?? null, holdUntil: data.payment_hold_until ?? null });
+      const { data } = await supabase.from("orders").select("order_status,payment_hold_outcome,payment_hold_until,bank_credit_seen_at").eq("order_no", orderNo).maybeSingle();
+      if (!stopped && data) setLiveStatus({ status: data.order_status, outcome: data.payment_hold_outcome ?? null, holdUntil: data.payment_hold_until ?? null, moneySeenAt: data.bank_credit_seen_at ?? null });
     };
     void check();
     // The moment the payment is matched (or the hold ends) the database row changes: show it at once.
@@ -103,13 +105,15 @@ export function HeldCheckoutPay({ settings, orderNo, amount, holdUntil, customer
   const qrSvg = useMemo(() => (uri ? renderSVG(uri, { border: 2, ecc: "M" }) : ""), [uri]);
 
   const sendUtr = async () => {
-    const problem = utrProblem(utr);
+    // Typed or pasted with words around it: the UTR is picked out when it is certain.
+    const typed = utrFromText(utr) ?? utr;
+    const problem = utrProblem(typed);
     if (problem) { setError(problem); return; }
     setSending(true);
     try {
-      await submitUpiPayment({ orderNo, amount, utr: normaliseUtr(utr), customer });
+      await submitUpiPayment({ orderNo, amount, utr: normaliseUtr(typed), customer });
       setError("");
-      toast.success("UTR sent", { description: "Your order is placed as soon as our bank shows this payment." });
+      toast.success("UTR sent", { description: "Your order is placed as soon as our team confirms this payment." });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not send the UTR");
     } finally {
@@ -141,7 +145,9 @@ export function HeldCheckoutPay({ settings, orderNo, amount, holdUntil, customer
     const unchecked = note === UNCHECKED_UTR_NOTE;
     const closed = note === REFUNDED_UTR_NOTE || REUSED_UTR_NOTE.test(note);
     const byAdmin = (liveStatus?.outcome ?? storeHold?.outcome) === "ended";
+    const moneyCame = Boolean(moneySeenAt);
     const reason = view === "dropped" ? "you cancelled before paying"
+      : moneyCame && !byAdmin ? "we could not confirm your payment in time"
       : unchecked ? UNCHECKED_UTR_NOTE
       : note === REFUNDED_UTR_NOTE ? "we refunded your transfer"
       : REUSED_UTR_NOTE.test(note) ? "your payment went to your new order"
@@ -152,7 +158,9 @@ export function HeldCheckoutPay({ settings, orderNo, amount, holdUntil, customer
       <div className="rounded-lg border border-border bg-card p-5 text-left">
         <p className="flex items-center gap-2 text-base font-bold text-navy"><XCircle className="h-5 w-5 text-slate" /> Not placed: {reason}</p>
         <p className="mt-1 text-sm text-slate">
-          {unchecked
+          {moneyCame
+            ? "Your money reached us, so do not pay again. Press Reorder and call us: we will place the order with it or refund it."
+            : unchecked
             ? `Do not pay again. Press Reorder and send the same UTR ${row?.utr}, or call us and we will refund it.`
             : closed ? `${orderNo} was not placed and nothing is due.`
             : byAdmin && row?.status === "rejected" ? `If you already transferred the money, call us with UTR ${row.utr} and we will place the order or refund it.`
@@ -178,21 +186,27 @@ export function HeldCheckoutPay({ settings, orderNo, amount, holdUntil, customer
     <div className="rounded-lg border border-border bg-card p-4 text-left shadow-card">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p className="text-xs font-bold uppercase tracking-wider text-slate">{byBank ? "Transfer now to place your order" : "Pay now to place your order · no extra charges"}</p>
+          <p className="text-xs font-bold uppercase tracking-wider text-slate">{view === "received" ? "Your payment" : byBank ? "Transfer now to place your order" : "Pay now to place your order · no extra charges"}</p>
           <p className="mt-1 text-2xl font-extrabold text-navy">{inrPrecise(amount)}</p>
           <p className="text-xs text-slate">{orderNo} · {method} · to {byBank ? bankDetails?.accountName : settings?.payeeName}</p>
         </div>
-        <span className={cn("inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold", left > 60 ? "bg-amber-50 text-amber-800" : "bg-red-50 text-red-800")}>
-          <Clock className="h-3.5 w-3.5" /> {view === "verifying" ? "Checking your payment" : left > 0 ? (byBank ? `Enter UTR within ${clockText(left)}` : `Pay within ${clockText(left)}`) : "Time is up"}
+        <span className={cn("inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold", view === "received" ? "bg-emerald-50 text-emerald-800" : left > 60 ? "bg-amber-50 text-amber-800" : "bg-red-50 text-red-800")}>
+          <Clock className="h-3.5 w-3.5" /> {view === "received" ? "Payment received" : view === "verifying" ? "Checking your payment" : left > 0 ? (byBank ? `Enter UTR within ${clockText(left)}` : `Pay within ${clockText(left)}`) : "Time is up"}
         </span>
       </div>
 
-      {view === "verifying" ? (
+      {view === "received" ? (
+        <div className="mt-4 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
+          <p className="flex items-center gap-2 font-semibold"><CheckCircle2 className="h-4 w-4" /> We have received your payment</p>
+          <p className="mt-1">{`Our bank shows ${inrPrecise(amount)} at ${new Date(moneySeenAt ?? Date.now()).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" })}.`}</p>
+          <p className="mt-1">Our team is confirming it now. Your order is placed as soon as they do, and you will get a notification. Please do not pay again. You can close this page.</p>
+        </div>
+      ) : view === "verifying" ? (
         <div className="mt-4 rounded-md border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">
           <p className="flex items-center gap-2 font-semibold"><ShieldCheck className="h-4 w-4" /> Checking UTR {submission?.utr} with our bank</p>
           <p className="mt-1">{byBank
             ? "Your order is placed once we confirm this payment in our bank account. You can close this page; you will get a notification."
-            : "Your order is placed the moment our bank shows this payment. You can close this page; you will get a notification."}</p>
+            : "Your order is placed once our team confirms this payment with our bank. You can close this page; you will get a notification."}</p>
         </div>
       ) : byBank ? (
         <>
@@ -231,7 +245,7 @@ export function HeldCheckoutPay({ settings, orderNo, amount, holdUntil, customer
               <ol className="list-decimal space-y-1 pl-4 text-sm text-charcoal">
                 <li>Scan the QR, or on your phone tap your UPI app below.</li>
                 <li>Pay exactly <span className="font-semibold">{inrPrecise(amount)}</span> to <span className="font-semibold">{settings?.payeeName}</span>.</li>
-                <li>Stay on this page: your order is confirmed automatically, usually within a minute.</li>
+                <li>Stay on this page: it shows when your payment reaches our bank. Our team then confirms it and your order is placed.</li>
               </ol>
               <UpiAppButtons uri={uri} />
               <button type="button" onClick={() => { void navigator.clipboard?.writeText(settings?.vpa ?? ""); toast.success("UPI ID copied"); }}
@@ -248,10 +262,15 @@ export function HeldCheckoutPay({ settings, orderNo, amount, holdUntil, customer
                 <XCircle className="mt-0.5 h-4 w-4 shrink-0" /> UTR {submission.utr} could not be matched{submission.note ? `: ${submission.note}` : ""}.
               </p>
             )}
-            <label className="block text-xs font-semibold text-charcoal" htmlFor={`utr-${orderNo}`}>Paid but not confirmed after a minute? Enter the 12-digit UTR from your UPI app</label>
+            <label className="block text-xs font-semibold text-charcoal" htmlFor={`utr-${orderNo}`}>Paid? Paste or type the 12-digit UTR from your UPI app: it speeds up the check</label>
             <div className="mt-1.5 flex flex-wrap gap-2">
-              <input id={`utr-${orderNo}`} inputMode="numeric" autoComplete="off" maxLength={16} placeholder="e.g. 612345678901" value={utr}
+              <input id={`utr-${orderNo}`} inputMode="numeric" autoComplete="off" maxLength={300} placeholder="e.g. 612345678901" value={utr}
                 onChange={(e) => { setUtr(e.target.value); setError(""); }}
+                // The whole "Share receipt" text of PhonePe, Google Pay or Paytm can be pasted: the UTR is picked out of it.
+                onPaste={(e) => {
+                  const found = utrFromText(e.clipboardData.getData("text"));
+                  if (found) { e.preventDefault(); setUtr(found); setError(""); }
+                }}
                 className="h-10 min-w-0 flex-1 rounded-md border border-input bg-white px-3 font-mono text-sm tracking-wider" />
               <button type="button" disabled={sending} onClick={() => void sendUtr()} className="h-10 rounded-md bg-navy px-4 text-sm font-semibold text-white hover:bg-midnight disabled:opacity-60">{sending ? "Sending…" : "Send UTR"}</button>
             </div>

@@ -255,12 +255,14 @@ export async function reopenBankCredit(id: string) {
 export type CreditWithoutUtr = {
   id: string; receivedAt: string; creditedAt: string | null; amount: number; accountEnding: string; balance: number | null;
   sender: string | null; raw: string; status: "new" | "used" | "dismissed"; orderNo: string | null; decidedAt: string | null; note: string | null;
+  /** The only checkout waiting for this amount when it came: kept for it until an admin decides. */
+  suggestedOrderNo: string | null;
 };
 /** Admin: bank credits whose SMS has no UTR (IDFC FIRST), for the company's account only, newest first. */
 export async function loadCreditsWithoutUtr(): Promise<CreditWithoutUtr[]> {
   if (STATIC_DATA_MODE) return readJson<CreditWithoutUtr[]>(DEMO_CREDITS_WITHOUT_UTR, []);
   const { data, error } = await supabase.from("bank_credits_without_reference")
-    .select("id,received_at,credited_at,amount,account_ending,balance,sender,raw,status,order_no,decided_at,note")
+    .select("id,received_at,credited_at,amount,account_ending,balance,sender,raw,status,order_no,decided_at,note,suggested_order_no")
     .order("received_at", { ascending: false }).limit(100);
   // Not set up in the database yet: nothing to show, and nothing to retry every few seconds.
   if (error && isMissingInDatabase(error)) return [];
@@ -268,12 +270,15 @@ export async function loadCreditsWithoutUtr(): Promise<CreditWithoutUtr[]> {
   return (data ?? []).map((row) => ({
     id: row.id, receivedAt: row.received_at, creditedAt: row.credited_at, amount: Number(row.amount), accountEnding: row.account_ending,
     balance: row.balance === null ? null : Number(row.balance), sender: row.sender, raw: row.raw, status: row.status as CreditWithoutUtr["status"],
-    orderNo: row.order_no, decidedAt: row.decided_at, note: row.note,
+    orderNo: row.order_no, decidedAt: row.decided_at, note: row.note, suggestedOrderNo: row.suggested_order_no ?? null,
   }));
 }
 
-/** Admin: confirms an order's UTR with a bank credit that has none, through the usual check (review_upi_utr). */
-export async function confirmOrderWithCredit(creditId: string, orderNo: string, utr: string) {
+/**
+ * Admin: pays an order with a bank credit that has no UTR: through the customer's UTR and the usual check when one waits
+ * (pass it, so a UTR changed meanwhile is refused), else the credit itself is the payment (utr null).
+ */
+export async function confirmOrderWithCredit(creditId: string, orderNo: string, utr: string | null) {
   if (STATIC_DATA_MODE) throw new Error("Not in the demo");
   const { error } = await supabase.rpc("confirm_order_with_bank_credit", { _credit_id: creditId, _order_no: orderNo, _expected_utr: utr });
   if (error) throw new Error(error.message);

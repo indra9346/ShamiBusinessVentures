@@ -614,7 +614,7 @@ export type Database = {
         Relationships: []
       }
       bank_credits_without_reference: {
-        Row: { id: string; received_at: string; credited_at: string | null; sender: string | null; raw: string; fingerprint: string; account_ending: string; amount: number; balance: number | null; status: string; order_no: string | null; decided_by: string | null; decided_at: string | null; note: string | null }
+        Row: { id: string; received_at: string; credited_at: string | null; sender: string | null; raw: string; fingerprint: string; account_ending: string; amount: number; balance: number | null; status: string; order_no: string | null; decided_by: string | null; decided_at: string | null; note: string | null; suggested_order_no: string | null }
         Insert: never
         Update: never
         Relationships: []
@@ -839,6 +839,8 @@ export type Database = {
       }
       orders: {
         Row: {
+          bank_credit_id: string | null
+          bank_credit_seen_at: string | null
           zoho_salesorder_id: string | null
           branch_id: string | null
           zoho_last_polled_at: string | null
@@ -878,6 +880,8 @@ export type Database = {
           vendor_ids: string[]
         }
         Insert: {
+          bank_credit_id?: string | null
+          bank_credit_seen_at?: string | null
           branch_id?: string | null
           zoho_salesorder_id?: string | null
           zoho_last_polled_at?: string | null
@@ -917,6 +921,8 @@ export type Database = {
           vendor_ids?: string[]
         }
         Update: {
+          bank_credit_id?: string | null
+          bank_credit_seen_at?: string | null
           branch_id?: string | null
           zoho_salesorder_id?: string | null
           zoho_last_polled_at?: string | null
@@ -1337,7 +1343,7 @@ export type Database = {
       admin_utr_conflicts: { Args: { _days?: number }; Returns: Json }
       review_utr_conflict: { Args: { _key: string; _note: string }; Returns: Json }
       record_bank_credit_without_reference: { Args: { _account_ending: string; _amount: number; _credited_at: string | null; _balance: number | null; _raw: string; _sender?: string }; Returns: Json }
-      confirm_order_with_bank_credit: { Args: { _credit_id: string; _order_no: string; _expected_utr: string }; Returns: Json }
+      confirm_order_with_bank_credit: { Args: { _credit_id: string; _order_no: string; _expected_utr: string | null }; Returns: Json }
       dismiss_bank_credit_without_reference: { Args: { _credit_id: string; _note: string }; Returns: Json }
       reopen_bank_credit_without_reference: { Args: { _credit_id: string }; Returns: Json }
       submit_upi_utr: { Args: { _order_no: string; _utr: string }; Returns: { id: string; order_id: string; order_no: string; user_id: string | null; customer_name: string; amount: number; utr: string; status: string; note: string | null; submitted_at: string; reviewed_at: string | null; reviewed_by: string | null } }

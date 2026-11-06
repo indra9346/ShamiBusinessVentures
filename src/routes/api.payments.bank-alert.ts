@@ -10,7 +10,8 @@ import { webhookKeyMatches } from "@/lib/zoho-sync-core";
  * and UTR is recorded; a matching unpaid checkout is confirmed at once and sent to Zoho.
  * Optional BANK_ALERT_SENDERS (comma list, e.g. "SBIUPI,HDFCBK,IDFCFB") accepts only the bank's SMS IDs.
  * A credit SMS with no UTR (IDFC FIRST Bank's has none) is kept only when it is for the company's own account, for an
- * admin to match to a waiting order (record_bank_credit_without_reference); it never confirms anything by itself.
+ * admin to confirm (record_bank_credit_without_reference keeps it for the only checkout waiting for that amount, and the
+ * customer's screen says the money arrived); it never confirms anything by itself.
  */
 export const Route = createFileRoute("/api/payments/bank-alert")({
   server: {
@@ -46,9 +47,9 @@ export const Route = createFileRoute("/api/payments/bank-alert")({
             console.error("bank-alert (no UTR) could not be recorded:", error.message);
             return Response.json({ ok: false }, { status: 500 });
           }
-          const outcome = data as { status: string; waiting_orders?: number };
-          console.info("bank-alert (no UTR):", outcome.status, `₹${withoutReference.amount}`, `A/C …${withoutReference.accountEnding}`, outcome.waiting_orders ?? "");
-          return Response.json({ ok: true, status: outcome.status, waitingOrders: outcome.waiting_orders ?? 0 });
+          const outcome = data as { status: string; waiting_orders?: number; linked_order?: string | null };
+          console.info("bank-alert (no UTR):", outcome.status, `₹${withoutReference.amount}`, `A/C …${withoutReference.accountEnding}`, outcome.waiting_orders ?? "", outcome.linked_order ? `kept for ${outcome.linked_order}` : "");
+          return Response.json({ ok: true, status: outcome.status, waitingOrders: outcome.waiting_orders ?? 0, keptFor: outcome.linked_order ?? null });
         }
         if (!parsed) return Response.json({ ok: true, ignored: "not a money-received SMS with an amount and UTR" });
         const { data, error } = await db.rpc("record_bank_credit", {

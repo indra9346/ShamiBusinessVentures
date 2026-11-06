@@ -43,13 +43,17 @@ export type PaymentHold = {
   method?: string | undefined;
   /** Product ids and quantities, to reorder the same items if it is not paid. */
   lines: { productId: string; qty: number; name?: string | undefined }[];
+  /** When the bank's SMS showed this checkout's money (kept for it, an admin confirms); null until then. */
+  moneySeenAt?: string | null | undefined;
 };
 
 /** What the customer should see for a held request right now. */
-export function holdView(hold: Pick<PaymentHold, "status" | "holdUntil" | "outcome">, utrSent: boolean, now = Date.now()) {
+export function holdView(hold: Pick<PaymentHold, "status" | "holdUntil" | "outcome"> & { moneySeenAt?: string | null | undefined }, utrSent: boolean, now = Date.now()) {
   if (hold.status === PAYMENT_EXPIRED) return hold.outcome === "dropped" ? ("dropped" as const) : ("expired" as const);
   // Any later status (Accepted, Packed...) means it was paid and is an order now.
   if (hold.status !== AWAITING_PAYMENT) return "confirmed" as const;
+  // The bank shows the money; an admin confirms it. Nothing more to pay or send.
+  if (hold.moneySeenAt) return "received" as const;
   if (utrSent) return "verifying" as const;
   return holdSecondsLeft(hold.holdUntil, now) > 0 ? ("pay" as const) : ("closing" as const);
 }
