@@ -16,17 +16,64 @@ const amount = (value: unknown) => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
-/** Whether this Zoho item should come to the website. Anything already linked is checked by the caller. */
+/**
+ * Why this Zoho item can't be sold on the website, or null when it can. The same checks apply to new
+ * items coming in by themselves and to an older item an admin brings in by hand.
+ */
+export function zohoItemSaleProblem(item: ZohoItem) {
+  if (text(item["item_id"]) === "" || text(item["name"]) === "") return "Zoho sent this item without a name";
+  if (text(item["status"]).toLowerCase() !== "active") return "Inactive in Zoho: switch it on in Zoho first";
+  if (item["can_be_sold"] === false) return "Zoho marks this item as not for sale";
+  if (text(item["product_type"]).toLowerCase() === "service") return "A service, not goods: it can't be sold on the website";
+  if ((amount(item["rate"]) ?? -1) < 0) return "Zoho has no selling price for this item";
+  return null;
+}
+
+/** Whether this Zoho item should come to the website by itself. Anything already linked is checked by the caller. */
 export function zohoItemImportable(item: ZohoItem) {
   const created = Date.parse(text(item["created_time"]));
-  return text(item["item_id"]) !== ""
-    && text(item["name"]) !== ""
-    && text(item["status"]).toLowerCase() === "active"
-    && item["can_be_sold"] !== false
-    && text(item["product_type"]).toLowerCase() !== "service"
-    && (amount(item["rate"]) ?? -1) >= 0
+  return zohoItemSaleProblem(item) === null
     && Number.isFinite(created)
     && created >= Date.parse(ZOHO_ITEM_IMPORT_FROM);
+}
+
+/** A Zoho item with no website product, as the admin's "Zoho items not on the website" list shows it. */
+export type ZohoItemNotOnWebsite = {
+  itemId: string;
+  name: string;
+  sku: string;
+  rate: number;
+  unit: string;
+  active: boolean;
+  stock: number | null;
+  createdAt: string;
+  /** Why it can't be brought in now, or null when it can. */
+  problem: string | null;
+};
+
+/**
+ * Zoho items that have no website product (no zoho_item_links row), active ones first. An item whose SKU a
+ * website product already uses can't come in: two products on one SKU would push different stock to it.
+ */
+export function zohoItemsNotOnWebsite(items: ZohoItem[], linkedItemIds: ReadonlySet<string>, websiteSkus: ReadonlySet<string>): ZohoItemNotOnWebsite[] {
+  return items
+    .filter((item) => text(item["item_id"]) !== "" && !linkedItemIds.has(text(item["item_id"])))
+    .map((item) => {
+      const sku = text(item["sku"]);
+      const problem = zohoItemSaleProblem(item) ?? (sku && websiteSkus.has(sku.toLowerCase()) ? "A website product already uses this SKU" : null);
+      return {
+        itemId: text(item["item_id"]),
+        name: text(item["name"]),
+        sku,
+        rate: amount(item["rate"]) ?? 0,
+        unit: text(item["unit"]),
+        active: text(item["status"]).toLowerCase() === "active",
+        stock: amount(item["available_stock"]) ?? amount(item["stock_on_hand"]),
+        createdAt: text(item["created_time"]),
+        problem,
+      };
+    })
+    .sort((a, b) => Number(a.problem !== null) - Number(b.problem !== null) || a.name.localeCompare(b.name, "en"));
 }
 
 /** The GST the item carries within the state, which is what the website adds to its price. */

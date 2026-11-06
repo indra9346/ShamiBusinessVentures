@@ -5,6 +5,8 @@ import {
   zohoItemAsHiddenProduct,
   zohoItemGstPercent,
   zohoItemImportable,
+  zohoItemSaleProblem,
+  zohoItemsNotOnWebsite,
   zohoItemSku,
 } from "../src/lib/zoho-item-import.ts";
 import { shownOnStorefront } from "../src/lib/storefront-visibility.ts";
@@ -94,4 +96,70 @@ test("only an imported product still pending is left alone in Zoho", () => {
   assert.equal(awaitingImportApproval("rejected", { zohoImported: true }), false);
   assert.equal(awaitingImportApproval("pending", {}), false);
   assert.equal(awaitingImportApproval("pending", null), false);
+});
+
+// Zoho's "Sugar S1", made on 27 Jun 2026, before new items came in by themselves (read live 6 Nov 2026).
+const sugarS1 = {
+  item_id: "3579709000000834002", name: "Sugar S1", status: "active", can_be_sold: true, product_type: "goods",
+  rate: 2752, purchase_rate: 2491.226, label_rate: "", sku: "", unit: "pcs", hsn_or_sac: "17011490",
+  created_time: "2026-06-27T13:48:14+0530", available_stock: 0, stock_on_hand: 0,
+};
+
+test("an older item stays out by itself but an admin can bring it in", () => {
+  assert.equal(zohoItemImportable(sugarS1), false);
+  assert.equal(zohoItemSaleProblem(sugarS1), null);
+});
+
+test("an admin can't bring in what Zoho won't sell", () => {
+  assert.match(zohoItemSaleProblem({ ...sugarS1, status: "inactive" })!, /^Inactive in Zoho/);
+  assert.match(zohoItemSaleProblem({ ...sugarS1, can_be_sold: false })!, /not for sale/);
+  assert.match(zohoItemSaleProblem({ ...sugarS1, product_type: "service" })!, /service/);
+  assert.match(zohoItemSaleProblem({ ...sugarS1, rate: "" })!, /no selling price/);
+  assert.match(zohoItemSaleProblem({ ...sugarS1, name: " " })!, /without a name/);
+});
+
+test("the same checks still decide what comes in by itself", () => {
+  assert.equal(zohoItemImportable({ ...ekadantha, status: "inactive" }), false);
+  assert.equal(zohoItemImportable({ ...ekadantha, can_be_sold: false }), false);
+  assert.equal(zohoItemImportable({ ...ekadantha, product_type: "service" }), false);
+  assert.equal(zohoItemImportable({ ...ekadantha, rate: -1 }), false);
+});
+
+test("the not-on-website list leaves out linked items and says what blocks the rest", () => {
+  const items = [
+    sugarS1,
+    { ...ekadantha },
+    { item_id: "3579709000000042119", name: "Sugar", status: "active", can_be_sold: true, product_type: "goods", rate: 4062, sku: "", unit: "qtl", created_time: "2026-03-04T12:59:01+0530", stock_on_hand: 0 },
+    { item_id: "3579709000000858197", name: "payviaUPI", status: "inactive", can_be_sold: true, product_type: "goods", rate: 0, sku: "", created_time: "2026-06-28T18:12:19+0530" },
+    { item_id: "999", name: "Copy of Belgaum", status: "active", can_be_sold: true, product_type: "goods", rate: 2700, sku: "SBV-SU-2EE9B743", created_time: "2026-11-05T10:00:00+0530" },
+  ];
+  const rows = zohoItemsNotOnWebsite(items, new Set(["3579709000003476321"]), new Set(["sbv-su-2ee9b743"]));
+  assert.deepEqual(rows.map((row) => row.name), ["Sugar", "Sugar S1", "Copy of Belgaum", "payviaUPI"]);
+  assert.equal(rows.find((row) => row.name === "Sugar S1")!.problem, null);
+  assert.equal(rows.find((row) => row.name === "Sugar S1")!.rate, 2752);
+  assert.match(rows.find((row) => row.name === "Copy of Belgaum")!.problem!, /already uses this SKU/);
+  assert.match(rows.find((row) => row.name === "payviaUPI")!.problem!, /^Inactive in Zoho/);
+  assert.equal(rows.find((row) => row.name === "payviaUPI")!.active, false);
+});
+
+test("an older item brought in by hand still comes in hidden, waiting for approval", () => {
+  const row = zohoItemAsHiddenProduct(sugarS1, "VENDOR-001", "Shami Business Ventures");
+  assert.equal(row.id, "ZI-3579709000000834002");
+  assert.equal(row.status, "pending");
+  assert.equal(row.active, false);
+  assert.equal(row.payload.price, 2752);
+  assert.equal(row.payload.sku, "SBV-GN-00834002");
+  assert.equal(awaitingImportApproval(row.status, row.payload), true);
+  assert.equal(shownOnStorefront({ status: row.status, active: row.active, vendorId: row.vendor_id }), false);
+});
+
+test("every reason an item can't come in reads in Kannada", async () => {
+  const { kn } = await import("../src/lib/i18n-kn.ts");
+  const reasons = [
+    zohoItemSaleProblem({ ...sugarS1, name: "" }), zohoItemSaleProblem({ ...sugarS1, status: "inactive" }),
+    zohoItemSaleProblem({ ...sugarS1, can_be_sold: false }), zohoItemSaleProblem({ ...sugarS1, product_type: "service" }),
+    zohoItemSaleProblem({ ...sugarS1, rate: "" }), "A website product already uses this SKU",
+  ];
+  for (const reason of reasons) assert.ok(reason && kn[reason], `missing Kannada for "${reason}"`);
+  assert.ok(kn["Made in Zoho on {0}"]?.includes("{0}"));
 });
