@@ -119,6 +119,14 @@ test("a batch can be deleted only while nothing has touched it", () => {
   assert.equal(batchDeleteBlocker(fresh, [], 0), "");
   assert.match(batchDeleteBlocker({ quantity: 12, remaining_quantity: 11 }, [{ reserved_quantity: 1, released_quantity: 0 }], 0), /Orders have taken stock/);
   assert.match(batchDeleteBlocker(fresh, [{ reserved_quantity: 1, released_quantity: 1 }], 0), /used this batch before/);
+  // Owner, 6 Nov: allowed when every order that used it was cancelled or expired, unpaid.
+  const released = [{ reserved_quantity: 1, released_quantity: 1 }];
+  assert.equal(batchDeleteBlocker(fresh, released, 0, () => ({ order_status: "Cancelled", payment_status: "Pending" })), "");
+  assert.equal(batchDeleteBlocker(fresh, released, 0, () => ({ order_status: "Payment Expired", payment_status: "Pending" })), "");
+  assert.match(batchDeleteBlocker(fresh, released, 0, () => ({ order_status: "Delivered", payment_status: "Paid" })), /used this batch before/);
+  assert.match(batchDeleteBlocker(fresh, released, 0, () => ({ order_status: "Cancelled", payment_status: "Refunded" })), /used this batch before/);
+  assert.match(batchDeleteBlocker(fresh, released, 0, () => undefined), /used this batch before/);
+  assert.match(batchDeleteBlocker(fresh, [{ reserved_quantity: 1, released_quantity: 0 }], 0, () => ({ order_status: "Cancelled", payment_status: "Pending" })), /Orders have tak/);
   assert.match(batchDeleteBlocker(fresh, [], 1), /Stock counts/);
   assert.match(batchDeleteBlocker({ quantity: 12, remaining_quantity: 10 }, [], 0), /moved/);
 });

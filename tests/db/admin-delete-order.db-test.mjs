@@ -86,11 +86,18 @@ const O = {
   held: await order("TEST-EXP-HELD", "Payment Expired"),
   released: await order("TEST-CAN-REL", "Cancelled"),
 };
+const C = { cancelled: await order("TEST-EXP-COMM-C", "Payment Expired"), pending: await order("TEST-EXP-COMM-P", "Payment Expired") };
 await q("ALTER TABLE public.order_items ENABLE TRIGGER USER");
 await q("ALTER TABLE public.orders ENABLE TRIGGER USER");
 await q("ALTER TABLE public.upi_payment_submissions DISABLE TRIGGER USER");
 await q("INSERT INTO public.upi_payment_submissions (order_id, order_no, user_id, utr, amount, status) VALUES ($1,'TEST-EXP-UTR',$2,'123456789012',100,'submitted')", [O.utr.id, CUSTOMER]);
 await q("ALTER TABLE public.upi_payment_submissions ENABLE TRIGGER USER");
+await q("SET session_replication_role = replica");
+for (const [key, status] of [["cancelled", "cancelled"], ["pending", "pending"]]) {
+  await q("INSERT INTO public.partner_commissions (order_item_id, order_id, order_no, partner_id, branch_id, product_id, product_name, qty, line_total, kind, rate, amount, status, placed_at) VALUES ($1,$2,$3,'00000000-0000-4000-8000-0000000000d1','BR-CLK','P1','TEST Rice',1,100,'per_unit',1,1,$4,now())",
+    [C[key].item, C[key].id, key === "cancelled" ? "TEST-EXP-COMM-C" : "TEST-EXP-COMM-P", status]);
+}
+await q("SET session_replication_role = DEFAULT");
 await q("INSERT INTO public.order_item_batch_allocations (order_item_id, batch_id, reserved_quantity, released_quantity, unit_cost) VALUES ($1,$2,1,0,100),($3,$2,1,1,100)", [O.held.item, batchId, O.released.item]);
 
 await db.exec(readFileSync(join(dir, MIGRATION), "utf8"));
@@ -162,5 +169,39 @@ await assert.rejects(() => as(ADMIN, "authenticated", () => q("DELETE FROM publi
 await q("ALTER TABLE public.orders DISABLE TRIGGER orders_require_payment_first");
 await assert.rejects(() => order("TEST-EXP-1", "Payment Expired"), /used before and deleted/);
 await assert.rejects(() => del(ADMIN, "TEST-EXP-1"), /no longer exists/);
+
+// Owner's decision: a batch whose only orders were cancelled or expired, unpaid, with every unit back, can be deleted.
+async function batch(code) {
+  await q("INSERT INTO public.batches (batch_code, product_id, product_name, quantity, remaining_quantity, unit, unit_cost, purchase_date, branch_id, warehouse, source, status) VALUES ($1,'P1','TEST Rice',5,5,'bag',100,'2026-11-01','BR-CLK','Challakere Godown','website','Active')", [code]);
+  return (await q("SELECT id FROM public.batches WHERE batch_code = $1", [code]))[0].id;
+}
+const B2 = await batch("TEST-B2"), B3 = await batch("TEST-B3");
+const usedBy = await order("TEST-CAN-B2", "Cancelled");
+const paidBy = await order("TEST-PAID-B3", "Cancelled", { paid_amount: 100, payment_status: "Refunded" });
+await q("INSERT INTO public.order_item_batch_allocations (order_item_id, batch_id, reserved_quantity, released_quantity, unit_cost) VALUES ($1,$2,1,1,100),($3,$4,1,1,100)", [usedBy.item, B2, paidBy.item, B3]);
+const stockBefore = (await q("SELECT stock FROM public.branch_stock WHERE product_id = 'P1'"))[0].stock;
+const delBatch = (id) => as(ADMIN, "authenticated", () => q("SELECT public.admin_delete_batch($1) AS r", [id]));
+await assert.rejects(() => delBatch(batchId), /taken stock/);
+await assert.rejects(() => delBatch(B3), /used batch .* before/);
+await assert.rejects(() => as(CUSTOMER, "authenticated", () => q("SELECT public.admin_delete_batch($1)", [B2])), /Only administrators/);
+const gone = (await delBatch(B2))[0].r;
+assert.equal(gone.batch_code, "TEST-B2");
+assert.equal((await q("SELECT count(*)::int AS n FROM public.batches WHERE id = $1", [B2]))[0].n, 0);
+assert.equal((await q("SELECT count(*)::int AS n FROM public.order_item_batch_allocations WHERE batch_id = $1", [B2]))[0].n, 0);
+assert.equal(await exists("TEST-CAN-B2"), true, "the cancelled order itself stays");
+assert.equal((await q("SELECT stock FROM public.branch_stock WHERE product_id = 'P1'"))[0].stock, stockBefore, "stock unchanged");
+assert.deepEqual((await q("SELECT batch_code, released_orders, deleted_by FROM public.deleted_batches_log"))
+  .map((row) => [row.batch_code, row.released_orders, row.deleted_by]), [["TEST-B2", 1, ADMIN]]);
+assert.equal((await as(CUSTOMER, "authenticated", () => q("SELECT count(*)::int AS n FROM public.deleted_batches_log")))[0].n, 0);
+
+// Owner's decision: a cancelled commission no longer keeps an order; a live one still does.
+assert.equal(await blocker("TEST-EXP-COMM-C"), null);
+assert.match(await blocker("TEST-EXP-COMM-P"), /partner commission/);
+await del(ADMIN, "TEST-EXP-COMM-C");
+assert.equal(await exists("TEST-EXP-COMM-C"), false);
+assert.equal((await q("SELECT count(*)::int AS n FROM public.partner_commissions WHERE order_id = $1", [C.cancelled.id]))[0].n, 0);
+await assert.rejects(() => del(ADMIN, "TEST-EXP-COMM-P"), /partner commission/);
+assert.equal(await exists("TEST-EXP-COMM-P"), true);
+assert.equal((await q("SELECT count(*)::int AS n FROM public.partner_commissions WHERE order_id = $1", [C.pending.id]))[0].n, 1);
 
 console.log("admin delete order OK");

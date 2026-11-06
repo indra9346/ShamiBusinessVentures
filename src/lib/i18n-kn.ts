@@ -3162,6 +3162,7 @@ export const kn: Record<string, string> = {
   "Please call us about this order's payment": "ಈ ಆರ್ಡರ್‌ನ ಪಾವತಿ ಬಗ್ಗೆ ದಯವಿಟ್ಟು ನಮಗೆ ಕರೆ ಮಾಡಿ",
   "Our payment records for this order need checking. Please do not pay again before speaking to us.": "ಈ ಆರ್ಡರ್‌ನ ಪಾವತಿ ದಾಖಲೆಗಳನ್ನು ಪರಿಶೀಲಿಸಬೇಕಾಗಿದೆ. ನಮ್ಮೊಂದಿಗೆ ಮಾತನಾಡುವ ಮೊದಲು ದಯವಿಟ್ಟು ಮತ್ತೆ ಪಾವತಿಸಬೇಡಿ.",
   "Need help? Call +91 98459 66288": "ಸಹಾಯ ಬೇಕೇ? +91 98459 66288 ಗೆ ಕರೆ ಮಾಡಿ",
+  "Its only orders were cancelled or expired, and every unit came back. Deleting it removes the batch record, and those orders no longer show this batch number. Stock does not change, here or in Zoho.": "ಇದರ ಆರ್ಡರ್‌ಗಳು ರದ್ದಾಗಿವೆ ಅಥವಾ ಅವಧಿ ಮುಗಿದಿವೆ, ಮತ್ತು ಎಲ್ಲಾ ಘಟಕಗಳು ಹಿಂತಿರುಗಿವೆ. ಅಳಿಸಿದರೆ ಬ್ಯಾಚ್ ದಾಖಲೆ ಹೋಗುತ್ತದೆ, ಮತ್ತು ಆ ಆರ್ಡರ್‌ಗಳಲ್ಲಿ ಈ ಬ್ಯಾಚ್ ಸಂಖ್ಯೆ ಕಾಣುವುದಿಲ್ಲ. ಇಲ್ಲಿ ಅಥವಾ Zoho ದಲ್ಲಿ ಸ್ಟಾಕ್ ಬದಲಾಗುವುದಿಲ್ಲ.",
   "Delete order": "ಆರ್ಡರ್ ಅಳಿಸಿ",
   "Delete order {0}?": "{0} ಆರ್ಡರ್ ಅಳಿಸಬೇಕೆ?",
   "Order {0} deleted": "{0} ಆರ್ಡರ್ ಅಳಿಸಲಾಗಿದೆ",

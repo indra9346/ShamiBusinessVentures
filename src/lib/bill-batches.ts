@@ -187,10 +187,14 @@ export function billChange(stored: { modifiedAt: string; total: number }, now: {
 }
 
 /** Why a batch cannot be deleted, or "" when it can. Mirrors admin_delete_batch in the database. */
-export function batchDeleteBlocker(batch: { quantity: number; remaining_quantity: number }, allocations: { reserved_quantity: number; released_quantity: number }[], adjustments: number) {
+export function batchDeleteBlocker<A extends { reserved_quantity: number; released_quantity: number }>(batch: { quantity: number; remaining_quantity: number }, allocations: A[], adjustments: number,
+  orderOf?: (allocation: A) => { order_status: string; payment_status: string } | undefined) {
   const held = allocations.reduce((sum, a) => sum + Math.max(0, a.reserved_quantity - a.released_quantity), 0);
   if (held > 0) return "Orders have taken stock from this batch, so it can't be deleted.";
-  if (allocations.length > 0) return "Orders have used this batch before, so it is kept for their records.";
+  // Allowed when every order that used it was cancelled or expired with nothing paid (the database checks money too).
+  const closed = (order: { order_status: string; payment_status: string } | undefined) =>
+    Boolean(order && ["Cancelled", "Payment Expired"].includes(order.order_status) && !["Paid", "Partially Paid", "Refunded"].includes(order.payment_status));
+  if (allocations.length > 0 && !(orderOf && allocations.every((a) => closed(orderOf(a))))) return "Orders have used this batch before, so it is kept for their records.";
   if (adjustments > 0) return "Stock counts have changed this batch, so it is kept for their records.";
   if (Math.abs(batch.quantity - batch.remaining_quantity) > 0.0005) return "This batch's units have moved, so it can't be deleted.";
   return "";

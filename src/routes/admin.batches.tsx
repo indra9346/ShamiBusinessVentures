@@ -383,8 +383,13 @@ function BatchDetail({ row, report, data, adjustments, orderId, go, onEdit, onDe
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   // The same rule as admin_delete_batch in the database, which has the last word.
-  const deleteBlocker = batchDeleteBlocker(row.batch, data.allocations.filter((a) => a.batch_id === row.batch.id),
-    adjustments.filter((a) => a.batch_id === row.batch.id).length);
+  const batchAllocations = data.allocations.filter((a) => a.batch_id === row.batch.id);
+  const orderOf = (allocation: { order_item_id?: string }) => {
+    const item = data.items.find((candidate) => candidate.id === allocation.order_item_id);
+    return item ? data.orders.find((order) => order.id === item.order_id) : undefined;
+  };
+  const deleteBlocker = batchDeleteBlocker(row.batch, batchAllocations,
+    adjustments.filter((a) => a.batch_id === row.batch.id).length, orderOf);
   const remove = async (): Promise<void> => {
     setDeleting(true);
     const { data: gone, error } = await supabase.rpc("admin_delete_batch", { _batch_id: row.batch.id });
@@ -451,7 +456,9 @@ function BatchDetail({ row, report, data, adjustments, orderId, go, onEdit, onDe
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>{`Delete batch ${b.batch_code}?`}</DialogTitle>
-            <DialogDescription>Nothing has been sold or reserved from it. Deleting it removes only the batch record: stock does not change, here or in Zoho.</DialogDescription>
+            <DialogDescription>{batchAllocations.length > 0
+              ? "Its only orders were cancelled or expired, and every unit came back. Deleting it removes the batch record, and those orders no longer show this batch number. Stock does not change, here or in Zoho."
+              : "Nothing has been sold or reserved from it. Deleting it removes only the batch record: stock does not change, here or in Zoho."}</DialogDescription>
           </DialogHeader>
           {b.zoho_adjustment_id && (
             <p className="flex gap-2 rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900">
