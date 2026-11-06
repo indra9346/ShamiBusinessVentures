@@ -2,6 +2,7 @@ import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { Heart, Menu, Search, ShoppingCart, User, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Logo } from "@/components/brand/Logo";
+import { cn } from "@/lib/utils";
 import { useApp } from "@/lib/store";
 import { Input } from "@/components/ui/input";
 import { inr, isStorefrontProduct } from "@/lib/data";
@@ -34,9 +35,11 @@ export function SiteHeader() {
       {/* With the festival crackers playing the header is solid (no live blur under a moving video). */}
       <div className={`relative isolate border-b border-white/10 ${festiveHere ? "bg-navy" : "bg-navy/95 backdrop-blur-md"}`}>
         {festiveHere && <><HeaderCrackers /><DiwaliLanterns place="header" /><HeaderZari /></>}
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-3.5 py-2.5 sm:px-6 sm:py-3">
-          {/* Over the festival drawings a soft shadow keeps the white and gold letters clear. */}
-          <Logo className={festiveHere ? "[&_img]:drop-shadow-[0_1px_2px_rgba(0,0,0,0.6)]" : ""} />
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-2 px-3.5 py-2.5 sm:gap-3 sm:px-6 sm:py-3">
+          {/* Over the festival drawings a soft shadow keeps the white and gold letters clear. On a narrow phone the
+              logo gives way a little (same shape) so the icons never run past the right edge; from tablets up it is
+              its usual size. */}
+          <Logo className={cn("min-w-0 shrink [&_img]:h-auto [&_img]:w-[168px] [&_img]:max-w-full sm:[&_img]:w-[206px] lg:[&_img]:w-[224px]", festiveHere && "[&_img]:drop-shadow-[0_1px_2px_rgba(0,0,0,0.6)]")} />
 
           <div className="relative hidden min-w-0 flex-1 max-w-xl mx-6 lg:block">
             <SearchAutosuggest
@@ -53,7 +56,7 @@ export function SiteHeader() {
             />
           </div>
 
-          <div className="flex items-center gap-1 sm:gap-2">
+          <div className="flex shrink-0 items-center gap-0.5 sm:gap-2">
             <LanguageSwitcher light compact className="sm:hidden" />
             <LanguageSwitcher light className="hidden sm:inline-flex" />
             <Link
