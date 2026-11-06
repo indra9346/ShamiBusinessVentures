@@ -4,6 +4,7 @@ import { Package } from "lucide-react";
 import { toast } from "sonner";
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { CancelCheckoutButton } from "@/components/site/CancelCheckoutButton";
+import { CheckoutItems } from "@/components/site/CheckoutItems";
 import { DataTable, FilterNote, Panel, scrollToSection, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { Pager } from "@/components/panel/pager";
 import { accountNav } from "@/lib/account-nav";
@@ -22,7 +23,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { showCartNotification } from "@/components/site/CartFloatingNotification";
 import { orderBelongsToUser } from "@/lib/account-identity";
-import { UNCHECKED_UTR_NOTE, isBankMethod, methodLabel } from "@/lib/payment-rules";
+import { UNCHECKED_UTR_NOTE, isBankMethod } from "@/lib/payment-rules";
 import { useUpiPayments } from "@/lib/upi-store";
 import { supabase } from "@/integrations/supabase/client";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
@@ -63,7 +64,7 @@ function AccountOrders() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const routeSearch = Route.useSearch();
   const navigate = Route.useNavigate();
-  const { user, orders, updateOrderStatus, addToCart, paymentHolds } = useApp();
+  const { user, orders, updateOrderStatus, addToCart, paymentHolds, products } = useApp();
   const unpaid = paymentHolds.filter((hold) => hold.status === AWAITING_PAYMENT);
   const now = useServerNow();
   const { submissions } = useUpiPayments();
@@ -153,24 +154,39 @@ function AccountOrders() {
     >
       {unpaid.length > 0 && (
         <Panel title="Waiting for payment" className="mb-6">
-          <p className="mb-3 text-sm text-slate">These are not orders yet: each is placed when its payment is confirmed. Unpaid ones end on their own and nothing is due.</p>
-          <ul className="divide-y divide-border">
+          <p className="mb-3 text-sm text-slate">Your order is placed as soon as we receive the payment. If it is not paid in time, it is cancelled on its own and you pay nothing.</p>
+          <ul className="space-y-3">
             {unpaid.map((hold) => {
               const left = holdSecondsLeft(hold.holdUntil, now);
               const byBank = isBankMethod(hold.method);
               const utrSent = submissions.some((item) => item.orderNo === hold.orderNo && item.status === "submitted");
+              const method = byBank ? `${hold.method ?? "NEFT"} bank transfer` : "UPI";
+              const state = utrSent
+                ? { tone: "bg-sky-50 text-sky-900", title: "Checking your payment", text: "We have your UTR and are matching it with our bank. Your order is placed as soon as the money shows. Nothing more to do." }
+                : left === 0
+                  ? { tone: "bg-slate-100 text-charcoal", title: "Time to pay is over", text: "It will be cancelled on its own and you pay nothing. If money already left your account, call us with the UTR." }
+                  : byBank
+                    ? { tone: "bg-amber-50 text-amber-950", title: "Waiting for your bank transfer", text: `Transfer ${inrPrecise(hold.amount)} by ${hold.method ?? "NEFT"}, then enter the UTR within ${clockText(left)}.` }
+                    : { tone: "bg-amber-50 text-amber-950", title: "Waiting for your payment", text: `Pay ${inrPrecise(hold.amount)} by UPI within ${clockText(left)}.` };
               return (
-                <li key={hold.orderNo} className="flex flex-wrap items-center justify-between gap-3 py-2.5">
-                  <div>
-                    <p className="font-semibold text-navy">{hold.orderNo}</p>
-                    <p className="text-xs text-slate">{inrPrecise(hold.amount)} · {methodLabel(hold.method ?? "UPI")} · {utrSent
-                      ? "checking the payment"
-                      : left === 0 ? "time is up"
-                      : byBank ? `enter UTR within ${clockText(left)}` : `pay within ${clockText(left)}`}</p>
+                <li key={hold.orderNo} className="rounded-lg border border-border bg-white p-3 sm:p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <CheckoutItems lines={hold.lines} products={products} className="min-w-0 flex-1" />
+                    <div className="text-right">
+                      <p className="text-base font-extrabold text-navy">{inrPrecise(hold.amount)}</p>
+                      <p className="text-xs text-slate">{method}</p>
+                    </div>
                   </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    {!utrSent && left > 0 && <CancelCheckoutButton orderNo={hold.orderNo} byBank={byBank} />}
-                    <Link to="/account/orders/$id" params={{ id: hold.orderNo }} search={true} className="rounded-md bg-gold px-4 py-2 text-sm font-bold text-midnight hover:bg-gold-light">{utrSent || left === 0 ? "View" : byBank ? "Enter UTR" : "Pay now"}</Link>
+                  <div className={`mt-3 rounded-md px-3 py-2 text-xs ${state.tone}`}>
+                    <p className="font-bold">{state.title}</p>
+                    <p className="mt-0.5">{state.text}</p>
+                  </div>
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+                    <p className="text-[11px] text-slate">{`Order no. ${hold.orderNo}`}</p>
+                    <div className="flex flex-wrap items-center gap-3">
+                      {!utrSent && left > 0 && <CancelCheckoutButton orderNo={hold.orderNo} byBank={byBank} small />}
+                      <Link to="/account/orders/$id" params={{ id: hold.orderNo }} search={true} className="rounded-md bg-gold px-4 py-2 text-sm font-bold text-midnight hover:bg-gold-light">{utrSent || left === 0 ? "View details" : byBank ? "Enter UTR" : "Pay now"}</Link>
+                    </div>
                   </div>
                 </li>
               );
@@ -180,13 +196,14 @@ function AccountOrders() {
       )}
       {notPlaced.length > 0 && (
         <Panel title="Not placed" className="mb-6">
-          <p className="mb-3 text-sm text-slate">These checkouts were not placed. Nothing is due unless a line below says so. Reorder puts the same items back in your cart, at today's prices and stock.</p>
+          <p className="mb-3 text-sm text-slate">These were not paid, so they were not placed and you owe nothing (unless a line below says otherwise). Tap Reorder to buy the same items again at today's price.</p>
           <ul className="divide-y divide-border">
             {notPlaced.map((hold) => (
               <li key={hold.orderNo} className="flex flex-wrap items-center justify-between gap-3 py-2.5">
                 <div className="min-w-0">
                   <Link to="/account/orders/$id" params={{ id: hold.orderNo }} search={true} className="font-semibold text-navy hover:text-gold">{hold.orderNo}</Link>
-                  <p className="text-xs text-slate">{inrPrecise(hold.amount)} · {hold.lines.map((line) => `${line.name ?? line.productId} × ${line.qty}`).join(", ")}</p>
+                  <p className="text-xs text-slate">{inrPrecise(hold.amount)}</p>
+                  <CheckoutItems lines={hold.lines} products={products} max={2} className="mt-1.5" />
                   {submissions.some((item) => item.orderNo === hold.orderNo && item.status === "rejected" && item.note === UNCHECKED_UTR_NOTE) && (
                     <p className="mt-0.5 text-xs font-semibold text-amber-800">{`Do not pay again: send UTR ${submissions.find((item) => item.orderNo === hold.orderNo)?.utr} on the reorder, or call us.`}</p>
                   )}

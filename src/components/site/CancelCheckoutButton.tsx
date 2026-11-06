@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils";
  * is never done by mistake. The database refuses once a UTR has been sent (cancel_payment_hold): the money may already be
  * on its way, so then the customer calls us instead.
  */
-export function CancelCheckoutButton({ orderNo, byBank, className }: { orderNo: string; byBank: boolean; className?: string }) {
+export function CancelCheckoutButton({ orderNo, byBank, small = false, className }: { orderNo: string; byBank: boolean; small?: boolean; className?: string }) {
   const { cancelPaymentHold } = useApp();
   const [asking, setAsking] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -22,6 +22,13 @@ export function CancelCheckoutButton({ orderNo, byBank, className }: { orderNo: 
       setAsking(false);
     }
   };
+  if (!asking && small) {
+    return (
+      <button type="button" onClick={() => setAsking(true)} className={cn("text-xs font-semibold text-slate underline-offset-2 hover:text-danger hover:underline", className)}>
+        Cancel order
+      </button>
+    );
+  }
   if (!asking) {
     return (
       <button type="button" onClick={() => setAsking(true)}

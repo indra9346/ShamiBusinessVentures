@@ -5062,6 +5062,20 @@ export const kn: Record<string, string> = {
   "Hide checked UTRs": "ಪರಿಶೀಲಿಸಿದ UTR ಗಳನ್ನು ಮರೆಮಾಡಿ",
   "Show checked UTRs ({0})": "ಪರಿಶೀಲಿಸಿದ UTR ಗಳನ್ನು ತೋರಿಸಿ ({0})",
   "Too many UTRs could not be used in the last hour. Please try again in an hour, or call us.": "ಕಳೆದ ಒಂದು ಗಂಟೆಯಲ್ಲಿ ತುಂಬಾ UTR ಗಳನ್ನು ಬಳಸಲಾಗಲಿಲ್ಲ. ದಯವಿಟ್ಟು ಒಂದು ಗಂಟೆಯ ನಂತರ ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ, ಅಥವಾ ನಮಗೆ ಕರೆ ಮಾಡಿ.",
+  "Your order is placed as soon as we receive the payment. If it is not paid in time, it is cancelled on its own and you pay nothing.": "ನಾವು ಪಾವತಿ ಪಡೆದ ತಕ್ಷಣ ನಿಮ್ಮ ಆರ್ಡರ್ ಆಗುತ್ತದೆ. ಸಮಯಕ್ಕೆ ಪಾವತಿಸದಿದ್ದರೆ, ಅದು ತಾನಾಗಿ ರದ್ದಾಗುತ್ತದೆ ಮತ್ತು ನೀವು ಏನೂ ಪಾವತಿಸಬೇಕಿಲ್ಲ.",
+  "We have your UTR and are matching it with our bank. Your order is placed as soon as the money shows. Nothing more to do.": "ನಿಮ್ಮ UTR ನಮಗೆ ಸಿಕ್ಕಿದೆ, ಅದನ್ನು ನಮ್ಮ ಬ್ಯಾಂಕ್‌ನೊಂದಿಗೆ ಹೊಂದಿಸುತ್ತಿದ್ದೇವೆ. ಹಣ ಬಂದ ತಕ್ಷಣ ನಿಮ್ಮ ಆರ್ಡರ್ ಆಗುತ್ತದೆ. ನೀವು ಇನ್ನೇನೂ ಮಾಡಬೇಕಿಲ್ಲ.",
+  "Time to pay is over": "ಪಾವತಿಸುವ ಸಮಯ ಮುಗಿದಿದೆ",
+  "It will be cancelled on its own and you pay nothing. If money already left your account, call us with the UTR.": "ಇದು ತಾನಾಗಿ ರದ್ದಾಗುತ್ತದೆ ಮತ್ತು ನೀವು ಏನೂ ಪಾವತಿಸಬೇಕಿಲ್ಲ. ನಿಮ್ಮ ಖಾತೆಯಿಂದ ಹಣ ಈಗಾಗಲೇ ಹೋಗಿದ್ದರೆ, UTR ನೊಂದಿಗೆ ನಮಗೆ ಕರೆ ಮಾಡಿ.",
+  "Waiting for your bank transfer": "ನಿಮ್ಮ ಬ್ಯಾಂಕ್ ವರ್ಗಾವಣೆಗಾಗಿ ಕಾಯುತ್ತಿದೆ",
+  "Transfer {0} by {1}, then enter the UTR within {2}.": "{1} ಮೂಲಕ {0} ವರ್ಗಾಯಿಸಿ, ನಂತರ {2} ಒಳಗೆ UTR ನಮೂದಿಸಿ.",
+  "Waiting for your payment": "ನಿಮ್ಮ ಪಾವತಿಗಾಗಿ ಕಾಯುತ್ತಿದೆ",
+  "Pay {0} by UPI within {1}.": "{1} ಒಳಗೆ UPI ಮೂಲಕ {0} ಪಾವತಿಸಿ.",
+  "{0} bank transfer": "{0} ಬ್ಯಾಂಕ್ ವರ್ಗಾವಣೆ",
+  "Order no. {0}": "ಆರ್ಡರ್ ಸಂಖ್ಯೆ {0}",
+  "View details": "ವಿವರ ನೋಡಿ",
+  "Qty:": "ಪ್ರಮಾಣ:",
+  "more item(s)": "ಇನ್ನಷ್ಟು ವಸ್ತು(ಗಳು)",
+  "These were not paid, so they were not placed and you owe nothing (unless a line below says otherwise). Tap Reorder to buy the same items again at today's price.": "ಇವುಗಳಿಗೆ ಪಾವತಿ ಆಗಿಲ್ಲ, ಆದ್ದರಿಂದ ಆರ್ಡರ್ ಆಗಿಲ್ಲ ಮತ್ತು ನೀವು ಏನೂ ಕೊಡಬೇಕಿಲ್ಲ (ಕೆಳಗಿನ ಸಾಲು ಬೇರೆ ಹೇಳದಿದ್ದರೆ). ಅದೇ ವಸ್ತುಗಳನ್ನು ಇಂದಿನ ಬೆಲೆಯಲ್ಲಿ ಮತ್ತೆ ಕೊಳ್ಳಲು Reorder ಒತ್ತಿ.",
 };
 
 /** Word-level fallbacks for text that isn't in the dictionary (product names, specs from the database). */
