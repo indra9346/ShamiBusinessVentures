@@ -194,6 +194,17 @@ export async function reviewUpiPayment(orderNo: string, decision: "confirmed" | 
   return Number((data as { rejections?: number } | null)?.rejections ?? 0);
 }
 
+/** Admin: rejects the customer's UTR and ends the checkout at once (stock back on sale, the customer told). */
+export async function rejectUtrAndEndCheckout(orderNo: string, utr: string, note?: string) {
+  if (STATIC_DATA_MODE) {
+    await reviewUpiPayment(orderNo, "rejected", utr, note);
+    return;
+  }
+  const { error } = await supabase.rpc("admin_reject_utr_and_end_checkout", { _order_no: orderNo, _note: note ?? "", _expected_utr: utr });
+  if (error) throw new Error(error.message);
+  changed();
+}
+
 /** Admin: a UTR that was not checked in time has been refunded. It pays for nothing from now on. */
 export async function markUtrRefunded(orderNo: string) {
   if (STATIC_DATA_MODE) {
