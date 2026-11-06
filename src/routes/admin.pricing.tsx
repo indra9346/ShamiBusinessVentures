@@ -9,6 +9,8 @@ import { inrPrecise } from "@/lib/data";
 import { priceLotTotals } from "@/lib/pricing";
 import { useApp } from "@/lib/store";
 import { reloadBranches, useBranches } from "@/lib/branches";
+import { godownProductOptions, godownProductTag, groupGodownProducts } from "@/lib/godown-products";
+import { useLanguage } from "@/lib/i18n";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
 import { Button } from "@/components/ui/button";
@@ -55,7 +57,8 @@ const money = (value: number) => (value < 0 ? `(${inrPrecise(-value).replace("�
 
 function AdminPricing() {
   const { products, updateProduct } = useApp();
-  const { branches, ready } = useBranches();
+  const { branches, prices, ready } = useBranches();
+  const { t } = useLanguage();
   const godowns = branches.filter((branch) => !branch.vendorId);
   const [lots, setLots] = useState<Lot[] | null>(null);
   const [loadError, setLoadError] = useState("");
@@ -207,12 +210,27 @@ function AdminPricing() {
           {field("margin", "Shami margin", { numeric: true })}
           {field("bagKg", "Bag size (kg)", { numeric: true })}
           <div className="grid gap-1 sm:col-span-2"><Label className="text-[11px] text-slate">Website product</Label>
-            <select className="h-8 w-full min-w-0 rounded-md border border-input bg-white px-2 text-sm" value={form.productId} onChange={(event) => setForm({ ...form, productId: event.target.value })}>
-              <option value="">Choose…</option>
-              {products.filter((product) => !product.vendorId.startsWith("zoho:")).map((product) => (
-                <option key={product.id} value={product.id}>{product.name} ({product.weight})</option>
-              ))}
-            </select>
+            {(() => {
+              // Every website product for the chosen godown, hidden ones too (lib/godown-products.ts).
+              const options = godownProductOptions(products, branches.find((branch) => branch.id === form.branchId), prices);
+              const chosen = options.find((option) => option.product.id === form.productId);
+              const tag = chosen ? godownProductTag(chosen) : null;
+              return (
+                <>
+                  <select className="h-8 w-full min-w-0 rounded-md border border-input bg-white px-2 text-sm" value={form.productId} onChange={(event) => setForm({ ...form, productId: event.target.value })}>
+                    <option value="">Choose…</option>
+                    {groupGodownProducts(options).map((group) => (
+                      <optgroup key={group.label} label={t(group.label)}>
+                        {group.options.map(({ product }) => (
+                          <option key={product.id} value={product.id}>{product.name}{product.weight ? ` (${product.weight})` : ""}</option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
+                  {tag && <span className="text-[11px] text-amber-700">{tag}</span>}
+                </>
+              );
+            })()}
           </div>
           <div className="grid gap-1"><Label className="text-[11px] text-slate">Godown</Label>
             <select className="h-8 rounded-md border border-input bg-white px-2 text-sm" value={form.branchId} onChange={(event) => setForm({ ...form, branchId: event.target.value })}>

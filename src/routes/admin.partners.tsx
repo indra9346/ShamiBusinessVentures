@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { Copy, Handshake, IndianRupee, KeyRound, Target, Timer, Trash2, UserPlus } from "lucide-react";
+import { AlertTriangle, Copy, Handshake, IndianRupee, KeyRound, Target, Timer, Trash2, UserPlus } from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { FilterNote, Panel, scrollToSection, StatCard } from "@/components/panel/widgets";
 import { CommissionLinesTable, PartnerLeaderboard, commissionTotals, usePartnerData } from "@/components/partners/PartnerWidgets";
@@ -9,6 +9,8 @@ import { PartnerHistoryPanel } from "@/components/partners/PartnerHistory";
 import { adminNav } from "@/lib/panel-nav";
 import { useApp } from "@/lib/store";
 import { useBranches } from "@/lib/branches";
+import { godownProductOptions, godownRateWarning, groupGodownProducts } from "@/lib/godown-products";
+import { useLanguage } from "@/lib/i18n";
 import { inrPrecise } from "@/lib/data";
 import { matchesCommissionStatus } from "@/lib/panel-filters";
 import { describeRate, monthLabel, monthStart, partnerPasswordProblem, suggestPartnerPassword, type CommissionKind } from "@/lib/partners";
@@ -260,7 +262,11 @@ function TargetEditor({ partnerId, month }: { partnerId: string; month: string }
 
 function RateEditor({ godownId, rules, onChange }: { godownId: string; rules: Rule[]; onChange: () => Promise<void> }) {
   const { products } = useApp();
-  const real = products.filter((product) => !product.vendorId.startsWith("zoho:") && product.active);
+  const { t } = useLanguage();
+  const branchState = useBranches();
+  const godown = branchState.branches.find((branch) => branch.id === godownId) ?? null;
+  // Every website product, hidden ones too (one rule for every godown screen, lib/godown-products.ts).
+  const groups = groupGodownProducts(godownProductOptions(products, godown, branchState.prices));
   const [draft, setDraft] = useState({ productId: "", kind: "per_unit" as CommissionKind, value: "" });
   const save = async () => {
     const value = Number(draft.value);
@@ -280,7 +286,7 @@ function RateEditor({ godownId, rules, onChange }: { godownId: string; rules: Ru
     if (error) { toast.error("Could not remove the rate", { description: error.message }); return; }
     await onChange();
   };
-  const nameOf = (id: string | null) => (id ? real.find((p) => p.id === id)?.name ?? products.find((p) => p.id === id)?.name ?? id : "Default (all other products)");
+  const nameOf = (id: string | null) => (id ? products.find((p) => p.id === id)?.name ?? id : "Default (all other products)");
   const sorted = [...rules].sort((a, b) => (a.product_id ? 1 : 0) - (b.product_id ? 1 : 0) || nameOf(a.product_id).localeCompare(nameOf(b.product_id)));
   return (
     <div className="space-y-3">
@@ -288,8 +294,14 @@ function RateEditor({ godownId, rules, onChange }: { godownId: string; rules: Ru
         <ul className="space-y-1 text-sm">
           {sorted.map((rule) => (
             <li key={rule.id} className="flex items-center justify-between gap-2 border-b border-border/60 pb-1">
-              <span className={rule.product_id ? "text-charcoal" : "font-semibold text-navy"}>{nameOf(rule.product_id)}</span>
-              <span className="flex items-center gap-2">
+              <span className="min-w-0">
+                <span className={rule.product_id ? "text-charcoal" : "font-semibold text-navy"}>{nameOf(rule.product_id)}</span>
+                {(() => {
+                  const warning = godownRateWarning(rule.product_id, products, godown, branchState.prices);
+                  return warning ? <span className="mt-0.5 flex items-start gap-1 text-[11px] leading-snug text-amber-700"><AlertTriangle className="mt-px h-3 w-3 shrink-0" />{warning}</span> : null;
+                })()}
+              </span>
+              <span className="flex shrink-0 items-center gap-2">
                 <span className="font-semibold text-navy">{describeRate(rule.kind as CommissionKind, Number(rule.value))}</span>
                 <button type="button" aria-label="Remove rate" className="text-slate hover:text-danger" onClick={() => void remove(rule)}><Trash2 className="h-3.5 w-3.5" /></button>
               </span>
@@ -301,7 +313,11 @@ function RateEditor({ godownId, rules, onChange }: { godownId: string; rules: Ru
         <div className="grid gap-1"><Label className="text-xs">Product</Label>
           <select className="h-8 w-full min-w-0 rounded-md border border-input bg-white px-2 text-sm" value={draft.productId} onChange={(e) => setDraft({ ...draft, productId: e.target.value })}>
             <option value="">Default (all other products)</option>
-            {real.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}
+            {groups.map((group) => (
+              <optgroup key={group.label} label={t(group.label)}>
+                {group.options.map(({ product }) => <option key={product.id} value={product.id}>{product.name}</option>)}
+              </optgroup>
+            ))}
           </select>
         </div>
         <div className="grid gap-1"><Label className="text-xs">Type</Label>
@@ -316,6 +332,7 @@ function RateEditor({ godownId, rules, onChange }: { godownId: string; rules: Ru
         <Button size="sm" className="bg-navy text-white hover:bg-navy/90" disabled={!draft.value} onClick={() => void save()}>Save rate</Button>
       </div>
       <p className="text-[11px] text-slate">A product's own rate wins over the default. Each order line keeps the rate it was placed at.</p>
+      <p className="text-[11px] text-slate">Hidden products are listed too, so a rate can be ready before the product goes on the shop.</p>
     </div>
   );
 }
