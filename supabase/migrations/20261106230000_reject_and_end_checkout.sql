@@ -41,7 +41,7 @@ BEGIN
   -- A UTR that an admin checked against the bank and rejected, or whose money went to the customer's new order, leaves
   -- nothing here to keep: the delete log keeps the UTR. Any other UTR may stand for money in the bank.
   IF EXISTS (SELECT 1 FROM public.upi_payment_submissions s WHERE s.order_id = o.id AND s.status = 'submitted') THEN
-    RETURN 'A UTR on this checkout still waits for a check.';
+    RETURN 'A UTR on this checkout still waits for a check, so it stays.';
   END IF;
   IF EXISTS (SELECT 1 FROM public.upi_payment_submissions s WHERE s.order_id = o.id AND s.status = 'confirmed') THEN
     RETURN 'Money was recorded on this order, so it stays for the accounts.';
