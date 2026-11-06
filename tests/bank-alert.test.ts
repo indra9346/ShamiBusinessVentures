@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseBankCredit, smsFromPayload } from "../src/lib/bank-alert.ts";
+import { parseBankCredit, smsFromPayload, parseCreditWithoutReference } from "../src/lib/bank-alert.ts";
 
 const credit = (amount: number, utr: string) => ({ amount, utr });
 const read = (sms: string) => {
@@ -66,4 +66,34 @@ test("a whole 12-digit reference still reads, also an IMPS one", () => {
   assert.equal(parseBankCredit("Rs 5,000 credited to A/c XX12 by IMPS Ref 330612345678")?.utr, "330612345678");
   assert.equal(parseBankCredit("Rs 5,000 credited to A/c XX12 IMPS330612345678")?.utr, "330612345678");
   assert.equal(parseBankCredit("Rs 5,000 received in A/c XX12. UPI/P2A/612345678901/RAMESH")?.utr, "612345678901");
+});
+
+// IDFC FIRST Bank's credit SMS, as received on the company phone on 6 Nov 2026: no UTR at all.
+const idfc = {
+  company: "Your A/C XXXXX000900 is credited with INR 2,484.00 on 06/11/26 14:21. Your new balance is INR 4,51,961.38. Team IDFC FIRST Bank",
+  other: "Your A/C XXXXX354536 is credited with INR 600.00 on 06/11/26 15:19. Your new balance is INR 18,25,825.69. Team IDFC FIRST Bank",
+  small: "Your A/C XXXXX692557 is credited with INR 64.00 on 06/11/26 15:10. Your new balance is INR 7,50,909.84. Team IDFC FIRST Bank",
+};
+
+test("an IDFC FIRST credit has no UTR, so it never confirms a payment by itself", () => {
+  for (const sms of Object.values(idfc)) assert.equal(parseBankCredit(sms), null);
+});
+
+test("an IDFC FIRST credit is read for an admin to match: amount, account, bank time, balance", () => {
+  assert.deepEqual(parseCreditWithoutReference(idfc.company), { amount: 2484, accountEnding: "000900", creditedAt: "2026-11-06T14:21:00+05:30", balance: 451961.38 });
+  assert.deepEqual(parseCreditWithoutReference(idfc.other), { amount: 600, accountEnding: "354536", creditedAt: "2026-11-06T15:19:00+05:30", balance: 1825825.69 });
+  assert.equal(parseCreditWithoutReference(idfc.small)?.amount, 64);
+});
+
+test("a debit, a credit with a UTR, or one with no account is not a credit without a reference", () => {
+  assert.equal(parseCreditWithoutReference("Your A/C XXXXX354536 is debited with INR 236.00 on 06/11/26 12:39. Your new balance is INR 18,25,225.69. Team IDFC FIRST Bank"), null);
+  assert.equal(parseCreditWithoutReference("Rs.2484.00 credited to A/c XX0900 by UPI Ref No 612345678901 on 06-11-26. -IDFC FIRST Bank"), null);
+  assert.ok(parseBankCredit("Rs.2484.00 credited to A/c XX0900 by UPI Ref No 612345678901 on 06-11-26. -IDFC FIRST Bank"));
+  assert.equal(parseCreditWithoutReference("INR 2,484.00 is credited to your account on 06/11/26. Team IDFC FIRST Bank"), null);
+  assert.equal(parseCreditWithoutReference("Your A/C XXXXX000900 has a new statement. Team IDFC FIRST Bank"), null);
+});
+
+test("other banks' wording without a UTR is read too, the time only when the SMS gives one", () => {
+  assert.deepEqual(parseCreditWithoutReference("Dear Customer, A/c no. XX4521 credited with Rs.1,000.50 on 07-11-2026. Avl Bal Rs.12,345.00"),
+    { amount: 1000.5, accountEnding: "4521", creditedAt: "2026-11-07T00:00:00+05:30", balance: 12345 });
 });

@@ -1,14 +1,16 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { createClient } from "@supabase/supabase-js";
 import type { Database } from "@/integrations/supabase/types";
-import { parseBankCredit, smsFromPayload } from "@/lib/bank-alert";
+import { parseBankCredit, parseCreditWithoutReference, smsFromPayload } from "@/lib/bank-alert";
 import { webhookKeyMatches } from "@/lib/zoho-sync-core";
 
 /**
  * The company phone forwards each bank SMS here (an SMS-forwarding app, POST, with the secret
  * BANK_ALERT_KEY as the X-Bank-Alert-Key header or ?key=). A "money received" SMS with an amount
  * and UTR is recorded; a matching unpaid checkout is confirmed at once and sent to Zoho.
- * Optional BANK_ALERT_SENDERS (comma list, e.g. "SBIUPI,HDFCBK") accepts only the bank's SMS IDs.
+ * Optional BANK_ALERT_SENDERS (comma list, e.g. "SBIUPI,HDFCBK,IDFCFB") accepts only the bank's SMS IDs.
+ * A credit SMS with no UTR (IDFC FIRST Bank's has none) is kept only when it is for the company's own account, for an
+ * admin to match to a waiting order (record_bank_credit_without_reference); it never confirms anything by itself.
  */
 export const Route = createFileRoute("/api/payments/bank-alert")({
   server: {
@@ -27,12 +29,28 @@ export const Route = createFileRoute("/api/payments/bank-alert")({
           return Response.json({ ok: true, ignored: "not from the bank's SMS ID" });
         }
         const parsed = parseBankCredit(text);
-        if (!parsed) return Response.json({ ok: true, ignored: "not a money-received SMS with an amount and UTR" });
+        const withoutReference = parsed ? null : parseCreditWithoutReference(text);
+        if (!parsed && !withoutReference) return Response.json({ ok: true, ignored: "not a money-received SMS with an amount and UTR" });
 
         const url = process.env["SUPABASE_URL"];
         const serviceKey = process.env["SUPABASE_SERVICE_ROLE_KEY"];
         if (!url || !serviceKey) return Response.json({ error: "Server configuration is missing" }, { status: 500 });
         const db = createClient<Database>(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
+        if (withoutReference) {
+          // The database checks the account against the company's bank details and tells the admins about a match.
+          const { data, error } = await db.rpc("record_bank_credit_without_reference", {
+            _account_ending: withoutReference.accountEnding, _amount: withoutReference.amount, _credited_at: withoutReference.creditedAt,
+            _balance: withoutReference.balance, _raw: text, ...(sender ? { _sender: sender } : {}),
+          });
+          if (error) {
+            console.error("bank-alert (no UTR) could not be recorded:", error.message);
+            return Response.json({ ok: false }, { status: 500 });
+          }
+          const outcome = data as { status: string; waiting_orders?: number };
+          console.info("bank-alert (no UTR):", outcome.status, `₹${withoutReference.amount}`, `A/C …${withoutReference.accountEnding}`, outcome.waiting_orders ?? "");
+          return Response.json({ ok: true, status: outcome.status, waitingOrders: outcome.waiting_orders ?? 0 });
+        }
+        if (!parsed) return Response.json({ ok: true, ignored: "not a money-received SMS with an amount and UTR" });
         const { data, error } = await db.rpc("record_bank_credit", {
           _utr: parsed.utr, _amount: parsed.amount, _raw: text, _source: "sms",
           ...(parsed.payer ? { _payer: parsed.payer } : {}),

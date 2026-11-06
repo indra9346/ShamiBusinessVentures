@@ -59,6 +59,52 @@ export function parseBankCredit(raw: string): BankCredit | null {
   return { amount, utr, payer: VPA.exec(sms)?.[1] ?? null };
 }
 
+export type CreditWithoutReference = {
+  amount: number;
+  /** The last digits of the account the bank names ("A/C XXXXX000900" → "000900"). */
+  accountEnding: string;
+  /** The bank's time from the SMS, as an ISO time in India, or null when it gives none. */
+  creditedAt: string | null;
+  balance: number | null;
+};
+
+// A masked account number: "A/C XXXXX000900", "A/c no. XX0905", "Account **4521".
+const MASKED_ACCOUNT = /\ba\/?c(?:count)?\.?(?:\s*no\.?)?\s*[:\-]?\s*[x*]{2,}\s*([0-9]{3,6})(?![0-9])/i;
+// "on 06/11/26 14:21" or "on 06-11-2026 at 2:21": the bank's date and time.
+const CREDIT_TIME = /\bon\s+([0-3]?[0-9])[/-]([01]?[0-9])[/-]([0-9]{4}|[0-9]{2})(?![0-9])(?:\s+(?:at\s+)?([0-2]?[0-9]):([0-5][0-9]))?/i;
+const BALANCE = /\b(?:new\s+|avl\.?\s+|available\s+)?bal(?:ance)?\.?\s*(?:is\s*)?[:\-]?\s*(?:(?:rs|inr)\.?:?\s*|₹\s*)([0-9][0-9,]*(?:\.[0-9]{1,2})?)/i;
+
+function creditTime(sms: string): string | null {
+  const match = CREDIT_TIME.exec(sms);
+  if (!match) return null;
+  const day = Number(match[1]);
+  const month = Number(match[2]);
+  const year = match[3]!.length === 2 ? 2000 + Number(match[3]) : Number(match[3]);
+  if (day < 1 || day > 31 || month < 1 || month > 12) return null;
+  const pad = (value: number) => String(value).padStart(2, "0");
+  const time = match[4] !== undefined ? `${pad(Number(match[4]))}:${match[5]}` : "00:00";
+  if (Number(time.slice(0, 2)) > 23) return null;
+  const iso = `${year}-${pad(month)}-${pad(day)}T${time}:00+05:30`;
+  return Number.isFinite(Date.parse(iso)) ? iso : null;
+}
+
+/**
+ * A "money received" SMS that names the account but carries no UTR, such as IDFC FIRST Bank's "Your A/C XXXXX000900 is
+ * credited with INR 2,484.00 on 06/11/26 14:21. Your new balance is INR 4,51,961.38". It can't confirm a payment by
+ * itself: the server keeps it only for the company's own account, for an admin to match to an order. Null for a debit,
+ * an SMS with a UTR (parseBankCredit takes those), or one without an amount or a masked account number.
+ */
+export function parseCreditWithoutReference(raw: string): CreditWithoutReference | null {
+  const sms = raw.replace(/\s+/g, " ").trim();
+  if (!sms || !CREDIT.test(sms) || DEBIT.test(sms)) return null;
+  if (upiReference(sms)) return null;
+  const account = MASKED_ACCOUNT.exec(sms)?.[1];
+  const amount = creditedAmount(sms);
+  if (!account || amount === null) return null;
+  const balanceText = BALANCE.exec(sms)?.[1];
+  return { amount, accountEnding: account, creditedAt: creditTime(sms), balance: balanceText ? toAmount(balanceText) : null };
+}
+
 /**
  * The text of a forwarded SMS from whatever the forwarding app sends: JSON with a message-like
  * field (text, message, body, sms, msg, content), form data with one, or the plain body.

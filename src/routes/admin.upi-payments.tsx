@@ -13,7 +13,8 @@ import { inrPrecise } from "@/lib/data";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { DEFAULT_UPI_SETTINGS, isValidVpa, settingsProblem, upiPaymentUri, type UpiSettings } from "@/lib/upi-pay";
 import { loadBankAudit, loadBankSettings, loadUpiAudit, markUtrRefunded, reopenBankCredit, reviewUpiPayment, saveBankDetails, saveUpiSettings, settleBankCredit, useUpiPayments, type BankAuditRow, type BankCredit, type UpiAuditRow } from "@/lib/upi-store";
-import { parseBankCredit } from "@/lib/bank-alert";
+import { parseBankCredit, parseCreditWithoutReference } from "@/lib/bank-alert";
+import { CreditHint, CreditsWithoutUtrPanel } from "@/components/panel/CreditsWithoutUtr";
 import { AWAITING_PAYMENT, clockText, holdSecondsLeft } from "@/lib/payment-hold";
 import { CustomersPayingNow } from "@/components/panel/CustomersPayingNow";
 import { ResizableTable } from "@/hooks/use-column-resize";
@@ -36,7 +37,7 @@ const istTime = (iso: string) => new Date(iso).toLocaleString("en-IN", { timeZon
  * confirmed (marks the order paid).
  */
 function AdminUpiPayments() {
-  const { settings, submissions, credits } = useUpiPayments();
+  const { settings, submissions, credits, creditsWithoutUtr } = useUpiPayments();
   const { confirmPayment, paymentHolds, orders, simulateBankAlert } = useApp();
   const methodOf = (orderNo: string) => paymentHolds.find((hold) => hold.orderNo === orderNo)?.method ?? orders.find((order) => order.id === orderNo)?.method ?? "UPI";
   const awaiting = paymentHolds.filter((hold) => hold.status === AWAITING_PAYMENT);
@@ -191,6 +192,7 @@ function AdminUpiPayments() {
                         <Button size="sm" className="bg-emerald-600 text-white hover:bg-emerald-700" disabled={busy === s.orderNo} onClick={() => void confirm(s.orderNo, s.amount, s.utr)}>Confirm paid</Button>
                         <Button size="sm" variant="outline" className="text-danger" disabled={busy === s.orderNo} onClick={() => void reject(s.orderNo, s.utr)}>Reject</Button>
                       </div>
+                      <CreditHint payment={s} credits={creditsWithoutUtr} />
                     </td>
                   </tr>
                   );
@@ -201,6 +203,8 @@ function AdminUpiPayments() {
         )}
       </Panel>
       </div>
+
+      <CreditsWithoutUtrPanel credits={creditsWithoutUtr} submissions={submissions} />
 
       <Panel title="Waiting for payment (not orders yet)" className="mb-6">
         <p className="mb-3 text-xs text-slate">Checkouts whose customer has not paid yet. Their stock is held; they become orders when the bank alert (UPI) or your confirmation matches the payment, and end on their own when the time is up. NEFT and RTGS always wait for your confirmation: an amount alone never confirms them.</p>
@@ -464,6 +468,7 @@ function BankAlertsPanel({ credits, checkingOrders, onDemoMatch }: { credits: Ba
   const [busy, setBusy] = useState("");
   const [suggestedKey, setSuggestedKey] = useState("");
   const parsed = sample.trim() ? parseBankCredit(sample) : null;
+  const withoutUtr = sample.trim() && !parsed ? parseCreditWithoutReference(sample) : null;
   const endpoint = typeof window === "undefined" ? "https://grainbazar.com/api/payments/bank-alert" : `${window.location.origin}/api/payments/bank-alert`;
   const lastAlert = credits[0]?.receivedAt;
   const needsYou = credits.filter((credit) => ["ambiguous", "mismatch", "late", "balance"].includes(credit.status));
@@ -503,7 +508,7 @@ function BankAlertsPanel({ credits, checkingOrders, onDemoMatch }: { credits: Ba
           <ol className="list-decimal space-y-1 pl-5 text-[13px]">
             <li>Install a free SMS-forwarding app (for example <b>SMS to URL Forwarder</b> on Android) and allow it to read SMS.</li>
             <li>Make a long random key (button below) and save it in Hostinger as the environment variable <code className="rounded bg-muted px-1">BANK_ALERT_KEY</code>, then redeploy.</li>
-            <li>In the app, forward the bank's SMS sender (e.g. SBIUPI, HDFCBK) to this address with method POST:
+            <li>In the app, forward the bank's SMS sender (e.g. SBIUPI, HDFCBK, IDFCFB) to this address with method POST:
               <code className="mt-1 block break-all rounded bg-muted px-2 py-1 text-[12px]">{endpoint}?key=YOUR_KEY</code></li>
             <li>Send yourself ₹1 by UPI to the business UPI ID: the alert appears below within a minute.</li>
           </ol>
@@ -524,6 +529,11 @@ function BankAlertsPanel({ credits, checkingOrders, onDemoMatch }: { credits: Ba
             className="w-full rounded-md border border-input bg-white p-2 text-sm" />
           {sample.trim() && (parsed ? (
             <p className="rounded-md bg-emerald-50 p-2 text-sm text-emerald-900">Read as <b>{inrPrecise(parsed.amount)}</b> received · UTR <b className="font-mono">{parsed.utr}</b>{parsed.payer ? ` · from ${parsed.payer}` : ""}</p>
+          ) : withoutUtr ? (
+            <p className="rounded-md bg-sky-50 p-2 text-sm text-sky-900">
+              <span>Read as <b>{inrPrecise(withoutUtr.amount)}</b> credited to <b>{`A/C …${withoutUtr.accountEnding}`}</b>, with no UTR.</span>{" "}
+              <span>Kept only when it is the company's account, for you to match to a waiting UTR under "Bank credits without a UTR".</span>
+            </p>
           ) : (
             <p className="rounded-md bg-amber-50 p-2 text-sm text-amber-900">Not read as a payment (a debit, or no amount / 12-digit UTR). Such SMS are ignored.</p>
           ))}
