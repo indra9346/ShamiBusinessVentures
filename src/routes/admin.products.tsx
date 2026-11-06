@@ -36,6 +36,7 @@ import {
 import { ProductCodePicker, type CodeFill, type CodeFormFields } from "@/components/panel/ProductCodePicker";
 import { duplicatesToConfirm } from "@/lib/product-code-rules";
 import { useApp } from "@/lib/store";
+import { sellerChoices } from "@/lib/house-seller";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -186,6 +187,8 @@ function AdminProductsPanel() {
     deleteProduct,
     getFIFOCost,
   } = useApp();
+  // The company sells its own products itself; vendor accounts come after it.
+  const sellers = useMemo(() => sellerChoices(vendors, products), [vendors, products]);
   const categoryChoices = categories.map((c) => ({ name: c.name, subs: c.grades }));
   const [q, setQ] = useState("");
   const [category, setCategory] = useState("all");
@@ -210,7 +213,7 @@ function AdminProductsPanel() {
 
   const [addOpen, setAddOpen] = useState(false);
   const [form, setForm] = useState(
-    emptyForm(categoryChoices[0]?.name, categoryChoices[0]?.subs[0], vendors[0]?.id),
+    emptyForm(categoryChoices[0]?.name, categoryChoices[0]?.subs[0], sellers[0]?.id),
   );
   const [trade, setTrade] = useState<TradeFieldsState>(() => emptyTradeFields(categoryChoices[0]?.name ?? "Rice"));
   const [editTrade, setEditTrade] = useState<TradeFieldsState>(() => emptyTradeFields("Rice"));
@@ -361,9 +364,9 @@ function AdminProductsPanel() {
     [products],
   );
   useEffect(() => {
-    if (!form.vendorId && vendors.length > 0)
-      setForm((current) => ({ ...current, vendorId: vendors[0]!.id }));
-  }, [form.vendorId, vendors]);
+    if (!form.vendorId && sellers.length > 0)
+      setForm((current) => ({ ...current, vendorId: sellers[0]!.id }));
+  }, [form.vendorId, sellers]);
 
   const [quickOpen, setQuickOpen] = useState(false);
   const [quickForm, setQuickForm] = useState({ name: "", qty: "", price: "", maxPurchaseQuantity: String(DEFAULT_MAX_PURCHASE_QUANTITY), image: "" });
@@ -491,7 +494,7 @@ function AdminProductsPanel() {
       toast.error("Set the maximum customer purchase quantity to a whole number from 1 to 100,000");
       return;
     }
-    const vendor = vendors[0];
+    const vendor = sellers[0];
     if (!vendor) {
       toast.error("Create or approve a vendor profile before assigning products");
       return;
@@ -580,7 +583,7 @@ function AdminProductsPanel() {
       toast.error("Enter a valid non-negative stock quantity");
       return;
     }
-    const vendor = vendors.find((v) => v.id === form.vendorId);
+    const vendor = sellers.find((v) => v.id === form.vendorId);
     if (!vendor) {
       toast.error("Choose an existing vendor profile before creating this product");
       return;
@@ -648,7 +651,7 @@ function AdminProductsPanel() {
     setFormCodeBox("");
     setCodeDuplicateOk(false);
     lastCodeFill.current = null;
-    setForm(emptyForm(categoryChoices[0]?.name, categoryChoices[0]?.subs[0], vendors[0]?.id));
+    setForm(emptyForm(categoryChoices[0]?.name, categoryChoices[0]?.subs[0], sellers[0]?.id));
     setTrade(emptyTradeFields(categoryChoices[0]?.name ?? "Rice"));
   };
 
@@ -761,7 +764,7 @@ function AdminProductsPanel() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Vendors</SelectItem>
-                {vendors.map((v) => (
+                {sellers.map((v) => (
                   <SelectItem key={v.id} value={v.id}>
                     {v.business}
                   </SelectItem>
@@ -987,7 +990,7 @@ function AdminProductsPanel() {
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          {vendors.map((v) => (
+                          {sellers.map((v) => (
                             <SelectItem key={v.id} value={v.id}>
                               {v.business}
                             </SelectItem>

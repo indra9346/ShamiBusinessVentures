@@ -32,6 +32,7 @@ import { adminNav } from "@/lib/panel-nav";
 import { inr } from "@/lib/data";
 import { NEEDS_RESTOCK, OPEN_ORDERS, orderTimestamp } from "@/lib/panel-filters";
 import { useApp } from "@/lib/store";
+import { HOUSE_SELLER_ID } from "@/lib/house-seller";
 import { supabase } from "@/integrations/supabase/client";
 
 export const Route = createFileRoute("/admin/dashboard")({
@@ -352,7 +353,8 @@ function AdminDashboard() {
           orderIds: new Set<string>(),
           periodSales: 0,
           commission: vendor?.commission ?? null,
-          status: vendor?.status ?? "Unknown",
+          // The company itself sells its own products (no vendor account).
+          status: vendor?.status ?? (item.vendorId === HOUSE_SELLER_ID ? "approved" : "Unknown"),
         };
         current.orderIds.add(order.id);
         current.periodSales += (item.unitPrice ?? item.product.price) * item.qty;
