@@ -20,6 +20,8 @@ import {
 
 const DEMO_SETTINGS = "gb-demo-upi-settings";
 const DEMO_SUBMISSIONS = "gb-demo-upi-submissions";
+/** Demo: sample bank credits without a UTR, kept in this browser like the demo's UTRs. */
+const DEMO_CREDITS_WITHOUT_UTR = "gb-demo-credits-without-utr";
 const DEMO_BANK = "gb-demo-bank-details";
 const DEMO_BANK_DETAILS: BankDetails = { accountName: "Shami Business Ventures Pvt. Ltd.", accountNumber: "50100123456789", ifsc: "HDFC0001234", bankName: "HDFC Bank (demo)", branch: "Challakere" };
 const CHANGED = "gb-upi-changed";
@@ -234,20 +236,64 @@ export async function reopenBankCredit(id: string) {
   changed();
 }
 
+export type CreditWithoutUtr = {
+  id: string; receivedAt: string; creditedAt: string | null; amount: number; accountEnding: string; balance: number | null;
+  sender: string | null; raw: string; status: "new" | "used" | "dismissed"; orderNo: string | null; decidedAt: string | null; note: string | null;
+};
+/** Admin: bank credits whose SMS has no UTR (IDFC FIRST), for the company's account only, newest first. */
+export async function loadCreditsWithoutUtr(): Promise<CreditWithoutUtr[]> {
+  if (STATIC_DATA_MODE) return readJson<CreditWithoutUtr[]>(DEMO_CREDITS_WITHOUT_UTR, []);
+  const { data, error } = await supabase.from("bank_credits_without_reference")
+    .select("id,received_at,credited_at,amount,account_ending,balance,sender,raw,status,order_no,decided_at,note")
+    .order("received_at", { ascending: false }).limit(100);
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((row) => ({
+    id: row.id, receivedAt: row.received_at, creditedAt: row.credited_at, amount: Number(row.amount), accountEnding: row.account_ending,
+    balance: row.balance === null ? null : Number(row.balance), sender: row.sender, raw: row.raw, status: row.status as CreditWithoutUtr["status"],
+    orderNo: row.order_no, decidedAt: row.decided_at, note: row.note,
+  }));
+}
+
+/** Admin: confirms an order's UTR with a bank credit that has none, through the usual check (review_upi_utr). */
+export async function confirmOrderWithCredit(creditId: string, orderNo: string, utr: string) {
+  if (STATIC_DATA_MODE) throw new Error("Not in the demo");
+  const { error } = await supabase.rpc("confirm_order_with_bank_credit", { _credit_id: creditId, _order_no: orderNo, _expected_utr: utr });
+  if (error) throw new Error(error.message);
+  changed();
+}
+
+/** Admin: a credit that is not a website payment (an office sale, say), with what it was. */
+export async function dismissCreditWithoutUtr(creditId: string, note: string) {
+  if (STATIC_DATA_MODE) throw new Error("Not in the demo");
+  const { error } = await supabase.rpc("dismiss_bank_credit_without_reference", { _credit_id: creditId, _note: note });
+  if (error) throw new Error(error.message);
+  changed();
+}
+
+/** Admin: a credit dismissed by mistake can be matched again. */
+export async function reopenCreditWithoutUtr(creditId: string) {
+  if (STATIC_DATA_MODE) throw new Error("Not in the demo");
+  const { error } = await supabase.rpc("reopen_bank_credit_without_reference", { _credit_id: creditId });
+  if (error) throw new Error(error.message);
+  changed();
+}
+
 /** Settings, submissions and bank alerts, kept current: after every change here, across tabs, and live from the database. */
 export function useUpiPayments() {
   const [settings, setSettings] = useState<UpiSettings | null>(null);
   const [submissions, setSubmissions] = useState<UpiSubmission[]>([]);
   const [credits, setCredits] = useState<BankCredit[]>([]);
+  const [creditsWithoutUtr, setCreditsWithoutUtr] = useState<CreditWithoutUtr[]>([]);
   const retry = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const refresh = useCallback(async () => {
     if (retry.current) clearTimeout(retry.current);
-    const [nextSettings, nextSubmissions, nextCredits] = await Promise.allSettled([loadUpiSettings(), loadUpiSubmissions(), loadBankCredits()]);
+    const [nextSettings, nextSubmissions, nextCredits, nextPlain] = await Promise.allSettled([loadUpiSettings(), loadUpiSubmissions(), loadBankCredits(), loadCreditsWithoutUtr()]);
     // A failed read keeps what is on screen, and is tried again in a few seconds.
     if (nextSettings.status === "fulfilled") setSettings(nextSettings.value);
     if (nextSubmissions.status === "fulfilled") setSubmissions(nextSubmissions.value);
     if (nextCredits.status === "fulfilled") setCredits(nextCredits.value);
-    if ([nextSettings, nextSubmissions, nextCredits].some((result) => result.status === "rejected")) retry.current = setTimeout(() => void refresh(), 5000);
+    if (nextPlain.status === "fulfilled") setCreditsWithoutUtr(nextPlain.value);
+    if ([nextSettings, nextSubmissions, nextCredits, nextPlain].some((result) => result.status === "rejected")) retry.current = setTimeout(() => void refresh(), 5000);
   }, []);
   useEffect(() => {
     void refresh();
@@ -258,6 +304,7 @@ export function useUpiPayments() {
     const channel = STATIC_DATA_MODE ? null : supabase.channel(`upi-${Math.random().toString(36).slice(2)}`)
       .on("postgres_changes", { event: "*", schema: "public", table: "upi_payment_submissions" }, onChange)
       .on("postgres_changes", { event: "*", schema: "public", table: "bank_credits" }, onChange)
+      .on("postgres_changes", { event: "*", schema: "public", table: "bank_credits_without_reference" }, onChange)
       .subscribe();
     return () => {
       window.removeEventListener(CHANGED, onChange);
@@ -267,5 +314,5 @@ export function useUpiPayments() {
       if (channel) void supabase.removeChannel(channel);
     };
   }, [refresh]);
-  return { settings, submissions, credits, refresh };
+  return { settings, submissions, credits, creditsWithoutUtr, refresh };
 }
