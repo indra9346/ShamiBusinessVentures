@@ -33,6 +33,7 @@ import { inr } from "@/lib/data";
 import { NEEDS_RESTOCK, OPEN_ORDERS, orderTimestamp } from "@/lib/panel-filters";
 import { useApp } from "@/lib/store";
 import { HOUSE_SELLER_ID } from "@/lib/house-seller";
+import { netMoneyReceived } from "@/lib/net-receipts";
 import { supabase } from "@/integrations/supabase/client";
 
 export const Route = createFileRoute("/admin/dashboard")({
@@ -247,16 +248,11 @@ function AdminDashboard() {
       .reduce((s, p) => s + p.amount, 0);
 
     // This is derived from marketplace records, not a direct bank feed.
-    const totalInflow = orders
-      .filter((o) => o.status !== "Cancelled")
-      .reduce((sum, order) => sum + paymentsReceived(order), 0);
-    const totalRefunds = orders
-      .filter((o) => o.payment === "Refunded")
-      .reduce((s, o) => s + o.amount, 0);
-    const totalPaidPayouts = payouts
-      .filter((p) => p.status === "Paid")
-      .reduce((s, p) => s + p.amount, 0);
-    const bankBalance = totalInflow - totalRefunds - totalPaidPayouts;
+    const lifetime = netMoneyReceived(orders, payouts);
+    const totalInflow = lifetime.paid;
+    const totalRefunds = lifetime.refunded;
+    const totalPaidPayouts = lifetime.toSellers;
+    const bankBalance = lifetime.net;
 
     return {
       periodInflow,
@@ -264,6 +260,9 @@ function AdminDashboard() {
       periodRefunds,
       periodPaidPayouts,
       bankBalance,
+      totalInflow,
+      totalRefunds,
+      totalPaidPayouts,
     };
   }, [filteredOrders, filteredPayouts, orders, payouts]);
 
@@ -417,9 +416,9 @@ function AdminDashboard() {
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
           link={{ to: "/admin/payments" }}
-          label="Lifetime Net Receipts"
+          label="Net Money Received (All Time)"
           value={inr(financialStats.bankBalance)}
-          description="Recorded payments less refunds and paid payouts · not a bank feed"
+          description={`${inr(financialStats.totalInflow)} paid − ${inr(financialStats.totalRefunds)} refunded − ${inr(financialStats.totalPaidPayouts)} to sellers (website records)`}
           icon={Landmark}
           highlight
         />
