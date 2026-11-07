@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { AuthCard } from "@/components/site/AuthCard";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { supabase } from "@/integrations/supabase/client";
 
 export const Route = createFileRoute("/partner/login")({
@@ -67,7 +68,7 @@ function PartnerLogin() {
         </label>
         <label className="block">
           <span className="mb-1.5 block text-xs font-semibold text-charcoal">Password</span>
-          <Input ref={passwordRef} required type="password" name="partner_login_password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} />
+          <PasswordInput ref={passwordRef} required name="partner_login_password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} />
         </label>
         <button
           type="submit"

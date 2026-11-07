@@ -193,6 +193,13 @@
     color: var(--midnight);
   }
 
+  /* Edge's own eye shows only while typing and disappears for good on blur; PasswordInput has one
+     that stays, so hide the browser's to avoid two eyes. */
+  input::-ms-reveal,
+  input::-ms-clear {
+    display: none;
+  }
+
   body {
     background-color: var(--color-background);
     background-image: radial-gradient(circle at 50% 0%, oklch(0.976 0.006 90) 0%, oklch(0.964 0.009 88) 100%);

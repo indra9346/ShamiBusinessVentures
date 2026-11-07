@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { showAuthNotice } from "@/components/site/AuthNotice";
 import { AuthCard } from "@/components/site/AuthCard";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { cleanMobile, staffLoginEmail } from "@/lib/attendance";
 import { normalisePhone } from "@/lib/otp";
 import { supabase } from "@/integrations/supabase/client";
@@ -68,7 +69,7 @@ function StaffLogin() {
         </label>
         <label className="block">
           <span className="mb-1.5 block text-xs font-semibold text-charcoal">Password</span>
-          <Input ref={passwordRef} type="password" value={password} onChange={(event) => setPassword(event.target.value)} name="staff_password" autoComplete="current-password" />
+          <PasswordInput ref={passwordRef} value={password} onChange={(event) => setPassword(event.target.value)} name="staff_password" autoComplete="current-password" />
         </label>
         <button disabled={busy || !hydrated} className="w-full rounded-md bg-navy py-3 text-sm font-semibold text-white transition-colors hover:bg-midnight disabled:opacity-60">
           {busy ? "Signing in…" : "Sign in"}

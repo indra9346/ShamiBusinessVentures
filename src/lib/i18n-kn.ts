@@ -954,6 +954,8 @@ export const kn: Record<string, string> = {
   "Security and preferences": "ಭದ್ರತೆ ಮತ್ತು ಆದ್ಯತೆಗಳು",
   "Sign in to save notification preferences": "ಸೂಚನೆ ಆದ್ಯತೆಗಳನ್ನು ಉಳಿಸಲು ಲಾಗಿನ್ ಆಗಿ",
   "Update Password": "ಪಾಸ್‌ವರ್ಡ್ ನವೀಕರಿಸಿ",
+  "Show password": "ಪಾಸ್‌ವರ್ಡ್ ತೋರಿಸಿ",
+  "Hide password": "ಪಾಸ್‌ವರ್ಡ್ ಮರೆಮಾಡಿ",
   "Updating…": "ನವೀಕರಿಸಲಾಗುತ್ತಿದೆ…",
   "Home delivery": "ಮನೆಗೆ ಡೆಲಿವರಿ",
   "item(s)": "ವಸ್ತು(ಗಳು)",
