@@ -21,7 +21,7 @@ export type Database = {
         Relationships: []
       }
       rice_samples: {
-        Row: { id: string; sample_no: number; arrival_date: string; variety: string; method: string; price_per_qntl: number; quantity_qntl: number; party_role: string; party_name: string; party_phone: string; seller_name: string; notes: string; status: string; status_reason: string; status_changed_at: string; created_by: string | null; created_by_name: string; created_at: string; updated_at: string; deleted_at: string | null; deleted_by: string | null; deleted_by_name: string; deleted_reason: string }
+        Row: { id: string; sample_no: number; arrival_date: string; variety: string; method: string; price_per_qntl: number; quantity_qntl: number; quantity_bags: number | null; bag_kg: number | null; party_role: string; party_name: string; party_phone: string; seller_name: string; notes: string; status: string; status_reason: string; status_changed_at: string; created_by: string | null; created_by_name: string; created_at: string; updated_at: string; deleted_at: string | null; deleted_by: string | null; deleted_by_name: string; deleted_reason: string }
         Insert: never
         Update: never
         Relationships: []
@@ -1279,6 +1279,7 @@ export type Database = {
     }
     Functions: {
       rice_sample_save: { Args: { _id: string | null; _arrival_date: string; _variety: string; _method: string; _price_per_qntl: number; _quantity_qntl: number; _party_role: string; _party_name: string; _party_phone: string; _seller_name: string; _notes: string }; Returns: string }
+      rice_sample_save_with_bags: { Args: { _id: string | null; _arrival_date: string; _variety: string; _method: string; _price_per_qntl: number; _quantity_qntl: number; _party_role: string; _party_name: string; _party_phone: string; _seller_name: string; _notes: string; _quantity_bags: number | null; _bag_kg: number | null }; Returns: string }
       rice_sample_add_test: { Args: { _sample_id: string; _tested_at: string | null; _tested_by_name: string; _score: number; _grain: string; _swelling: string; _taste: string; _broken: string; _notes: string }; Returns: string }
       rice_sample_add_measured_test: { Args: { _moisture_percent: number | null; _glazing: string; _sample_id: string; _tested_at: string | null; _tested_by_name: string; _score: number; _grain: string; _swelling: string; _taste: string; _broken: string; _notes: string }; Returns: string }
       rice_sample_set_status: { Args: { _sample_id: string; _action: string; _reason: string }; Returns: string }

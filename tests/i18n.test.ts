@@ -4,6 +4,7 @@ import { loadKannada, translateText } from "../src/lib/i18n-core.ts";
 import { kn } from "../src/lib/i18n-kn.ts";
 import { productDescription } from "../src/lib/seo.ts";
 import { DEFAULT_RULES, MARK_WORDS, REGISTER_LEGEND, leaveProblem, ruleLines, rulesProblem } from "../src/lib/attendance.ts";
+import { availableParts, availableText, bagCountText, parseAvailable } from "../src/lib/rice-samples.ts";
 
 await loadKannada();
 
@@ -118,4 +119,26 @@ test("a product description made from its facts reads in Kannada", () => {
   assert.doesNotMatch(withPack, /pack size|Sold by/);
   const noPack = translateText(productDescription({ name: "Belgaum Sugar - 50 kg Bag", weight: "50 kg bag" }), "kn");
   assert.doesNotMatch(noPack, /pack size|Sold by/);
+});
+
+test("a rice sample's available quantity reads in Kannada, in bags or quintals", () => {
+  const inBags = { quantity_qntl: 52, quantity_bags: 200, bag_kg: 26 };
+  const parts = availableParts(inBags);
+  assert.equal(translateText(parts.figure, "kn"), "200 ಚೀಲಗಳು");
+  assert.equal(translateText(parts.under, "kn"), "ತಲಾ 26 kg · 52 ಕ್ವಿಂಟಾಲ್");
+  assert.equal(translateText(availableText(inBags), "kn"), "26 kg ನ 200 ಚೀಲಗಳು (52 ಕ್ವಿಂಟಾಲ್)");
+  assert.equal(translateText(availableText({ quantity_qntl: 0.26, quantity_bags: 1, bag_kg: 26 }), "kn"), "26 kg ನ 1 ಚೀಲ (0.26 ಕ್ವಿಂಟಾಲ್)");
+  assert.equal(translateText(availableText({ quantity_qntl: 52, quantity_bags: null, bag_kg: null }), "kn"), "52 ಕ್ವಿಂಟಾಲ್");
+  assert.equal(translateText(availableParts({ quantity_qntl: 52, quantity_bags: null, bag_kg: null }).under, "kn"), "ಕ್ವಿಂಟಾಲ್");
+  // The History dialog renders the label and the quantity as separate text, like the card and compare.
+  assert.equal(translateText("Available: ", "kn"), `${kn["Available:"]} `);
+  assert.equal(translateText(`52 quintal available (${bagCountText(200)} of 26 kg)`, "kn"), "52 ಕ್ವಿಂಟಾಲ್ ಲಭ್ಯ (26 kg ನ 200 ಚೀಲಗಳು)");
+  assert.equal(translateText("= 1,200.5 quintal", "kn"), "= 1,200.5 ಕ್ವಿಂಟಾಲ್");
+  assert.equal(translateText("Price / quintal", "kn"), "ಬೆಲೆ / ಕ್ವಿಂಟಾಲ್");
+  for (const kind of ["quintal", "bags"] as const) {
+    const answer = parseAvailable({ unit: kind, quantity: "", bagKg: "" });
+    assert.ok(!answer.ok && translateText(answer.message, "kn") !== answer.message, `${kind}: ${answer.ok ? "" : answer.message}`);
+  }
+  const noWeight = parseAvailable({ unit: "bags", quantity: "200", bagKg: "" });
+  assert.ok(!noWeight.ok && translateText(noWeight.message, "kn") !== noWeight.message);
 });
