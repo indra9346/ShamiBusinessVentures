@@ -5,6 +5,7 @@ import { PanelLayout } from "@/components/panel/PanelLayout";
 import { Panel } from "@/components/panel/widgets";
 import { accountNav } from "@/lib/account-nav";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -95,11 +96,11 @@ function AccountSettings() {
           <div className="grid gap-4">
             <div className="grid gap-1.5">
               <Label>Current Password (optional for one-time-code accounts)</Label>
-              <Input type="password" value={current} onChange={(e) => setCurrent(e.target.value)} />
+              <PasswordInput autoComplete="current-password" value={current} onChange={(e) => setCurrent(e.target.value)} />
             </div>
             <div className="grid gap-1.5">
               <Label>New Password</Label>
-              <Input type="password" autoComplete="new-password" value={next} onChange={(e) => setNext(e.target.value)} />
+              <PasswordInput autoComplete="new-password" value={next} onChange={(e) => setNext(e.target.value)} />
             </div>
           </div>
           <div className="mt-6 flex justify-end">

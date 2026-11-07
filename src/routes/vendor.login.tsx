@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { AuthCard } from "@/components/site/AuthCard";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { useApp } from "@/lib/store";
 import { supabase } from "@/integrations/supabase/client";
@@ -91,10 +92,9 @@ function VendorLogin() {
         </label>
         <label className="block">
           <span className="mb-1.5 block text-xs font-semibold text-charcoal">Password</span>
-          <Input
+          <PasswordInput
             ref={passwordRef}
             required
-            type="password"
             name="vendor_login_password"
             autoComplete="new-password"
             placeholder=""
