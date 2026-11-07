@@ -53,15 +53,8 @@ export function ProductGallery({
   // keep the chosen one highlighted until the scroll arrives (or stops).
   const target = useRef<number | null>(null);
   const targetTimer = useRef<number | undefined>(undefined);
-  const frame = useRef<number | undefined>(undefined);
 
-  useEffect(
-    () => () => {
-      window.clearTimeout(targetTimer.current);
-      if (frame.current !== undefined) window.cancelAnimationFrame(frame.current);
-    },
-    [],
-  );
+  useEffect(() => () => window.clearTimeout(targetTimer.current), []);
 
   useEffect(() => {
     reveal(sideStrip.current, active, true);
@@ -101,19 +94,16 @@ export function ProductGallery({
     el.scrollTo({ left: next * el.clientWidth, behavior: smooth() });
   };
 
+  // Browsers send scroll events at most once a frame, and setting the same picture again does nothing.
   const onScroll = () => {
-    if (frame.current !== undefined) return;
-    frame.current = window.requestAnimationFrame(() => {
-      frame.current = undefined;
-      const el = scroller.current;
-      if (!el) return;
-      const shown = imageAtScroll(el.scrollLeft, el.clientWidth, count);
-      if (target.current !== null) {
-        if (shown !== target.current) return;
-        target.current = null;
-      }
-      setActive(shown);
-    });
+    const el = scroller.current;
+    if (!el) return;
+    const shown = imageAtScroll(el.scrollLeft, el.clientWidth, count);
+    if (target.current !== null) {
+      if (shown !== target.current) return;
+      target.current = null;
+    }
+    setActive(shown);
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {

@@ -246,7 +246,8 @@ function ProductDetail() {
           </p>
           <p className="mt-1 text-xs text-slate">Purchase range: 1–{purchaseLimit} units (maximum {configuredMax} per order, subject to stock).</p>
 
-          <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-3">
+          {/* One row, except 1024-1279 px where the half-width column is too narrow for it (stacked there). */}
+          <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-3 lg:flex-col lg:items-stretch xl:flex-row xl:items-center">
             <div className="flex items-center gap-2.5 sm:gap-3">
               <div className="flex h-11 items-center rounded-md border border-border bg-card shadow-xs focus-within:border-gold focus-within:ring-1 focus-within:ring-gold">
                 <button
@@ -304,7 +305,7 @@ function ProductDetail() {
                     productImg,
                   );
                 }}
-                className="flex h-11 flex-1 sm:flex-initial sm:min-w-44 items-center justify-center gap-2 rounded-md bg-navy px-4 text-sm font-bold text-white transition-colors hover:bg-midnight disabled:opacity-40 shadow-xs"
+                className="flex h-11 flex-1 sm:flex-initial sm:min-w-44 lg:flex-1 xl:flex-initial items-center justify-center gap-2 rounded-md bg-navy px-4 text-sm font-bold text-white transition-colors hover:bg-midnight disabled:opacity-40 shadow-xs"
               >
                 <ShoppingCart className="h-4 w-4" /> Add to Cart
               </button>
@@ -324,7 +325,7 @@ function ProductDetail() {
                 tabIndex={availableStock === 0 ? -1 : undefined}
                 aria-disabled={availableStock === 0}
                 className={cn(
-                  "flex h-11 flex-1 items-center justify-center rounded-md bg-gold px-6 text-sm font-bold text-midnight transition-colors hover:bg-gold-light shadow-xs sm:flex-none sm:min-w-36",
+                  "flex h-11 flex-1 items-center justify-center rounded-md bg-gold px-6 text-sm font-bold text-midnight transition-colors hover:bg-gold-light shadow-xs sm:flex-none sm:min-w-36 lg:flex-1 xl:flex-none",
                   availableStock === 0 && "pointer-events-none opacity-40",
                 )}
               >
