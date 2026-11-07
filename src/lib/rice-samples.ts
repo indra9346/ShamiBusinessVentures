@@ -28,6 +28,8 @@ export type BrokenResult = "few" | "some" | "many";
 
 export type RiceSample = {
   id: string; sample_no: number; arrival_date: string; variety: string; method: string; price_per_qntl: number; quantity_qntl: number;
+  /** Set together when the quantity was entered in bags; quantity_qntl is then bags × bag_kg / 100. Null for quintals. */
+  quantity_bags: number | null; bag_kg: number | null;
   party_role: PartyRole; party_name: string; party_phone: string; seller_name: string; notes: string;
   status: SampleStatus; status_reason: string; status_changed_at: string; created_by_name: string; created_at: string; updated_at: string;
   deleted_at: string | null; deleted_by_name: string; deleted_reason: string;
@@ -193,6 +195,69 @@ export function priceUnitWarning(pricePerQntl: number): string | null {
   if (pricePerQntl < 1500) return `That is only ₹${perKg} per kg. This price is per quintal (100 kg), not per bag.`;
   if (pricePerQntl > 20000) return `That is ₹${perKg} per kg. Please check the figure: this price is per quintal (100 kg).`;
   return null;
+}
+
+// ---------------------------------------------------------------- Available quantity: quintals or bags
+
+/**
+ * Brokers often quote rice in bags ("300 bags of 26 kg"). The sample keeps quintals as the one figure the list, compare and the
+ * purchase order read, and keeps the bags as typed beside it. A bag weight has one decimal at most, so bags × kg / 100 is
+ * exact to the 3 decimals the database keeps, and the database checks the same sum (rice_sample_save_with_bags).
+ */
+export type QuantityUnit = "quintal" | "bags";
+export const MIN_BAG_KG = 1;
+export const MAX_BAG_KG = 100;
+
+/** Commas allowed, as in 1,200. Blank or anything else is NaN. */
+const typedNumber = (text: string) => {
+  const clean = text.replace(/,/g, "").trim();
+  return clean ? Number(clean) : Number.NaN;
+};
+
+export const bagsToQntl = (bags: number, bagKg: number) => round3((bags * bagKg) / 100);
+
+/** A bag weight the database accepts: 1 to 100 kg, one decimal at most. */
+export const isBagKg = (kg: number) => Number.isFinite(kg) && kg >= MIN_BAG_KG && kg <= MAX_BAG_KG && Math.abs(kg * 10 - Math.round(kg * 10)) < 1e-9;
+
+export type ParsedAvailable =
+  | { ok: true; quantityQntl: number; quantityBags: number | null; bagKg: number | null }
+  | { ok: false; message: string };
+
+/** What the Add sample form saves for Available, or what is wrong with it in plain words. */
+export function parseAvailable(input: { unit: QuantityUnit; quantity: string; bagKg: string }): ParsedAvailable {
+  const value = typedNumber(input.quantity);
+  if (input.unit === "quintal") {
+    if (!(value > 0) || round3(value) <= 0) return { ok: false, message: "Enter the quantity available in quintals" };
+    if (value >= 1_000_000) return { ok: false, message: "The quantity is too high. It should be in quintals." };
+    return { ok: true, quantityQntl: round3(value), quantityBags: null, bagKg: null };
+  }
+  if (!(value > 0) || !Number.isInteger(value)) return { ok: false, message: "Enter the number of bags as a whole number" };
+  const kg = typedNumber(input.bagKg);
+  if (!isBagKg(kg)) return { ok: false, message: "Enter the weight of one bag: 1 to 100 kg, one decimal at most (like 26 or 26.5)" };
+  const quantityQntl = bagsToQntl(value, kg);
+  if (quantityQntl >= 1_000_000) return { ok: false, message: "That is too many bags." };
+  return { ok: true, quantityQntl, quantityBags: value, bagKg: kg };
+}
+
+const formatQty = (value: number) => Number(value).toLocaleString("en-IN", { maximumFractionDigits: 3 });
+const hasBags = (sample: Pick<RiceSample, "quantity_bags" | "bag_kg">) => Boolean(sample.quantity_bags && sample.bag_kg);
+export const bagCountText = (bags: number) => `${formatQty(bags)} ${bags === 1 ? "bag" : "bags"}`;
+
+/** The card's figure and the line under it: "200 bags" over "26 kg each · 52 quintal", or "52" over "quintal". */
+export function availableParts(sample: Pick<RiceSample, "quantity_qntl" | "quantity_bags" | "bag_kg">): { figure: string; under: string } {
+  if (!hasBags(sample)) return { figure: formatQty(sample.quantity_qntl), under: "quintal" };
+  return { figure: bagCountText(Number(sample.quantity_bags)), under: `${formatQty(Number(sample.bag_kg))} kg each · ${formatQty(sample.quantity_qntl)} quintal` };
+}
+
+/** One line: "200 bags of 26 kg (52 quintal)", or "52 quintal". */
+export function availableText(sample: Pick<RiceSample, "quantity_qntl" | "quantity_bags" | "bag_kg">): string {
+  if (!hasBags(sample)) return `${formatQty(sample.quantity_qntl)} quintal`;
+  return `${bagCountText(Number(sample.quantity_bags))} of ${formatQty(Number(sample.bag_kg))} kg (${formatQty(sample.quantity_qntl)} quintal)`;
+}
+
+/** Bag weights already used on samples, smallest first, so the same size is picked again. */
+export function bagSizeChoices(samples: Pick<RiceSample, "bag_kg">[]): number[] {
+  return [...new Set(samples.map((sample) => Number(sample.bag_kg)).filter((kg) => isBagKg(kg)))].sort((a, b) => a - b);
 }
 
 // ---------------------------------------------------------------- Purchase order figures

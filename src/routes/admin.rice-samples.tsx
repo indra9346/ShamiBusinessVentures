@@ -18,6 +18,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import {
   BROKEN_LABELS, GRAIN_LABELS, NO_GST_WORDS, PO_DEATH_WORDS, RICE_PO_SETTINGS_KEY, SORT_LABELS, STATUS_LABELS, SWELLING_LABELS, TASTE_LABELS, bestInComparison, canCancelPo, inPlay, poDeathReason, poTaxAmount, poTaxLabel, poTaxReason, isBulkUnit, isSamplePhone, glazingChoices, latestTest, NO_MEASURE_FILTER, parseMoisture, testMatchesMeasures, type TestMeasureFilter, phoneLinks, planPoLine,
   poLineProblem, poReference, priceUnitWarning, riceTextOptions, sampleLabel, sortSamples, testsBySample, zohoPoUrl, zohoStatusLabel,
+  availableParts, availableText, bagCountText, bagSizeChoices, parseAvailable, type QuantityUnit,
   type BrokenResult, type GrainResult, type PoTax, type RetiredPo, type PartyRole, type RaiseResult, type RicePo, type RiceSample, type RiceTest, type SampleSort, type SampleStatus, type SwellingResult, type TasteResult, type ZohoItemMatch, type ZohoVendorMatch,
 } from "@/lib/rice-samples";
 import type { RiceDesk, RiceGodown } from "@/lib/rice-samples.functions";
@@ -55,7 +56,7 @@ const keepOpen = { onInteractOutside: (event: { preventDefault(): void }) => eve
 /** Shown only in the static preview, which has no database. Made-up names and numbers. */
 const demoDesk = (): RiceDesk => {
   const sample = (id: string, variety: string, method: string, price: number, quantity: number, role: PartyRole, name: string, arrival: string, status: SampleStatus): RiceSample => ({
-    id, sample_no: Number(id.slice(-1)), arrival_date: arrival, variety, method, price_per_qntl: price, quantity_qntl: quantity, party_role: role, party_name: name, party_phone: "9000000001", seller_name: role === "broker" ? "Sample Mills" : "",
+    id, sample_no: Number(id.slice(-1)), arrival_date: arrival, variety, method, price_per_qntl: price, quantity_qntl: quantity, quantity_bags: null, bag_kg: null, party_role: role, party_name: name, party_phone: "9000000001", seller_name: role === "broker" ? "Sample Mills" : "",
     notes: "", status, status_reason: status === "unavailable" ? "Broker says the lot is sold" : "", status_changed_at: `${arrival}T10:00:00Z`, created_by_name: "Head Office", created_at: `${arrival}T10:00:00Z`, updated_at: `${arrival}T10:00:00Z`, deleted_at: null, deleted_by_name: "", deleted_reason: "",
   });
   const test = (sampleId: string, score: number, grain: GrainResult, taste: TasteResult, broken: BrokenResult): RiceTest => ({
@@ -64,8 +65,8 @@ const demoDesk = (): RiceDesk => {
   return {
     samples: [
       sample("a0000000-0000-4000-8000-000000000001", "Sona Rice", "Steam Rice", 4200, 120, "broker", "Sample Broker", "2026-11-02", "tested"),
-      sample("a0000000-0000-4000-8000-000000000002", "Sona Rice", "Raw Rice", 3950, 200, "seller", "Sample Traders", "2026-11-02", "tested"),
-      sample("a0000000-0000-4000-8000-000000000003", "HMT", "Raw Rice", 4600, 80, "broker", "Second Broker", "2026-11-01", "arrived"),
+      { ...sample("a0000000-0000-4000-8000-000000000002", "Sona Rice", "Raw Rice", 3950, 200, "seller", "Sample Traders", "2026-11-02", "tested"), quantity_bags: 400, bag_kg: 50 },
+      { ...sample("a0000000-0000-4000-8000-000000000003", "HMT", "Raw Rice", 4600, 80, "broker", "Second Broker", "2026-11-01", "arrived"), quantity_bags: 320, bag_kg: 25 },
       sample("a0000000-0000-4000-8000-000000000004", "RNR", "Steam Rice", 3700, 60, "broker", "Second Broker", "2026-10-30", "unavailable"),
     ],
     tests: [test("a0000000-0000-4000-8000-000000000001", 8, "separate", "good", "few"), test("a0000000-0000-4000-8000-000000000002", 6, "slightly_sticky", "ok", "some")],
@@ -83,13 +84,18 @@ const FILTER_LABELS: Record<ListFilter, string> = {
 const matchesFilter = (status: SampleStatus, filter: ListFilter) =>
   filter === "deleted" ? false : filter === "all" ? true : filter === "in_play" ? inPlay(status) : filter === "out" ? status === "discarded" || status === "unavailable" : status === filter;
 
+/** quantity is quintals or a number of bags, as quantityUnit says. Switching the unit keeps the typed number. */
 type SampleForm = {
-  id: string | null; arrivalDate: string; variety: string; method: string; price: string; quantity: string;
+  id: string | null; arrivalDate: string; variety: string; method: string; price: string; quantity: string; quantityUnit: QuantityUnit; bagKg: string;
   partyRole: PartyRole; partyName: string; partyPhone: string; sellerName: string; notes: string;
 };
-const emptySampleForm = (): SampleForm => ({ id: null, arrivalDate: todayLocal(), variety: "", method: "", price: "", quantity: "", partyRole: "broker", partyName: "", partyPhone: "", sellerName: "", notes: "" });
+const emptySampleForm = (): SampleForm => ({ id: null, arrivalDate: todayLocal(), variety: "", method: "", price: "", quantity: "", quantityUnit: "quintal", bagKg: "", partyRole: "broker", partyName: "", partyPhone: "", sellerName: "", notes: "" });
+/** Edit and Add similar reopen in the unit the sample was entered in. */
 const formFromSample = (sample: RiceSample, keepId: boolean): SampleForm => ({
-  id: keepId ? sample.id : null, arrivalDate: keepId ? sample.arrival_date : todayLocal(), variety: sample.variety, method: sample.method, price: String(sample.price_per_qntl), quantity: String(sample.quantity_qntl),
+  id: keepId ? sample.id : null, arrivalDate: keepId ? sample.arrival_date : todayLocal(), variety: sample.variety, method: sample.method, price: String(sample.price_per_qntl),
+  ...(sample.quantity_bags && sample.bag_kg
+    ? { quantity: String(sample.quantity_bags), quantityUnit: "bags" as const, bagKg: String(sample.bag_kg) }
+    : { quantity: String(sample.quantity_qntl), quantityUnit: "quintal" as const, bagKg: "" }),
   partyRole: sample.party_role, partyName: sample.party_name, partyPhone: sample.party_phone, sellerName: sample.seller_name, notes: keepId ? sample.notes : "",
 });
 
@@ -322,6 +328,7 @@ function SampleCard({ sample, tests, po, zoho, compared, onCompare, onTest, onBu
   onStatus: (action: StatusAction) => void; onHistory: () => void; onCancelPo: (po: RicePo) => void; onChanged: () => Promise<void>;
 }) {
   const latest = latestTest(tests);
+  const available = availableParts(sample);
   const pending = po?.state === "sending" || po?.state === "uncertain";
   const deleted = Boolean(sample.deleted_at);
   const open = inPlay(sample.status) && !pending && !deleted;
@@ -345,8 +352,8 @@ function SampleCard({ sample, tests, po, zoho, compared, onCompare, onTest, onBu
         </div>
         <div className="rounded-md bg-ivory px-2 py-2">
           <p className="text-[10px] font-medium text-slate uppercase">Available</p>
-          <p className="text-sm font-bold text-navy">{qty(sample.quantity_qntl)}</p>
-          <p className="text-[10px] text-slate">quintal</p>
+          <p className="text-sm font-bold break-words text-navy">{available.figure}</p>
+          <p className="text-[10px] break-words text-slate">{available.under}</p>
         </div>
         <div className="rounded-md bg-ivory px-2 py-2">
           <p className="text-[10px] font-medium text-slate uppercase">Score</p>
@@ -593,7 +600,7 @@ function CompareTable({ samples, tests, pos, onTest, onBuy }: { samples: RiceSam
               <div className="mt-2">
                 {cell("Price / quintal", inrPrecise(sample.price_per_qntl), best.bestPrice.has(sample.id))}
                 {cell("Score", latest ? `${latest.score}/10` : "Not tested", best.bestScore.has(sample.id))}
-                {cell("Available", `${qty(sample.quantity_qntl)} quintal`)}
+                {cell("Available", availableText(sample))}
                 {cell("Grain", latest ? GRAIN_LABELS[latest.grain] : "—")}
                 {cell("Swelling", latest ? SWELLING_LABELS[latest.swelling] : "—")}
                 {cell("Taste and smell", latest ? <span className={latest.taste === "off" ? "text-danger" : ""}>{TASTE_LABELS[latest.taste]}</span> : "—")}
@@ -632,19 +639,28 @@ function SampleFormDialog({ form, onForm, samples, onClose, onSaved }: { form: S
   useEffect(() => { void loadRiceOptions(samples).then(setOptions); }, [samples]);
   const price = num(form.price);
   const warning = priceUnitWarning(price);
+  const inBags = form.quantityUnit === "bags";
+  const available = parseAvailable({ unit: form.quantityUnit, quantity: form.quantity, bagKg: form.bagKg });
+  const bagSizes = useMemo(() => bagSizeChoices(samples), [samples]);
   const set = (patch: Partial<SampleForm>) => onForm({ ...form, ...patch });
   const save = async () => {
     if (!form.variety.trim()) { toast.error("Enter the rice variety"); return; }
     if (!(price > 0)) { toast.error("Enter the purchase price per quintal"); return; }
-    if (!(num(form.quantity) > 0)) { toast.error("Enter the quantity available in quintals"); return; }
+    if (!available.ok) { toast.error(available.message); return; }
     if (!form.partyName.trim()) { toast.error(`Enter the ${form.partyRole}'s name`); return; }
     if (!isSamplePhone(form.partyPhone)) { toast.error("Enter a phone number with 10 digits"); return; }
     if (STATIC_DATA_MODE) { toast("Preview only: nothing is saved"); onClose(); return; }
     setSaving(true);
-    const { error } = await supabase.rpc("rice_sample_save", {
-      _id: form.id, _arrival_date: form.arrivalDate, _variety: form.variety, _method: form.method, _price_per_qntl: price, _quantity_qntl: num(form.quantity),
+    const fields = {
+      _id: form.id, _arrival_date: form.arrivalDate, _variety: form.variety, _method: form.method, _price_per_qntl: price, _quantity_qntl: available.quantityQntl,
       _party_role: form.partyRole, _party_name: form.partyName, _party_phone: form.partyPhone, _seller_name: form.partyRole === "broker" ? form.sellerName : "", _notes: form.notes,
-    });
+    };
+    let { error } = await supabase.rpc("rice_sample_save_with_bags", { ...fields, _quantity_bags: available.quantityBags, _bag_kg: available.bagKg });
+    // PGRST202: the database update for bags is not applied yet. Quintals still save the old way; bags cannot be kept without it.
+    if (error?.code === "PGRST202") {
+      if (available.quantityBags !== null) { setSaving(false); toast.error("Bags can't be saved yet", { description: "The database update for bags is not applied. Choose Quintal for now." }); return; }
+      ({ error } = await supabase.rpc("rice_sample_save", fields));
+    }
     setSaving(false);
     if (error) { toast.error("Could not save the sample", { description: error.message }); return; }
     toast.success(form.id ? "Sample updated" : "Sample added");
@@ -669,13 +685,28 @@ function SampleFormDialog({ form, onForm, samples, onClose, onSaved }: { form: S
               <datalist id="rice-methods">{options.methods.map((value) => <option key={value} value={value} />)}</datalist>
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="grid min-w-0 gap-1"><Label className="text-xs text-slate">Price (₹ per quintal)</Label>
+          {/* Stacked on phones: a number box and its unit don't fit in half of a phone's width. */}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid min-w-0 content-start gap-1"><Label className="text-xs text-slate">Price (₹ per quintal)</Label>
               <Input className={inputClass} inputMode="decimal" value={form.price} onChange={(event) => set({ price: event.target.value })} />
               {price > 0 && !warning && <p className="text-[11px] text-slate">{inrPrecise(price / 100)} per kg</p>}
             </div>
-            <div className="grid min-w-0 gap-1"><Label className="text-xs text-slate">Available (quintal)</Label>
-              <Input className={inputClass} inputMode="decimal" value={form.quantity} onChange={(event) => set({ quantity: event.target.value })} />
+            <div className="grid min-w-0 content-start gap-1"><Label htmlFor="rice-sample-available" className="text-xs text-slate">{inBags ? "Available (bags)" : "Available (quintal)"}</Label>
+              <div className="flex min-w-0 gap-2">
+                <Input id="rice-sample-available" className={cn(inputClass, "min-w-0 flex-1")} inputMode={inBags ? "numeric" : "decimal"} value={form.quantity} onChange={(event) => set({ quantity: event.target.value })} />
+                <select aria-label="Available in" className="h-10 w-24 shrink-0 rounded-md border border-input bg-white px-2 text-sm" value={form.quantityUnit} onChange={(event) => set({ quantityUnit: event.target.value as QuantityUnit })}>
+                  <option value="quintal">Quintal</option>
+                  <option value="bags">Bags</option>
+                </select>
+              </div>
+              {inBags && (
+                <>
+                  <Label htmlFor="rice-sample-bag-kg" className="mt-1 text-xs text-slate">Weight of one bag (kg)</Label>
+                  <Input id="rice-sample-bag-kg" className={inputClass} inputMode="decimal" list="rice-bag-sizes" placeholder="e.g. 26" value={form.bagKg} onChange={(event) => set({ bagKg: event.target.value })} />
+                  <datalist id="rice-bag-sizes">{bagSizes.map((kg) => <option key={kg} value={String(kg)} />)}</datalist>
+                  {available.ok && <p className="text-[11px] text-slate">{`= ${qty(available.quantityQntl)} quintal`}</p>}
+                </>
+              )}
             </div>
           </div>
           {warning && <p className="rounded-md bg-amber-50 px-2 py-1.5 text-xs font-medium text-amber-800">{warning}</p>}
@@ -863,7 +894,7 @@ function HistoryDialog({ sample, tests, events, po, onClose }: { sample: RiceSam
       <DialogContent className={dialogClass}>
         <DialogHeader>
           <DialogTitle>{sampleLabel(sample.sample_no)}: {sample.variety}{sample.method ? ` · ${sample.method}` : ""}</DialogTitle>
-          <DialogDescription>Reference in Zoho: {po?.reference ?? poReference(sample.id)}</DialogDescription>
+          <DialogDescription>Reference in Zoho: {po?.reference ?? poReference(sample.id)}<span className="block">Available: <strong className="font-semibold text-navy">{availableText(sample)}</strong></span></DialogDescription>
         </DialogHeader>
         <div>
           <h4 className="mb-1 text-xs font-bold tracking-wide text-navy uppercase">Cook tests ({tests.length})</h4>
@@ -1030,7 +1061,9 @@ function BuyDialog({ sample, tests, desk, po, onReload, onClose }: { sample: Ric
             <div className="grid grid-cols-2 gap-3">
               <div className="grid min-w-0 gap-1"><Label className="text-xs text-slate">Quantity to buy (quintal)</Label>
                 <Input className={inputClass} inputMode="decimal" value={quantity} onChange={(event) => setQuantity(event.target.value)} />
-                <p className="text-[11px] text-slate">{qty(sample.quantity_qntl)} available</p>
+                <p className="text-[11px] break-words text-slate">{sample.quantity_bags && sample.bag_kg
+                  ? `${qty(sample.quantity_qntl)} quintal available (${bagCountText(sample.quantity_bags)} of ${qty(sample.bag_kg)} kg)`
+                  : `${qty(sample.quantity_qntl)} quintal available`}</p>
               </div>
               <div className="grid min-w-0 gap-1"><Label className="text-xs text-slate">Agreed price (₹ per quintal)</Label>
                 <Input className={inputClass} inputMode="decimal" value={rate} onChange={(event) => setRate(event.target.value)} />

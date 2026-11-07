@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  availableParts, availableText, bagCountText, bagSizeChoices, bagsToQntl, isBagKg, parseAvailable,
   bestInComparison, canCancelPo, cancelRicePo, checkRicePo, createInZohoOnce, findPurchaseOrdersByReference, gstPreferencesFrom, itemBody, itemMatchFrom, kgPerZohoUnit, latestTest, nameKey, phoneLinks, planPoLine, plainZohoRefusal,
   differsFromRaised, NO_GST_WORDS, OFF_LIST_CHECK_MS, poDeathReason, poTaxAmount, poTaxDifferences, poTaxFrom, poTaxLabel, poTaxReason, poDifferences, poLineProblem, poReference, retiredPoProblem, settleRaisedPo, syncRaisedPos, zohoSaysNoSuchPo, priceUnitWarning, purchaseOrderBody, raiseRicePo, readPoStatus, riceTextOptions, sortSamples, testsBySample, vendorBody, vendorMatchesFrom, zohoPoUrl, zohoStatusLabel, zohoVerdict,
   type ClaimAnswer, type CreationStore, type PoActor, type PoFound, type PoLifeStore, type PoPlan, type PoStore, type RaisedPo, type RecordAnswer, type RicePo, type RiceSample, type RiceTest, type ZohoRaw, type ZohoSend,
@@ -594,9 +595,76 @@ test("a price in the wrong unit is caught while typing", () => {
   assert.equal(priceUnitWarning(0), null);
 });
 
+// ---------------------------------------------------------------- Samples: available quantity in quintals or bags
+
+test("bags convert to quintals exactly, with a bag weight of one decimal", () => {
+  assert.equal(bagsToQntl(200, 26), 52);
+  assert.equal(bagsToQntl(37, 26.5), 9.805);
+  assert.equal(bagsToQntl(1, 1), 0.01);
+  assert.equal(bagsToQntl(3, 0.1 + 0.2 + 25.7), 0.78);
+  // Every whole number of bags up to 5,000 at every allowed weight lands on 3 decimals, as the database's check needs.
+  for (let tenths = 10; tenths <= 1000; tenths += 7) {
+    for (const bags of [1, 3, 7, 199, 4999]) {
+      const quintals = bagsToQntl(bags, tenths / 10);
+      assert.equal(quintals, (bags * tenths) / 1000, `${bags} bags of ${tenths / 10} kg`);
+    }
+  }
+});
+
+test("a bag weight is 1 to 100 kg with one decimal at most", () => {
+  for (const kg of [1, 25, 26, 26.5, 50, 99.9, 100]) assert.equal(isBagKg(kg), true, String(kg));
+  for (const kg of [0, 0.5, 0.26, 26.25, 100.1, 2600, Number.NaN, -26]) assert.equal(isBagKg(kg), false, String(kg));
+});
+
+test("Available in quintals saves as typed, with no bags", () => {
+  assert.deepEqual(parseAvailable({ unit: "quintal", quantity: "52", bagKg: "" }), { ok: true, quantityQntl: 52, quantityBags: null, bagKg: null });
+  assert.deepEqual(parseAvailable({ unit: "quintal", quantity: "1,200.5", bagKg: "26" }), { ok: true, quantityQntl: 1200.5, quantityBags: null, bagKg: null });
+  assert.deepEqual(parseAvailable({ unit: "quintal", quantity: "0.0006", bagKg: "" }), { ok: true, quantityQntl: 0.001, quantityBags: null, bagKg: null });
+  // The database keeps 3 decimals, so this would be saved as 0.
+  for (const quantity of ["", "0", "-5", "abc", "1000000", "0.0004"]) assert.equal(parseAvailable({ unit: "quintal", quantity, bagKg: "" }).ok, false, quantity);
+});
+
+test("Available in bags needs a whole number of bags and the weight of one bag", () => {
+  assert.deepEqual(parseAvailable({ unit: "bags", quantity: "200", bagKg: "26" }), { ok: true, quantityQntl: 52, quantityBags: 200, bagKg: 26 });
+  assert.deepEqual(parseAvailable({ unit: "bags", quantity: "1,000", bagKg: " 26.5 " }), { ok: true, quantityQntl: 265, quantityBags: 1000, bagKg: 26.5 });
+  const wrong = (quantity: string, bagKg: string) => {
+    const answer = parseAvailable({ unit: "bags", quantity, bagKg });
+    assert.equal(answer.ok, false, `${quantity} bags of ${bagKg}`);
+    return answer.ok ? "" : answer.message;
+  };
+  assert.match(wrong("200.5", "26"), /whole number/);
+  assert.match(wrong("0", "26"), /whole number/);
+  assert.match(wrong("", "26"), /whole number/);
+  assert.match(wrong("200", ""), /weight of one bag/);
+  assert.match(wrong("200", "0.26"), /1 to 100 kg/);
+  assert.match(wrong("200", "26.25"), /one decimal/);
+  assert.match(wrong("200", "150"), /1 to 100 kg/);
+  assert.match(wrong("100000000", "100"), /too many bags/);
+});
+
+test("Available reads in the unit it was entered in", () => {
+  const inQuintals = { quantity_qntl: 52, quantity_bags: null, bag_kg: null };
+  const inBags = { quantity_qntl: 52, quantity_bags: 200, bag_kg: 26 };
+  assert.deepEqual(availableParts(inQuintals), { figure: "52", under: "quintal" });
+  assert.deepEqual(availableParts(inBags), { figure: "200 bags", under: "26 kg each · 52 quintal" });
+  assert.deepEqual(availableParts({ quantity_qntl: 0.26, quantity_bags: 1, bag_kg: 26 }), { figure: "1 bag", under: "26 kg each · 0.26 quintal" });
+  assert.equal(availableText(inQuintals), "52 quintal");
+  assert.equal(availableText(inBags), "200 bags of 26 kg (52 quintal)");
+  assert.equal(availableText({ quantity_qntl: 3127.5, quantity_bags: 12510, bag_kg: 25 }), "12,510 bags of 25 kg (3,127.5 quintal)");
+  // A row read before the migration has no bag columns at all.
+  assert.equal(availableText({ quantity_qntl: 52 } as never), "52 quintal");
+  assert.equal(bagCountText(1), "1 bag");
+});
+
+test("bag sizes already used are offered again, once each", () => {
+  assert.deepEqual(bagSizeChoices([{ bag_kg: 50 }, { bag_kg: null }, { bag_kg: 26 }, { bag_kg: 26 }, { bag_kg: 25 }]), [25, 26, 50]);
+  assert.deepEqual(bagSizeChoices([]), []);
+});
+
 // ---------------------------------------------------------------- Samples: sorting and comparing
 
 const sample = (id: string, price: number, arrival: string): RiceSample => ({
+  quantity_bags: null, bag_kg: null,
   id, sample_no: 1, arrival_date: arrival, variety: "Sona", method: "", price_per_qntl: price, quantity_qntl: 10, party_role: "broker", party_name: "B", party_phone: "9000000000", seller_name: "", notes: "",
   status: "tested", status_reason: "", status_changed_at: "", created_by_name: "", created_at: "", updated_at: "", deleted_at: null, deleted_by_name: "", deleted_reason: "",
 });
