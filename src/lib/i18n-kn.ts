@@ -5202,6 +5202,26 @@ export const kn: Record<string, string> = {
   "Qty:": "ಪ್ರಮಾಣ:",
   "more item(s)": "ಇನ್ನಷ್ಟು ವಸ್ತು(ಗಳು)",
   "These were not paid, so they were not placed and you owe nothing (unless a line below says otherwise). Tap Reorder to buy the same items again at today's price.": "ಇವುಗಳಿಗೆ ಪಾವತಿ ಆಗಿಲ್ಲ, ಆದ್ದರಿಂದ ಆರ್ಡರ್ ಆಗಿಲ್ಲ ಮತ್ತು ನೀವು ಏನೂ ಕೊಡಬೇಕಿಲ್ಲ (ಕೆಳಗಿನ ಸಾಲು ಬೇರೆ ಹೇಳದಿದ್ದರೆ). ಅದೇ ವಸ್ತುಗಳನ್ನು ಇಂದಿನ ಬೆಲೆಯಲ್ಲಿ ಮತ್ತೆ ಕೊಳ್ಳಲು Reorder ಒತ್ತಿ.",
+  // A sales order voided in Zoho (order page, 7 Nov 2026).
+  "Sales order void in Zoho": "ಮಾರಾಟ ಆರ್ಡರ್ Zoho ದಲ್ಲಿ ಅಮಾನ್ಯಗೊಂಡಿದೆ",
+  "Sales order cancelled in Zoho": "ಮಾರಾಟ ಆರ್ಡರ್ Zoho ದಲ್ಲಿ ರದ್ದಾಗಿದೆ",
+  "Sales order void in Zoho, but money was received": "ಮಾರಾಟ ಆರ್ಡರ್ Zoho ದಲ್ಲಿ ಅಮಾನ್ಯಗೊಂಡಿದೆ, ಆದರೆ ಹಣ ಬಂದಿದೆ",
+  "Sales order cancelled in Zoho, but money was received": "ಮಾರಾಟ ಆರ್ಡರ್ Zoho ದಲ್ಲಿ ರದ್ದಾಗಿದೆ, ಆದರೆ ಹಣ ಬಂದಿದೆ",
+  "Its sales order is void in the official Zoho books, so this order is closed here and nothing on it can be changed. You can delete it with Delete order.": "ಇದರ ಮಾರಾಟ ಆರ್ಡರ್ ಅಧಿಕೃತ Zoho ಲೆಕ್ಕಪುಸ್ತಕದಲ್ಲಿ ಅಮಾನ್ಯಗೊಂಡಿದೆ, ಆದ್ದರಿಂದ ಈ ಆರ್ಡರ್ ಇಲ್ಲಿಯೂ ಮುಚ್ಚಲಾಗಿದೆ ಮತ್ತು ಇದರಲ್ಲಿ ಏನನ್ನೂ ಬದಲಾಯಿಸಲು ಸಾಧ್ಯವಿಲ್ಲ. ಆರ್ಡರ್ ಅಳಿಸಿ ಒತ್ತಿ ಇದನ್ನು ಅಳಿಸಬಹುದು.",
+  "Its sales order is cancelled in the official Zoho books, so this order is closed here and nothing on it can be changed. You can delete it with Delete order.": "ಇದರ ಮಾರಾಟ ಆರ್ಡರ್ ಅಧಿಕೃತ Zoho ಲೆಕ್ಕಪುಸ್ತಕದಲ್ಲಿ ರದ್ದಾಗಿದೆ, ಆದ್ದರಿಂದ ಈ ಆರ್ಡರ್ ಇಲ್ಲಿಯೂ ಮುಚ್ಚಲಾಗಿದೆ ಮತ್ತು ಇದರಲ್ಲಿ ಏನನ್ನೂ ಬದಲಾಯಿಸಲು ಸಾಧ್ಯವಿಲ್ಲ. ಆರ್ಡರ್ ಅಳಿಸಿ ಒತ್ತಿ ಇದನ್ನು ಅಳಿಸಬಹುದು.",
+  "Its sales order is void in Zoho, but a payment was recorded for this order here, so it stays open until the customer is refunded. Nothing else on it can be changed meanwhile.": "ಇದರ ಮಾರಾಟ ಆರ್ಡರ್ Zoho ದಲ್ಲಿ ಅಮಾನ್ಯಗೊಂಡಿದೆ, ಆದರೆ ಈ ಆರ್ಡರ್‌ಗೆ ಇಲ್ಲಿ ಪಾವತಿ ದಾಖಲಾಗಿದೆ, ಆದ್ದರಿಂದ ಗ್ರಾಹಕರಿಗೆ ಹಣ ಹಿಂದಿರುಗಿಸುವವರೆಗೆ ಇದು ತೆರೆದಿರುತ್ತದೆ. ಅಲ್ಲಿಯವರೆಗೆ ಇದರಲ್ಲಿ ಬೇರೆ ಏನನ್ನೂ ಬದಲಾಯಿಸಲು ಸಾಧ್ಯವಿಲ್ಲ.",
+  "Its sales order is cancelled in Zoho, but a payment was recorded for this order here, so it stays open until the customer is refunded. Nothing else on it can be changed meanwhile.": "ಇದರ ಮಾರಾಟ ಆರ್ಡರ್ Zoho ದಲ್ಲಿ ರದ್ದಾಗಿದೆ, ಆದರೆ ಈ ಆರ್ಡರ್‌ಗೆ ಇಲ್ಲಿ ಪಾವತಿ ದಾಖಲಾಗಿದೆ, ಆದ್ದರಿಂದ ಗ್ರಾಹಕರಿಗೆ ಹಣ ಹಿಂದಿರುಗಿಸುವವರೆಗೆ ಇದು ತೆರೆದಿರುತ್ತದೆ. ಅಲ್ಲಿಯವರೆಗೆ ಇದರಲ್ಲಿ ಬೇರೆ ಏನನ್ನೂ ಬದಲಾಯಿಸಲು ಸಾಧ್ಯವಿಲ್ಲ.",
+  "Its sales order is void in the official Zoho books, so this order is being closed here too. Nothing on it can be changed. If it still shows {0} in a minute, open the order again.": "ಇದರ ಮಾರಾಟ ಆರ್ಡರ್ ಅಧಿಕೃತ Zoho ಲೆಕ್ಕಪುಸ್ತಕದಲ್ಲಿ ಅಮಾನ್ಯಗೊಂಡಿದೆ, ಆದ್ದರಿಂದ ಈ ಆರ್ಡರ್ ಇಲ್ಲಿಯೂ ಮುಚ್ಚಲಾಗುತ್ತಿದೆ. ಇದರಲ್ಲಿ ಏನನ್ನೂ ಬದಲಾಯಿಸಲು ಸಾಧ್ಯವಿಲ್ಲ. ಒಂದು ನಿಮಿಷದ ನಂತರವೂ {0} ಎಂದು ತೋರಿಸಿದರೆ, ಆರ್ಡರ್ ಅನ್ನು ಮತ್ತೆ ತೆರೆಯಿರಿ.",
+  "Its sales order is cancelled in the official Zoho books, so this order is being closed here too. Nothing on it can be changed. If it still shows {0} in a minute, open the order again.": "ಇದರ ಮಾರಾಟ ಆರ್ಡರ್ ಅಧಿಕೃತ Zoho ಲೆಕ್ಕಪುಸ್ತಕದಲ್ಲಿ ರದ್ದಾಗಿದೆ, ಆದ್ದರಿಂದ ಈ ಆರ್ಡರ್ ಇಲ್ಲಿಯೂ ಮುಚ್ಚಲಾಗುತ್ತಿದೆ. ಇದರಲ್ಲಿ ಏನನ್ನೂ ಬದಲಾಯಿಸಲು ಸಾಧ್ಯವಿಲ್ಲ. ಒಂದು ನಿಮಿಷದ ನಂತರವೂ {0} ಎಂದು ತೋರಿಸಿದರೆ, ಆರ್ಡರ್ ಅನ್ನು ಮತ್ತೆ ತೆರೆಯಿರಿ.",
+  "Void in Zoho: {0}": "Zoho ದಲ್ಲಿ ಅಮಾನ್ಯ: {0}",
+  "Cancelled in Zoho: {0}": "Zoho ದಲ್ಲಿ ರದ್ದಾಗಿದೆ: {0}",
+  "Sales Order {0}, in {1}, is void in Zoho. Nothing more is sent to Zoho for this order.": "{1} ನಲ್ಲಿನ ಮಾರಾಟ ಆರ್ಡರ್ {0} Zoho ದಲ್ಲಿ ಅಮಾನ್ಯಗೊಂಡಿದೆ. ಈ ಆರ್ಡರ್‌ಗಾಗಿ Zoho ಗೆ ಇನ್ನು ಏನನ್ನೂ ಕಳುಹಿಸಲಾಗುವುದಿಲ್ಲ.",
+  "Sales Order {0}, in {1}, is cancelled in Zoho. Nothing more is sent to Zoho for this order.": "{1} ನಲ್ಲಿನ ಮಾರಾಟ ಆರ್ಡರ್ {0} Zoho ದಲ್ಲಿ ರದ್ದಾಗಿದೆ. ಈ ಆರ್ಡರ್‌ಗಾಗಿ Zoho ಗೆ ಇನ್ನು ಏನನ್ನೂ ಕಳುಹಿಸಲಾಗುವುದಿಲ್ಲ.",
+  "The sales order is void in Zoho, so no new invoice is made.": "ಮಾರಾಟ ಆರ್ಡರ್ Zoho ದಲ್ಲಿ ಅಮಾನ್ಯಗೊಂಡಿದೆ, ಆದ್ದರಿಂದ ಹೊಸ ಇನ್‌ವಾಯ್ಸ್ ಮಾಡಲಾಗುವುದಿಲ್ಲ.",
+  "Its sales order is void in Zoho and nothing was paid here. Deleting removes the order and its items from this website for good. The void sales order stays in Zoho on record, stock is not touched, and a record of who deleted it is kept.": "ಇದರ ಮಾರಾಟ ಆರ್ಡರ್ Zoho ದಲ್ಲಿ ಅಮಾನ್ಯಗೊಂಡಿದೆ ಮತ್ತು ಇಲ್ಲಿ ಏನನ್ನೂ ಪಾವತಿಸಿಲ್ಲ. ಅಳಿಸಿದರೆ ಆರ್ಡರ್ ಮತ್ತು ಅದರ ವಸ್ತುಗಳು ಈ ವೆಬ್‌ಸೈಟ್‌ನಿಂದ ಶಾಶ್ವತವಾಗಿ ತೆಗೆದುಹಾಕಲ್ಪಡುತ್ತವೆ. ಅಮಾನ್ಯ ಮಾರಾಟ ಆರ್ಡರ್ Zoho ದಲ್ಲಿ ದಾಖಲೆಯಾಗಿ ಉಳಿಯುತ್ತದೆ, ಸ್ಟಾಕ್ ಬದಲಾಗುವುದಿಲ್ಲ, ಮತ್ತು ಯಾರು ಅಳಿಸಿದರು ಎಂಬ ದಾಖಲೆ ಉಳಿಯುತ್ತದೆ.",
+  "A push to Zoho for this order is running or got no clear answer, so it stays. Wait 10 minutes, open the order again, then try again.": "ಈ ಆರ್ಡರ್‌ಗಾಗಿ Zoho ಗೆ ಕಳುಹಿಸುವುದು ನಡೆಯುತ್ತಿದೆ ಅಥವಾ ಸ್ಪಷ್ಟ ಉತ್ತರ ಬಂದಿಲ್ಲ, ಆದ್ದರಿಂದ ಇದು ಉಳಿಯುತ್ತದೆ. 10 ನಿಮಿಷ ಕಾಯಿರಿ, ಆರ್ಡರ್ ಅನ್ನು ಮತ್ತೆ ತೆರೆಯಿರಿ, ನಂತರ ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ.",
+  "This order was sent to Zoho, so it stays to match Zoho. It can be deleted once its sales order is void in Zoho.": "ಈ ಆರ್ಡರ್ Zoho ಗೆ ಹೋಗಿದೆ, ಆದ್ದರಿಂದ Zoho ಗೆ ಹೊಂದುವಂತೆ ಉಳಿಯುತ್ತದೆ. ಇದರ ಮಾರಾಟ ಆರ್ಡರ್ Zoho ದಲ್ಲಿ ಅಮಾನ್ಯಗೊಂಡ ನಂತರ ಇದನ್ನು ಅಳಿಸಬಹುದು.",
+  "Zoho Books has a live invoice for this order, so it stays. Void or delete the invoice in Zoho, then open the order again.": "ಈ ಆರ್ಡರ್‌ಗೆ Zoho Books ನಲ್ಲಿ ಚಾಲ್ತಿಯಲ್ಲಿರುವ ಇನ್‌ವಾಯ್ಸ್ ಇದೆ, ಆದ್ದರಿಂದ ಇದು ಉಳಿಯುತ್ತದೆ. Zoho ದಲ್ಲಿ ಇನ್‌ವಾಯ್ಸ್ ಅನ್ನು ಅಮಾನ್ಯಗೊಳಿಸಿ ಅಥವಾ ಅಳಿಸಿ, ನಂತರ ಆರ್ಡರ್ ಅನ್ನು ಮತ್ತೆ ತೆರೆಯಿರಿ.",
 };
 
 /** Word-level fallbacks for text that isn't in the dictionary (product names, specs from the database). */

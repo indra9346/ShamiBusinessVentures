@@ -2361,6 +2361,8 @@ async function zohoLineItemsForOrder(
 }
 
 const ZOHO_CLOSED_ORDER_STATES = ["void", "cancelled"];
+/** What an answered review says once a Zoho void closed its order. */
+const ZOHO_VOID_CLOSED_NOTE = "Closed: the sales order is void in Zoho, so the order was cancelled here too.";
 /** Zoho closes a sales order once it is invoiced, even with nothing shipped yet: nothing left to edit there. */
 const ZOHO_FINISHED_ORDER_STATES = ["closed", "fulfilled"];
 
@@ -2476,8 +2478,12 @@ async function syncLinkedZohoOrder(
       }
     }
   } else if (ZOHO_CLOSED_ORDER_STATES.includes(zohoStatus())) {
+    // Zoho is the official book: a void there closes this order too, refused only when money was received here.
+    const closed = await closeOrderVoidedInZoho(db, order, str(zoho["salesorder_number"]), zohoStatus());
     await saveZohoZohoState(db, order.id, zoho);
-    throw new NeedsReviewError(`Zoho sales order ${str(zoho["salesorder_number"])} is ${zohoStatus()} in Zoho, but Grain Bazar order ${order.order_no} is ${order.order_status}. Cancel it in Grain Bazar or create a new Zoho order.`);
+    if (!closed.closed) throw new NeedsReviewError(closed.review);
+    await refreshSalesOrderSnapshotSafe(db, organizationId, zoho);
+    return;
   } else if (!ZOHO_FINISHED_ORDER_STATES.includes(zohoStatus())) {
     const zohoTotal = Number(zoho["total"]);
     const invoiced = str(zoho["invoiced_status"]).toLowerCase();
@@ -2910,6 +2916,32 @@ async function tellAdminsOfPaymentReview(db: Awaited<ReturnType<typeof dbAdmin>>
 }
 
 /** Records Zoho's status and change time on the Grain Bazar order (shown in the admin). */
+/**
+ * A sales order voided or cancelled in Zoho. Zoho is the official book, so the website order closes too, at any stage
+ * (apply_zoho_order_cancellation). It is refused only when money was received here, which must be refunded first, and
+ * the caller hands that to a person. Once closed, the order's earlier reviews are answered: they asked about this.
+ */
+async function closeOrderVoidedInZoho(
+  db: Awaited<ReturnType<typeof dbAdmin>>,
+  order: { id: string; order_no: string; order_status: string },
+  salesOrderNumber: string,
+  zohoStatus: string,
+): Promise<{ closed: true } | { closed: false; review: string }> {
+  const { data: result, error } = await db.rpc("apply_zoho_order_cancellation", { _order_id: order.id });
+  if (!error && result && !result.startsWith("blocked")) {
+    await db.from("zoho_sync_outbox")
+      .update({ status: "complete", last_error: ZOHO_VOID_CLOSED_NOTE, updated_at: new Date().toISOString() })
+      .eq("entity_type", "order").eq("entity_id", order.id).in("status", ["needs_review", "failed"]);
+    return { closed: true };
+  }
+  const why = error?.message
+    ?? (result === "blocked_paid" ? "a payment was received here (refund it first)" : `it is ${order.order_status}`);
+  return {
+    closed: false,
+    review: `Zoho sales order ${salesOrderNumber} was ${zohoStatus === "void" ? "voided" : "cancelled"} in Zoho, but Grain Bazar order ${order.order_no} was not cancelled because ${why}. Decide which is right and correct the other side.`,
+  };
+}
+
 async function saveZohoZohoState(db: Awaited<ReturnType<typeof dbAdmin>>, orderId: string, zoho: Record<string, unknown>) {
   const modified = str(zoho["last_modified_time"]);
   await db.from("orders").update({
@@ -3062,15 +3094,13 @@ async function applyZohoSalesOrderToApp(
 
   const status = str(zoho["order_status"] ?? zoho["status"]).toLowerCase();
   let outcome = "recorded";
-  if (["void", "cancelled"].includes(status) && order.order_status !== "Cancelled") {
-    const { data: result, error } = await db.rpc("apply_zoho_order_cancellation", { _order_id: order.id });
-    if (error || (result && result.startsWith("blocked"))) {
-      const why = error?.message
-        ?? (result === "blocked_paid" ? "a payment was received (refund it first)" : `it is already ${order.order_status}`);
-      await saveZohoReview(db, "order", order.id, `Zoho sales order ${number} was ${status === "void" ? "voided" : "cancelled"} in Zoho, but Grain Bazar order ${order.order_no} was not cancelled because ${why}. Decide which is right and correct the other side.`);
-      outcome = "review";
-    } else {
+  if (ZOHO_CLOSED_ORDER_STATES.includes(status) && order.order_status !== "Cancelled") {
+    const closed = await closeOrderVoidedInZoho(db, order, number, status);
+    if (closed.closed) {
       outcome = "cancelled";
+    } else {
+      await saveZohoReview(db, "order", order.id, closed.review);
+      outcome = "review";
     }
   } else if (order.order_status !== "Cancelled") {
     const fulfillment = zohoFulfillmentStatus(zoho);
@@ -3209,8 +3239,16 @@ export const refreshZohoOrderInvoice = createServerFn({ method: "POST" })
     const response = await withZohoPurpose("Order page: invoice check", () => inventoryRequest<{ salesorder?: Record<string, unknown> }>(
       region, organizationId, token, `salesorders/${encodeURIComponent(order.zoho_salesorder_id)}`, "GET",
     ));
-    if (!response.salesorder) return { refreshed: false };
-    await withZohoPurpose("Order page: invoice check", () => recordZohoInvoiceState(db, order, response.salesorder!));
+    const salesOrder = response.salesorder;
+    if (!salesOrder) return { refreshed: false };
+    // Opening the order is enough: a sales order voided in Zoho closes it here too (unless money was received here).
+    const zohoStatus = str(salesOrder["order_status"] ?? salesOrder["status"]).toLowerCase();
+    if (ZOHO_CLOSED_ORDER_STATES.includes(zohoStatus) && order.order_status !== "Cancelled") {
+      const closed = await closeOrderVoidedInZoho(db, order, str(salesOrder["salesorder_number"]), zohoStatus);
+      if (!closed.closed) await saveZohoReview(db, "order", order.id, closed.review);
+      await saveZohoZohoState(db, order.id, salesOrder);
+    }
+    await withZohoPurpose("Order page: invoice check", () => recordZohoInvoiceState(db, order, salesOrder));
     await flushZohoCallLog();
     return { refreshed: true };
   });
