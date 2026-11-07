@@ -23,6 +23,7 @@ import { NotInYourArea } from "@/components/site/NotInYourArea";
 import { isOutsideServiceArea } from "@/lib/godown-rules";
 import { useBankDetails, useUpiPayments } from "@/lib/upi-store";
 import { isBankMethod, lapsedTransfer, methodLabel, methodsForOrders, pickMethod, UPI_BELOW, type PayMethod } from "@/lib/payment-rules";
+import { parsePayParam, payPanelId, payParam, restorablePlaced } from "@/lib/upi-return";
 import { settingsProblem } from "@/lib/upi-pay";
 import { GST_BILL_PAY_NOTE, gstBillProblem, normaliseGstin } from "@/lib/gstin";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
@@ -44,7 +45,8 @@ const preferredAddressId = (list: { id: string; default?: boolean }[]) =>
   (list.find((address) => address.default) ?? list[0])?.id ?? "";
 
 export const Route = createFileRoute("/checkout")({
-  validateSearch: z.object({ productId: z.string().optional(), coupon: z.string().optional() }),
+  // pay: the held checkouts being paid, so a reload after the UPI app reopens the pay step (owner, 7 Nov 2026).
+  validateSearch: z.object({ productId: z.string().optional(), coupon: z.string().optional(), pay: z.string().optional() }),
   head: () => pageHead({ title: `Secure Checkout | ${SITE_NAME}`, description: "Choose your address, delivery and payment, and place your order.", path: "/checkout", noindex: true }),
   component: Checkout,
 });
@@ -73,7 +75,7 @@ function Checkout() {
     orders,
     paymentHolds,
   } = useApp();
-  const { productId, coupon: cartCoupon } = Route.useSearch();
+  const { productId, coupon: cartCoupon, pay } = Route.useSearch();
   const navigate = useNavigate();
   useEffect(() => {
     // Wait until the saved sign-in has been read, or a refresh would bounce signed-in customers.
@@ -207,6 +209,21 @@ function Checkout() {
     discount: number;
     total: number;
   } | null>(null);
+  // Back on checkout after a reload (often what happens on a phone after paying in the UPI app): the pay step for the
+  // checkouts named in ?pay=, from the customer's own held checkouts. Once per visit.
+  const restoredPay = useRef(false);
+  useEffect(() => {
+    if (restoredPay.current || placedOrders.length > 0 || !pay) return;
+    const restored = restorablePlaced(paymentHolds, parsePayParam(pay));
+    if (!restored.length) return;
+    restoredPay.current = true;
+    const total = restored.reduce((sum, order) => sum + order.amount, 0);
+    setPlacedOrders(restored);
+    setPlacedId(restored.map((order) => order.id).join(", "));
+    setConfirmationSummary({ subtotal: total, shipCost: 0, tax: 0, discount: 0, total });
+    setStep(4);
+    window.setTimeout(() => document.getElementById(payPanelId(restored[0]!.id))?.scrollIntoView({ block: "start" }), 300);
+  }, [pay, paymentHolds, placedOrders.length]);
   const [shippingRates, setShippingRates] = useState(defaultShipping);
   const [shippingRatesReady, setShippingRatesReady] = useState(false);
   useEffect(() => {
@@ -527,6 +544,9 @@ function Checkout() {
       if (selectedAddress) setHeldAddress({ address: selectedAddress, godown: godownLabel });
       setPlacedId(placed.map((order) => order.id).join(", "));
       setPlacedOrders(placed.map((order) => ({ id: order.id, amount: order.amount, holdUntil: order.holdUntil ?? null, method: payMethod })));
+      // Kept in the address, so coming back from the UPI app to a reloaded page lands on this pay step again.
+      restoredPay.current = true;
+      void navigate({ to: "/checkout", search: (prev) => ({ ...prev, pay: payParam(placed.map((order) => order.id)) }), replace: true });
       toast.success("Pay now to place your order", { description: "Prices and stock are held for you while you pay." });
       setStep(step + 1);
       return;

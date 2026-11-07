@@ -6,6 +6,7 @@ import { inrPrecise } from "@/lib/data";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { normaliseUtr, settingsProblem, upiPaymentUri, utrProblem, type UpiSettings } from "@/lib/upi-pay";
 import { UpiAppButtons } from "@/components/site/UpiAppButtons";
+import { payPanelId } from "@/lib/upi-return";
 import { BankTransferDetails, BankUtrForm } from "@/components/site/BankTransferPay";
 import { allowedMethods, isBankMethod } from "@/lib/payment-rules";
 import { submitUpiPayment, useBankDetails, useUpiPayments } from "@/lib/upi-store";
@@ -104,7 +105,7 @@ export function UpiPayPanel({ settings, orderNo, amount, customer }: { settings:
   }
 
   return (
-    <div className="rounded-lg border border-border bg-card p-4 text-left shadow-card">
+    <div id={payPanelId(orderNo)} className="scroll-mt-24 rounded-lg border border-border bg-card p-4 text-left shadow-card">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="text-xs font-bold uppercase tracking-wider text-slate">Pay by UPI · no extra charges</p>
@@ -138,7 +139,7 @@ export function UpiPayPanel({ settings, orderNo, amount, customer }: { settings:
               <li>Check the amount <span className="font-semibold">{inrPrecise(amount)}</span> and pay to <span className="font-semibold">{settings.payeeName}</span>.</li>
               <li>Copy the 12-digit <span className="font-semibold">UTR / UPI Ref. No.</span> from the payment receipt and enter it here.</li>
             </ol>
-            <UpiAppButtons uri={uri} />
+            <UpiAppButtons uri={uri} returnTo={payPanelId(orderNo)} />
             <button type="button" onClick={() => { void navigator.clipboard?.writeText(settings.vpa); toast.success("UPI ID copied"); }}
               className="inline-flex items-center gap-1 text-xs font-semibold text-gold hover:underline">
               <Copy className="h-3.5 w-3.5" /> UPI ID: {settings.vpa}

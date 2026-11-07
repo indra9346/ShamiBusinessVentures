@@ -5266,6 +5266,11 @@ export const kn: Record<string, string> = {
   "per {0} kg bag, GST included": "ಪ್ರತಿ {0} ಕೆಜಿ ಚೀಲಕ್ಕೆ, GST ಸೇರಿ",
   "{0} at {1}: {2} incl. GST": "{1} ನಲ್ಲಿ {0}: {2} GST ಸೇರಿ",
   "Order total (incl. GST):": "ಆರ್ಡರ್ ಒಟ್ಟು (GST ಸೇರಿ):",
+  // Back from the UPI app (7 Nov 2026).
+  "Come back here and enter the 12-digit UPI Ref No. (UTR) from the payment receipt. Our team confirms it with our bank and your order is placed.": "ಇಲ್ಲಿಗೆ ಹಿಂತಿರುಗಿ, ಪಾವತಿ ರಸೀದಿಯಲ್ಲಿರುವ 12 ಅಂಕಿಯ UPI Ref No. (UTR) ನಮೂದಿಸಿ. ನಮ್ಮ ತಂಡ ಅದನ್ನು ನಮ್ಮ ಬ್ಯಾಂಕ್‌ನೊಂದಿಗೆ ಖಚಿತಪಡಿಸುತ್ತದೆ ಮತ್ತು ನಿಮ್ಮ ಆರ್ಡರ್ ಆಗುತ್ತದೆ.",
+  "Payment done? Enter its UPI Ref No. now": "ಪಾವತಿ ಆಯಿತೇ? ಈಗಲೇ ಅದರ UPI Ref No. ನಮೂದಿಸಿ",
+  "It is the 12-digit number on the receipt in your UPI app (UPI Ref No., UPI transaction ID or UTR). Your order is kept for you while you enter it.": "ಇದು ನಿಮ್ಮ UPI ಆ್ಯಪ್‌ನ ರಸೀದಿಯಲ್ಲಿರುವ 12 ಅಂಕಿಯ ಸಂಖ್ಯೆ (UPI Ref No., UPI transaction ID ಅಥವಾ UTR). ನೀವು ಅದನ್ನು ನಮೂದಿಸುವವರೆಗೆ ನಿಮ್ಮ ಆರ್ಡರ್ ಕಾಯ್ದಿರಿಸಲಾಗುತ್ತದೆ.",
+  "Paid? Enter the 12-digit UPI Ref No. (UTR) from your UPI app": "ಪಾವತಿಸಿದಿರಾ? ನಿಮ್ಮ UPI ಆ್ಯಪ್‌ನಿಂದ 12 ಅಂಕಿಯ UPI Ref No. (UTR) ನಮೂದಿಸಿ",
 };
 
 /** Word-level fallbacks for text that isn't in the dictionary (product names, specs from the database). */
