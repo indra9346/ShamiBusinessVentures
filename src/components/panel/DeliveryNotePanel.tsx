@@ -33,8 +33,9 @@ function eventText(event: DeliveryNoteEvent) {
 /**
  * The order's delivery note on the admin order page: why it cannot be generated yet, or the note, its
  * warnings and who generated and printed it. Whatever this shows, the database decides again on the press.
+ * readOnly (the sales order is void in Zoho): only a note already made shows, with its warnings, and nothing to press.
  */
-export function DeliveryNotePanel({ orderNo, className = "" }: { orderNo: string; className?: string }) {
+export function DeliveryNotePanel({ orderNo, className = "", readOnly = false }: { orderNo: string; className?: string; readOnly?: boolean }) {
   const [view, setView] = useState<DeliveryNoteView | null>(null);
   const [failed, setFailed] = useState("");
   const [busy, setBusy] = useState<"" | "check" | "generate" | "stop">("");
@@ -87,6 +88,7 @@ export function DeliveryNotePanel({ orderNo, className = "" }: { orderNo: string
   };
 
   if (STATIC_DATA_MODE) {
+    if (readOnly) return null;
     return (
       <Panel title="Delivery note and slips" className={className}>
         <p className="text-sm text-slate">Delivery notes need the live database, so they are not available in this demo.</p>
@@ -98,13 +100,14 @@ export function DeliveryNotePanel({ orderNo, className = "" }: { orderNo: string
   const note = view?.note ?? null;
   const words = state ? gateWords(state) : null;
   const warnings = note && state ? paperWarnings(state) : [];
-  const recheck = (
+  if (readOnly && !note) return null;
+  const recheck = readOnly ? null : (
     <Button size="sm" variant="outline" disabled={busy !== ""} onClick={() => void check(true)}>
       <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", busy === "check" && "animate-spin")} /> Check again
     </Button>
   );
 
-  const stopControl = state && (
+  const stopControl = state && !readOnly && (
     <div className="space-y-2 border-t border-border pt-3">
       {stopping ? (
         <div className="flex flex-wrap items-center gap-2">

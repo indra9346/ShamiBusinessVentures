@@ -61,7 +61,7 @@ export const Route = createFileRoute("/product/$id")({
     return {
       ...pageHead({
         title: `${p.name} at ${inr(p.price)} | ${SITE_NAME}`,
-        description: `Buy ${p.name}${p.weight ? ` (${p.weight})` : ""} at ${inr(p.price)} + GST from Grain Bazar. ${own ? `${own} ` : ""}GST invoice, pickup or delivery from Challakere and Hubli.`,
+        description: `Buy ${p.name}${p.weight ? ` (${p.weight})` : ""} at ${inr(p.price)} (GST included) from Grain Bazar. ${own ? `${own} ` : ""}GST invoice, pickup or delivery from Challakere and Hubli.`,
         path,
         type: "product",
         ...(p.image ? { image: p.image } : {}),
@@ -239,7 +239,7 @@ function ProductDetail() {
               </>
             )}
           </div>
-          <p className="mt-1 text-xs text-slate">GST calculated at checkout · Pack size {product.weight}</p>
+          <p className="mt-1 text-xs text-slate">Price includes GST · Pack size {product.weight}</p>
 
           <p className={cn("mt-4 text-sm font-semibold", availableStock > 0 ? "text-success" : "text-danger")}>
             {availableStock > 0 ? `In stock — ${availableStock} units available` : "Currently out of stock"}
@@ -388,7 +388,7 @@ function ProductDetail() {
                 ["Pack size", product.weight],
                 ["SKU", product.sku],
                 ["Brand", product.brand],
-                ["Tax", `${product.gst}% GST, added at checkout`],
+                ["Tax", `${product.gst}% GST, included in the price`],
               ].map(([k, v]) => (
                 <div key={k} className="flex justify-between border-b border-border pb-2">
                   <dt className="text-slate">{k}</dt>

@@ -851,6 +851,7 @@ export type Database = {
           branch_id: string | null
           zoho_last_polled_at: string | null
           zoho_order_status: string | null
+          prices_include_gst: boolean
           zoho_last_modified_at: string | null
           advance_due: number
           balance_due: number
@@ -892,6 +893,7 @@ export type Database = {
           zoho_salesorder_id?: string | null
           zoho_last_polled_at?: string | null
           zoho_order_status?: string | null
+          prices_include_gst?: boolean
           zoho_last_modified_at?: string | null
           advance_due?: number
           balance_due?: number
@@ -933,6 +935,7 @@ export type Database = {
           zoho_salesorder_id?: string | null
           zoho_last_polled_at?: string | null
           zoho_order_status?: string | null
+          prices_include_gst?: boolean
           zoho_last_modified_at?: string | null
           advance_due?: number
           balance_due?: number
@@ -1358,6 +1361,7 @@ export type Database = {
       complete_follow_up_task: { Args: { _id: string; _note?: string }; Returns: Json }
       admin_reject_utr_and_end_checkout: { Args: { _order_no: string; _note: string; _expected_utr?: string | null }; Returns: boolean }
       order_delete_blocker: { Args: { _order_no: string }; Returns: string | null }
+      extend_my_payment_hold: { Args: { _order_no: string }; Returns: string | null }
       admin_delete_order: { Args: { _order_no: string; _reason: string }; Returns: Json }
       mark_utr_refunded: { Args: { _order_no: string }; Returns: boolean }
       delivery_note_check: { Args: { _order_no: string; _zoho: Json | null }; Returns: Json }

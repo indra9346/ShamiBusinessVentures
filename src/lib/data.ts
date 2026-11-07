@@ -784,6 +784,8 @@ export type Order = {
   zohoSalesOrderId?: string | null;
   /** Zoho's own status for the linked sales order (draft, confirmed, void…). */
   zohoOrderStatus?: string | null;
+  /** Placed on or after 7 Nov 2026: its item prices include GST, so `subtotal` is the goods before GST and `tax` the GST inside them. Older orders added GST on top. */
+  pricesIncludeGst?: boolean;
   dbOrderId?: string;
   /** Per-vendor status for split marketplace fulfillment. */
   vendorStatuses?: { vendorId: string; vendor: string; status: OrderStatus }[];

@@ -229,6 +229,8 @@ export type BatchOrder = {
   id: string; order_no: string; created_at: string; order_status: string; payment_status: string; branch_id: string | null;
   user_id: string | null; customer_name: string | null; customer_email: string | null; customer_phone: string | null;
   shipping_address: JsonLike; subtotal: number; discount: number;
+  /** From 7 Nov 2026 item prices include GST: the rate before GST is worked out of unit_price, and the discount came off the price with GST. */
+  prices_include_gst?: boolean | null; gst_amount?: number | null;
   /** A held checkout: until when its stock stays put aside. */
   payment_hold_until?: string | null;
 };
@@ -344,15 +346,18 @@ export function buildBatchReport(input: {
       if (!item || !order || VOID_STATUSES.includes(order.order_status)) continue;
       if (UNPACKED_STATUSES.includes(order.order_status)) unpackedByBatch.set(batch.id, qty((unpackedByBatch.get(batch.id) ?? 0) + net));
       const held = HELD_STATUSES.includes(order.order_status);
-      const share = num(order.subtotal) > 0 ? Math.max(0, 1 - num(order.discount) / num(order.subtotal)) : 1;
-      const value = paise(net * num(item.unit_price) * share);
+      const inclusive = Boolean(order.prices_include_gst);
+      const goods = inclusive ? num(order.subtotal) + num(order.gst_amount) : num(order.subtotal);
+      const share = goods > 0 ? Math.max(0, 1 - num(order.discount) / goods) : 1;
+      const rateBeforeGst = inclusive ? (num(item.unit_price) * 100) / (100 + num(item.gst_rate)) : num(item.unit_price);
+      const value = paise(net * rateBeforeGst * share);
       const cost = paise(net * num(allocation.unit_cost));
       const key = customerKeyOf(order);
       sales.push({
         batchId: batch.id, batchCode: batch.batch_code, orderItemId: item.id, orderId: order.id, orderNo: order.order_no, orderDate: order.created_at,
         orderStatus: order.order_status, held, customerKey: key, customerName: order.customer_name ?? "",
         customerPhone: order.customer_phone ?? "", customerEmail: order.customer_email ?? "", customerAddress: addressLine(order.shipping_address),
-        productName: item.product_name || batch.product_name, qty: net, rate: paise(num(item.unit_price) * share), value, cost,
+        productName: item.product_name || batch.product_name, qty: net, rate: paise(rateBeforeGst * share), value, cost,
         profit: held ? 0 : paise(value - cost),
         holdUntil: held ? order.payment_hold_until ?? null : null,
       });

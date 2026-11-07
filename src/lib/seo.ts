@@ -183,6 +183,8 @@ export function productJsonLd(p: ProductForSeo) {
     url: absoluteUrl(`/product/${encodeURIComponent(p.id)}`),
     priceCurrency: "INR",
     price: price.toFixed(2),
+    // Prices include GST (owner, 7 Nov 2026), as Google expects for India.
+    priceSpecification: { "@type": "UnitPriceSpecification", price: price.toFixed(2), priceCurrency: "INR", valueAddedTaxIncluded: true },
     availability: (p.stock ?? 1) > 0 ? "https://schema.org/InStock" : "https://schema.org/OutOfStock",
     itemCondition: "https://schema.org/NewCondition",
     seller: { "@type": "Organization", name: SITE_NAME },
