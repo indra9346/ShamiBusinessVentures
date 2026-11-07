@@ -1,5 +1,6 @@
-import type { ReactElement } from "react";
+import { useEffect, type ReactElement } from "react";
 import { upiAppLinks } from "@/lib/upi-pay";
+import { PAY_RETURNED_EVENT, rememberPayReturn, takePayReturn } from "@/lib/upi-return";
 
 /*
  * The UPI app buttons on the pay screen: each app's own mark in its colours, as large tiles that
@@ -56,7 +57,30 @@ const MARKS: Record<string, () => ReactElement> = {
   "Any UPI app": UpiMark,
 };
 
-export function UpiAppButtons({ uri }: { uri: string }) {
+/**
+ * One-tap UPI app buttons. `returnTo` is the pay panel's id: after paying, the customer comes back to it (its QR and
+ * UTR box), whether the browser kept the page or reloaded it.
+ */
+export function UpiAppButtons({ uri, returnTo }: { uri: string; returnTo?: string }) {
+  useEffect(() => {
+    const comeBack = () => {
+      if (document.visibilityState !== "visible") return;
+      const target = takePayReturn();
+      if (!target) return;
+      // After the browser has laid the page out again.
+      window.setTimeout(() => {
+        document.getElementById(target)?.scrollIntoView({ behavior: "smooth", block: "start" });
+        window.dispatchEvent(new CustomEvent(PAY_RETURNED_EVENT, { detail: target }));
+      }, 150);
+    };
+    comeBack();
+    document.addEventListener("visibilitychange", comeBack);
+    window.addEventListener("pageshow", comeBack);
+    return () => {
+      document.removeEventListener("visibilitychange", comeBack);
+      window.removeEventListener("pageshow", comeBack);
+    };
+  }, []);
   return (
     <div className="grid grid-cols-4 gap-2">
       {upiAppLinks(uri).map((link) => {
@@ -65,6 +89,7 @@ export function UpiAppButtons({ uri }: { uri: string }) {
           <a
             key={link.app}
             href={link.href}
+            onClick={() => { if (returnTo) rememberPayReturn(returnTo); }}
             className="flex min-h-[4.5rem] flex-col items-center justify-center gap-1.5 rounded-xl border border-border bg-white px-1 py-2 text-center shadow-xs transition-colors hover:border-gold active:bg-ivory"
           >
             <span data-no-translate className="overflow-hidden rounded-[10px] ring-1 ring-black/5">
