@@ -5230,6 +5230,22 @@ export const kn: Record<string, string> = {
   "One bag must weigh from 1 to 100 kg": "ಒಂದು ಚೀಲದ ತೂಕ 1 ರಿಂದ 100 kg ಇರಬೇಕು",
   "Enter the bag weight with one decimal at most, like 26 or 26.5": "ಚೀಲದ ತೂಕವನ್ನು ಹೆಚ್ಚೆಂದರೆ ಒಂದು ದಶಮಾಂಶದೊಂದಿಗೆ ನಮೂದಿಸಿ, 26 ಅಥವಾ 26.5 ರಂತೆ",
   "The page showed {0} quintal, but {1} bags of {2} kg is {3} quintal. Reload the page and try again.": "ಪುಟ {0} ಕ್ವಿಂಟಾಲ್ ತೋರಿಸಿತು, ಆದರೆ {2} kg ನ {1} ಚೀಲಗಳು {3} ಕ್ವಿಂಟಾಲ್. ಪುಟವನ್ನು ಮರುಲೋಡ್ ಮಾಡಿ ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ.",
+  // Prices include GST (7 Nov 2026).
+  "Subtotal (incl. GST)": "ಉಪಮೊತ್ತ (GST ಸೇರಿ)",
+  "Includes GST of {0}": "{0} GST ಸೇರಿದೆ",
+  "Price includes GST · Pack size": "ಬೆಲೆಯಲ್ಲಿ GST ಸೇರಿದೆ · ಪ್ಯಾಕ್ ಗಾತ್ರ",
+  "{0}% GST, included in the price": "{0}% GST, ಬೆಲೆಯಲ್ಲೇ ಸೇರಿದೆ",
+  "incl. GST": "GST ಸೇರಿ",
+  "Subtotal (before GST)": "ಉಪಮೊತ್ತ (GST ಮೊದಲು)",
+  "Sub Total before GST (": "GST ಮೊದಲು ಉಪಮೊತ್ತ (",
+  "Price incl. GST": "GST ಸೇರಿದ ಬೆಲೆ",
+  "Selling price before GST (Qntl)": "GST ಮೊದಲು ಮಾರಾಟ ಬೆಲೆ (ಕ್ವಿಂಟಾಲ್)",
+  "Selling price before GST ({0} kg bag)": "GST ಮೊದಲು ಮಾರಾಟ ಬೆಲೆ ({0} ಕೆಜಿ ಚೀಲ)",
+  "Customers pay ({0} kg bag, incl. {1}% GST)": "ಗ್ರಾಹಕರು ಪಾವತಿಸುವುದು ({0} ಕೆಜಿ ಚೀಲ, {1}% GST ಸೇರಿ)",
+  "Sheet price {0} + {1}% GST": "ಶೀಟ್ ಬೆಲೆ {0} + {1}% GST",
+  "per {0} kg bag, GST included": "ಪ್ರತಿ {0} ಕೆಜಿ ಚೀಲಕ್ಕೆ, GST ಸೇರಿ",
+  "{0} at {1}: {2} incl. GST": "{1} ನಲ್ಲಿ {0}: {2} GST ಸೇರಿ",
+  "Order total (incl. GST):": "ಆರ್ಡರ್ ಒಟ್ಟು (GST ಸೇರಿ):",
 };
 
 /** Word-level fallbacks for text that isn't in the dictionary (product names, specs from the database). */

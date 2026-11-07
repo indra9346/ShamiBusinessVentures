@@ -136,7 +136,7 @@ export function invoiceNumberFor(order: Order, prefix: string) {
   return `${prefix}${order.id.replace(/[^0-9]/g, "") || order.id}`;
 }
 
-type Line = {
+export type Line = {
   name: string;
   detail: string;
   vendor: string;
@@ -149,13 +149,20 @@ type Line = {
   tax: number;
 };
 
-/** Per-line tax, reconciled to the order's GST total (which the database calculated). */
-function invoiceLines(order: Order, catalog: Product[]): Line[] {
+/**
+ * Per-line tax, reconciled to the order's GST total (which the database calculated). An order whose prices
+ * include GST shows each line's taxable value and the GST inside it (₹130 at 5% = ₹123.81 + ₹6.19), and its
+ * rate is the price before GST; an older order's rate already was.
+ */
+export function invoiceLines(order: Pick<Order, "items" | "tax" | "pricesIncludeGst">, catalog: Product[]): Line[] {
   const lines: Line[] = order.items.map((item) => {
     const product = catalog.find((candidate) => candidate.id === item.product.id) ?? item.product;
-    const rate = item.unitPrice ?? item.product.price;
-    const taxable = round2(rate * item.qty);
+    const price = item.unitPrice ?? item.product.price;
     const gstRate = Number(item.gstRate ?? item.product.gst ?? 0);
+    const gross = round2(price * item.qty);
+    const inside = order.pricesIncludeGst && gstRate > 0 ? round2((gross * gstRate) / (100 + gstRate)) : 0;
+    const taxable = order.pricesIncludeGst ? round2(gross - inside) : gross;
+    const rate = order.pricesIncludeGst ? round2(taxable / item.qty) : price;
     return {
       name: item.product.name || "Item",
       detail: [item.product.sku ? `SKU ${item.product.sku}` : "", item.capacity || product.weight ? `Pack ${item.capacity || product.weight}` : ""]
@@ -167,7 +174,7 @@ function invoiceLines(order: Order, catalog: Product[]): Line[] {
       rate,
       taxable,
       gstRate,
-      tax: round2((taxable * gstRate) / 100),
+      tax: order.pricesIncludeGst ? inside : round2((taxable * gstRate) / 100),
     };
   });
   const difference = round2(order.tax - lines.reduce((sum, line) => sum + line.tax, 0));

@@ -4,7 +4,7 @@ import {
   allowedMethods, bankDetailChanges, lapsedTransfer, methodsForOrders, availableMethods, bankDetailsProblem, bankUtrProblem, cleanBankDetails, isBankMethod, mergeIntoCart, methodLabel,
   normaliseBankUtr, paymentNoticeTarget, pickMethod, reorderPlan,
 } from "../src/lib/payment-rules.ts";
-import { lineGst, toPaise } from "../src/lib/pricing.ts";
+import { lineGstInside, toPaise } from "../src/lib/pricing.ts";
 import { holdView } from "../src/lib/payment-hold.ts";
 
 test("the method follows the client's note, at every boundary", () => {
@@ -117,12 +117,17 @@ test("a split cart offers only what every order allows", () => {
 });
 
 test("the screen's total lands on the same side of a boundary as the database's", () => {
-  // Float noise: these carts are exactly Rs 1 lakh and Rs 2 lakh.
-  const noisy = 3059.74 * 12 + lineGst(3059.74, 12, 18) + 3148.56 * 18;
+  // Float noise: these carts are exactly Rs 1 lakh and Rs 2 lakh. Prices include GST, so the cart is just the prices.
+  const noisy = 1037.37 * 5 + 18962.63 * 5;
+  assert.notEqual(noisy, 100_000);
   assert.deepEqual(allowedMethods(toPaise(noisy)), ["NEFT"]);
   assert.deepEqual(allowedMethods(toPaise(792.4 * 17 + 5652.4 * 33)), ["NEFT", "RTGS"]);
-  // A half-paisa GST rounds up, as round(numeric, 2) does.
-  assert.equal(lineGst(760.25, 14, 5), 532.18);
+  // The GST inside a line, per line to paise, as the database works it out (price x qty x rate / (100 + rate)).
+  assert.equal(lineGstInside(130, 1, 5), 6.19);
+  assert.equal(lineGstInside(130, 3, 5), 18.57);
+  assert.equal(lineGstInside(2700, 2, 5), 257.14);
+  assert.equal(lineGstInside(112, 1, 12), 12);
+  assert.equal(lineGstInside(50, 2, 0), 0);
   assert.equal(toPaise(1.005), 1.01);
   assert.equal(toPaise(99_999.995), 100_000);
   assert.equal(toPaise(2518.95), 2518.95);

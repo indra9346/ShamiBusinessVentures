@@ -6,7 +6,7 @@ import { Check, CreditCard, Loader2, Lock, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { SiteLayout, Breadcrumbs } from "@/components/site/SiteLayout";
 import { getAvailablePurchaseQuantity, inr, inrPrecise } from "@/lib/data";
-import { couponDiscount, lineGst, toPaise } from "@/lib/pricing";
+import { couponDiscount, lineGstInside, toPaise } from "@/lib/pricing";
 import { useApp, type Address } from "@/lib/store";
 import { PickupPointCard } from "@/components/site/PickupPointCard";
 import { usePickupSettings } from "@/lib/pickup-points";
@@ -322,8 +322,9 @@ function Checkout() {
       return groups;
     }, {}))
     : [{ point: null, lines: checkoutItems }];
+  // Prices include GST: the subtotal is what the customer pays for the goods, and this is the GST inside it.
   const tax = checkoutItems.reduce(
-    (sum, line) => sum + lineGst(line.product.price, line.qty, line.product.gst),
+    (sum, line) => sum + lineGstInside(line.product.price, line.qty, line.product.gst),
     0,
   );
   // A coupon applies to a single order; checkout does not send it when the cart splits.
@@ -337,17 +338,16 @@ function Checkout() {
           c.maxPerUser),
   );
   const discount = appliedCoupon ? couponDiscount(appliedCoupon, subtotal) : 0;
-  const total = toPaise(subtotal + shipCost + tax - discount);
+  const total = toPaise(subtotal + shipCost - discount);
   const summary = confirmationSummary ?? { subtotal, shipCost, tax, discount, total };
   // The order's value decides how it can be paid; the database checks again on the final total. A cart that
   // splits is several orders, each with its own total.
   const orderTotals = orderGroups.length > 1
     ? orderGroups.map((group) => {
       const goods = group.lines.reduce((sum, line) => sum + line.product.price * line.qty, 0);
-      const gst = group.lines.reduce((sum, line) => sum + lineGst(line.product.price, line.qty, line.product.gst), 0);
       const point = group.point ? branches.find((branch) => branch.id === group.point) ?? null : null;
       const delivers = point ? (fulfil === "Delivery" && point.deliveryEnabled) || !point.pickupEnabled : fulfil === "Delivery";
-      return toPaise(goods + gst + (delivers ? branchDeliveryFee(point ?? fulfilBranch, goods) : 0));
+      return toPaise(goods + (delivers ? branchDeliveryFee(point ?? fulfilBranch, goods) : 0));
     })
     : [total];
   const payOptions = methodsForOrders(orderTotals, { upi: Boolean(directUpi), bank: Boolean(bankDetails) });
@@ -511,7 +511,8 @@ function Checkout() {
       // authoritative values returned by that transaction on confirmation.
       const sum = (pick: (order: (typeof placed)[number]) => number) => placed.reduce((total, order) => total + pick(order), 0);
       setConfirmationSummary({
-        subtotal: sum((order) => order.subtotal),
+        // The database stores the goods before GST; the customer saw them with GST inside.
+        subtotal: sum((order) => order.subtotal + order.tax),
         shipCost: sum((order) => order.shipping),
         tax: sum((order) => order.tax),
         discount: sum((order) => order.discount),
@@ -639,9 +640,8 @@ function Checkout() {
   ) : (
     <div className="mt-4 space-y-2.5 text-sm">
       {[
-        ["Subtotal", inrPrecise(summary.subtotal)],
+        ["Subtotal (incl. GST)", inrPrecise(summary.subtotal)],
         [fulfil === "Delivery" ? "Delivery" : "Pickup", summary.shipCost === 0 ? "Free" : inrPrecise(summary.shipCost)],
-        ["GST", inrPrecise(summary.tax)],
         ...(summary.discount > 0
           ? [["Coupon discount", `- ${inrPrecise(summary.discount)}`]]
           : []),
@@ -656,6 +656,7 @@ function Checkout() {
         <span>Total</span>
         <span>{inrPrecise(summary.total)}</span>
       </div>
+      {summary.tax > 0 && <p className="text-right text-xs text-slate">{`Includes GST of ${inrPrecise(summary.tax)}`}</p>}
     </div>
   );
 

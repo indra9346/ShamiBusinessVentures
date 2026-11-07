@@ -20,7 +20,6 @@ import { Pager } from "@/components/panel/pager";
 import { adminNav } from "@/lib/panel-nav";
 import { canCancelOrder, inr, orderStages, type OrderStatus } from "@/lib/data";
 import { allowedMethods } from "@/lib/payment-rules";
-import { lineGst } from "@/lib/pricing";
 import { inOrderRange, matchesOrderStatus, OPEN_ORDERS, orderListSearch, orderStatusFilter } from "@/lib/panel-filters";
 import { useApp, type Address } from "@/lib/store";
 import { supabase } from "@/integrations/supabase/client";
@@ -261,8 +260,8 @@ function AdminOrders() {
           capacity: line.capacity,
           unitPrice: line.unitPrice,
         })),
-        // The order's value decides how it can be paid: bank transfer from Rs 1 lakh.
-        method: allowedMethods(lines.reduce((sum, line) => sum + line.unitPrice * line.qty + lineGst(line.unitPrice, line.qty, line.product!.gst), 0))[0] ?? "NEFT",
+        // The order's value decides how it can be paid: bank transfer from Rs 1 lakh. Prices include GST.
+        method: allowedMethods(lines.reduce((sum, line) => sum + line.unitPrice * line.qty, 0))[0] ?? "NEFT",
         payment: "Pending",
         customerOverride: customer,
         ...(shippingAddress ? { shippingAddress } : {}),
@@ -844,7 +843,7 @@ function AdminOrders() {
               />
             </div>
             <p className="text-right text-sm font-semibold text-navy">
-              Order subtotal:{" "}
+              Order total (incl. GST):{" "}
               {inr(
                 draftItems.reduce(
                   (sum, item) => sum + (Number(item.qty) || 0) * (Number(item.price) || 0),

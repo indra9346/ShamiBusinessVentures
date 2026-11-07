@@ -91,7 +91,7 @@ export const getBatchData = createServerFn({ method: "GET" })
     const orders: BatchOrder[] = [];
     for (let start = 0; start < orderIds.length; start += IN_CHUNK) {
       const { data, error } = await db.from("orders")
-        .select("id,order_no,created_at,order_status,payment_status,branch_id,user_id,customer_name,customer_email,customer_phone,shipping_address,subtotal,discount,payment_hold_until")
+        .select("id,order_no,created_at,order_status,payment_status,branch_id,user_id,customer_name,customer_email,customer_phone,shipping_address,subtotal,discount,payment_hold_until,gst_amount,prices_include_gst")
         .in("id", orderIds.slice(start, start + IN_CHUNK));
       if (error) throw new Error("Could not read orders");
       for (const order of data ?? []) orders.push({ ...order, subtotal: n(order.subtotal), discount: n(order.discount) });
