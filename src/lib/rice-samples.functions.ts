@@ -91,7 +91,9 @@ export const getRiceSampleDesk = createServerFn({ method: "POST" })
       id: b.id, name: b.name, isDefault: b.is_default, locationId: b.zoho_location_id, locationName: b.zoho_location_name,
     }));
     return {
-      samples: samples.map((s): RiceSample => ({ ...s, party_role: s.party_role as RiceSample["party_role"], status: s.status as RiceSample["status"], price_per_qntl: n(s.price_per_qntl), quantity_qntl: n(s.quantity_qntl) })),
+      samples: samples.map((s): RiceSample => ({ ...s, party_role: s.party_role as RiceSample["party_role"], status: s.status as RiceSample["status"], price_per_qntl: n(s.price_per_qntl), quantity_qntl: n(s.quantity_qntl),
+        // Missing until the bags migration is applied, and null for a sample entered in quintals.
+        quantity_bags: s.quantity_bags == null ? null : n(s.quantity_bags), bag_kg: s.bag_kg == null ? null : n(s.bag_kg) })),
       tests: tests as unknown as RiceTest[],
       events: events as unknown as RiceEvent[],
       pos: pos.map(poFromRow),

@@ -10,6 +10,8 @@ Files: `supabase/migrations/20261103100000_rice_samples.sql`, `src/lib/rice-samp
 
 Price is rupees per quintal (100 kg) before GST, the same unit as `price_lots`. A figure outside ₹1,500 to ₹20,000 per quintal, which usually means a price per kg or per bag, is questioned while typing and again at the purchase order. Each sample gets a short number (S-12) to write on its bag, so a test lands on the right one.
 
+Available can be typed in quintals or in bags (owner's request, 7 Nov 2026), because brokers often quote "300 bags of 26 kg". In bags, the form asks for the weight of one bag (1 to 100 kg, one decimal at most) and shows the quintals under it. `quantity_qntl` stays the one figure the list, compare, Buy this and the Zoho purchase order read; `quantity_bags` and `bag_kg` keep what was typed, so the card says "200 bags, 26 kg each · 52 quintal" and Edit reopens in bags. The rice master list has no pack size and a sample isn't linked to a product, so the bag weight is always asked; sizes used on earlier samples are offered. `rice_sample_save_with_bags` works out the quintals itself and refuses if the page showed a different figure; a table check holds the same sum. The old `rice_sample_save` still works and saves in quintals, for the page that was live before the update.
+
 A cook test takes five taps in the godown, and every test is kept:
 
 | Field | Why it helps the decision |
