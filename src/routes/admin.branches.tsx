@@ -9,6 +9,7 @@ import { inr } from "@/lib/data";
 import { matchesBranchView } from "@/lib/panel-filters";
 import { useApp } from "@/lib/store";
 import { PLATFORM_FEATURES_KEY, reloadBranches, useBranches, type Branch } from "@/lib/branches";
+import { useDepositAccounts } from "@/components/panel/DepositAccountsPanel";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -59,6 +60,7 @@ const formFrom = (branch: Branch): Form => ({
 function AdminBranches() {
   const { branches, stock, prices, features, ready } = useBranches();
   const { orders } = useApp();
+  const [depositAccounts] = useDepositAccounts();
   const [form, setForm] = useState<Form | null>(null);
   const [saving, setSaving] = useState(false);
   const [locations, setLocations] = useState<{ id: string; name: string }[] | null>(null);
@@ -276,6 +278,13 @@ function AdminBranches() {
                     ? <>Zoho price list: <span className="font-semibold text-navy">{branch.zohoPricebookName || branch.zohoPricebookId}</span> · {[...prices.values()].filter((byBranch) => byBranch.get(branch.id)?.listed).length} item(s) sold here{[...prices.values()].some((byBranch) => byBranch.get(branch.id)?.pending) ? " · website changes waiting for Zoho" : ""}</>
                     : "Prices: normal price, every item"}
                 </p>
+                {depositAccounts && (
+                  <p className="text-xs text-slate">
+                    Payments deposited to:{" "}
+                    <span className="font-semibold text-navy">{depositAccounts[branch.id]?.accountName ?? "Undeposited Funds (Zoho's default)"}</span>{" "}
+                    <Link to="/admin/payments" hash="deposit-accounts" className="font-semibold text-gold hover:underline">Change</Link>
+                  </p>
+                )}
                 {!branch.vendorId && (
                   <p className="text-xs">
                     <Link to="/admin/partners" className="font-semibold text-gold hover:underline">Channel partner: login, commission rates and target →</Link>

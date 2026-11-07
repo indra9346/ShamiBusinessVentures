@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { CheckCircle2, Clock, IndianRupee, RotateCcw, XCircle } from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { DataTable, FilterNote, Panel, scrollToSection, StatCard, StatusBadge } from "@/components/panel/widgets";
+import { DepositAccountsPanel } from "@/components/panel/DepositAccountsPanel";
 import { adminNav } from "@/lib/panel-nav";
 import { inr, inrPrecise } from "@/lib/data";
 import { loadAdvancePercent } from "@/lib/business-rules";
@@ -324,6 +325,8 @@ function AdminPayments() {
           </div>
         </div>
       </Panel>
+
+      <DepositAccountsPanel className="mt-6" />
 
       <Dialog open={!!view} onOpenChange={(o) => !o && setView(null)}>
         <DialogContent>
