@@ -660,7 +660,7 @@ function AdminOrderDetail() {
           </div>
           <dl className="space-y-2 text-sm">
             <div className="flex justify-between">
-              <dt className="text-slate">Sub Total ({order.items.length} Item{order.items.length === 1 ? "" : "s"})</dt>
+              <dt className="text-slate">Sub Total before GST ({order.items.length} Item{order.items.length === 1 ? "" : "s"})</dt>
               <dd className="font-medium text-charcoal">{inr(order.subtotal)}</dd>
             </div>
             {order.discount > 0 && (
@@ -711,7 +711,7 @@ function AdminOrderDetail() {
                   <th className="px-3 py-3">SKU</th>
                   <th className="px-3 py-3">Vendor</th>
                   <th className="px-3 py-3 text-center">Bags / Capacity</th>
-                  <th className="px-3 py-3 text-right">Selling Price</th>
+                  <th className="px-3 py-3 text-right">{order.pricesIncludeGst ? "Price incl. GST" : "Selling Price"}</th>
                   <th className="px-3 py-3 text-right">FIFO Unit Cost</th>
                   <th className="px-3 py-3 text-right">Gross Margin</th>
                   <th className="px-3 py-3 text-right">Line Total</th>

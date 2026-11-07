@@ -111,7 +111,7 @@ export function StickyCartBar() {
                 >
                   {inr(subtotal)}
                   <span className="ml-1.5 text-[11px] font-medium text-slate">
-                    {previewing ? `incl. ${preview.qty} new` : "+ GST at checkout"}
+                    {previewing ? `incl. ${preview.qty} new` : "incl. GST"}
                   </span>
                 </span>
               </span>

@@ -2512,7 +2512,8 @@ async function syncLinkedZohoOrder(
         discount_type: "entity_level",
         is_discount_before_tax: true,
         shipping_charge: Number(order.shipping) || 0,
-        is_inclusive_tax: false,
+        // Prices include GST on orders from 7 Nov 2026: Zoho takes the rate as GST-inclusive, so its total is the price paid.
+        is_inclusive_tax: Boolean(order.prices_include_gst),
         ...(str(zoho["place_of_supply"]) ? { place_of_supply: str(zoho["place_of_supply"]) } : {}),
         ...(str(zoho["gst_treatment"]) ? { gst_treatment: str(zoho["gst_treatment"]) } : {}),
         ...(str(zoho["gst_no"]) ? { gst_no: str(zoho["gst_no"]) } : {}),
@@ -3883,7 +3884,8 @@ async function syncZohoOrder(db: Awaited<ReturnType<typeof dbAdmin>>, region: Re
     discount_type: "entity_level",
     is_discount_before_tax: true,
     shipping_charge: Number(order.shipping) || 0,
-    is_inclusive_tax: false,
+    // Prices include GST on orders from 7 Nov 2026: Zoho takes the rate as GST-inclusive, so its total is the price paid.
+    is_inclusive_tax: Boolean(order.prices_include_gst),
     notes: notesParts.join(" "),
     ...zohoGstFields(order.customer_gstin, "order", order.business_legal_name),
   };

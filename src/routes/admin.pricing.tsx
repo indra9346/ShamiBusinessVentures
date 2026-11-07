@@ -6,7 +6,7 @@ import { PanelLayout } from "@/components/panel/PanelLayout";
 import { FilterNote, Panel, scrollToSection, StatCard } from "@/components/panel/widgets";
 import { adminNav } from "@/lib/panel-nav";
 import { inrPrecise } from "@/lib/data";
-import { priceLotTotals } from "@/lib/pricing";
+import { addGst, priceLotTotals } from "@/lib/pricing";
 import { useApp } from "@/lib/store";
 import { reloadBranches, useBranches } from "@/lib/branches";
 import { godownProductOptions, godownProductTag, groupGodownProducts } from "@/lib/godown-products";
@@ -127,26 +127,31 @@ function AdminPricing() {
     await load();
   };
 
-  /** Copies the lot's bag price to its godown: the godown's Zoho price list, or the item's normal price. */
+  /** What customers pay for a lot's bag: the sheet's selling price is before GST, and prices include GST (owner, 7 Nov 2026). */
+  const customerPrice = (lot: Lot) => addGst(Number(lot.selling_bag), products.find((item) => item.id === lot.product_id)?.gst ?? 0);
+  const productGst = (id: string | null) => products.find((item) => item.id === id)?.gst ?? 0;
+
+  /** Copies the lot's bag price, with GST added, to its godown: the godown's Zoho price list, or the item's normal price. */
   const applyPrice = async (lot: Lot) => {
     const branch = branches.find((item) => item.id === lot.branch_id);
     const product = products.find((item) => item.id === lot.product_id);
     if (!branch || !product) { toast.error("Choose the website product and the godown for this lot first"); return; }
+    const price = customerPrice(lot);
     setBusyApply(true);
     try {
       if (branch.zohoPricebookId) {
-        const { error } = await supabase.rpc("admin_set_branch_price", { _branch_id: branch.id, _product_id: product.id, _price: Number(lot.selling_bag), _listed: true });
+        const { error } = await supabase.rpc("admin_set_branch_price", { _branch_id: branch.id, _product_id: product.id, _price: price, _listed: true });
         if (error) throw new Error(error.message);
         // Send it to the godown's Zoho price list now rather than at the next 15-minute sync.
         const { syncZohoGodownsNow } = await import("@/lib/zoho-commerce.functions");
         const result = await syncZohoGodownsNow();
         if (result.prices.errors.length) toast.warning("Saved on the website; Zoho will be updated at the next sync", { description: result.prices.errors[0] });
         await reloadBranches();
-      } else if (!(await updateProduct(product.id, { price: Number(lot.selling_bag) }))) {
+      } else if (!(await updateProduct(product.id, { price }))) {
         throw new Error("The product price could not be saved");
       }
-      await supabase.from("price_lots").update({ applied_price: Number(lot.selling_bag), applied_branch_id: branch.id, applied_at: new Date().toISOString() }).eq("id", lot.id);
-      toast.success(`${product.name} at ${branch.name}: ${inrPrecise(Number(lot.selling_bag))}`, {
+      await supabase.from("price_lots").update({ applied_price: price, applied_branch_id: branch.id, applied_at: new Date().toISOString() }).eq("id", lot.id);
+      toast.success(`${product.name} at ${branch.name}: ${inrPrecise(price)} incl. GST`, {
         description: branch.zohoPricebookId ? `Godown price list "${branch.zohoPricebookName}" updated` : "Normal price updated (godowns without a price list)",
       });
       setApplying(null);
@@ -243,8 +248,9 @@ function AdminPricing() {
         <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {result(`GST (${num(form.gstRate)}%)`, inrPrecise(live.gst))}
           {result("Landing price (Qntl)", inrPrecise(live.landing))}
-          {result("Selling price (Qntl)", inrPrecise(live.sellingQntl))}
-          {result(`Selling price (${num(form.bagKg) || 50} kg bag)`, inrPrecise(live.sellingBag))}
+          {result("Selling price before GST (Qntl)", inrPrecise(live.sellingQntl))}
+          {result(`Selling price before GST (${num(form.bagKg) || 50} kg bag)`, inrPrecise(live.sellingBag))}
+          {selectedProduct && result(`Customers pay (${num(form.bagKg) || 50} kg bag, incl. ${selectedProduct.gst}% GST)`, inrPrecise(addGst(live.sellingBag, selectedProduct.gst)))}
         </div>
         <div className="mt-4 flex flex-wrap gap-2">
           <Button className="bg-navy text-white hover:bg-navy/90" disabled={saving} onClick={() => void save()}>{saving ? "Saving…" : form.id ? "Save changes" : "Add lot"}</Button>
@@ -331,7 +337,8 @@ function AdminPricing() {
               <div className="space-y-1 text-sm">
                 <p><span className="text-slate">Product:</span> <strong>{productName(applying.product_id)}</strong></p>
                 <p><span className="text-slate">Godown:</span> <strong>{godownName(applying.branch_id)}</strong></p>
-                <p><span className="text-slate">New price:</span> <strong className="text-navy">{inrPrecise(Number(applying.selling_bag))}</strong> per {Number(applying.bag_kg)} kg bag</p>
+                <p><span className="text-slate">New price:</span> <strong className="text-navy">{inrPrecise(customerPrice(applying))}</strong> {`per ${Number(applying.bag_kg)} kg bag, GST included`}</p>
+                <p className="text-xs text-slate">{`Sheet price ${inrPrecise(Number(applying.selling_bag))} + ${productGst(applying.product_id)}% GST`}</p>
                 <p className="text-xs text-slate">{branch?.zohoPricebookId
                   ? `Updates the godown's Zoho price list "${branch.zohoPricebookName}".`
                   : "This godown has no Zoho price list: this changes the item's normal price (used by every godown without a price list) and the Zoho item rate."}</p>

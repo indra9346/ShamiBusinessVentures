@@ -851,6 +851,7 @@ export type Database = {
           branch_id: string | null
           zoho_last_polled_at: string | null
           zoho_order_status: string | null
+          prices_include_gst: boolean
           zoho_last_modified_at: string | null
           advance_due: number
           balance_due: number
@@ -892,6 +893,7 @@ export type Database = {
           zoho_salesorder_id?: string | null
           zoho_last_polled_at?: string | null
           zoho_order_status?: string | null
+          prices_include_gst?: boolean
           zoho_last_modified_at?: string | null
           advance_due?: number
           balance_due?: number
@@ -933,6 +935,7 @@ export type Database = {
           zoho_salesorder_id?: string | null
           zoho_last_polled_at?: string | null
           zoho_order_status?: string | null
+          prices_include_gst?: boolean
           zoho_last_modified_at?: string | null
           advance_due?: number
           balance_due?: number

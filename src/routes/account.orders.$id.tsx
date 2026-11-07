@@ -338,7 +338,7 @@ function AccountOrderDetail() {
         <Panel title="Order Summary">
           <dl className="space-y-2 text-sm">
             <div className="flex justify-between">
-              <dt className="text-slate">Subtotal</dt>
+              <dt className="text-slate">Subtotal (before GST)</dt>
               <dd className="text-charcoal">{inrPrecise(order.subtotal)}</dd>
             </div>
             <div className="flex justify-between">
@@ -346,7 +346,7 @@ function AccountOrderDetail() {
               <dd className="text-danger">-{inrPrecise(order.discount)}</dd>
             </div>
             <div className="flex justify-between">
-              <dt className="text-slate">Tax</dt>
+              <dt className="text-slate">GST</dt>
               <dd className="text-charcoal">{inrPrecise(order.tax)}</dd>
             </div>
             <div className="flex justify-between">
