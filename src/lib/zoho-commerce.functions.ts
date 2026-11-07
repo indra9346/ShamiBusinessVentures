@@ -32,6 +32,10 @@ import {
 } from "@/lib/zoho-call-log";
 import { ZOHO_TOKEN_LIMIT_MESSAGE, createZohoTokenCache, isZohoTokenLimit, type ZohoTokenCache, type ZohoTokenReply } from "@/lib/zoho-token-cache";
 import { billChange, billPlan, billSummary, lineBlocker } from "@/lib/bill-batches";
+import {
+  DEPOSIT_ACCOUNTS_KEY, depositAccountFor, depositAccountHint, godownOfPayment, parseDepositAccounts, withDepositAccount,
+  zohoCustomerPaymentBody, zohoDepositAccountOptions, type DepositAccount, type DepositAccounts, type ZohoDepositAccountOption,
+} from "@/lib/deposit-accounts";
 
 // ---------------------------------------------------------------- Zoho API call log
 // Every Zoho API call made from this file is noted with what it was for, and saved to
@@ -408,7 +412,7 @@ export const startZohoAuthorization = createServerFn({ method: "POST" })
       response_type: "code",
       client_id: reqEnv("ZOHO_CLIENT_ID"),
       scope:
-        "ZohoCommerce.items.READ,ZohoCommerce.items.CREATE,ZohoCommerce.items.UPDATE,ZohoCommerce.coupons.READ,ZohoCommerce.coupons.CREATE,ZohoCommerce.coupons.UPDATE,ZohoCommerce.salesorders.READ,ZohoCommerce.salesorders.CREATE,ZohoCommerce.salesorders.UPDATE,ZohoCommerce.settings.READ,ZohoCommerce.settings.UPDATE,ZohoCommerce.sitesIndex.READ,ZohoCommerce.webhooks.READ,ZohoCommerce.webhooks.CREATE,ZohoInventory.contacts.READ,ZohoInventory.contacts.CREATE,ZohoInventory.contacts.UPDATE,ZohoInventory.items.READ,ZohoInventory.items.CREATE,ZohoInventory.items.UPDATE,ZohoInventory.salesorders.READ,ZohoInventory.salesorders.CREATE,ZohoInventory.salesorders.UPDATE,ZohoInventory.inventoryadjustments.READ,ZohoInventory.inventoryadjustments.CREATE,ZohoInventory.settings.READ,ZohoInventory.settings.UPDATE,ZohoBooks.salesorders.CREATE,ZohoBooks.invoices.READ,ZohoBooks.invoices.CREATE,ZohoBooks.customerpayments.READ,ZohoBooks.customerpayments.CREATE,ZohoInventory.packages.READ,ZohoInventory.packages.CREATE,ZohoInventory.shipmentorders.READ,ZohoInventory.shipmentorders.CREATE,ZohoInventory.shipmentorders.UPDATE,ZohoInventory.purchaseorders.READ,ZohoInventory.purchaseorders.CREATE,ZohoInventory.bills.READ,ZohoBooks.invoices.UPDATE",
+        "ZohoCommerce.items.READ,ZohoCommerce.items.CREATE,ZohoCommerce.items.UPDATE,ZohoCommerce.coupons.READ,ZohoCommerce.coupons.CREATE,ZohoCommerce.coupons.UPDATE,ZohoCommerce.salesorders.READ,ZohoCommerce.salesorders.CREATE,ZohoCommerce.salesorders.UPDATE,ZohoCommerce.settings.READ,ZohoCommerce.settings.UPDATE,ZohoCommerce.sitesIndex.READ,ZohoCommerce.webhooks.READ,ZohoCommerce.webhooks.CREATE,ZohoInventory.contacts.READ,ZohoInventory.contacts.CREATE,ZohoInventory.contacts.UPDATE,ZohoInventory.items.READ,ZohoInventory.items.CREATE,ZohoInventory.items.UPDATE,ZohoInventory.salesorders.READ,ZohoInventory.salesorders.CREATE,ZohoInventory.salesorders.UPDATE,ZohoInventory.inventoryadjustments.READ,ZohoInventory.inventoryadjustments.CREATE,ZohoInventory.settings.READ,ZohoInventory.settings.UPDATE,ZohoBooks.salesorders.CREATE,ZohoBooks.invoices.READ,ZohoBooks.invoices.CREATE,ZohoBooks.customerpayments.READ,ZohoBooks.customerpayments.CREATE,ZohoInventory.packages.READ,ZohoInventory.packages.CREATE,ZohoInventory.shipmentorders.READ,ZohoInventory.shipmentorders.CREATE,ZohoInventory.shipmentorders.UPDATE,ZohoInventory.purchaseorders.READ,ZohoInventory.purchaseorders.CREATE,ZohoInventory.bills.READ,ZohoBooks.invoices.UPDATE,ZohoBooks.banking.READ",
       redirect_uri: redirectUri,
       access_type: "offline",
       prompt: "consent",
@@ -2602,6 +2606,31 @@ async function copyZohoAddressToInvoice(
   return outcome;
 }
 
+async function readDepositAccounts(db: Awaited<ReturnType<typeof dbAdmin>>): Promise<DepositAccounts> {
+  const { data, error } = await db.from("settings").select("value").eq("key", DEPOSIT_ACCOUNTS_KEY).maybeSingle();
+  // Not read is not "none chosen": posting now could put the money in Undeposited Funds by mistake, so the sync waits.
+  if (error) throw new Error("Could not read which Zoho account each godown's payments are deposited to");
+  return parseDepositAccounts(data?.value);
+}
+
+/** The Zoho bank or cash account for this order's payments: its godown's choice, or null for Zoho's Undeposited Funds. */
+async function depositAccountForOrder(
+  db: Awaited<ReturnType<typeof dbAdmin>>,
+  order: Database["public"]["Tables"]["orders"]["Row"],
+  zoho: Record<string, unknown>,
+): Promise<DepositAccount | null> {
+  const accounts = await readDepositAccounts(db);
+  if (!Object.keys(accounts).length) return null;
+  const orderBranch = (order as { branch_id?: string | null }).branch_id ?? null;
+  let godowns: { id: string; zohoLocationId: string }[] = [];
+  if (!orderBranch && str(zoho["location_id"])) {
+    const { data, error } = await db.from("branches").select("id,zoho_location_id").is("vendor_id", null);
+    if (error) throw new Error("Could not read the godowns to find where this order's payment is deposited");
+    godowns = (data ?? []).map((row) => ({ id: row.id, zohoLocationId: str(row.zoho_location_id) }));
+  }
+  return depositAccountFor(accounts, godownOfPayment(orderBranch, str(zoho["location_id"]), godowns));
+}
+
 /**
  * Zoho Books invoice for a confirmed website order: converts its sales order to an invoice (Books
  * "invoices/fromsalesorder", so it gets the godown location's invoice series), marks it sent,
@@ -2715,6 +2744,8 @@ async function ensureZohoBooksInvoice(
   const gone = paymentsGoneFromInvoice(website, onInvoice);
   const toRecord = paymentsToRecord(website, onInvoice.map((payment) => payment.reference), Number(invoice.balance));
   const customerId = str(invoice.customer_id) || str(zoho["customer_id"]);
+  // The godown's own Zoho bank account, when one is chosen (Admin > Payments & Matching); else Zoho's Undeposited Funds.
+  const depositAccount = toRecord.length ? await depositAccountForOrder(db, order, zoho) : null;
   for (const payment of toRecord) {
     // Claimed before the post, so two syncs at once can't both post it. A crash here leaves a review, not a second payment.
     const pushed = website.find((row) => row.txnRef.trim() === payment.reference);
@@ -2726,23 +2757,17 @@ async function ensureZohoBooksInvoice(
     }
     let created: { payment?: { payment_id?: string } } | undefined;
     try {
-      created = await booksRequest<{ payment?: { payment_id?: string } }>(region, organizationId, token, "customerpayments", "POST", {
-        customer_id: customerId,
-        payment_mode: payment.mode,
-        amount: payment.amount,
-        date: payment.date,
-        reference_number: payment.reference,
-        description: `Grain Bazar order ${order.order_no} · ${payment.method || "website payment"} · UTR ${payment.reference}`,
-        invoices: [{ invoice_id: invoiceId, amount_applied: payment.amount }],
-      });
+      created = await booksRequest<{ payment?: { payment_id?: string } }>(region, organizationId, token, "customerpayments", "POST",
+        zohoCustomerPaymentBody(payment, { customerId, invoiceId, orderNo: order.order_no }, depositAccount));
     } catch (cause) {
       // Not sent, or the reply was lost: the next sync reads Zoho first either way.
       if (pushed) await db.from("payments").update({ zoho_invoice_id: null, zoho_pushed_at: null }).eq("id", pushed.id);
-      moneyIssues.retry.push(failure(`recording payment ${payment.reference}`, cause));
+      const message = cause instanceof Error ? cause.message : String(cause);
+      moneyIssues.retry.push(`${failure(`recording payment ${payment.reference}`, cause)}${depositAccountHint(message, depositAccount)}`);
       continue;
     }
     if (pushed) await noteAsPushed(pushed.id, str(created?.payment?.payment_id) || null);
-    console.info(zohoLogLine("zoho_invoice_payment_recorded", { order: number, amount: payment.amount }));
+    console.info(zohoLogLine("zoho_invoice_payment_recorded", { order: number, amount: payment.amount, deposited_to: depositAccount ? "godown_account" : "undeposited_funds" }));
   }
   // Paid in full on the website, but Zoho's separate CGST/SGST rounding left a paisa or two on the
   // invoice: write that off so Books shows it PAID for exactly what the customer paid.
@@ -3663,6 +3688,70 @@ export const listZohoLocations = createServerFn({ method: "GET" })
       const message = cause instanceof Error ? cause.message : "Zoho refused the location list";
       throw new Error(`${message}${zohoPermissionHint(message)}`);
     }
+  });
+
+/** The organisation's active Zoho Books bank and cash accounts (scope ZohoBooks.banking.READ). */
+async function zohoDepositAccounts(region: Region, organizationId: string, token: string): Promise<ZohoDepositAccountOption[]> {
+  const result = await booksRequest<{ bankaccounts?: unknown[] }>(region, organizationId, token, "bankaccounts?filter_by=Status.Active&per_page=200", "GET");
+  return zohoDepositAccountOptions(result.bankaccounts ?? []);
+}
+
+/**
+ * Admin: which Zoho account each godown's website payments are deposited to, and the accounts to choose from.
+ * Zoho's list is read only when asked for. If Zoho refuses (e.g. not yet reauthorized for banking), the saved
+ * choices still come back, with the reason.
+ */
+export const listZohoDepositAccounts = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    await ensureAdmin(context.supabase, context.userId);
+    const db = await dbAdmin();
+    const chosen = await readDepositAccounts(db);
+    try {
+      const { region, organizationId, token } = await zohoOrderContext(db);
+      return { chosen, accounts: await zohoDepositAccounts(region, organizationId, token), problem: null as string | null };
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "Zoho refused the list of bank accounts";
+      return { chosen, accounts: null as ZohoDepositAccountOption[] | null, problem: `${message}${zohoPermissionHint(message)}` };
+    }
+  });
+
+/**
+ * Admin: choose the Zoho bank or cash account a godown's website payments are deposited to ("" = none:
+ * Zoho's Undeposited Funds). The account must be one of Zoho's active bank or cash accounts right now;
+ * its name is Zoho's. Only payments posted from now on use it.
+ */
+export const saveGodownDepositAccount = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator(z.object({ branchId: z.string().trim().min(1).max(40), accountId: z.string().trim().regex(/^\d{0,30}$/) }))
+  .handler(async ({ context, data }) => {
+    await ensureAdmin(context.supabase, context.userId);
+    const db = await dbAdmin();
+    const { data: branch, error: branchError } = await db.from("branches").select("id,name,vendor_id").eq("id", data.branchId).maybeSingle();
+    if (branchError) throw new Error("Could not read the godown");
+    if (!branch || branch.vendor_id) throw new Error("That godown was not found");
+    let account: DepositAccount | null = null;
+    if (data.accountId) {
+      const { region, organizationId, token } = await zohoOrderContext(db);
+      let options: ZohoDepositAccountOption[];
+      try {
+        options = await zohoDepositAccounts(region, organizationId, token);
+      } catch (cause) {
+        const message = cause instanceof Error ? cause.message : "Zoho refused the list of bank accounts";
+        throw new Error(`${message}${zohoPermissionHint(message)}`);
+      }
+      const option = options.find((item) => item.id === data.accountId);
+      if (!option) throw new Error("That account is not an active bank or cash account in Zoho Books. Reload the list and choose again.");
+      account = { accountId: option.id, accountName: option.name, setAt: new Date().toISOString(), setBy: context.userId };
+    }
+    const current = await readDepositAccounts(db);
+    const { error } = await db.from("settings").upsert(
+      { key: DEPOSIT_ACCOUNTS_KEY, value: withDepositAccount(current, branch.id, account) as unknown as Json, is_public: false, updated_at: new Date().toISOString() },
+      { onConflict: "key" },
+    );
+    if (error) throw new Error("Could not save the godown's deposit account");
+    console.info(zohoLogLine("godown_deposit_account_set", { godown: branch.id, account: account ? "chosen" : "undeposited_funds" }));
+    return { chosen: depositAccountFor(withDepositAccount(current, branch.id, account).godowns, branch.id) };
   });
 
 /**
