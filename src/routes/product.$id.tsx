@@ -13,7 +13,9 @@ import { PickupPointCard } from "@/components/site/PickupPointCard";
 import { supabase } from "@/integrations/supabase/client";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
-import { resizedImage, responsiveImage, showOriginalImage } from "@/lib/image-url";
+import { showOriginalImage } from "@/lib/image-url";
+import { productImages } from "@/lib/product-images";
+import { ProductGallery } from "@/components/site/ProductGallery";
 import { showCustomerNotification } from "@/components/site/CartFloatingNotification";
 import { AddToCartPicker } from "@/components/site/AddToCartPicker";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
@@ -70,6 +72,7 @@ export const Route = createFileRoute("/product/$id")({
           ...(p.description ? { description: p.description } : {}),
           ...(p.weight ? { weight: p.weight } : {}),
           ...(p.image ? { image: p.image } : {}),
+          images: productImages(p),
           ...(p.sku ? { sku: p.sku } : {}),
           ...(p.brand ? { brand: p.brand } : {}),
           ...(p.category ? { category: p.category } : {}),
@@ -96,7 +99,6 @@ function ProductDetail() {
   const currentPurchaseLimit = product ? getAvailablePurchaseQuantity(product) : 1;
   const [qty, setQty] = useState(1);
   const [typedQty, setTypedQty] = useState("1");
-  const [active, setActive] = useState(0);
 
   useEffect(() => {
     setTypedQty(String(qty));
@@ -130,7 +132,8 @@ function ProductDetail() {
   const off = getDisplayDiscountPercent(product);
   const mrpOnly = getPricingDisplayMode(product) === "mrp_only";
   const productImg = product.image || `/products/${product.category.toLowerCase()}.jpg`;
-  const gallery = [productImg, productImg, productImg];
+  // The main picture first, then the others the admin added (none: the main picture alone, as before).
+  const gallery = productImages({ image: productImg, images: product.images });
   const related = products.filter((p) => isStorefrontProduct(p) && p.id !== product.id).slice(0, 4);
   const productReviews = reviews.filter((review) => review.productId === product.id && review.status === "Published");
 
@@ -178,40 +181,23 @@ function ProductDetail() {
       </div>
 
       <div className="mx-auto grid max-w-7xl gap-8 px-4 py-6 sm:gap-10 sm:px-6 sm:py-10 lg:grid-cols-2">
-        <div>
-          <div className="overflow-hidden rounded-xl border border-border bg-ivory">
-            <img
-              {...responsiveImage(gallery[active] || productImg, [480, 720, 1080], "(min-width: 1280px) 600px, (min-width: 1024px) 50vw, 100vw", 80)}
-              alt={product.name}
-              width={800}
-              height={800}
-              onError={(e) => {
-                if (showOriginalImage(e)) return;
-                const cat = product.category.toLowerCase();
-                (e.currentTarget as HTMLImageElement).src =
-                  cat.includes("sugar")
-                    ? "/products/sugar.jpg"
-                    : cat.includes("oil")
-                    ? "/products/oil.jpg"
-                    : "/products/rice.jpg";
-              }}
-              className="aspect-square w-full object-cover"
-            />
-          </div>
-          <div className="mt-4 flex gap-3 overflow-x-auto pb-1">
-            {gallery.map((g, i) => (
-              <button
-                key={i}
-                onClick={() => setActive(i)}
-                className={cn(
-                  "h-16 w-16 sm:h-20 sm:w-20 shrink-0 overflow-hidden rounded-lg border-2",
-                  active === i ? "border-gold" : "border-border",
-                )}
-              >
-                <img src={resizedImage(g, 160)} alt="" loading="lazy" width={800} height={800} className="h-full w-full object-cover" />
-              </button>
-            ))}
-          </div>
+        <div className="min-w-0">
+          <ProductGallery
+            key={product.id}
+            images={gallery}
+            alt={product.name}
+            onImageError={(e) => {
+              if (showOriginalImage(e)) return;
+              const cat = product.category.toLowerCase();
+              const fallback = cat.includes("sugar")
+                ? "/products/sugar.jpg"
+                : cat.includes("oil")
+                ? "/products/oil.jpg"
+                : "/products/rice.jpg";
+              // Once only: a missing fallback must not retry for ever.
+              if (!e.currentTarget.src.endsWith(fallback)) e.currentTarget.src = fallback;
+            }}
+          />
         </div>
 
         <div>

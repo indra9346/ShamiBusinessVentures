@@ -11,6 +11,8 @@ import { GodownPricesPanel } from "@/components/panel/GodownPricesPanel";
 import { ProductCodePicker } from "@/components/panel/ProductCodePicker";
 import { duplicatesToConfirm } from "@/lib/product-code-rules";
 import { isZohoMirrorProduct } from "@/lib/data";
+import { resizedImage } from "@/lib/image-url";
+import { productImages } from "@/lib/product-images";
 import { useApp } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -85,6 +87,7 @@ function AdminProductDetail() {
   const productOrders = orders.filter((o) => o.items.some((i) => i.product.id === product.id));
   const disc = product.mrp > 0 ? Math.round(((product.mrp - product.price) / product.mrp) * 100) : 0;
   const pricingMode = getPricingDisplayMode(product);
+  const gallery = productImages(product);
 
   return (
     <PanelLayout items={adminNav} tone="admin" title={product.name} subtitle={product.sku}>
@@ -93,11 +96,13 @@ function AdminProductDetail() {
       <div className="grid gap-6 xl:grid-cols-[360px_minmax(0,1fr)]">
         <Panel title="Gallery">
           <img src={product.image} alt={product.name} className="h-64 w-full rounded-lg border border-border object-cover" />
-          <div className="mt-3 grid grid-cols-3 gap-2">
-            {[0, 1, 2].map((i) => (
-              <img key={i} src={product.image} alt={`${product.name} thumb ${i + 1}`} className="h-20 w-full rounded-md border border-border object-cover" />
-            ))}
-          </div>
+          {gallery.length > 1 && (
+            <div className="mt-3 grid grid-cols-3 gap-2">
+              {gallery.slice(1).map((src, i) => (
+                <img key={src} src={resizedImage(src, 240)} alt={`${product.name} picture ${i + 2}`} loading="lazy" className="h-20 w-full rounded-md border border-border object-cover" />
+              ))}
+            </div>
+          )}
         </Panel>
 
         <div className="space-y-6">

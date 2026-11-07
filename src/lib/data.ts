@@ -47,7 +47,10 @@ export type Product = {
   vendorId: string;
   category: string;
   subcategory: string;
+  /** The main picture: product cards, the cart, search, Google and the Zoho item use this one. */
   image: string;
+  /** Further pictures for the product page's gallery, in order (not the main one). See src/lib/product-images.ts. */
+  images?: string[] | undefined;
   mrp: number;
   price: number;
   gst: number;

@@ -34,6 +34,8 @@ import {
   type TradeFieldsState,
 } from "@/components/panel/ProductTradeFields";
 import { ProductCodePicker, type CodeFill, type CodeFormFields } from "@/components/panel/ProductCodePicker";
+import { ProductImagesField } from "@/components/panel/ProductImagesField";
+import { imageFields, productImages, withImages } from "@/lib/product-images";
 import { duplicatesToConfirm } from "@/lib/product-code-rules";
 import { useApp } from "@/lib/store";
 import { sellerChoices } from "@/lib/house-seller";
@@ -144,6 +146,8 @@ function emptyForm(
     warehouseStock: "",
     requiredStock: "",
     image: "",
+    /** Pictures after the main one, for the product page's gallery. */
+    images: [] as string[],
     status: "approved" as "approved" | "pending" | "rejected",
     pricingDisplayMode: DEFAULT_PRICING_DISPLAY_MODE as PricingDisplayMode,
   };
@@ -382,6 +386,7 @@ function AdminProductsPanel() {
     stock: "",
     weight: "",
     image: "",
+    images: [] as string[],
     maxPurchaseQuantity: String(DEFAULT_MAX_PURCHASE_QUANTITY),
     minimumStock: "",
     warehouseStock: "",
@@ -394,29 +399,6 @@ function AdminProductsPanel() {
   });
   const [imageUploading, setImageUploading] = useState(false);
   const [editImageUploading, setEditImageUploading] = useState(false);
-
-  const uploadProductImage = async (
-    event: ChangeEvent<HTMLInputElement>,
-    editingProduct = false,
-  ) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    const setUploading = editingProduct ? setEditImageUploading : setImageUploading;
-    setUploading(true);
-    try {
-      const image = await uploadCatalogImage(file, "products");
-      if (editingProduct) setEditForm((current) => ({ ...current, image }));
-      else setForm((current) => ({ ...current, image }));
-      toast.success("Product image uploaded");
-    } catch (error) {
-      toast.error("Could not upload the product image", {
-        description: error instanceof Error ? error.message : "Try again.",
-      });
-    } finally {
-      setUploading(false);
-      event.target.value = "";
-    }
-  };
 
   const uploadQuickProductImage = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -553,7 +535,8 @@ function AdminProductsPanel() {
       toast.error("Please fill the product name and selling price");
       return;
     }
-    if (!form.image.trim()) {
+    const pictures = imageFields(productImages(form));
+    if (!pictures.image) {
       toast.error("Choose a product image before saving");
       return;
     }
@@ -607,7 +590,8 @@ function AdminProductsPanel() {
       vendorId: vendor.id,
       category: form.category,
       subcategory: form.subcategory || form.category,
-      image: form.image.trim(),
+      image: pictures.image,
+      ...(pictures.images.length ? { images: pictures.images } : {}),
       mrp,
       price,
       pricingDisplayMode: form.pricingDisplayMode,
@@ -1132,32 +1116,11 @@ function AdminProductsPanel() {
                       placeholder="e.g. 25 kg bag"
                     />
                   </div>
-                  <div>
-                    <Label>Product Image</Label>
-                    <Input
-                      value={form.image}
-                      onChange={(e) => setForm({ ...form, image: e.target.value })}
-                      placeholder="Paste an image URL or browse local files"
-                    />
-                    <label className="mt-2 inline-flex cursor-pointer items-center gap-2 text-sm font-medium text-navy hover:text-gold">
-                      <ImagePlus className="h-4 w-4" />{" "}
-                      {imageUploading ? "Uploading…" : "Browse local files"}
-                      <input
-                        className="sr-only"
-                        type="file"
-                        accept="image/jpeg,image/png,image/webp,image/gif,image/avif"
-                        disabled={imageUploading}
-                        onChange={(event) => void uploadProductImage(event)}
-                      />
-                    </label>
-                    {form.image && (
-                      <img
-                        src={form.image}
-                        alt="Product preview"
-                        className="mt-2 h-24 w-24 rounded-md border object-cover"
-                      />
-                    )}
-                  </div>
+                  <ProductImagesField
+                    images={productImages(form)}
+                    onChange={(update) => setForm((current) => withImages(current, update))}
+                    onUploadingChange={setImageUploading}
+                  />
                   <div className="grid grid-cols-3 gap-3">
                     <div>
                       <Label>Available Stock</Label>
@@ -1373,7 +1336,7 @@ function AdminProductsPanel() {
                       gst: String(p.gst),
                       stock: String(p.stock),
                       weight: p.weight,
-                      image: p.image,
+                      ...imageFields(productImages(p)),
                       maxPurchaseQuantity: String(getMaxPurchaseQuantity(p)),
                       minimumStock: String(p.minimumStock ?? 30),
                       warehouseStock: String(p.warehouseStock ?? p.stock),
@@ -1582,40 +1545,18 @@ function AdminProductsPanel() {
               mrp={Number(editForm.mrp)}
               price={Number(editForm.price)}
             />
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label>Weight / Capacity</Label>
-                <WeightInput
-                  value={editForm.weight}
-                  onChange={(weight) => setEditForm((current) => ({ ...current, weight }))}
-                />
-              </div>
-              <div>
-                <Label>Product Image URL</Label>
-                <Input
-                  value={editForm.image}
-                  onChange={(e) => setEditForm({ ...editForm, image: e.target.value })}
-                />
-                <label className="mt-2 inline-flex cursor-pointer items-center gap-2 text-sm font-medium text-navy hover:text-gold">
-                  <ImagePlus className="h-4 w-4" />{" "}
-                  {editImageUploading ? "Uploading…" : "Browse local files"}
-                  <input
-                    className="sr-only"
-                    type="file"
-                    accept="image/jpeg,image/png,image/webp,image/gif,image/avif"
-                    disabled={editImageUploading}
-                    onChange={(event) => void uploadProductImage(event, true)}
-                  />
-                </label>
-                {editForm.image && (
-                  <img
-                    src={editForm.image}
-                    alt="Product preview"
-                    className="mt-2 h-24 w-24 rounded-md border object-cover"
-                  />
-                )}
-              </div>
+            <div>
+              <Label>Weight / Capacity</Label>
+              <WeightInput
+                value={editForm.weight}
+                onChange={(weight) => setEditForm((current) => ({ ...current, weight }))}
+              />
             </div>
+            <ProductImagesField
+              images={productImages(editForm)}
+              onChange={(update) => setEditForm((current) => withImages(current, update))}
+              onUploadingChange={setEditImageUploading}
+            />
             <div>
               <Label>Maximum customer purchase quantity</Label>
               <Input
@@ -1772,7 +1713,8 @@ function AdminProductsPanel() {
                   gst,
                   stock: Number(editForm.stock),
                   weight: editForm.weight,
-                  image: editForm.image,
+                  // Always both: an empty list clears pictures the admin removed.
+                  ...imageFields(productImages(editForm)),
                   maxPurchaseQuantity,
                   minimumStock: Number(editForm.minimumStock),
                   warehouseStock: Number(editForm.warehouseStock),
