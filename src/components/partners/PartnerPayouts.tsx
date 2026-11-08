@@ -47,7 +47,7 @@ export function PartnerPayouts({ partnerId, partnerName }: { partnerId: string; 
         <StatCard label="Waiting" value={inrPrecise(position?.pending ?? 0)} icon={Timer} description="Becomes earned on delivery + full payment" />
       </div>
       {position && position.owed_back > 0 && (
-        <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{inrPrecise(position.owed_back)} was paid to you on orders that were later cancelled, refunded or changed. It comes off your next payout.</p>
+        <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{`${inrPrecise(position.owed_back)} was paid to you on orders that were later cancelled, refunded or changed. It comes off your next payout.`}</p>
       )}
       <Panel title="Payouts received"
         action={payouts?.length ? <button type="button" onClick={download} className="inline-flex items-center gap-1.5 text-xs font-semibold text-gold hover:underline"><FileSpreadsheet className="h-3.5 w-3.5" />Download Excel</button> : undefined}>
@@ -61,8 +61,8 @@ export function PartnerPayouts({ partnerId, partnerName }: { partnerId: string; 
                     <span className="min-w-0">
                       <span className="block font-semibold text-navy">{dayLabel(row.paid_on)} · {row.payout_no}</span>
                       <span className="block break-words text-xs text-slate">{row.mode}{row.reference ? ` · ${row.reference}` : ""}{row.note ? ` · ${row.note}` : ""}</span>
-                      {row.recovered_total > 0 && <span className="block text-xs text-slate">{inrPrecise(row.recovered_total)} taken back from this payout</span>}
-                      {undone && <span className="block text-xs font-semibold text-red-700">Undone: {row.void_reason}</span>}
+                      {row.recovered_total > 0 && <span className="block text-xs text-slate">{`${inrPrecise(row.recovered_total)} taken back from this payout`}</span>}
+                      {undone && <span className="block text-xs font-semibold text-red-700">{`Undone: ${row.void_reason}`}</span>}
                     </span>
                     <span className="flex shrink-0 items-center gap-1.5">
                       <span className={cn("tabular-nums font-bold text-navy", undone && "line-through")}>{inrPrecise(row.amount)}</span>

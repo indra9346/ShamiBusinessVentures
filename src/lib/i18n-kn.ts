@@ -5330,6 +5330,10 @@ export const kn: Record<string, string> = {
   "Could not save the godown's deposit account": "ಗೋದಾಮಿನ ಜಮೆ ಖಾತೆಯನ್ನು ಉಳಿಸಲು ಸಾಧ್ಯವಾಗಲಿಲ್ಲ",
   // 8 Nov 2026: partner payouts, payments on the order, godown signature, grouped menu
   "Partner Payouts": "ಪಾಲುದಾರರ ಪಾವತಿಗಳು",
+  "To pay {0}": "ಪಾವತಿಸಬೇಕು {0}",
+  "Waiting {0}": "ಕಾಯುತ್ತಿದೆ {0}",
+  "Details": "ವಿವರಗಳು",
+  "{0} selected · {1}": "{0} ಆಯ್ಕೆ · {1}",
   "Partners & Godowns": "ಪಾಲುದಾರರು ಮತ್ತು ಗೋದಾಮುಗಳು",
   "Zoho & Settings": "ಜೋಹೋ ಮತ್ತು ಸೆಟ್ಟಿಂಗ್‌ಗಳು",
   "Settle channel partner commissions and keep the record": "ಚಾನೆಲ್ ಪಾಲುದಾರರ ಕಮಿಷನ್ ಪಾವತಿಸಿ ದಾಖಲೆ ಇಡಿ",

@@ -129,13 +129,13 @@ function AdminPartnerPayouts() {
                   <span className="min-w-0"><span className="block truncate font-semibold text-navy">{row.partner_name}</span><span className="block truncate text-xs text-slate">{row.godown}</span></span>
                   {row.partner_status !== "active" && <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600">Suspended</span>}
                 </span>
-                <span className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+                <span className="mt-2 grid grid-cols-1 gap-x-3 gap-y-1 text-xs min-[420px]:grid-cols-2 [&>*]:min-w-0">
                   <span className="flex justify-between gap-2"><span className="text-slate">Earned</span><b className="text-navy">{inrPrecise(row.earned)}</b></span>
                   <span className="flex justify-between gap-2"><span className="text-slate">Paid</span><b className="text-navy">{inrPrecise(row.paid)}</b></span>
                   <span className="flex justify-between gap-2"><span className="text-slate">To pay</span><b className={row.due > 0 ? "text-amber-700" : "text-navy"}>{inrPrecise(row.due)}</b></span>
                   <span className="flex justify-between gap-2"><span className="text-slate">Waiting</span><b className="text-navy">{inrPrecise(row.pending)}</b></span>
                 </span>
-                {row.owed_back > 0 && <span className="mt-1 block text-xs font-semibold text-red-700">To take back: {inrPrecise(row.owed_back)}</span>}
+                {row.owed_back > 0 && <span className="mt-1 block text-xs font-semibold text-red-700">{`To take back: ${inrPrecise(row.owed_back)}`}</span>}
               </button>
             ))}
           </div>
@@ -162,7 +162,7 @@ function AdminPartnerPayouts() {
           </div>
           <p className="mb-3 text-xs text-slate">Days are the day the order was placed. A commission can be paid once its order is delivered and fully paid.</p>
           {position && position.owed_back > 0 && (
-            <p className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{inrPrecise(position.owed_back)} was paid on orders that were later cancelled, refunded or changed. It comes off the next payout by itself.</p>
+            <p className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{`${inrPrecise(position.owed_back)} was paid on orders that were later cancelled, refunded or changed. It comes off the next payout by itself.`}</p>
           )}
           {!lines ? <p className="text-sm text-slate">Loading…</p> : !lines.length ? <p className="py-6 text-center text-sm text-slate">No commissions in this period.</p> : (
             <>
@@ -182,7 +182,7 @@ function AdminPartnerPayouts() {
                           <input type="checkbox" className="h-4 w-4" disabled={!ids.length} checked={ids.length > 0 && ids.every((id) => picked.has(id))} onChange={(e) => toggle(ids, e.target.checked)} />
                           {dayLabel(group.day)}
                         </label>
-                        <span className="text-xs text-slate">To pay <b className="text-navy">{inrPrecise(group.due)}</b>{group.waiting > 0 ? <> · Waiting <b className="text-navy">{inrPrecise(group.waiting)}</b></> : null}</span>
+                        <span className="text-xs text-slate">{`To pay ${inrPrecise(group.due)}`}{group.waiting > 0 ? ` · ` : ""}{group.waiting > 0 ? `Waiting ${inrPrecise(group.waiting)}` : ""}</span>
                       </div>
                       <ul className="divide-y divide-border/60">
                         {group.lines.map((line) => {
@@ -200,7 +200,7 @@ function AdminPartnerPayouts() {
                                 <p className="break-words text-xs text-slate">{line.product_name} × {line.qty} · {line.customer_name}{line.pin ? ` · ${line.pin}` : ""}</p>
                                 <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
                                   <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-semibold", STATE_STYLE[state])}>{state}</span>
-                                  {line.paid_amount !== 0 && <span className="text-slate">Paid {inrPrecise(line.paid_amount)}</span>}
+                                  {line.paid_amount !== 0 && <span className="text-slate">{`Paid ${inrPrecise(line.paid_amount)}`}</span>}
                                   {line.due_amount !== 0 && <span className={line.due_amount < 0 ? "font-semibold text-red-700" : "font-semibold text-amber-700"}>{line.due_amount < 0 ? `Take back ${inrPrecise(-line.due_amount)}` : `Balance ${inrPrecise(line.due_amount)}`}</span>}
                                   {reason && <span className="text-slate">{reason} ({line.order_status} · {line.payment_status})</span>}
                                   {line.payout_nos.length > 0 && <span className="text-slate">{line.payout_nos.join(", ")}</span>}
@@ -215,7 +215,7 @@ function AdminPartnerPayouts() {
                 })}
               </div>
               <div className="sticky bottom-2 z-10 mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-gold bg-card px-3 py-2 shadow-card">
-                <p className="text-sm text-navy">{picked.size} selected · <b>{inrPrecise(selection.gross)}</b>{selection.recovered > 0 ? <> less <b>{inrPrecise(selection.recovered)}</b> taken back = <b>{inrPrecise(selection.most)}</b></> : null}</p>
+                <p className="text-sm text-navy">{`${picked.size} selected · ${inrPrecise(selection.gross)}`}{selection.recovered > 0 ? ` - ${inrPrecise(selection.recovered)} = ${inrPrecise(selection.most)}` : ""}</p>
                 <Button className="bg-navy text-white hover:bg-navy/90" disabled={!picked.size} onClick={() => setPaying(true)}><Banknote className="mr-1.5 h-4 w-4" />Record payout</Button>
               </div>
             </>
@@ -242,7 +242,8 @@ function AdminPartnerPayouts() {
                     <span className={cn("tabular-nums font-bold text-navy", row.status === "voided" && "line-through")}>{inrPrecise(row.amount)}</span>
                   </div>
                   <p className="mt-1 break-words text-xs text-slate">{dayLabel(row.paid_on)} · {row.mode}{row.reference ? ` · ${row.reference}` : ""}{row.recovered_total > 0 ? ` · ${inrPrecise(row.recovered_total)} taken back` : ""}{row.note ? ` · ${row.note}` : ""}</p>
-                  <p className="text-xs text-slate">Recorded by {row.created_by_name || "—"}{row.status === "voided" ? ` · ${payoutStatusLabel(row.status)} by ${row.voided_by_name || "—"}: ${row.void_reason}` : ""}</p>
+                  <p className="text-xs text-slate">{`Recorded by ${row.created_by_name || "—"}`}</p>
+                  {row.status === "voided" && <p className="text-xs font-semibold text-red-700">{`${payoutStatusLabel(row.status)}: ${row.void_reason}`}</p>}
                   <div className="mt-2 flex flex-wrap gap-2">
                     <Button size="sm" variant="outline" onClick={() => setViewing(row)}><History className="mr-1.5 h-3.5 w-3.5" />Details</Button>
                     {row.status === "paid" && <Button size="sm" variant="outline" onClick={() => setCorrecting(row)}>Correct details</Button>}
