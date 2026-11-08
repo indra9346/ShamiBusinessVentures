@@ -107,3 +107,60 @@ export function rememberPanelAccess(userId: string, tone: string, now = Date.now
 export function forgetPanelAccess(): void {
   access = null;
 }
+
+// ---- the admin menu's sections (like Zoho Books): which page sits where, and which sections are open on this device
+export type MenuGroup<T> = { key: string; label: string; items: T[] };
+
+const ADMIN_GROUPS: { key: string; label: string; pages: string[] }[] = [
+  { key: "", label: "", pages: ["/admin/dashboard"] },
+  { key: "sales", label: "Sales", pages: ["/admin/orders", "/admin/delivery-notes", "/admin/customers", "/admin/enquiries", "/admin/follow-ups", "/admin/coupons"] },
+  { key: "money", label: "Payments", pages: ["/admin/payments", "/admin/upi-payments", "/admin/payouts", "/admin/commissions"] },
+  { key: "products", label: "Products", pages: ["/admin/products", "/admin/product-codes", "/admin/categories", "/admin/pricing", "/admin/ads"] },
+  { key: "inventory", label: "Inventory", pages: ["/admin/inventory", "/admin/batches", "/admin/stock-counts", "/admin/rice-samples"] },
+  { key: "partners", label: "Partners & Godowns", pages: ["/admin/partners", "/admin/partner-payouts", "/admin/partner-report", "/admin/branches", "/admin/vendors", "/admin/attendance"] },
+  { key: "reports", label: "Reports", pages: ["/admin/reports", "/admin/godown-report"] },
+  { key: "system", label: "Zoho & Settings", pages: ["/admin/zoho", "/admin/zoho-api-calls", "/admin/notifications", "/admin/settings"] },
+];
+
+/** The menu's items in their sections, in the order above. A page nobody placed still shows, under More. */
+export function adminNavGroups<T extends { to: string }>(items: ReadonlyArray<T>): MenuGroup<T>[] {
+  const placed = new Set(ADMIN_GROUPS.flatMap((group) => group.pages));
+  const groups: MenuGroup<T>[] = ADMIN_GROUPS.map((group) => ({
+    key: group.key,
+    label: group.label,
+    items: group.pages.map((page) => items.find((item) => item.to === page)).filter((item): item is T => Boolean(item)),
+  })).filter((group) => group.items.length > 0);
+  const rest = items.filter((item) => !placed.has(item.to));
+  if (rest.length) groups.push({ key: "more", label: "More", items: [...rest] });
+  return groups;
+}
+
+const GROUPS_STORE = "gb-panel-menu-groups";
+
+/** Is this section open: the admin's own choice on this device, and the section of the page being shown always starts open. */
+export function groupOpenState(key: string, saved: Record<string, boolean>, activeGroup: string | undefined): boolean {
+  if (key === activeGroup) return true;
+  return saved[key] === true;
+}
+
+export function nextGroupOpenState(saved: Record<string, boolean>, key: string, open: boolean): Record<string, boolean> {
+  return { ...saved, [key]: open };
+}
+
+export function readMenuGroups(): Record<string, boolean> {
+  try {
+    if (typeof window === "undefined") return {};
+    const parsed = JSON.parse(window.localStorage.getItem(GROUPS_STORE) ?? "{}") as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, boolean>) : {};
+  } catch {
+    return {};
+  }
+}
+
+export function saveMenuGroups(saved: Record<string, boolean>): void {
+  try {
+    window.localStorage.setItem(GROUPS_STORE, JSON.stringify(saved));
+  } catch {
+    /* storage blocked: the sections still work on this page */
+  }
+}

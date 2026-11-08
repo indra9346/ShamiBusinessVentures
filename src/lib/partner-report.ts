@@ -32,6 +32,8 @@ export type PartnerCommissionRow = {
   kind: string;
   rate: number;
   line_total: number;
+  /** What payouts not undone have settled on this line. */
+  paid?: number;
 };
 export type PartnerTargetRow = { partner_id: string; month: string; target_sales: number };
 
@@ -40,6 +42,9 @@ export type PartnerTotals = GodownTotals & {
   commissionEarned: number;
   commissionPending: number;
   commissionCancelled: number;
+  commissionPaid: number;
+  /** Earned less paid. Below zero: paid too much, comes off the next payout. */
+  commissionBalance: number;
   /** Sales of lines with a commission rate (what the target counts). */
   eligibleSales: number;
   target: number;
@@ -102,6 +107,7 @@ export function buildPartnerReport(input: {
     const partner = partnerById.get(row.godownId)!;
     const mine = input.commissionRows.filter((c) => c.partner_id === partner.id && orderIds.has(c.order_id));
     const sum = (status: string) => rupees(mine.filter((c) => c.status === status).reduce((s, c) => s + Number(c.amount), 0));
+    const paidSum = rupees(mine.reduce((s, c) => s + (Number(c.paid) || 0), 0));
     const eligibleSales = rupees(mine.filter((c) => c.status !== "cancelled").reduce((s, c) => s + Number(c.line_total), 0));
     const target = targetForPeriod(input.targets, partner.id, input.from, input.to);
     return {
@@ -111,6 +117,8 @@ export function buildPartnerReport(input: {
       commissionEarned: sum("earned"),
       commissionPending: sum("pending"),
       commissionCancelled: sum("cancelled"),
+      commissionPaid: paidSum,
+      commissionBalance: rupees(sum("earned") - paidSum),
       eligibleSales,
       target,
       achievedPercent: target > 0 ? Math.round((eligibleSales * 1000) / target) / 10 : null,
@@ -137,9 +145,11 @@ export function buildPartnerReport(input: {
     commissionEarned: rupees(acc.commissionEarned + row.commissionEarned),
     commissionPending: rupees(acc.commissionPending + row.commissionPending),
     commissionCancelled: rupees(acc.commissionCancelled + row.commissionCancelled),
+    commissionPaid: rupees(acc.commissionPaid + row.commissionPaid),
+    commissionBalance: rupees(acc.commissionBalance + row.commissionBalance),
     eligibleSales: rupees(acc.eligibleSales + row.eligibleSales),
     target: rupees(acc.target + row.target),
-  }), { commissionEarned: 0, commissionPending: 0, commissionCancelled: 0, eligibleSales: 0, target: 0 });
+  }), { commissionEarned: 0, commissionPending: 0, commissionCancelled: 0, commissionPaid: 0, commissionBalance: 0, eligibleSales: 0, target: 0 });
   return {
     partners: rows,
     all: { ...base.all, ...total, achievedPercent: total.target > 0 ? Math.round((total.eligibleSales * 1000) / total.target) / 10 : null },
@@ -166,6 +176,8 @@ export const PARTNER_COLUMNS: Column[] = [
   ["Commission earned (₹)", (r) => r.commissionEarned],
   ["Commission pending (₹)", (r) => r.commissionPending],
   ["Commission cancelled (₹)", (r) => r.commissionCancelled],
+  ["Commission paid (₹)", (r) => r.commissionPaid],
+  ["Commission balance to pay (₹)", (r) => r.commissionBalance],
   ["Cancelled sales (₹)", (r) => r.cancelledValue],
   ["Refunded (₹)", (r) => r.refunded],
   ["GST (₹)", (r) => r.gst],

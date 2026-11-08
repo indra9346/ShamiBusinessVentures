@@ -9,10 +9,12 @@ import { inr } from "@/lib/data";
 import { matchesBranchView } from "@/lib/panel-filters";
 import { useApp } from "@/lib/store";
 import { PLATFORM_FEATURES_KEY, reloadBranches, useBranches, type Branch } from "@/lib/branches";
+import { useDepositAccounts } from "@/components/panel/DepositAccountsPanel";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { GodownSignatureField } from "@/components/panel/GodownSignatureField";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -59,6 +61,7 @@ const formFrom = (branch: Branch): Form => ({
 function AdminBranches() {
   const { branches, stock, prices, features, ready } = useBranches();
   const { orders } = useApp();
+  const [depositAccounts] = useDepositAccounts();
   const [form, setForm] = useState<Form | null>(null);
   const [saving, setSaving] = useState(false);
   const [locations, setLocations] = useState<{ id: string; name: string }[] | null>(null);
@@ -276,6 +279,13 @@ function AdminBranches() {
                     ? <>Zoho price list: <span className="font-semibold text-navy">{branch.zohoPricebookName || branch.zohoPricebookId}</span> · {[...prices.values()].filter((byBranch) => byBranch.get(branch.id)?.listed).length} item(s) sold here{[...prices.values()].some((byBranch) => byBranch.get(branch.id)?.pending) ? " · website changes waiting for Zoho" : ""}</>
                     : "Prices: normal price, every item"}
                 </p>
+                {depositAccounts && (
+                  <p className="text-xs text-slate">
+                    Payments deposited to:{" "}
+                    <span className="font-semibold text-navy">{depositAccounts[branch.id]?.accountName ?? "Undeposited Funds (Zoho's default)"}</span>{" "}
+                    <Link to="/admin/payments" hash="deposit-accounts" className="font-semibold text-gold hover:underline">Change</Link>
+                  </p>
+                )}
                 {!branch.vendorId && (
                   <p className="text-xs">
                     <Link to="/admin/partners" className="font-semibold text-gold hover:underline">Channel partner: login, commission rates and target →</Link>
@@ -292,6 +302,7 @@ function AdminBranches() {
                   <div><p className="font-bold text-navy">{inr(stat?.paid ?? 0)}</p><p className="text-slate">paid sales</p></div>
                   <div><p className="font-bold text-navy">{(stat?.units ?? 0).toLocaleString("en-IN")}</p><p className="text-slate">units in stock</p></div>
                 </div>
+                {!branch.vendorId && <GodownSignatureField branch={branch} />}
                 <div className="flex flex-wrap gap-2 pt-1">
                   <Button size="sm" variant="outline" onClick={() => setForm(formFrom(branch))}>Edit</Button>
                   {!branch.isDefault && <Button size="sm" variant="outline" onClick={() => void makeDefault(branch)}>Make default</Button>}

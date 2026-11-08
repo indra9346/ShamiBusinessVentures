@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useMemo, useState, type ChangeEvent } from "react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { Panel } from "@/components/panel/widgets";
@@ -18,7 +18,8 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { uploadCatalogImage } from "@/lib/catalog-images";
+import { ProductImagesField } from "@/components/panel/ProductImagesField";
+import { imageFields } from "@/lib/product-images";
 import { defaultGstForCategory, loadTaxSettings } from "@/lib/business-rules";
 
 export const Route = createFileRoute("/vendor/products/add")({
@@ -51,7 +52,8 @@ function VendorAddProduct() {
   const [specLabel, setSpecLabel] = useState("");
   const [specValue, setSpecValue] = useState("");
   const [status, setStatus] = useState<Product["status"]>("pending");
-  const [image, setImage] = useState("");
+  // All pictures, the main one first.
+  const [images, setImages] = useState<string[]>([]);
   const [imageUploading, setImageUploading] = useState(false);
   const [trade, setTrade] = useState<TradeFieldsState>(() => emptyTradeFields(""));
   const brandChoices = useMemo(
@@ -63,21 +65,6 @@ function VendorAddProduct() {
     [products],
   );
   const [skuToken] = useState(() => crypto.randomUUID().replaceAll("-", "").slice(0, 8).toUpperCase());
-
-  const chooseImage = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    setImageUploading(true);
-    try {
-      setImage(await uploadCatalogImage(file, "products"));
-      toast.success("Product image uploaded");
-    } catch (error) {
-      toast.error("Could not upload the product image", { description: error instanceof Error ? error.message : "Try again." });
-    } finally {
-      setImageUploading(false);
-      event.target.value = "";
-    }
-  };
 
   const cat = categories.find((c) => c.name === category);
   const sku = category ? `SBV-${category.slice(0, 2).toUpperCase()}-${skuToken}` : "";
@@ -98,7 +85,8 @@ function VendorAddProduct() {
     if (priceNum > mrpNum) { toast.error("Selling price cannot exceed MRP"); return; }
     if (!stock.trim() || !Number.isFinite(stockNum) || stockNum < 0) { toast.error("Enter a valid stock quantity"); return; }
     if (!description.trim()) { toast.error("Description is required"); return; }
-    if (!image.trim()) { toast.error("Choose a product image before submitting"); return; }
+    const pictures = imageFields(images);
+    if (!pictures.image) { toast.error("Choose a product image before submitting"); return; }
     if (imageUploading) { toast.error("Wait for the product image upload to finish"); return; }
 
     const id = `P-${crypto.randomUUID()}`;
@@ -114,7 +102,8 @@ function VendorAddProduct() {
       vendorId: "",
       category,
       subcategory,
-      image: image.trim(),
+      image: pictures.image,
+      ...(pictures.images.length ? { images: pictures.images } : {}),
       mrp: mrpNum,
       price: priceNum,
       gst: Number(gst),
@@ -232,14 +221,6 @@ function VendorAddProduct() {
             <Input type="number" value={stock} onChange={(e) => setStock(e.target.value)} placeholder="e.g. 120" />
           </div>
           <div className="grid gap-1.5">
-            <Label>Product Image</Label>
-            <label className="inline-flex cursor-pointer items-center justify-center rounded-md border border-dashed p-3 text-sm font-medium text-navy hover:bg-ivory">
-              {imageUploading ? "Uploading…" : image ? "Choose a different image" : "Browse local files"}
-              <input className="sr-only" type="file" accept="image/jpeg,image/png,image/webp,image/gif,image/avif" disabled={imageUploading} onChange={(event) => void chooseImage(event)} />
-            </label>
-            {image && <img src={image} alt="Product preview" className="h-28 w-28 rounded-md border object-cover" />}
-          </div>
-          <div className="grid gap-1.5">
             <Label>Listing Status</Label>
             <Select value={status} onValueChange={(v) => setStatus(v as Product["status"])}>
               <SelectTrigger><SelectValue /></SelectTrigger>
@@ -248,6 +229,12 @@ function VendorAddProduct() {
               </SelectContent>
             </Select>
           </div>
+          <ProductImagesField
+            className="lg:col-span-2"
+            images={images}
+            onChange={setImages}
+            onUploadingChange={setImageUploading}
+          />
           <div className="grid gap-1.5 lg:col-span-2">
             <Label>Description</Label>
             <Textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={4} placeholder="Describe quality, packaging, certifications..." />

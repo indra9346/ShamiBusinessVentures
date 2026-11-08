@@ -5,6 +5,7 @@ import { BrandLogo, LogoMark } from "@/components/brand/Logo";
 import { FilterNote, Panel, scrollToSection, StatCard } from "@/components/panel/widgets";
 import { CommissionLinesTable, PartnerLeaderboard, TargetBar, commissionTotals, usePartnerData } from "@/components/partners/PartnerWidgets";
 import { MyPartnerReport } from "@/components/partners/MyPartnerReport";
+import { PartnerPayouts } from "@/components/partners/PartnerPayouts";
 import { supabase } from "@/integrations/supabase/client";
 import { inrPrecise } from "@/lib/data";
 import { describeRate, monthLabel, monthStart, targetProgress, type CommissionKind } from "@/lib/partners";
@@ -104,6 +105,8 @@ function PartnerDashboard() {
           <StatCard onClick={() => openLines("sales")} label="Sales (excl. GST)" value={inrPrecise(totals.sales)} icon={Target} description={`${totals.orders} orders`} />
           <StatCard onClick={() => scrollToSection("leaderboard")} label="Leaderboard rank" value={myRank ? `#${myRank} of ${leaders?.length ?? 0}` : "—"} icon={Trophy} />
         </div>
+
+        <PartnerPayouts partnerId={me.id} partnerName={me.name} />
 
         <Panel title={`Target for ${monthLabel(month)}`}>
           {target > 0 ? (

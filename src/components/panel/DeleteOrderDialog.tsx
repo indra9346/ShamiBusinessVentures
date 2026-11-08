@@ -10,11 +10,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 /**
- * Admin: delete an order that never went anywhere. The database decides (admin_delete_order): it refuses
- * anything paid, sent to Zoho, invoiced, delivered, reviewed or returned, and says why. Zoho and stock
- * are never touched, and the delete is recorded.
+ * Admin: delete an order that never went anywhere, or whose sales order is void in Zoho. The database decides
+ * (admin_delete_order): it refuses anything paid, alive in Zoho, invoiced, given a delivery note, reviewed or
+ * returned, and says why. Zoho and stock are never touched, and the delete is recorded.
  */
-export function DeleteOrderDialog({ orderNo, onClose, onDeleted }: { orderNo: string; onClose: () => void; onDeleted?: () => void }) {
+export function DeleteOrderDialog({ orderNo, onClose, onDeleted, voidInZoho = false }: { orderNo: string; onClose: () => void; onDeleted?: () => void; voidInZoho?: boolean }) {
   const { forgetOrder } = useApp();
   // undefined while checking, null when it may be deleted, otherwise the reason it stays.
   const [blocker, setBlocker] = useState<string | null | undefined>(undefined);
@@ -54,7 +54,9 @@ export function DeleteOrderDialog({ orderNo, onClose, onDeleted }: { orderNo: st
               ? "Checking whether it can be deleted…"
               : blocker
                 ? blocker
-                : "Nothing was paid, sent to Zoho or delivered. Deleting removes the order and its items for good. Zoho and stock are not touched, and a record of who deleted it is kept."}
+                : voidInZoho
+                  ? "Its sales order is void in Zoho and nothing was paid here. Deleting removes the order and its items from this website for good. The void sales order stays in Zoho on record, stock is not touched, and a record of who deleted it is kept."
+                  : "Nothing was paid, sent to Zoho or delivered. Deleting removes the order and its items for good. Zoho and stock are not touched, and a record of who deleted it is kept."}
           </DialogDescription>
         </DialogHeader>
         {blocker === null && (
@@ -74,7 +76,7 @@ export function DeleteOrderDialog({ orderNo, onClose, onDeleted }: { orderNo: st
 }
 
 /** The button for an order's own page; it leaves for the order list once the order is gone. */
-export function DeleteOrderButton({ orderNo }: { orderNo: string }) {
+export function DeleteOrderButton({ orderNo, voidInZoho = false }: { orderNo: string; voidInZoho?: boolean }) {
   const [open, setOpen] = useState(false);
   const navigate = useNavigate();
   return (
@@ -82,7 +84,7 @@ export function DeleteOrderButton({ orderNo }: { orderNo: string }) {
       <Button variant="outline" size="sm" className="text-danger hover:border-danger" onClick={() => setOpen(true)}>
         <Trash2 className="mr-1.5 h-3.5 w-3.5" />Delete order
       </Button>
-      {open && <DeleteOrderDialog orderNo={orderNo} onClose={() => setOpen(false)} onDeleted={() => void navigate({ to: "/admin/orders" })} />}
+      {open && <DeleteOrderDialog orderNo={orderNo} voidInZoho={voidInZoho} onClose={() => setOpen(false)} onDeleted={() => void navigate({ to: "/admin/orders" })} />}
     </>
   );
 }

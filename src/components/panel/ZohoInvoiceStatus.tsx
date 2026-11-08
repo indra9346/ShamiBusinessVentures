@@ -36,9 +36,9 @@ const STATES: Record<string, { label: string; tone: string; note?: string; publi
 /**
  * The order's official Zoho Books invoice (number, status, amounts), the same for admins, the
  * customer and the order's vendors. Admins can approve a new invoice after one was voided or
- * deleted in Zoho, and refresh it from Zoho.
+ * deleted in Zoho, and refresh it from Zoho. readOnly: the sales order is void in Zoho, so there is nothing to approve or push.
  */
-export function ZohoInvoiceStatus({ orderNo, audience, className }: { orderNo: string; audience: "admin" | "customer" | "vendor"; className?: string }) {
+export function ZohoInvoiceStatus({ orderNo, audience, className, readOnly = false }: { orderNo: string; audience: "admin" | "customer" | "vendor"; className?: string; readOnly?: boolean }) {
   const [row, setRow] = useState<InvoiceRow | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState<"" | "approve" | "refresh">("");
@@ -104,6 +104,8 @@ export function ZohoInvoiceStatus({ orderNo, audience, className }: { orderNo: s
     if (!isAdmin) return null;
   }
   const canApprove = isAdmin && ["void", "deleted", "awaiting_approval"].includes(status) && !row?.admin_approved;
+  // A void sales order gets no new invoice, so the approval note would mislead.
+  const adminNote = readOnly ? (["void", "deleted", "awaiting_approval"].includes(status) ? "The sales order is void in Zoho, so no new invoice is made." : undefined) : state?.note;
 
   return (
     <div className={cn("rounded-lg border border-border bg-card p-3 text-sm", className)}>
@@ -124,8 +126,8 @@ export function ZohoInvoiceStatus({ orderNo, audience, className }: { orderNo: s
           )}
         </p>
       )}
-      {(isAdmin ? state?.note : state?.publicNote) && (
-        <p className="mt-1 text-xs text-slate">{isAdmin ? state?.note : state?.publicNote}</p>
+      {(isAdmin ? adminNote : state?.publicNote) && (
+        <p className="mt-1 text-xs text-slate">{isAdmin ? adminNote : state?.publicNote}</p>
       )}
       {isAdmin && row?.last_event && (
         <p className="mt-1 text-[11px] text-slate">
@@ -133,7 +135,7 @@ export function ZohoInvoiceStatus({ orderNo, audience, className }: { orderNo: s
           {row.auto_attempts > 0 && ` · invoices created: ${row.auto_attempts}`}
         </p>
       )}
-      {isAdmin && (
+      {isAdmin && !readOnly && (
         <div className="mt-2 flex flex-wrap gap-2">
           {canApprove && (
             <Button size="sm" className="bg-navy text-white hover:bg-navy/90" disabled={busy !== ""} onClick={() => void approve()}>

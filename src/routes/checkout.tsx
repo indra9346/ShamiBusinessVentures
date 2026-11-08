@@ -6,7 +6,7 @@ import { Check, CreditCard, Loader2, Lock, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { SiteLayout, Breadcrumbs } from "@/components/site/SiteLayout";
 import { getAvailablePurchaseQuantity, inr, inrPrecise } from "@/lib/data";
-import { couponDiscount, lineGst, toPaise } from "@/lib/pricing";
+import { couponDiscount, gstAfterCoupon, lineGstInside, toPaise } from "@/lib/pricing";
 import { useApp, type Address } from "@/lib/store";
 import { PickupPointCard } from "@/components/site/PickupPointCard";
 import { usePickupSettings } from "@/lib/pickup-points";
@@ -23,6 +23,7 @@ import { NotInYourArea } from "@/components/site/NotInYourArea";
 import { isOutsideServiceArea } from "@/lib/godown-rules";
 import { useBankDetails, useUpiPayments } from "@/lib/upi-store";
 import { isBankMethod, lapsedTransfer, methodLabel, methodsForOrders, pickMethod, UPI_BELOW, type PayMethod } from "@/lib/payment-rules";
+import { parsePayParam, payPanelId, payParam, restorablePlaced } from "@/lib/upi-return";
 import { settingsProblem } from "@/lib/upi-pay";
 import { GST_BILL_PAY_NOTE, gstBillProblem, normaliseGstin } from "@/lib/gstin";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
@@ -44,7 +45,8 @@ const preferredAddressId = (list: { id: string; default?: boolean }[]) =>
   (list.find((address) => address.default) ?? list[0])?.id ?? "";
 
 export const Route = createFileRoute("/checkout")({
-  validateSearch: z.object({ productId: z.string().optional(), coupon: z.string().optional() }),
+  // pay: the held checkouts being paid, so a reload after the UPI app reopens the pay step (owner, 7 Nov 2026).
+  validateSearch: z.object({ productId: z.string().optional(), coupon: z.string().optional(), pay: z.string().optional() }),
   head: () => pageHead({ title: `Secure Checkout | ${SITE_NAME}`, description: "Choose your address, delivery and payment, and place your order.", path: "/checkout", noindex: true }),
   component: Checkout,
 });
@@ -73,7 +75,7 @@ function Checkout() {
     orders,
     paymentHolds,
   } = useApp();
-  const { productId, coupon: cartCoupon } = Route.useSearch();
+  const { productId, coupon: cartCoupon, pay } = Route.useSearch();
   const navigate = useNavigate();
   useEffect(() => {
     // Wait until the saved sign-in has been read, or a refresh would bounce signed-in customers.
@@ -207,6 +209,21 @@ function Checkout() {
     discount: number;
     total: number;
   } | null>(null);
+  // Back on checkout after a reload (often what happens on a phone after paying in the UPI app): the pay step for the
+  // checkouts named in ?pay=, from the customer's own held checkouts. Once per visit.
+  const restoredPay = useRef(false);
+  useEffect(() => {
+    if (restoredPay.current || placedOrders.length > 0 || !pay) return;
+    const restored = restorablePlaced(paymentHolds, parsePayParam(pay));
+    if (!restored.length) return;
+    restoredPay.current = true;
+    const total = restored.reduce((sum, order) => sum + order.amount, 0);
+    setPlacedOrders(restored);
+    setPlacedId(restored.map((order) => order.id).join(", "));
+    setConfirmationSummary({ subtotal: total, shipCost: 0, tax: 0, discount: 0, total });
+    setStep(4);
+    window.setTimeout(() => document.getElementById(payPanelId(restored[0]!.id))?.scrollIntoView({ block: "start" }), 300);
+  }, [pay, paymentHolds, placedOrders.length]);
   const [shippingRates, setShippingRates] = useState(defaultShipping);
   const [shippingRatesReady, setShippingRatesReady] = useState(false);
   useEffect(() => {
@@ -322,8 +339,9 @@ function Checkout() {
       return groups;
     }, {}))
     : [{ point: null, lines: checkoutItems }];
+  // Prices include GST: the subtotal is what the customer pays for the goods, and this is the GST inside it.
   const tax = checkoutItems.reduce(
-    (sum, line) => sum + lineGst(line.product.price, line.qty, line.product.gst),
+    (sum, line) => sum + lineGstInside(line.product.price, line.qty, line.product.gst),
     0,
   );
   // A coupon applies to a single order; checkout does not send it when the cart splits.
@@ -337,17 +355,18 @@ function Checkout() {
           c.maxPerUser),
   );
   const discount = appliedCoupon ? couponDiscount(appliedCoupon, subtotal) : 0;
-  const total = toPaise(subtotal + shipCost + tax - discount);
-  const summary = confirmationSummary ?? { subtotal, shipCost, tax, discount, total };
+  const total = toPaise(subtotal + shipCost - discount);
+  // A coupon comes off each item in proportion, and the GST inside them with it (the database works it out the same way).
+  const taxShown = discount > 0 ? gstAfterCoupon(checkoutItems.map((line) => ({ price: line.product.price, qty: line.qty, gstPercent: line.product.gst })), discount) : tax;
+  const summary = confirmationSummary ?? { subtotal, shipCost, tax: taxShown, discount, total };
   // The order's value decides how it can be paid; the database checks again on the final total. A cart that
   // splits is several orders, each with its own total.
   const orderTotals = orderGroups.length > 1
     ? orderGroups.map((group) => {
       const goods = group.lines.reduce((sum, line) => sum + line.product.price * line.qty, 0);
-      const gst = group.lines.reduce((sum, line) => sum + lineGst(line.product.price, line.qty, line.product.gst), 0);
       const point = group.point ? branches.find((branch) => branch.id === group.point) ?? null : null;
       const delivers = point ? (fulfil === "Delivery" && point.deliveryEnabled) || !point.pickupEnabled : fulfil === "Delivery";
-      return toPaise(goods + gst + (delivers ? branchDeliveryFee(point ?? fulfilBranch, goods) : 0));
+      return toPaise(goods + (delivers ? branchDeliveryFee(point ?? fulfilBranch, goods) : 0));
     })
     : [total];
   const payOptions = methodsForOrders(orderTotals, { upi: Boolean(directUpi), bank: Boolean(bankDetails) });
@@ -511,7 +530,8 @@ function Checkout() {
       // authoritative values returned by that transaction on confirmation.
       const sum = (pick: (order: (typeof placed)[number]) => number) => placed.reduce((total, order) => total + pick(order), 0);
       setConfirmationSummary({
-        subtotal: sum((order) => order.subtotal),
+        // The database stores the goods before GST; the customer saw them with GST inside.
+        subtotal: sum((order) => order.subtotal + order.tax),
         shipCost: sum((order) => order.shipping),
         tax: sum((order) => order.tax),
         discount: sum((order) => order.discount),
@@ -526,6 +546,9 @@ function Checkout() {
       if (selectedAddress) setHeldAddress({ address: selectedAddress, godown: godownLabel });
       setPlacedId(placed.map((order) => order.id).join(", "));
       setPlacedOrders(placed.map((order) => ({ id: order.id, amount: order.amount, holdUntil: order.holdUntil ?? null, method: payMethod })));
+      // Kept in the address, so coming back from the UPI app to a reloaded page lands on this pay step again.
+      restoredPay.current = true;
+      void navigate({ to: "/checkout", search: (prev) => ({ ...prev, pay: payParam(placed.map((order) => order.id)) }), replace: true });
       toast.success("Pay now to place your order", { description: "Prices and stock are held for you while you pay." });
       setStep(step + 1);
       return;
@@ -639,9 +662,8 @@ function Checkout() {
   ) : (
     <div className="mt-4 space-y-2.5 text-sm">
       {[
-        ["Subtotal", inrPrecise(summary.subtotal)],
+        ["Subtotal (incl. GST)", inrPrecise(summary.subtotal)],
         [fulfil === "Delivery" ? "Delivery" : "Pickup", summary.shipCost === 0 ? "Free" : inrPrecise(summary.shipCost)],
-        ["GST", inrPrecise(summary.tax)],
         ...(summary.discount > 0
           ? [["Coupon discount", `- ${inrPrecise(summary.discount)}`]]
           : []),
@@ -656,6 +678,7 @@ function Checkout() {
         <span>Total</span>
         <span>{inrPrecise(summary.total)}</span>
       </div>
+      {summary.tax > 0 && <p className="text-right text-xs text-slate">{`Includes GST of ${inrPrecise(summary.tax)}`}</p>}
     </div>
   );
 

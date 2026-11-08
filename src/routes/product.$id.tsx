@@ -13,7 +13,9 @@ import { PickupPointCard } from "@/components/site/PickupPointCard";
 import { supabase } from "@/integrations/supabase/client";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
-import { resizedImage, responsiveImage, showOriginalImage } from "@/lib/image-url";
+import { showOriginalImage } from "@/lib/image-url";
+import { productImages } from "@/lib/product-images";
+import { ProductGallery } from "@/components/site/ProductGallery";
 import { showCustomerNotification } from "@/components/site/CartFloatingNotification";
 import { AddToCartPicker } from "@/components/site/AddToCartPicker";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
@@ -59,7 +61,7 @@ export const Route = createFileRoute("/product/$id")({
     return {
       ...pageHead({
         title: `${p.name} at ${inr(p.price)} | ${SITE_NAME}`,
-        description: `Buy ${p.name}${p.weight ? ` (${p.weight})` : ""} at ${inr(p.price)} + GST from Grain Bazar. ${own ? `${own} ` : ""}GST invoice, pickup or delivery from Challakere and Hubli.`,
+        description: `Buy ${p.name}${p.weight ? ` (${p.weight})` : ""} at ${inr(p.price)} (GST included) from Grain Bazar. ${own ? `${own} ` : ""}GST invoice, pickup or delivery from Challakere and Hubli.`,
         path,
         type: "product",
         ...(p.image ? { image: p.image } : {}),
@@ -70,6 +72,7 @@ export const Route = createFileRoute("/product/$id")({
           ...(p.description ? { description: p.description } : {}),
           ...(p.weight ? { weight: p.weight } : {}),
           ...(p.image ? { image: p.image } : {}),
+          images: productImages(p),
           ...(p.sku ? { sku: p.sku } : {}),
           ...(p.brand ? { brand: p.brand } : {}),
           ...(p.category ? { category: p.category } : {}),
@@ -96,7 +99,6 @@ function ProductDetail() {
   const currentPurchaseLimit = product ? getAvailablePurchaseQuantity(product) : 1;
   const [qty, setQty] = useState(1);
   const [typedQty, setTypedQty] = useState("1");
-  const [active, setActive] = useState(0);
 
   useEffect(() => {
     setTypedQty(String(qty));
@@ -130,7 +132,8 @@ function ProductDetail() {
   const off = getDisplayDiscountPercent(product);
   const mrpOnly = getPricingDisplayMode(product) === "mrp_only";
   const productImg = product.image || `/products/${product.category.toLowerCase()}.jpg`;
-  const gallery = [productImg, productImg, productImg];
+  // The main picture first, then the others the admin added (none: the main picture alone, as before).
+  const gallery = productImages({ image: productImg, images: product.images });
   const related = products.filter((p) => isStorefrontProduct(p) && p.id !== product.id).slice(0, 4);
   const productReviews = reviews.filter((review) => review.productId === product.id && review.status === "Published");
 
@@ -178,40 +181,23 @@ function ProductDetail() {
       </div>
 
       <div className="mx-auto grid max-w-7xl gap-8 px-4 py-6 sm:gap-10 sm:px-6 sm:py-10 lg:grid-cols-2">
-        <div>
-          <div className="overflow-hidden rounded-xl border border-border bg-ivory">
-            <img
-              {...responsiveImage(gallery[active] || productImg, [480, 720, 1080], "(min-width: 1280px) 600px, (min-width: 1024px) 50vw, 100vw", 80)}
-              alt={product.name}
-              width={800}
-              height={800}
-              onError={(e) => {
-                if (showOriginalImage(e)) return;
-                const cat = product.category.toLowerCase();
-                (e.currentTarget as HTMLImageElement).src =
-                  cat.includes("sugar")
-                    ? "/products/sugar.jpg"
-                    : cat.includes("oil")
-                    ? "/products/oil.jpg"
-                    : "/products/rice.jpg";
-              }}
-              className="aspect-square w-full object-cover"
-            />
-          </div>
-          <div className="mt-4 flex gap-3 overflow-x-auto pb-1">
-            {gallery.map((g, i) => (
-              <button
-                key={i}
-                onClick={() => setActive(i)}
-                className={cn(
-                  "h-16 w-16 sm:h-20 sm:w-20 shrink-0 overflow-hidden rounded-lg border-2",
-                  active === i ? "border-gold" : "border-border",
-                )}
-              >
-                <img src={resizedImage(g, 160)} alt="" loading="lazy" width={800} height={800} className="h-full w-full object-cover" />
-              </button>
-            ))}
-          </div>
+        <div className="min-w-0">
+          <ProductGallery
+            key={product.id}
+            images={gallery}
+            alt={product.name}
+            onImageError={(e) => {
+              if (showOriginalImage(e)) return;
+              const cat = product.category.toLowerCase();
+              const fallback = cat.includes("sugar")
+                ? "/products/sugar.jpg"
+                : cat.includes("oil")
+                ? "/products/oil.jpg"
+                : "/products/rice.jpg";
+              // Once only: a missing fallback must not retry for ever.
+              if (!e.currentTarget.src.endsWith(fallback)) e.currentTarget.src = fallback;
+            }}
+          />
         </div>
 
         <div>
@@ -253,14 +239,15 @@ function ProductDetail() {
               </>
             )}
           </div>
-          <p className="mt-1 text-xs text-slate">GST calculated at checkout · Pack size {product.weight}</p>
+          <p className="mt-1 text-xs text-slate">Price includes GST · Pack size {product.weight}</p>
 
           <p className={cn("mt-4 text-sm font-semibold", availableStock > 0 ? "text-success" : "text-danger")}>
             {availableStock > 0 ? `In stock — ${availableStock} units available` : "Currently out of stock"}
           </p>
           <p className="mt-1 text-xs text-slate">Purchase range: 1–{purchaseLimit} units (maximum {configuredMax} per order, subject to stock).</p>
 
-          <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-3">
+          {/* One row, except 1024-1279 px where the half-width column is too narrow for it (stacked there). */}
+          <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-3 lg:flex-col lg:items-stretch xl:flex-row xl:items-center">
             <div className="flex items-center gap-2.5 sm:gap-3">
               <div className="flex h-11 items-center rounded-md border border-border bg-card shadow-xs focus-within:border-gold focus-within:ring-1 focus-within:ring-gold">
                 <button
@@ -318,7 +305,7 @@ function ProductDetail() {
                     productImg,
                   );
                 }}
-                className="flex h-11 flex-1 sm:flex-initial sm:min-w-44 items-center justify-center gap-2 rounded-md bg-navy px-4 text-sm font-bold text-white transition-colors hover:bg-midnight disabled:opacity-40 shadow-xs"
+                className="flex h-11 flex-1 sm:flex-initial sm:min-w-44 lg:flex-1 xl:flex-initial items-center justify-center gap-2 rounded-md bg-navy px-4 text-sm font-bold text-white transition-colors hover:bg-midnight disabled:opacity-40 shadow-xs"
               >
                 <ShoppingCart className="h-4 w-4" /> Add to Cart
               </button>
@@ -338,7 +325,7 @@ function ProductDetail() {
                 tabIndex={availableStock === 0 ? -1 : undefined}
                 aria-disabled={availableStock === 0}
                 className={cn(
-                  "flex h-11 flex-1 items-center justify-center rounded-md bg-gold px-6 text-sm font-bold text-midnight transition-colors hover:bg-gold-light shadow-xs sm:flex-none sm:min-w-36",
+                  "flex h-11 flex-1 items-center justify-center rounded-md bg-gold px-6 text-sm font-bold text-midnight transition-colors hover:bg-gold-light shadow-xs sm:flex-none sm:min-w-36 lg:flex-1 xl:flex-none",
                   availableStock === 0 && "pointer-events-none opacity-40",
                 )}
               >
@@ -401,7 +388,7 @@ function ProductDetail() {
                 ["Pack size", product.weight],
                 ["SKU", product.sku],
                 ["Brand", product.brand],
-                ["Tax", `${product.gst}% GST, added at checkout`],
+                ["Tax", `${product.gst}% GST, included in the price`],
               ].map(([k, v]) => (
                 <div key={k} className="flex justify-between border-b border-border pb-2">
                   <dt className="text-slate">{k}</dt>

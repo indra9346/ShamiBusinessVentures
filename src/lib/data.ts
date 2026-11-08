@@ -47,7 +47,10 @@ export type Product = {
   vendorId: string;
   category: string;
   subcategory: string;
+  /** The main picture: product cards, the cart, search, Google and the Zoho item use this one. */
   image: string;
+  /** Further pictures for the product page's gallery, in order (not the main one). See src/lib/product-images.ts. */
+  images?: string[] | undefined;
   mrp: number;
   price: number;
   gst: number;
@@ -723,7 +726,7 @@ export const orderStages: OrderStatus[] = [
 ];
 
 export type OrderItem = {
-  product: Product; qty: number; vendor: string; vendorId: string; capacity?: string; unitPrice?: number; dbItemId?: string;
+  product: Product; qty: number; vendor: string; vendorId: string; capacity?: string; unitPrice?: number; dbItemId?: string; couponShare?: number;
   /** GST % captured on the order line (the catalog rate may have changed since). */
   gstRate?: number;
 };
@@ -781,6 +784,8 @@ export type Order = {
   zohoSalesOrderId?: string | null;
   /** Zoho's own status for the linked sales order (draft, confirmed, void…). */
   zohoOrderStatus?: string | null;
+  /** Placed on or after 7 Nov 2026: its item prices include GST, so `subtotal` is the goods before GST and `tax` the GST inside them. Older orders added GST on top. */
+  pricesIncludeGst?: boolean;
   dbOrderId?: string;
   /** Per-vendor status for split marketplace fulfillment. */
   vendorStatuses?: { vendorId: string; vendor: string; status: OrderStatus }[];

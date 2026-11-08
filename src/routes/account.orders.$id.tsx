@@ -67,7 +67,7 @@ export const Route = createFileRoute("/account/orders/$id")({
 
 function AccountOrderDetail() {
   const { id } = Route.useParams();
-  const { user, orders, updateOrderStatus, requestReturn, paymentHolds, ordersLoaded } = useApp();
+  const { returns, user, orders, updateOrderStatus, requestReturn, paymentHolds, ordersLoaded } = useApp();
   const { settings: upiSettings } = useUpiPayments();
   const [returnOpen, setReturnOpen] = useState(false);
   const [returnItemIndex, setReturnItemIndex] = useState("0");
@@ -289,6 +289,11 @@ function AccountOrderDetail() {
             </div>
           </dl>
           <ZohoInvoiceStatus orderNo={order.id} audience="customer" className="mt-3" />
+          {returns.filter((item) => item.order === order.id).map((item) => (
+            <p key={item.id} className="mt-3 rounded-md bg-ivory px-3 py-2 text-xs text-navy">
+              <span className="font-semibold">Return: {item.product}</span> · {item.status} · Refund {item.refund} · {inrPrecise(item.amount)}
+            </p>
+          ))}
         </Panel>
       </div>
 
@@ -338,7 +343,7 @@ function AccountOrderDetail() {
         <Panel title="Order Summary">
           <dl className="space-y-2 text-sm">
             <div className="flex justify-between">
-              <dt className="text-slate">Subtotal</dt>
+              <dt className="text-slate">Subtotal (before GST)</dt>
               <dd className="text-charcoal">{inrPrecise(order.subtotal)}</dd>
             </div>
             <div className="flex justify-between">
@@ -346,7 +351,7 @@ function AccountOrderDetail() {
               <dd className="text-danger">-{inrPrecise(order.discount)}</dd>
             </div>
             <div className="flex justify-between">
-              <dt className="text-slate">Tax</dt>
+              <dt className="text-slate">GST</dt>
               <dd className="text-charcoal">{inrPrecise(order.tax)}</dd>
             </div>
             <div className="flex justify-between">

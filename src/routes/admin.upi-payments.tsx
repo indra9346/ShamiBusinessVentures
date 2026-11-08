@@ -22,6 +22,7 @@ import { AWAITING_PAYMENT, clockText, holdSecondsLeft } from "@/lib/payment-hold
 import { CustomersPayingNow } from "@/components/panel/CustomersPayingNow";
 import { ResizableTable } from "@/hooks/use-column-resize";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -42,7 +43,7 @@ const istTime = (iso: string) => new Date(iso).toLocaleString("en-IN", { timeZon
 function AdminUpiPayments() {
   const { settings, submissions, credits, creditsWithoutUtr } = useUpiPayments();
   const utrChecks = useUtrChecks();
-  const { confirmPayment, paymentHolds, orders, simulateBankAlert, refreshHeldCheckouts } = useApp();
+  const { user, confirmPayment, paymentHolds, orders, simulateBankAlert, refreshHeldCheckouts } = useApp();
   const methodOf = (orderNo: string) => paymentHolds.find((hold) => hold.orderNo === orderNo)?.method ?? orders.find((order) => order.id === orderNo)?.method ?? "UPI";
   const awaiting = paymentHolds.filter((hold) => hold.status === AWAITING_PAYMENT);
   const [form, setForm] = useState<UpiSettings>(DEFAULT_UPI_SETTINGS);
@@ -91,8 +92,9 @@ function AdminUpiPayments() {
     }
   };
 
-  const confirm = async (orderNo: string, amount: number, utr: string) => {
-    if (!window.confirm(`Confirm ${inrPrecise(amount)} for ${orderNo}?\n\nOnly confirm after you see a credit with UTR ${utr} for this amount in the bank account.`)) return;
+  const [confirming, setConfirming] = useState<{ orderNo: string; amount: number; utr: string } | null>(null);
+  const confirm = async (orderNo: string, amount: number, utr: string, checkedAgainst: string, remark: string) => {
+    setConfirming(null);
     setBusy(orderNo);
     try {
       if (STATIC_DATA_MODE) {
@@ -101,7 +103,8 @@ function AdminUpiPayments() {
         else if (!(await confirmPayment(orderNo, amount, utr))) throw new Error("The order could not be marked paid");
       }
       // Live: one database step records the payment for this UTR and closes it.
-      await reviewUpiPayment(orderNo, "confirmed", utr);
+      // What the admin compared it with stays on the record, shown under Checked payments.
+      await reviewUpiPayment(orderNo, "confirmed", utr, [`Checked against ${checkedAgainst}`, user?.name ? `by ${user.name}` : "", remark.trim()].filter(Boolean).join(" ").slice(0, 200));
       pushOrderToZohoInBackground(orderNo);
       toast.success(`${orderNo} marked paid`, { description: `UTR ${utr}` });
     } catch (cause) {
@@ -215,7 +218,7 @@ function AdminUpiPayments() {
                     <td className="px-2 py-2 font-mono tracking-wider">{s.utr}</td>
                     <td className="px-2 py-2">
                       <div className="flex gap-2">
-                        <Button size="sm" className="bg-emerald-600 text-white hover:bg-emerald-700" disabled={busy === s.orderNo} onClick={() => void confirm(s.orderNo, s.amount, s.utr)}>Confirm paid</Button>
+                        <Button size="sm" className="bg-emerald-600 text-white hover:bg-emerald-700" disabled={busy === s.orderNo} onClick={() => setConfirming({ orderNo: s.orderNo, amount: s.amount, utr: s.utr })}>Confirm paid</Button>
                         <Button size="sm" variant="outline" className="text-danger" disabled={busy === s.orderNo} onClick={() => reject(s.orderNo, s.utr)}>Reject</Button>
                       </div>
                       <CreditHint payment={s} credits={creditsWithoutUtr} />
@@ -327,7 +330,7 @@ function AdminUpiPayments() {
                     <td className="px-2 py-2 text-right tabular-nums">{inrPrecise(s.amount)}</td>
                     <td className="px-2 py-2 font-mono">{s.utr}</td>
                     <td className={cn("px-2 py-2 text-xs font-semibold", s.status === "confirmed" ? "text-emerald-700" : "text-danger")}>
-                      {s.status === "confirmed" ? "Confirmed paid"
+                      {s.status === "confirmed" ? `Confirmed paid${s.note ? ` · ${s.note}` : ""}`
                         : s.note === REFUNDED_UTR_NOTE ? "Refunded"
                         : REUSED_UTR_NOTE.test(s.note ?? "") ? s.note
                         : `Rejected${s.note ? `: ${s.note}` : ""}`}
@@ -342,6 +345,7 @@ function AdminUpiPayments() {
         </Panel>
         </div>
       )}
+      {confirming && <ConfirmPaidDialog {...confirming} onClose={() => setConfirming(null)} onConfirm={(checkedAgainst, remark) => void confirm(confirming.orderNo, confirming.amount, confirming.utr, checkedAgainst, remark)} />}
     </PanelLayout>
   );
 }
@@ -614,5 +618,35 @@ function BankAlertsPanel({ credits, creditsWithoutUtr = [], checkingOrders, onDe
         </div>
       )}
     </Panel>
+  );
+}
+
+/** Payment confirmation is by hand for now: the admin says what they compared the UTR with, and that stays on the record. */
+function ConfirmPaidDialog({ orderNo, amount, utr, onClose, onConfirm }: { orderNo: string; amount: number; utr: string; onClose: () => void; onConfirm: (checkedAgainst: string, remark: string) => void }) {
+  const [checkedAgainst, setCheckedAgainst] = useState("");
+  const [remark, setRemark] = useState("");
+  return (
+    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{`Confirm ${inrPrecise(amount)} for ${orderNo}?`}</DialogTitle>
+          <DialogDescription>{`Only confirm after you see a credit with UTR ${utr} for this amount.`}</DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-2">
+          <p className="text-xs font-semibold text-slate">Checked against</p>
+          {["bank SMS", "bank statement", "bank SMS and statement"].map((option) => (
+            <label key={option} className="flex items-center gap-2 text-sm text-navy">
+              <input type="radio" name="checked-against" className="h-4 w-4" checked={checkedAgainst === option} onChange={() => setCheckedAgainst(option)} />
+              {option.charAt(0).toUpperCase() + option.slice(1)}
+            </label>
+          ))}
+          <Input placeholder="Remark (optional)" maxLength={100} value={remark} onChange={(event) => setRemark(event.target.value)} />
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button className="bg-emerald-600 text-white hover:bg-emerald-700" disabled={!checkedAgainst} onClick={() => onConfirm(checkedAgainst, remark)}>Confirm paid</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

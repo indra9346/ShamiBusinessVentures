@@ -15,6 +15,7 @@ import { AWAITING_PAYMENT, isHeldStatus, type PaymentHold } from "@/lib/payment-
 import { loadUpiSettings } from "@/lib/upi-store";
 import { isBankMethod, mergeIntoCart, reorderPlan, type ReorderLine, type ReorderPlan } from "@/lib/payment-rules";
 import { isStorefrontProduct as isOnSale } from "@/lib/data";
+import { lineGstInside, toPaise } from "@/lib/pricing";
 import type { Database } from "@/integrations/supabase/types";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { branchForPin, branchStockOf, defaultBranchOf, godownPriceOf, useAdminBranch, useBranches, useShopperPin } from "@/lib/branches";
@@ -229,7 +230,7 @@ type AppState = {
   updateOrderStatus: (id: string, status: OrderStatus) => Promise<boolean>;
   updateOrderItem: (orderId: string, index: number, patch: { qty?: number; capacity?: string; unitPrice?: number }) => Promise<boolean>;
   updateOrderDelivery: (orderId: string, delivery: string) => void;
-  confirmPayment: (id: string, amount: number, utr: string, advancePercent?: number) => Promise<boolean>;
+  confirmPayment: (id: string, amount: number, utr: string, advancePercent?: number, method?: string) => Promise<boolean>;
   refundOrder: (id: string) => Promise<boolean>;
 
   vendors: Vendor[];
@@ -528,7 +529,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
                   sold: 0, weight: "", status: "approved" as const, active: true, tags: [], description: "", specs: [],
                   created: "", updated: "",
                 };
-                return { product, qty: Number(item.qty), vendor: item.vendor || "", vendorId: item.vendor_id || "", capacity: item.capacity || product.weight, unitPrice: Number(item.unit_price), gstRate: Number(item.gst_rate), dbItemId: item.id };
+                return { product, qty: Number(item.qty), vendor: item.vendor || "", vendorId: item.vendor_id || "", capacity: item.capacity || product.weight, unitPrice: Number(item.unit_price), gstRate: Number(item.gst_rate), dbItemId: item.id, couponShare: Number(item.coupon_share ?? 0) };
               });
               const paymentStatus = row.payment_status.toLowerCase();
               const latestPayment = latestPaymentByOrder.get(row.id);
@@ -557,6 +558,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
                 ...(row.coupon ? { coupon: row.coupon } : {}),
                 zohoSalesOrderId: ((row as Record<string, unknown>)["zoho_salesorder_id"] as string | null) || null,
                 zohoOrderStatus: ((row as Record<string, unknown>)["zoho_order_status"] as string | null) || null,
+                pricesIncludeGst: Boolean((row as Record<string, unknown>)["prices_include_gst"]),
                 dbOrderId: row.id,
                 ...(vendorStatuses.length ? { vendorStatuses } : {}),
               };
@@ -1598,12 +1600,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
           order.pin = shippingAddress.pin;
           order.phone = shippingAddress.phone;
         }
-        if (subtotal !== undefined) order.subtotal = subtotal;
-        if (discount !== undefined) order.discount = discount;
+        // Prices include GST: subtotal is the goods as the customer sees them, tax the GST inside. The order keeps the goods before GST.
+        order.pricesIncludeGst = true;
         if (tax !== undefined) order.tax = tax;
+        if (subtotal !== undefined) order.subtotal = toPaise(subtotal - (tax ?? 0));
+        if (discount !== undefined) order.discount = discount;
         if (shipping !== undefined) order.shipping = shipping;
         if (subtotal !== undefined || discount !== undefined || tax !== undefined || shipping !== undefined) {
-          order.amount = (order.subtotal ?? 0) - (order.discount ?? 0) + (order.tax ?? 0) + (order.shipping ?? 0);
+          order.amount = toPaise((order.subtotal ?? 0) + (order.tax ?? 0) - (order.discount ?? 0) + (order.shipping ?? 0));
         }
         if (source) order.source = source;
         if (paymentDueDate) order.paymentDueDate = paymentDueDate;
@@ -1910,9 +1914,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
           });
         }
         const items = order.items.map((line, lineIndex) => lineIndex === index ? { ...line, qty: nextQty, capacity: nextCapacity, unitPrice: nextUnitPrice } : line);
-        const subtotal = items.reduce((sum, line) => sum + (line.unitPrice ?? line.product.price) * line.qty, 0);
-        const tax = Math.round(Math.max(0, subtotal - order.discount) * 0.05);
-        const amount = subtotal - order.discount + tax + order.shipping;
+        const lineAmount = (line: (typeof items)[number]) => (line.unitPrice ?? line.product.price) * line.qty;
+        // Preview only: an order whose prices include GST keeps its total and splits out the GST inside; an older one adds 5% on top.
+        const goods = items.reduce((sum, line) => sum + lineAmount(line), 0);
+        const tax = order.pricesIncludeGst
+          ? items.reduce((sum, line) => sum + lineGstInside(line.unitPrice ?? line.product.price, line.qty, line.gstRate ?? line.product.gst), 0)
+          : Math.round(Math.max(0, goods - order.discount) * 0.05);
+        const subtotal = order.pricesIncludeGst ? toPaise(goods - tax) : goods;
+        const amount = toPaise(subtotal - order.discount + tax + order.shipping);
         const paidAmount = order.paidAmount ?? (order.payment === "Paid" ? order.amount : 0);
         const payment = paidAmount >= amount ? "Paid" : paidAmount > 0 ? "Partially Paid" : order.payment === "COD" ? "COD" : "Pending";
         setOrders((list) => list.map((candidate) => candidate.id === orderId
@@ -1921,9 +1930,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
         pushNotif("Order updated", `${orderId} item details were updated.`, "info", "admin");
         return true;
       },
-      confirmPayment: async (id, amount, utr, advancePercent = 30) => {
+      confirmPayment: async (id, amount, utr, advancePercent = 30, method) => {
         if (!STATIC_DATA_MODE) {
-          const { data, error } = await supabase.rpc("admin_confirm_manual_payment", { _order_no: id, _amount: amount, _utr: utr.trim() });
+          const { data, error } = await supabase.rpc("admin_confirm_manual_payment", { _order_no: id, _amount: amount, _utr: utr.trim(), ...(method ? { _method: method } : {}) });
           if (error || !data) { toast.error("Could not record payment", { description: error?.message ?? "Order not found." }); return false; }
           pushOrderToZohoInBackground(id);
           return true;

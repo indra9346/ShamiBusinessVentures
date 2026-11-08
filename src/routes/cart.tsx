@@ -9,7 +9,7 @@ import { useApp } from "@/lib/store";
 import { resizedImage } from "@/lib/image-url";
 import { useStorefrontDisplay } from "@/lib/storefront-display";
 import { branchDeliveryFee, defaultBranchOf, useBranches } from "@/lib/branches";
-import { couponDiscount, lineGst } from "@/lib/pricing";
+import { couponDiscount, gstAfterCoupon, lineGstInside } from "@/lib/pricing";
 import { Input } from "@/components/ui/input";
 import { showCartNotification } from "@/components/site/CartFloatingNotification";
 
@@ -33,10 +33,12 @@ function Cart() {
   const godown = defaultBranchOf(useBranches().branches);
   const pickup = godown ? godown.pickupEnabled : true;
   const delivery = pickup ? 0 : branchDeliveryFee(godown, subtotal);
-  const tax = cartItems.reduce((sum, line) => sum + lineGst(line.product.price, line.qty, line.product.gst), 0);
+  // Prices include GST: the subtotal is what the customer pays for the goods, and this is the GST inside it.
+  const taxBeforeCoupon = cartItems.reduce((sum, line) => sum + lineGstInside(line.product.price, line.qty, line.product.gst), 0);
   const appliedCoupon = applied ? coupons.find((c) => c.code === applied) : undefined;
   const discount = appliedCoupon ? couponDiscount(appliedCoupon, subtotal) : 0;
-  const total = subtotal + delivery + tax - discount;
+  const tax = discount > 0 ? gstAfterCoupon(cartItems.map((line) => ({ price: line.product.price, qty: line.qty, gstPercent: line.product.gst })), discount) : taxBeforeCoupon;
+  const total = subtotal + delivery - discount;
 
   const applyCoupon = () => {
     const code = coupon.trim().toUpperCase();
@@ -174,15 +176,15 @@ function Cart() {
           <aside className="h-max rounded-lg border border-border bg-card p-6 shadow-card lg:sticky lg:top-40">
             <h2 className="text-sm font-bold tracking-wide text-navy uppercase">Order Summary</h2>
             <div className="mt-5 space-y-3 text-sm">
-              <Row label="Subtotal" value={inrPrecise(subtotal)} />
+              <Row label="Subtotal (incl. GST)" value={inrPrecise(subtotal)} />
               <Row label={pickup ? "Godown pickup" : "Delivery charges"} value={delivery === 0 ? "Free" : inrPrecise(delivery)} />
-              <Row label="GST" value={inrPrecise(tax)} />
               {discount > 0 && <Row label={`Coupon discount (${applied})`} value={`- ${inrPrecise(discount)}`} gold />}
               <div className="hairline-gold my-2" />
               <div className="flex justify-between text-base font-bold text-navy">
                 <span>Grand total</span>
                 <span>{inrPrecise(total)}</span>
               </div>
+              {tax > 0 && <p className="text-right text-xs text-slate">{`Includes GST of ${inrPrecise(tax)}`}</p>}
             </div>
 
             <div className="mt-5 flex gap-2">

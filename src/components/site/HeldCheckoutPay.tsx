@@ -12,6 +12,7 @@ import { CancelCheckoutButton } from "@/components/site/CancelCheckoutButton";
 import { normaliseUtr, upiPaymentUri, utrFromText, utrProblem, type UpiSettings } from "@/lib/upi-pay";
 import { GST_BILL_PAY_NOTE } from "@/lib/gstin";
 import { UpiAppButtons } from "@/components/site/UpiAppButtons";
+import { PAY_RETURNED_EVENT, payPanelId } from "@/lib/upi-return";
 import { BankTransferDetails, BankUtrForm } from "@/components/site/BankTransferPay";
 import { ReorderButton } from "@/components/site/ReorderButton";
 import { isBankMethod, lapsedTransfer, REFUNDED_UTR_NOTE, REUSED_UTR_NOTE, UNCHECKED_UTR_NOTE } from "@/lib/payment-rules";
@@ -106,6 +107,22 @@ export function HeldCheckoutPay({ settings, orderNo, amount, holdUntil, customer
     if (STATIC_DATA_MODE && view === "closing") void cancelPaymentHold(orderNo);
   }, [view, orderNo, cancelPaymentHold]);
 
+  // Back from the UPI app: ask for the UTR at once, and keep the order 10 more minutes (once) while it is typed.
+  // Until the bank SMS reaches the site, the UTR is how we learn that this payment was made.
+  const [backFromApp, setBackFromApp] = useState(false);
+  useEffect(() => {
+    const onBack = (event: Event) => {
+      if ((event as CustomEvent<string>).detail !== payPanelId(orderNo)) return;
+      setBackFromApp(true);
+      if (!STATIC_DATA_MODE) void supabase.rpc("extend_my_payment_hold", { _order_no: orderNo }).then(({ data }) => {
+        if (data) setLiveStatus((current) => (current ? { ...current, holdUntil: data } : current));
+      });
+      window.setTimeout(() => document.getElementById(`utr-${orderNo}`)?.focus({ preventScroll: true }), 600);
+    };
+    window.addEventListener(PAY_RETURNED_EVENT, onBack);
+    return () => window.removeEventListener(PAY_RETURNED_EVENT, onBack);
+  }, [orderNo]);
+
   const uri = useMemo(() => (settings && !byBank ? upiPaymentUri(settings, amount, orderNo) : ""), [settings, byBank, amount, orderNo]);
   const qrSvg = useMemo(() => (uri ? renderSVG(uri, { border: 2, ecc: "M" }) : ""), [uri]);
 
@@ -128,7 +145,7 @@ export function HeldCheckoutPay({ settings, orderNo, amount, holdUntil, customer
 
   if (view === "confirmed") {
     return (
-      <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-5 text-left text-emerald-900">
+      <div id={payPanelId(orderNo)} className="scroll-mt-24 rounded-lg border border-emerald-200 bg-emerald-50 p-5 text-left text-emerald-900">
         <p className="flex items-center gap-2 text-base font-bold"><CheckCircle2 className="h-5 w-5" /> Payment received · order placed and confirmed</p>
         <p className="mt-1 text-sm">Order <span className="font-semibold">{orderNo}</span> · {`${inrPrecise(amount)} paid by ${method}. We have started on your order.`}</p>
       </div>
@@ -140,7 +157,7 @@ export function HeldCheckoutPay({ settings, orderNo, amount, holdUntil, customer
     const row = STATIC_DATA_MODE ? submission : finalUtr;
     if (row === undefined && !STATIC_DATA_MODE) {
       return (
-        <div className="rounded-lg border border-border bg-card p-5 text-left">
+        <div id={payPanelId(orderNo)} className="scroll-mt-24 rounded-lg border border-border bg-card p-5 text-left">
           <p className="flex items-center gap-2 text-base font-bold text-navy"><XCircle className="h-5 w-5 text-slate" /> Not placed</p>
         </div>
       );
@@ -160,7 +177,7 @@ export function HeldCheckoutPay({ settings, orderNo, amount, holdUntil, customer
       : row?.status === "rejected" ? "the UTR you sent could not be matched"
       : byBank ? "the UTR did not come in time" : "the payment time ran out";
     return (
-      <div className="rounded-lg border border-border bg-card p-5 text-left">
+      <div id={payPanelId(orderNo)} className="scroll-mt-24 rounded-lg border border-border bg-card p-5 text-left">
         <p className="flex items-center gap-2 text-base font-bold text-navy"><XCircle className="h-5 w-5 text-slate" /> Not placed: {reason}</p>
         <p className="mt-1 text-sm text-slate">
           {moneyCame
@@ -188,7 +205,7 @@ export function HeldCheckoutPay({ settings, orderNo, amount, holdUntil, customer
   const earlier = lapsedTransfer(submissions, now);
 
   return (
-    <div className="rounded-lg border border-border bg-card p-4 text-left shadow-card">
+    <div id={payPanelId(orderNo)} className="scroll-mt-24 rounded-lg border border-border bg-card p-4 text-left shadow-card">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="text-xs font-bold uppercase tracking-wider text-slate">{view === "received" ? "Your payment" : byBank ? "Transfer now to place your order" : "Pay now to place your order · no extra charges"}</p>
@@ -256,24 +273,30 @@ export function HeldCheckoutPay({ settings, orderNo, amount, holdUntil, customer
               <ol className="list-decimal space-y-1 pl-4 text-sm text-charcoal">
                 <li>Scan the QR, or on your phone tap your UPI app below.</li>
                 <li>Pay exactly <span className="font-semibold">{inrPrecise(amount)}</span> to <span className="font-semibold">{settings?.payeeName}</span>.</li>
-                <li>Stay on this page: it shows when your payment reaches our bank. Our team then confirms it and your order is placed.</li>
+                <li>Come back here and enter the 12-digit UPI Ref No. (UTR) from the payment receipt. Our team confirms it with our bank and your order is placed.</li>
               </ol>
-              <UpiAppButtons uri={uri} />
+              <UpiAppButtons uri={uri} returnTo={payPanelId(orderNo)} />
               <button type="button" onClick={() => { void navigator.clipboard?.writeText(settings?.vpa ?? ""); toast.success("UPI ID copied"); }}
                 className="inline-flex items-center gap-1 text-xs font-semibold text-gold hover:underline">
                 <Copy className="h-3.5 w-3.5" /> UPI ID: {settings?.vpa}
               </button>
-              <p className="flex items-center gap-2 text-xs font-semibold text-slate"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Waiting for your payment…</p>
+              {!backFromApp && <p className="flex items-center gap-2 text-xs font-semibold text-slate"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Waiting for your payment…</p>}
             </div>
           </div>
 
           <div className="mt-4 border-t border-border pt-4">
+            {backFromApp && submission?.status !== "rejected" && (
+              <div role="status" className="mb-3 rounded-md border-2 border-amber-400 bg-amber-50 p-3 text-sm text-amber-950">
+                <p className="font-bold">Payment done? Enter its UPI Ref No. now</p>
+                <p className="mt-0.5">It is the 12-digit number on the receipt in your UPI app (UPI Ref No., UPI transaction ID or UTR). Your order is kept for you while you enter it.</p>
+              </div>
+            )}
             {submission?.status === "rejected" && (
               <p className="mb-2 flex items-start gap-2 rounded-md bg-red-50 p-2 text-xs text-red-800">
                 <XCircle className="mt-0.5 h-4 w-4 shrink-0" /> UTR {submission.utr} could not be matched{submission.note ? `: ${submission.note}` : ""}.
               </p>
             )}
-            <label className="block text-xs font-semibold text-charcoal" htmlFor={`utr-${orderNo}`}>Paid? Paste or type the 12-digit UTR from your UPI app: it speeds up the check</label>
+            <label className="block text-xs font-semibold text-charcoal" htmlFor={`utr-${orderNo}`}>Paid? Enter the 12-digit UPI Ref No. (UTR) from your UPI app</label>
             <div className="mt-1.5 flex flex-wrap gap-2">
               <input id={`utr-${orderNo}`} inputMode="numeric" autoComplete="off" maxLength={300} placeholder="e.g. 612345678901" value={utr}
                 onChange={(e) => { setUtr(e.target.value); setError(""); }}

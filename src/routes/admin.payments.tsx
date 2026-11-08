@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { CheckCircle2, Clock, IndianRupee, RotateCcw, XCircle } from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { DataTable, FilterNote, Panel, scrollToSection, StatCard, StatusBadge } from "@/components/panel/widgets";
+import { DepositAccountsPanel } from "@/components/panel/DepositAccountsPanel";
 import { adminNav } from "@/lib/panel-nav";
 import { inr, inrPrecise } from "@/lib/data";
 import { loadAdvancePercent } from "@/lib/business-rules";
@@ -99,6 +100,7 @@ function AdminPayments() {
   const [view, setView] = useState<(typeof txns)[number] | null>(null);
   const [confirmOrder, setConfirmOrder] = useState<string | null>(null);
   const [utr, setUtr] = useState("");
+  const [paidBy, setPaidBy] = useState("UPI");
   const [advancePercent, setAdvancePercent] = useState("30");
   // The advance the database requires before a vendor accepts comes from Settings → Orders.
   const [settingsAdvance, setSettingsAdvance] = useState(30);
@@ -325,6 +327,8 @@ function AdminPayments() {
         </div>
       </Panel>
 
+      <DepositAccountsPanel className="mt-6" />
+
       <Dialog open={!!view} onOpenChange={(o) => !o && setView(null)}>
         <DialogContent>
           <DialogHeader>
@@ -404,6 +408,12 @@ function AdminPayments() {
                     />
                   </label>
                   <p className="text-sm text-slate">Use this only after you have verified the incoming bank transfer. This records a manual payment with the UTR for reconciliation.</p>
+                  <label className="grid gap-1 text-xs font-semibold text-slate">
+                    Paid by
+                    <select value={paidBy} onChange={(event) => setPaidBy(event.target.value)} className="h-9 rounded-md border border-border bg-background px-3 text-base text-navy sm:text-sm">
+                      {["UPI", "NEFT", "RTGS", "IMPS", "Cash", "Cheque"].map((mode) => <option key={mode} value={mode}>{mode}</option>)}
+                    </select>
+                  </label>
                   <Input
                     value={utr}
                     onChange={(e) => setUtr(e.target.value)}
@@ -413,7 +423,7 @@ function AdminPayments() {
                     className="w-full"
                     disabled={advance <= 0 || utr.trim().length < 4}
                     onClick={async () => {
-                      const saved = await confirmPayment(order.id, advance, utr, percent);
+                      const saved = await confirmPayment(order.id, advance, utr, percent, paidBy);
                       if (!saved) return;
                       toast.success(`Verified manual payment of ${inrPrecise(advance)} recorded for ${order.id}`);
                       setConfirmOrder(null);

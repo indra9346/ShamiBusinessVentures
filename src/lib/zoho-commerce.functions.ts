@@ -11,6 +11,7 @@ import {
   zohoBatchesAtLocation, zohoTracksBatches, type BatchShare, type StockBatch, type ZohoBatch,
 } from "@/lib/batches";
 import { awaitingImportApproval, zohoItemAsHiddenProduct, zohoItemImportable, zohoItemSaleProblem, zohoItemsNotOnWebsite } from "@/lib/zoho-item-import";
+import { zohoDiscountFields } from "@/lib/zoho-sync-core";
 import {
   cleanEmailList, godownPricesFromPricebook, godownStockFromZohoItem, mergeGodownPrices, newOrderEmail, parseZohoItemSyncVendorIds, pendingOrderQty, sameGodownPrices,
   zohoPricebookItemsFor, reconcileCatalog, reconcileCustomers, reconcileOrders, shouldRetryZohoCall,
@@ -32,6 +33,10 @@ import {
 } from "@/lib/zoho-call-log";
 import { ZOHO_TOKEN_LIMIT_MESSAGE, createZohoTokenCache, isZohoTokenLimit, type ZohoTokenCache, type ZohoTokenReply } from "@/lib/zoho-token-cache";
 import { billChange, billPlan, billSummary, lineBlocker } from "@/lib/bill-batches";
+import {
+  DEPOSIT_ACCOUNTS_KEY, depositAccountFor, depositAccountHint, godownOfPayment, parseDepositAccounts, withDepositAccount,
+  zohoCustomerPaymentBody, zohoDepositAccountOptions, type DepositAccount, type DepositAccounts, type ZohoDepositAccountOption,
+} from "@/lib/deposit-accounts";
 
 // ---------------------------------------------------------------- Zoho API call log
 // Every Zoho API call made from this file is noted with what it was for, and saved to
@@ -408,7 +413,7 @@ export const startZohoAuthorization = createServerFn({ method: "POST" })
       response_type: "code",
       client_id: reqEnv("ZOHO_CLIENT_ID"),
       scope:
-        "ZohoCommerce.items.READ,ZohoCommerce.items.CREATE,ZohoCommerce.items.UPDATE,ZohoCommerce.coupons.READ,ZohoCommerce.coupons.CREATE,ZohoCommerce.coupons.UPDATE,ZohoCommerce.salesorders.READ,ZohoCommerce.salesorders.CREATE,ZohoCommerce.salesorders.UPDATE,ZohoCommerce.settings.READ,ZohoCommerce.settings.UPDATE,ZohoCommerce.sitesIndex.READ,ZohoCommerce.webhooks.READ,ZohoCommerce.webhooks.CREATE,ZohoInventory.contacts.READ,ZohoInventory.contacts.CREATE,ZohoInventory.contacts.UPDATE,ZohoInventory.items.READ,ZohoInventory.items.CREATE,ZohoInventory.items.UPDATE,ZohoInventory.salesorders.READ,ZohoInventory.salesorders.CREATE,ZohoInventory.salesorders.UPDATE,ZohoInventory.inventoryadjustments.READ,ZohoInventory.inventoryadjustments.CREATE,ZohoInventory.settings.READ,ZohoInventory.settings.UPDATE,ZohoBooks.salesorders.CREATE,ZohoBooks.invoices.READ,ZohoBooks.invoices.CREATE,ZohoBooks.customerpayments.READ,ZohoBooks.customerpayments.CREATE,ZohoInventory.packages.READ,ZohoInventory.packages.CREATE,ZohoInventory.shipmentorders.READ,ZohoInventory.shipmentorders.CREATE,ZohoInventory.shipmentorders.UPDATE,ZohoInventory.purchaseorders.READ,ZohoInventory.purchaseorders.CREATE,ZohoInventory.bills.READ,ZohoBooks.invoices.UPDATE",
+        "ZohoCommerce.items.READ,ZohoCommerce.items.CREATE,ZohoCommerce.items.UPDATE,ZohoCommerce.coupons.READ,ZohoCommerce.coupons.CREATE,ZohoCommerce.coupons.UPDATE,ZohoCommerce.salesorders.READ,ZohoCommerce.salesorders.CREATE,ZohoCommerce.salesorders.UPDATE,ZohoCommerce.settings.READ,ZohoCommerce.settings.UPDATE,ZohoCommerce.sitesIndex.READ,ZohoCommerce.webhooks.READ,ZohoCommerce.webhooks.CREATE,ZohoInventory.contacts.READ,ZohoInventory.contacts.CREATE,ZohoInventory.contacts.UPDATE,ZohoInventory.items.READ,ZohoInventory.items.CREATE,ZohoInventory.items.UPDATE,ZohoInventory.salesorders.READ,ZohoInventory.salesorders.CREATE,ZohoInventory.salesorders.UPDATE,ZohoInventory.inventoryadjustments.READ,ZohoInventory.inventoryadjustments.CREATE,ZohoInventory.settings.READ,ZohoInventory.settings.UPDATE,ZohoBooks.salesorders.CREATE,ZohoBooks.invoices.READ,ZohoBooks.invoices.CREATE,ZohoBooks.customerpayments.READ,ZohoBooks.customerpayments.CREATE,ZohoBooks.customerpayments.DELETE,ZohoInventory.packages.READ,ZohoInventory.packages.CREATE,ZohoInventory.shipmentorders.READ,ZohoInventory.shipmentorders.CREATE,ZohoInventory.shipmentorders.UPDATE,ZohoInventory.purchaseorders.READ,ZohoInventory.purchaseorders.CREATE,ZohoInventory.bills.READ,ZohoBooks.invoices.UPDATE,ZohoBooks.banking.READ",
       redirect_uri: redirectUri,
       access_type: "offline",
       prompt: "consent",
@@ -1220,7 +1225,7 @@ function inventoryApi(region: Region, resource: string, organizationId: string, 
  * errors only for GET/PUT. A POST is never resent blindly; order creation looks the order up by
  * its Reference# (the website order number) on the next attempt instead (see syncZohoOrder).
  */
-async function fetchWithZohoRetry(send: () => Promise<Response>, resource: string, method: "GET" | "POST" | "PUT") {
+async function fetchWithZohoRetry(send: () => Promise<Response>, resource: string, method: "GET" | "POST" | "PUT" | "DELETE") {
   const MAX_RETRIES = 2;
   let response: Response | null = null;
   for (let retry = 0; ; retry += 1) {
@@ -2276,7 +2281,7 @@ async function pushCommerceProductValues(
   }
 }
 
-type GrainBazarOrderItem = { id?: string; product_id: string | null; product_name: string; sku: string | null; qty: number; unit_price: number; gst_rate: number };
+type GrainBazarOrderItem = { id?: string; product_id: string | null; product_name: string; sku: string | null; qty: number; unit_price: number; gst_rate: number; coupon_share?: number };
 
 /** Batch numbers each order line took (FIFO at the order's godown), by order item id. */
 async function orderItemBatchCodes(db: Awaited<ReturnType<typeof dbAdmin>>, itemIds: string[]) {
@@ -2353,6 +2358,7 @@ async function zohoLineItemsForOrder(
     const batchText = item.id ? batchLineText(batchCodes.get(item.id) ?? [], item.qty) : "";
     lineItems.push({
       item_id: zohoItemId, name: item.product_name, quantity: item.qty, rate: item.unit_price, tax_percentage: item.gst_rate,
+      ...(Number(item.coupon_share) > 0 ? { discount: Number(item.coupon_share) } : {}),
       ...(hsn ? { hsn_or_sac: hsn } : {}),
       ...(batchText ? { description: batchText } : {}),
     });
@@ -2361,6 +2367,8 @@ async function zohoLineItemsForOrder(
 }
 
 const ZOHO_CLOSED_ORDER_STATES = ["void", "cancelled"];
+/** What an answered review says once a Zoho void closed its order. */
+const ZOHO_VOID_CLOSED_NOTE = "Closed: the sales order is void in Zoho, so the order was cancelled here too.";
 /** Zoho closes a sales order once it is invoiced, even with nothing shipped yet: nothing left to edit there. */
 const ZOHO_FINISHED_ORDER_STATES = ["closed", "fulfilled"];
 
@@ -2476,8 +2484,12 @@ async function syncLinkedZohoOrder(
       }
     }
   } else if (ZOHO_CLOSED_ORDER_STATES.includes(zohoStatus())) {
+    // Zoho is the official book: a void there closes this order too, refused only when money was received here.
+    const closed = await closeOrderVoidedInZoho(db, order, str(zoho["salesorder_number"]), zohoStatus());
     await saveZohoZohoState(db, order.id, zoho);
-    throw new NeedsReviewError(`Zoho sales order ${str(zoho["salesorder_number"])} is ${zohoStatus()} in Zoho, but Grain Bazar order ${order.order_no} is ${order.order_status}. Cancel it in Grain Bazar or create a new Zoho order.`);
+    if (!closed.closed) throw new NeedsReviewError(closed.review);
+    await refreshSalesOrderSnapshotSafe(db, organizationId, zoho);
+    return;
   } else if (!ZOHO_FINISHED_ORDER_STATES.includes(zohoStatus())) {
     const zohoTotal = Number(zoho["total"]);
     const invoiced = str(zoho["invoiced_status"]).toLowerCase();
@@ -2502,11 +2514,10 @@ async function syncLinkedZohoOrder(
         customer_id: str(zoho["customer_id"]),
         date: str(zoho["date"]),
         line_items: lineItems,
-        discount: Number(order.discount) || 0,
-        discount_type: "entity_level",
-        is_discount_before_tax: true,
+        ...zohoDiscountFields(order.discount, items),
         shipping_charge: Number(order.shipping) || 0,
-        is_inclusive_tax: false,
+        // Prices include GST on orders from 7 Nov 2026: Zoho takes the rate as GST-inclusive, so its total is the price paid.
+        is_inclusive_tax: Boolean(order.prices_include_gst),
         ...(str(zoho["place_of_supply"]) ? { place_of_supply: str(zoho["place_of_supply"]) } : {}),
         ...(str(zoho["gst_treatment"]) ? { gst_treatment: str(zoho["gst_treatment"]) } : {}),
         ...(str(zoho["gst_no"]) ? { gst_no: str(zoho["gst_no"]) } : {}),
@@ -2602,6 +2613,31 @@ async function copyZohoAddressToInvoice(
   return outcome;
 }
 
+async function readDepositAccounts(db: Awaited<ReturnType<typeof dbAdmin>>): Promise<DepositAccounts> {
+  const { data, error } = await db.from("settings").select("value").eq("key", DEPOSIT_ACCOUNTS_KEY).maybeSingle();
+  // Not read is not "none chosen": posting now could put the money in Undeposited Funds by mistake, so the sync waits.
+  if (error) throw new Error("Could not read which Zoho account each godown's payments are deposited to");
+  return parseDepositAccounts(data?.value);
+}
+
+/** The Zoho bank or cash account for this order's payments: its godown's choice, or null for Zoho's Undeposited Funds. */
+async function depositAccountForOrder(
+  db: Awaited<ReturnType<typeof dbAdmin>>,
+  order: Database["public"]["Tables"]["orders"]["Row"],
+  zoho: Record<string, unknown>,
+): Promise<DepositAccount | null> {
+  const accounts = await readDepositAccounts(db);
+  if (!Object.keys(accounts).length) return null;
+  const orderBranch = (order as { branch_id?: string | null }).branch_id ?? null;
+  let godowns: { id: string; zohoLocationId: string }[] = [];
+  if (!orderBranch && str(zoho["location_id"])) {
+    const { data, error } = await db.from("branches").select("id,zoho_location_id").is("vendor_id", null);
+    if (error) throw new Error("Could not read the godowns to find where this order's payment is deposited");
+    godowns = (data ?? []).map((row) => ({ id: row.id, zohoLocationId: str(row.zoho_location_id) }));
+  }
+  return depositAccountFor(accounts, godownOfPayment(orderBranch, str(zoho["location_id"]), godowns));
+}
+
 /**
  * Zoho Books invoice for a confirmed website order: converts its sales order to an invoice (Books
  * "invoices/fromsalesorder", so it gets the godown location's invoice series), marks it sent,
@@ -2629,7 +2665,7 @@ async function ensureZohoBooksInvoice(
   const fail = (step: string, cause: unknown): never => {
     throw new Error(failure(step, cause));
   };
-  type BooksInvoice = { invoice_id?: string; invoice_number?: string; status?: string; total?: number; balance?: number; payment_made?: number | null; customer_id?: string; customer_name?: string; gst_treatment?: string; gst_no?: string; place_of_supply?: string; billing_address?: unknown; shipping_address?: unknown };
+  type BooksInvoice = { date?: string; invoice_id?: string; invoice_number?: string; status?: string; total?: number; balance?: number; payment_made?: number | null; customer_id?: string; customer_name?: string; gst_treatment?: string; gst_no?: string; place_of_supply?: string; billing_address?: unknown; shipping_address?: unknown };
   const linked = (Array.isArray(zoho["invoices"]) ? zoho["invoices"] : []).map(plainObject)
     .filter((invoice) => str(invoice["invoice_id"]) && !["void"].includes(str(invoice["status"]).toLowerCase()));
   let invoiceId = str(linked[0]?.["invoice_id"]);
@@ -2715,6 +2751,8 @@ async function ensureZohoBooksInvoice(
   const gone = paymentsGoneFromInvoice(website, onInvoice);
   const toRecord = paymentsToRecord(website, onInvoice.map((payment) => payment.reference), Number(invoice.balance));
   const customerId = str(invoice.customer_id) || str(zoho["customer_id"]);
+  // The godown's own Zoho bank account, when one is chosen (Admin > Payments & Matching); else Zoho's Undeposited Funds.
+  const depositAccount = toRecord.length ? await depositAccountForOrder(db, order, zoho) : null;
   for (const payment of toRecord) {
     // Claimed before the post, so two syncs at once can't both post it. A crash here leaves a review, not a second payment.
     const pushed = website.find((row) => row.txnRef.trim() === payment.reference);
@@ -2726,23 +2764,17 @@ async function ensureZohoBooksInvoice(
     }
     let created: { payment?: { payment_id?: string } } | undefined;
     try {
-      created = await booksRequest<{ payment?: { payment_id?: string } }>(region, organizationId, token, "customerpayments", "POST", {
-        customer_id: customerId,
-        payment_mode: payment.mode,
-        amount: payment.amount,
-        date: payment.date,
-        reference_number: payment.reference,
-        description: `Grain Bazar order ${order.order_no} · ${payment.method || "website payment"} · UTR ${payment.reference}`,
-        invoices: [{ invoice_id: invoiceId, amount_applied: payment.amount }],
-      });
+      created = await booksRequest<{ payment?: { payment_id?: string } }>(region, organizationId, token, "customerpayments", "POST",
+        zohoCustomerPaymentBody(payment, { customerId, invoiceId, orderNo: order.order_no }, depositAccount));
     } catch (cause) {
       // Not sent, or the reply was lost: the next sync reads Zoho first either way.
       if (pushed) await db.from("payments").update({ zoho_invoice_id: null, zoho_pushed_at: null }).eq("id", pushed.id);
-      moneyIssues.retry.push(failure(`recording payment ${payment.reference}`, cause));
+      const message = cause instanceof Error ? cause.message : String(cause);
+      moneyIssues.retry.push(`${failure(`recording payment ${payment.reference}`, cause)}${depositAccountHint(message, depositAccount)}`);
       continue;
     }
     if (pushed) await noteAsPushed(pushed.id, str(created?.payment?.payment_id) || null);
-    console.info(zohoLogLine("zoho_invoice_payment_recorded", { order: number, amount: payment.amount }));
+    console.info(zohoLogLine("zoho_invoice_payment_recorded", { order: number, amount: payment.amount, deposited_to: depositAccount ? "godown_account" : "undeposited_funds" }));
   }
   // Paid in full on the website, but Zoho's separate CGST/SGST rounding left a paisa or two on the
   // invoice: write that off so Books shows it PAID for exactly what the customer paid.
@@ -2832,6 +2864,7 @@ async function recordZohoInvoiceState(
     }
     await saveInvoiceRecord(db, order, {
       zoho_invoice_id: invoice.invoiceId, invoice_number: invoice.number, status,
+      ...(invoice.date ? { invoice_date: invoice.date } : {}),
       total: invoice.total, balance: invoice.balance,
       auto_attempts: Math.max(1, row?.auto_attempts ?? 0),
       last_event: row?.zoho_invoice_id === invoice.invoiceId ? `Invoice ${status.replace("_", " ")} in Zoho` : "Invoice found in Zoho",
@@ -2876,6 +2909,7 @@ async function syncZohoOrderInvoice(
   await saveInvoiceRecord(db, order, {
     zoho_invoice_id: str(invoice.invoice_id) || null,
     invoice_number: str(invoice.invoice_number) || null,
+    ...(/^\d{4}-\d{2}-\d{2}/.test(str(invoice.date)) ? { invoice_date: str(invoice.date).slice(0, 10) } : {}),
     status: websiteInvoiceStatus(str(invoice.status)),
     total: Number.isFinite(Number(invoice.total)) ? Number(invoice.total) : null,
     balance: Number.isFinite(Number(invoice.balance)) ? Number(invoice.balance) : null,
@@ -2910,6 +2944,32 @@ async function tellAdminsOfPaymentReview(db: Awaited<ReturnType<typeof dbAdmin>>
 }
 
 /** Records Zoho's status and change time on the Grain Bazar order (shown in the admin). */
+/**
+ * A sales order voided or cancelled in Zoho. Zoho is the official book, so the website order closes too, at any stage
+ * (apply_zoho_order_cancellation). It is refused only when money was received here, which must be refunded first, and
+ * the caller hands that to a person. Once closed, the order's earlier reviews are answered: they asked about this.
+ */
+async function closeOrderVoidedInZoho(
+  db: Awaited<ReturnType<typeof dbAdmin>>,
+  order: { id: string; order_no: string; order_status: string },
+  salesOrderNumber: string,
+  zohoStatus: string,
+): Promise<{ closed: true } | { closed: false; review: string }> {
+  const { data: result, error } = await db.rpc("apply_zoho_order_cancellation", { _order_id: order.id });
+  if (!error && result && !result.startsWith("blocked")) {
+    await db.from("zoho_sync_outbox")
+      .update({ status: "complete", last_error: ZOHO_VOID_CLOSED_NOTE, updated_at: new Date().toISOString() })
+      .eq("entity_type", "order").eq("entity_id", order.id).in("status", ["needs_review", "failed"]);
+    return { closed: true };
+  }
+  const why = error?.message
+    ?? (result === "blocked_paid" ? "a payment was received here (refund it first)" : `it is ${order.order_status}`);
+  return {
+    closed: false,
+    review: `Zoho sales order ${salesOrderNumber} was ${zohoStatus === "void" ? "voided" : "cancelled"} in Zoho, but Grain Bazar order ${order.order_no} was not cancelled because ${why}. Decide which is right and correct the other side.`,
+  };
+}
+
 async function saveZohoZohoState(db: Awaited<ReturnType<typeof dbAdmin>>, orderId: string, zoho: Record<string, unknown>) {
   const modified = str(zoho["last_modified_time"]);
   await db.from("orders").update({
@@ -3062,15 +3122,13 @@ async function applyZohoSalesOrderToApp(
 
   const status = str(zoho["order_status"] ?? zoho["status"]).toLowerCase();
   let outcome = "recorded";
-  if (["void", "cancelled"].includes(status) && order.order_status !== "Cancelled") {
-    const { data: result, error } = await db.rpc("apply_zoho_order_cancellation", { _order_id: order.id });
-    if (error || (result && result.startsWith("blocked"))) {
-      const why = error?.message
-        ?? (result === "blocked_paid" ? "a payment was received (refund it first)" : `it is already ${order.order_status}`);
-      await saveZohoReview(db, "order", order.id, `Zoho sales order ${number} was ${status === "void" ? "voided" : "cancelled"} in Zoho, but Grain Bazar order ${order.order_no} was not cancelled because ${why}. Decide which is right and correct the other side.`);
-      outcome = "review";
-    } else {
+  if (ZOHO_CLOSED_ORDER_STATES.includes(status) && order.order_status !== "Cancelled") {
+    const closed = await closeOrderVoidedInZoho(db, order, number, status);
+    if (closed.closed) {
       outcome = "cancelled";
+    } else {
+      await saveZohoReview(db, "order", order.id, closed.review);
+      outcome = "review";
     }
   } else if (order.order_status !== "Cancelled") {
     const fulfillment = zohoFulfillmentStatus(zoho);
@@ -3209,8 +3267,16 @@ export const refreshZohoOrderInvoice = createServerFn({ method: "POST" })
     const response = await withZohoPurpose("Order page: invoice check", () => inventoryRequest<{ salesorder?: Record<string, unknown> }>(
       region, organizationId, token, `salesorders/${encodeURIComponent(order.zoho_salesorder_id)}`, "GET",
     ));
-    if (!response.salesorder) return { refreshed: false };
-    await withZohoPurpose("Order page: invoice check", () => recordZohoInvoiceState(db, order, response.salesorder!));
+    const salesOrder = response.salesorder;
+    if (!salesOrder) return { refreshed: false };
+    // Opening the order is enough: a sales order voided in Zoho closes it here too (unless money was received here).
+    const zohoStatus = str(salesOrder["order_status"] ?? salesOrder["status"]).toLowerCase();
+    if (ZOHO_CLOSED_ORDER_STATES.includes(zohoStatus) && order.order_status !== "Cancelled") {
+      const closed = await closeOrderVoidedInZoho(db, order, str(salesOrder["salesorder_number"]), zohoStatus);
+      if (!closed.closed) await saveZohoReview(db, "order", order.id, closed.review);
+      await saveZohoZohoState(db, order.id, salesOrder);
+    }
+    await withZohoPurpose("Order page: invoice check", () => recordZohoInvoiceState(db, order, salesOrder));
     await flushZohoCallLog();
     return { refreshed: true };
   });
@@ -3666,6 +3732,112 @@ export const listZohoLocations = createServerFn({ method: "GET" })
   });
 
 /**
+ * Admin: removes one recorded payment from an order. If it was posted to Zoho Books it comes out of Zoho first (scope
+ * ZohoBooks.customerpayments.DELETE, after Reauthorize Zoho); if Zoho will not, the admin deletes it there and presses again.
+ * The database then corrects the order and keeps a copy (admin_delete_payment).
+ */
+export const deleteOrderPayment = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator(z.object({ paymentId: z.string().uuid(), reason: z.string().trim().min(4).max(300) }))
+  .handler(async ({ data, context }) => {
+    await ensureAdmin(context.supabase, context.userId);
+    const db = await dbAdmin();
+    const { data: payment } = await db.from("payments").select("id,order_id,zoho_payment_id,zoho_invoice_id,txn_ref").eq("id", data.paymentId).maybeSingle();
+    if (!payment) throw new Error("This payment no longer exists.");
+    const { data: blocker, error: blockerError } = await context.supabase.rpc("payment_delete_blocker", { _payment_id: data.paymentId });
+    if (blockerError) throw new Error(blockerError.message);
+    if (blocker) throw new Error(blocker);
+    if (payment.zoho_payment_id || payment.zoho_invoice_id) {
+      const { region, organizationId, token } = await zohoOrderContext(db);
+      const stillInZoho = async () => {
+        if (!payment.zoho_invoice_id) return Boolean(payment.zoho_payment_id);
+        const listed = await booksRequest<{ payments?: { payment_id?: string; reference_number?: string }[] }>(region, organizationId, token, `invoices/${encodeURIComponent(payment.zoho_invoice_id)}/payments`, "GET");
+        return (listed.payments ?? []).some((row) => (payment.zoho_payment_id && str(row.payment_id) === payment.zoho_payment_id) || (payment.txn_ref && str(row.reference_number) === payment.txn_ref));
+      };
+      if (payment.zoho_payment_id) {
+        try {
+          await booksRequest(region, organizationId, token, `customerpayments/${encodeURIComponent(payment.zoho_payment_id)}`, "DELETE");
+        } catch (cause) {
+          const message = cause instanceof Error ? cause.message : "Zoho refused";
+          if (await stillInZoho()) throw new Error(`Zoho Books would not remove this payment: ${message}${zohoPermissionHint(message)} You can delete it in Zoho Books yourself, then press Remove again.`);
+        }
+      } else if (await stillInZoho()) {
+        throw new Error("Zoho Books holds this payment. Delete it in Zoho Books, then press Remove again.");
+      }
+      const { error: clearError } = await db.from("payments").update({ zoho_payment_id: null, zoho_invoice_id: null, zoho_pushed_at: null }).eq("id", payment.id);
+      if (clearError) throw new Error("Could not update the payment record");
+    }
+    const { data: result, error } = await context.supabase.rpc("admin_delete_payment", { _payment_id: data.paymentId, _reason: data.reason });
+    if (error) throw new Error(error.message);
+    if (payment.order_id) await db.rpc("enqueue_zoho_sync", { _entity_type: "order", _entity_id: payment.order_id });
+    return result as { order_no: string; paid: number; balance: number };
+  });
+
+/** The organisation's active Zoho Books bank and cash accounts (scope ZohoBooks.banking.READ). */
+async function zohoDepositAccounts(region: Region, organizationId: string, token: string): Promise<ZohoDepositAccountOption[]> {
+  const result = await booksRequest<{ bankaccounts?: unknown[] }>(region, organizationId, token, "bankaccounts?filter_by=Status.Active&per_page=200", "GET");
+  return zohoDepositAccountOptions(result.bankaccounts ?? []);
+}
+
+/**
+ * Admin: which Zoho account each godown's website payments are deposited to, and the accounts to choose from.
+ * Zoho's list is read only when asked for. If Zoho refuses (e.g. not yet reauthorized for banking), the saved
+ * choices still come back, with the reason.
+ */
+export const listZohoDepositAccounts = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    await ensureAdmin(context.supabase, context.userId);
+    const db = await dbAdmin();
+    const chosen = await readDepositAccounts(db);
+    try {
+      const { region, organizationId, token } = await zohoOrderContext(db);
+      return { chosen, accounts: await zohoDepositAccounts(region, organizationId, token), problem: null as string | null };
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "Zoho refused the list of bank accounts";
+      return { chosen, accounts: null as ZohoDepositAccountOption[] | null, problem: `${message}${zohoPermissionHint(message)}` };
+    }
+  });
+
+/**
+ * Admin: choose the Zoho bank or cash account a godown's website payments are deposited to ("" = none:
+ * Zoho's Undeposited Funds). The account must be one of Zoho's active bank or cash accounts right now;
+ * its name is Zoho's. Only payments posted from now on use it.
+ */
+export const saveGodownDepositAccount = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator(z.object({ branchId: z.string().trim().min(1).max(40), accountId: z.string().trim().regex(/^\d{0,30}$/) }))
+  .handler(async ({ context, data }) => {
+    await ensureAdmin(context.supabase, context.userId);
+    const db = await dbAdmin();
+    const { data: branch, error: branchError } = await db.from("branches").select("id,name,vendor_id").eq("id", data.branchId).maybeSingle();
+    if (branchError) throw new Error("Could not read the godown");
+    if (!branch || branch.vendor_id) throw new Error("That godown was not found");
+    let account: DepositAccount | null = null;
+    if (data.accountId) {
+      const { region, organizationId, token } = await zohoOrderContext(db);
+      let options: ZohoDepositAccountOption[];
+      try {
+        options = await zohoDepositAccounts(region, organizationId, token);
+      } catch (cause) {
+        const message = cause instanceof Error ? cause.message : "Zoho refused the list of bank accounts";
+        throw new Error(`${message}${zohoPermissionHint(message)}`);
+      }
+      const option = options.find((item) => item.id === data.accountId);
+      if (!option) throw new Error("That account is not an active bank or cash account in Zoho Books. Reload the list and choose again.");
+      account = { accountId: option.id, accountName: option.name, setAt: new Date().toISOString(), setBy: context.userId };
+    }
+    const current = await readDepositAccounts(db);
+    const { error } = await db.from("settings").upsert(
+      { key: DEPOSIT_ACCOUNTS_KEY, value: withDepositAccount(current, branch.id, account) as unknown as Json, is_public: false, updated_at: new Date().toISOString() },
+      { onConflict: "key" },
+    );
+    if (error) throw new Error("Could not save the godown's deposit account");
+    console.info(zohoLogLine("godown_deposit_account_set", { godown: branch.id, account: account ? "chosen" : "undeposited_funds" }));
+    return { chosen: depositAccountFor(withDepositAccount(current, branch.id, account).godowns, branch.id) };
+  });
+
+/**
  * The Zoho sales orders for one website order: newer ones carry the website order number in
  * Reference# (their own number comes from the godown's Zoho series), older ones are GB-<order no>.
  */
@@ -3707,7 +3879,7 @@ async function syncZohoOrder(db: Awaited<ReturnType<typeof dbAdmin>>, region: Re
   const orderId = job.entity_id;
   const [{ data: order, error: orderError }, { data: items, error: itemsError }] = await Promise.all([
     db.from("orders").select("*").eq("id", orderId).maybeSingle(),
-    db.from("order_items").select("id,product_id,product_name,sku,qty,unit_price,gst_rate,line_total").eq("order_id", orderId),
+    db.from("order_items").select("id,product_id,product_name,sku,qty,unit_price,gst_rate,line_total,coupon_share").eq("order_id", orderId),
   ]);
   if (orderError || itemsError) throw new Error("Could not read the order and items from Grain Bazar");
   if (!order) return;
@@ -3841,11 +4013,10 @@ async function syncZohoOrder(db: Awaited<ReturnType<typeof dbAdmin>>, region: Re
     customer_id: customerId,
     date: datePart(order.created_at, new Date().toISOString().slice(0, 10)),
     line_items: locationId ? lineItems.map((line) => ({ ...line, location_id: locationId })) : lineItems,
-    discount: Number(order.discount) || 0,
-    discount_type: "entity_level",
-    is_discount_before_tax: true,
+    ...zohoDiscountFields(order.discount, items),
     shipping_charge: Number(order.shipping) || 0,
-    is_inclusive_tax: false,
+    // Prices include GST on orders from 7 Nov 2026: Zoho takes the rate as GST-inclusive, so its total is the price paid.
+    is_inclusive_tax: Boolean(order.prices_include_gst),
     notes: notesParts.join(" "),
     ...zohoGstFields(order.customer_gstin, "order", order.business_legal_name),
   };
@@ -5263,7 +5434,7 @@ async function readOrderEmailConfig(db: Awaited<ReturnType<typeof dbAdmin>>): Pr
 }
 
 /** Zoho Books API v3 (same organization as Inventory). */
-async function booksRequest<T>(region: Region, organizationId: string, token: string, resource: string, method: "GET" | "POST" | "PUT", body?: Record<string, unknown>) {
+async function booksRequest<T>(region: Region, organizationId: string, token: string, resource: string, method: "GET" | "POST" | "PUT" | "DELETE", body?: Record<string, unknown>) {
   const url = new URL(`${REGIONS[region][2]}/books/v3/${resource}`);
   url.searchParams.set("organization_id", organizationId);
   const send = () => fetch(url, {

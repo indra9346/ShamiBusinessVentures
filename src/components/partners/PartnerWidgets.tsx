@@ -104,7 +104,7 @@ export function CommissionLinesTable({ lines, showPartner, partnerNames }: { lin
   if (!lines.length) return <p className="py-6 text-center text-sm text-slate">No commissions in this month yet.</p>;
   return (
     <div className="overflow-x-auto">
-      <ResizableTable tableId="partner-commission-lines" className="w-full min-w-[900px] text-left text-sm">
+      <ResizableTable tableId="partner-commission-lines" className="w-full min-w-[1040px] text-left text-sm">
         <thead>
           <tr className="border-b border-border text-[11px] font-bold uppercase tracking-wider text-slate">
             <th className="px-2 py-2">Date</th>
@@ -116,6 +116,8 @@ export function CommissionLinesTable({ lines, showPartner, partnerNames }: { lin
             <th className="px-2 py-2 text-right">Sale (excl. GST)</th>
             <th className="px-2 py-2">Rate</th>
             <th className="px-2 py-2 text-right">Commission</th>
+            <th className="px-2 py-2 text-right">Paid</th>
+            <th className="px-2 py-2 text-right">Balance</th>
             <th className="px-2 py-2">Status</th>
           </tr>
         </thead>
@@ -131,6 +133,8 @@ export function CommissionLinesTable({ lines, showPartner, partnerNames }: { lin
               <td className="px-2 py-2 text-right">{inrPrecise(Number(line.line_total))}</td>
               <td className="px-2 py-2 text-xs">{describeRate(line.kind as CommissionKind, Number(line.rate))}</td>
               <td className="px-2 py-2 text-right font-semibold text-navy">{inrPrecise(Number(line.amount))}</td>
+              <td className="px-2 py-2 text-right">{inrPrecise(Number(line.paid_amount))}</td>
+              <td className={cn("px-2 py-2 text-right", Number(line.due_amount) < 0 ? "font-semibold text-red-700" : "")}>{inrPrecise(Number(line.due_amount))}</td>
               <td className="px-2 py-2"><CommissionStatusBadge status={line.status} /></td>
             </tr>
           ))}

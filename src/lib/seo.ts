@@ -101,7 +101,10 @@ export type ProductForSeo = {
   name: string;
   description?: string;
   weight?: string;
+  /** The main picture. */
   image?: string;
+  /** The product page's further pictures, in order (Google may show any of them). */
+  images?: string[];
   sku?: string;
   brand?: string;
   category?: string;
@@ -165,14 +168,23 @@ export function productDescription(p: { name: string; description?: string | und
   return `${p.name}${pack}. Sold by Grain Bazar with a GST invoice.`;
 }
 
-/** Product rich result: name, description, image, SKU, brand, real ratings and the INR offer with stock and delivery. */
+/** Every picture's full address, the main one first, without blanks or repeats. */
+function productPictures(p: Pick<ProductForSeo, "image" | "images">) {
+  const all = [p.image, ...(p.images ?? [])].map((src) => (src ?? "").trim()).filter(Boolean).map(absoluteUrl);
+  return [...new Set(all)];
+}
+
+/** Product rich result: name, description, pictures, SKU, brand, real ratings and the INR offer with stock and delivery. */
 export function productJsonLd(p: ProductForSeo) {
   const price = Math.round(p.price * 100) / 100;
+  const pictures = productPictures(p);
   const offer = {
     "@type": "Offer",
     url: absoluteUrl(`/product/${encodeURIComponent(p.id)}`),
     priceCurrency: "INR",
     price: price.toFixed(2),
+    // Prices include GST (owner, 7 Nov 2026), as Google expects for India.
+    priceSpecification: { "@type": "UnitPriceSpecification", price: price.toFixed(2), priceCurrency: "INR", valueAddedTaxIncluded: true },
     availability: (p.stock ?? 1) > 0 ? "https://schema.org/InStock" : "https://schema.org/OutOfStock",
     itemCondition: "https://schema.org/NewCondition",
     seller: { "@type": "Organization", name: SITE_NAME },
@@ -192,7 +204,7 @@ export function productJsonLd(p: ProductForSeo) {
     "@type": "Product",
     name: p.name,
     description: clip(productDescription(p), 500),
-    ...(p.image ? { image: [absoluteUrl(p.image)] } : {}),
+    ...(pictures.length ? { image: pictures } : {}),
     ...(p.sku ? { sku: p.sku } : {}),
     ...(p.brand ? { brand: { "@type": "Brand", name: p.brand } } : {}),
     ...(p.category ? { category: p.category } : {}),

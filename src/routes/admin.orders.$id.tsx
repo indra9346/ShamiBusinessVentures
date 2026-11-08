@@ -2,6 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { toast } from "sonner";
 import {
+  Ban,
   Building2,
   CheckCircle2,
   Circle,
@@ -53,9 +54,11 @@ import {
 } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
 import { DeleteOrderButton } from "@/components/panel/DeleteOrderDialog";
+import { DeleteAllDetailsButton, OrderPaymentsPanel } from "@/components/panel/OrderPaymentsPanel";
 import { InvoicePreviewButton } from "@/components/site/InvoicePreviewDialog";
 import { ResizableTable } from "@/hooks/use-column-resize";
 import { ItemBatchCodes, useOrderItemBatches } from "@/components/batches/OrderItemBatches";
+import { isVoidInZoho, zohoVoidNotice } from "@/lib/zoho-void";
 
 export const Route = createFileRoute("/admin/orders/$id")({
   head: ({ params }) => ({
@@ -126,9 +129,13 @@ function AdminOrderDetail() {
   }
 
   const isCancelled = order.status === "Cancelled";
-  const canCancel = canCancelOrder(order, "admin");
+  // Voided (or cancelled) in the official Zoho books: the website closes the order too, and nothing here changes it.
+  const voidInZoho = isVoidInZoho(order);
+  const voidNotice = zohoVoidNotice(order);
+  const voidWord = order.zohoOrderStatus === "cancelled" ? "cancelled" : "void";
+  const canCancel = !voidInZoho && canCancelOrder(order, "admin");
   const hasUnrefundedPayment = (order.paidAmount ?? 0) > 0 || order.payment === "Paid" || order.payment === "Partially Paid";
-  const canEditItems = !isCancelled && (STATIC_DATA_MODE || (
+  const canEditItems = !isCancelled && !voidInZoho && (STATIC_DATA_MODE || (
     order.status === "Placed" && order.payment === "Pending" &&
     (order.paidAmount ?? 0) === 0 && (order.discount ?? 0) === 0 && !order.coupon
   ));
@@ -179,23 +186,28 @@ function AdminOrderDetail() {
           <span className="text-slate/40">|</span>
           <span className="font-mono text-xs font-semibold text-slate">TXN: {order.txn}</span>
           {zohoSalesOrderId && (
-            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 text-xs font-semibold text-emerald-800">
-              <Building2 className="h-3 w-3" /> Zoho: {zohoSalesOrderId}
+            <span className={cn(
+              "inline-flex min-w-0 items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-semibold break-all",
+              voidInZoho ? "border-red-200 bg-red-50 text-red-800" : "border-emerald-200 bg-emerald-50 text-emerald-800",
+            )}>
+              <Building2 className="h-3 w-3 shrink-0" /> Zoho: {zohoSalesOrderId}
             </span>
           )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={syncingZoho}
-            onClick={() => void handleSyncToZoho()}
-            className="border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 font-semibold"
-            title="Immediately synchronize this order with Zoho Commerce / Inventory"
-          >
-            <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${syncingZoho ? "animate-spin" : ""}`} />
-            {syncingZoho ? "Syncing to Zoho…" : zohoSalesOrderId ? "Re-sync to Zoho" : "Push to Zoho"}
-          </Button>
+          {!voidInZoho && (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={syncingZoho}
+              onClick={() => void handleSyncToZoho()}
+              className="border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 font-semibold"
+              title="Immediately synchronize this order with Zoho Commerce / Inventory"
+            >
+              <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${syncingZoho ? "animate-spin" : ""}`} />
+              {syncingZoho ? "Syncing to Zoho…" : zohoSalesOrderId ? "Re-sync to Zoho" : "Push to Zoho"}
+            </Button>
+          )}
           <Button
             variant="outline"
             size="sm"
@@ -206,6 +218,7 @@ function AdminOrderDetail() {
           </Button>
           <InvoicePreviewButton order={order} copy="office" size="sm" label="Invoice" />
 
+          {!voidInZoho && (
           <Select
             value={order.status}
             disabled={isCancelled}
@@ -225,7 +238,9 @@ function AdminOrderDetail() {
               {isCancelled && <SelectItem value="Cancelled">Cancelled</SelectItem>}
             </SelectContent>
           </Select>
+          )}
 
+          {!voidInZoho && (
           <AlertDialog>
             <AlertDialogTrigger asChild>
               <Button
@@ -263,12 +278,30 @@ function AdminOrderDetail() {
               </AlertDialogFooter>
             </AlertDialogContent>
           </AlertDialog>
-          {isCancelled && <DeleteOrderButton orderNo={order.id} />}
+          )}
+          {isCancelled && <DeleteOrderButton orderNo={order.id} voidInZoho={voidInZoho} />}
+          {(isCancelled || voidInZoho) && <DeleteAllDetailsButton orderNo={order.id} />}
         </div>
       </div>
 
+      {voidNotice && (
+        <div
+          role="status"
+          className={cn(
+            "mb-5 flex items-start gap-2.5 rounded-xl border p-4",
+            voidNotice.tone === "refund" ? "border-amber-300 bg-amber-50 text-amber-950" : "border-red-200 bg-red-50 text-red-950",
+          )}
+        >
+          <Ban className="mt-0.5 h-5 w-5 shrink-0" />
+          <div className="min-w-0">
+            <p className="text-sm font-bold">{voidNotice.title}</p>
+            <p className="mt-0.5 text-sm break-words">{voidNotice.detail}</p>
+          </div>
+        </div>
+      )}
+
       {/* WHAT'S NEXT Action Banner (matching Zoho Commerce) */}
-      {!isCancelled && order.status !== "Delivered" && (
+      {!isCancelled && !voidInZoho && order.status !== "Delivered" && (
         <div className="mb-5 flex flex-col gap-3 rounded-xl border border-emerald-200 bg-emerald-50/70 p-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-2.5">
             <Sparkles className="h-5 w-5 text-emerald-700 shrink-0" />
@@ -367,7 +400,11 @@ function AdminOrderDetail() {
           <div>
             <div className="flex items-center gap-2">
               <span className="text-xs font-semibold uppercase tracking-wider text-slate">Zoho Commerce / Inventory Integration</span>
-              {zohoSalesOrderId ? (
+              {zohoSalesOrderId && voidInZoho ? (
+                <span className="inline-flex min-w-0 items-center gap-1 rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-semibold text-red-800 break-all">
+                  <Ban className="h-3 w-3 shrink-0" /> {`${voidWord === "cancelled" ? "Cancelled" : "Void"} in Zoho: ${zohoSalesOrderId}`}
+                </span>
+              ) : zohoSalesOrderId ? (
                 <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-800">
                   <CheckCircle2 className="h-3 w-3" /> Synced: {zohoSalesOrderId}
                 </span>
@@ -378,24 +415,28 @@ function AdminOrderDetail() {
               )}
             </div>
             <p className="text-xs text-slate mt-0.5">
-              {zohoSalesOrderId
+              {zohoSalesOrderId && voidInZoho
+                ? `Sales Order ${zohoSalesOrderId}, in ${zohoLocationLabel(orderBranch)}, is ${voidWord} in Zoho. Nothing more is sent to Zoho for this order.`
+                : zohoSalesOrderId
                 ? `Order is synchronized with Zoho under Sales Order ${zohoSalesOrderId}, in ${zohoLocationLabel(orderBranch)}.`
                 : "Active write sync will automatically mirror this sales order into Zoho Inventory & Commerce."}
             </p>
-            {zohoSalesOrderId && <ZohoInvoiceStatus orderNo={order.id} audience="admin" className="mt-3" />}
+            {zohoSalesOrderId && <ZohoInvoiceStatus orderNo={order.id} audience="admin" className="mt-3" readOnly={voidInZoho} />}
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={syncingZoho}
-            onClick={() => void handleSyncToZoho()}
-            className="text-xs font-semibold text-navy hover:text-gold"
-          >
-            <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${syncingZoho ? "animate-spin" : ""}`} />
-            {syncingZoho ? "Syncing with Zoho…" : zohoSalesOrderId ? "Re-sync to Zoho" : "Push to Zoho Sales Orders"}
-          </Button>
+          {!voidInZoho && (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={syncingZoho}
+              onClick={() => void handleSyncToZoho()}
+              className="text-xs font-semibold text-navy hover:text-gold"
+            >
+              <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${syncingZoho ? "animate-spin" : ""}`} />
+              {syncingZoho ? "Syncing with Zoho…" : zohoSalesOrderId ? "Re-sync to Zoho" : "Push to Zoho Sales Orders"}
+            </Button>
+          )}
           <Link
             to="/admin/zoho"
             className="inline-flex items-center gap-1 text-xs font-semibold text-slate hover:text-navy"
@@ -405,7 +446,7 @@ function AdminOrderDetail() {
         </div>
       </div>
 
-      <DeliveryNotePanel orderNo={order.id} className="mb-5" />
+      <DeliveryNotePanel orderNo={order.id} className="mb-5" readOnly={voidInZoho} />
 
       {/* Zoho ERP Style 4-Stage Horizontal Progression Tracker */}
       <Panel title="Order Stage Progression" className="mb-5">
@@ -498,7 +539,7 @@ function AdminOrderDetail() {
         </Panel>
       )}
 
-      {!canEditItems && !isCancelled && (
+      {!canEditItems && !isCancelled && !voidInZoho && (
         <p className="mb-3 rounded-md border border-border bg-muted/20 px-3 py-2 text-xs text-slate">
           Order lines can be edited only while the order is unpaid, undiscounted, and still in Placed status.
         </p>
@@ -621,7 +662,7 @@ function AdminOrderDetail() {
           </div>
           <dl className="space-y-2 text-sm">
             <div className="flex justify-between">
-              <dt className="text-slate">Sub Total ({order.items.length} Item{order.items.length === 1 ? "" : "s"})</dt>
+              <dt className="text-slate">Sub Total before GST ({order.items.length} Item{order.items.length === 1 ? "" : "s"})</dt>
               <dd className="font-medium text-charcoal">{inr(order.subtotal)}</dd>
             </div>
             {order.discount > 0 && (
@@ -658,6 +699,8 @@ function AdminOrderDetail() {
         </Panel>
       </div>
 
+      <OrderPaymentsPanel orderNo={order.id} total={order.amount} />
+
       {/* Items Table with FIFO Cost and Pricing Breakdown */}
       <div className="mt-6">
         <Panel title={`Order Items (${order.items.length})`}>
@@ -672,7 +715,7 @@ function AdminOrderDetail() {
                   <th className="px-3 py-3">SKU</th>
                   <th className="px-3 py-3">Vendor</th>
                   <th className="px-3 py-3 text-center">Bags / Capacity</th>
-                  <th className="px-3 py-3 text-right">Selling Price</th>
+                  <th className="px-3 py-3 text-right">{order.pricesIncludeGst ? "Price incl. GST" : "Selling Price"}</th>
                   <th className="px-3 py-3 text-right">FIFO Unit Cost</th>
                   <th className="px-3 py-3 text-right">Gross Margin</th>
                   <th className="px-3 py-3 text-right">Line Total</th>

@@ -3,21 +3,56 @@ import type { Coupon } from "./store";
 /** Rounds to paise, as the database's numeric(14,2) columns and round(x, 2) do. */
 export const toPaise = (amount: number) => Math.round(Number((amount * 100).toPrecision(12))) / 100;
 
-/** GST on one cart line, rounded per line to paise (same as place_marketplace_order). */
-export const lineGst = (price: number, qty: number, gstPercent: number) => toPaise((price * qty * gstPercent) / 100);
+/*
+ * Every selling price includes GST (owner, 7 Nov 2026): a ₹130 item costs the customer ₹130, of which
+ * ₹6.19 is GST at 5% and ₹123.81 the taxable value. Orders placed before then added GST on top; they
+ * keep their own figures (orders.prices_include_gst is false for them).
+ */
+
+/** The GST inside one cart line's price, rounded per line to paise (same as place_marketplace_order): price x qty x rate / (100 + rate). */
+export const lineGstInside = (price: number, qty: number, gstPercent: number) =>
+  gstPercent > 0 ? toPaise((price * qty * gstPercent) / (100 + gstPercent)) : 0;
+
+/** The GST left inside the goods once a coupon has come off each line in proportion to its amount. */
+export function gstAfterCoupon(lines: ReadonlyArray<{ price: number; qty: number; gstPercent: number }>, discount: number) {
+  const gross = lines.map((line) => toPaise(line.price * line.qty));
+  const goods = toPaise(gross.reduce((sum, value) => sum + value, 0));
+  let discountLeft = toPaise(Math.min(discount, goods));
+  let goodsLeft = goods;
+  const ranked = lines.map((line, index) => ({ line, gross: gross[index]! })).sort((a, b) => b.gross - a.gross);
+  let gst = 0;
+  for (const { line, gross: lineGross } of ranked) {
+    const share = goodsLeft > 0 ? Math.min(lineGross, toPaise((discountLeft * lineGross) / goodsLeft)) : 0;
+    const left = toPaise(lineGross - share);
+    gst += line.gstPercent > 0 ? toPaise((left * line.gstPercent) / (100 + line.gstPercent)) : 0;
+    discountLeft = toPaise(discountLeft - share);
+    goodsLeft = toPaise(goodsLeft - lineGross);
+  }
+  return toPaise(gst);
+}
+
+/** One line's figures: what the customer pays, the GST inside it, and the taxable value before GST. */
+export function lineFigures(price: number, qty: number, gstPercent: number) {
+  const gross = toPaise(price * qty);
+  const gst = lineGstInside(price, qty, gstPercent);
+  return { gross, gst, taxable: toPaise(gross - gst) };
+}
+
+/** A before-GST price with GST added, for prices worked out from costs (Admin > Pricing sheet). */
+export const addGst = (beforeGst: number, gstPercent: number) => toPaise((beforeGst * (100 + gstPercent)) / 100);
 
 /**
- * The coupon discount place_marketplace_order_with_coupon stores: a percentage of the
- * pre-GST subtotal capped at the coupon's maximum (no cap when it has none), or a fixed
- * amount up to the subtotal.
+ * The coupon discount place_marketplace_order_with_coupon stores: a percentage of the goods
+ * total the customer sees (GST included), capped at the coupon's maximum (no cap when it has
+ * none), or a fixed amount up to that total.
  */
-export function couponDiscount(coupon: Coupon, subtotal: number) {
+export function couponDiscount(coupon: Coupon, goodsTotal: number) {
   const value = parseFloat(coupon.value.replace(/[^0-9.]/g, "")) || 0;
   if (coupon.type === "Percentage") {
-    const discount = toPaise((subtotal * value) / 100);
+    const discount = toPaise((goodsTotal * value) / 100);
     return coupon.uncapped ? discount : Math.min(coupon.max, discount);
   }
-  return Math.min(subtotal, value);
+  return Math.min(goodsTotal, value);
 }
 
 /** A purchase lot's entered values (the white columns of Shami's pricing sheet). */
