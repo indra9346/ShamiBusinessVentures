@@ -148,7 +148,7 @@ RETURNS text LANGUAGE sql IMMUTABLE AS $function$
               ELSE 'pending' END
 $function$;
 UPDATE public.partner_commissions c SET status = public.partner_commission_status(o.order_status, o.payment_status), updated_at = now()
-  FROM public.orders o WHERE o.id = c.order_id AND c.status IS DISTINCT FROM public.partner_commission_status(o.order_status, o.payment_status);
+  FROM public.orders o WHERE o.id = c.order_id AND o.payment_status = 'Refunded' AND c.status <> 'cancelled';
 
 -- The lines now also say what was paid and what is left.
 DROP FUNCTION IF EXISTS public.partner_commission_lines(date);

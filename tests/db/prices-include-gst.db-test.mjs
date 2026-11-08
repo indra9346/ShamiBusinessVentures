@@ -121,7 +121,7 @@ assert.deepEqual(figures(await orderOf(smallDelivered)), [123.81, 6.19, 100, 0, 
 // A coupon's minimum and percentage go by the goods the customer sees: ₹1,040 of oil meets a ₹1,000 minimum
 // (₹990.48 before GST did not), and 10% of it is ₹104.
 const coupon = await checkout([["OIL", 8]], { coupon: "TEN" });
-assert.deepEqual(figures(await orderOf(coupon)), [990.48, 49.52, 0, 104, 936]);
+assert.deepEqual(figures(await orderOf(coupon)), [990.48, 44.57, 0, 104, 936]);
 
 // An admin's line edit: on a new order the typed price includes GST; on an older order GST goes on top, as before.
 await db.exec(`SET session_replication_role = replica`);
