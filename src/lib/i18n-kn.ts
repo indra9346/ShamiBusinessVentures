@@ -5423,6 +5423,19 @@ export const kn: Record<string, string> = {
   "Remark (optional)": "ಟಿಪ್ಪಣಿ (ಐಚ್ಛಿಕ)",
   "Mark refunded": "ಹಣ ಮರಳಿಸಲಾಗಿದೆ ಎಂದು ಗುರುತಿಸಿ",
   "Return: {0}": "ರಿಟರ್ನ್: {0}",
+  "Signature saved": "ಸಹಿ ಉಳಿಸಲಾಗಿದೆ",
+  "Signature removed": "ಸಹಿ ತೆಗೆದುಹಾಕಲಾಗಿದೆ",
+  "Choose a PNG, JPG or WebP picture": "PNG, JPG ಅಥವಾ WebP ಚಿತ್ರ ಆಯ್ಕೆಮಾಡಿ",
+  "Choose a picture under 2 MB": "2 MB ಒಳಗಿನ ಚಿತ್ರ ಆಯ್ಕೆಮಾಡಿ",
+  "This file could not be read as a picture": "ಈ ಫೈಲ್ ಅನ್ನು ಚಿತ್ರವಾಗಿ ಓದಲಾಗಲಿಲ್ಲ",
+  "Could not save the signature": "ಸಹಿ ಉಳಿಸಲಾಗಲಿಲ್ಲ",
+  "The payout was not recorded": "ಪಾವತಿ ದಾಖಲಾಗಲಿಲ್ಲ",
+  "Payout corrected": "ಪಾವತಿ ಸರಿಪಡಿಸಲಾಗಿದೆ",
+  "Payouts downloaded": "ಪಾವತಿಗಳು ಡೌನ್‌ಲೋಡ್ ಆಗಿವೆ",
+  "Payment removed": "ಪಾವತಿ ತೆಗೆದುಹಾಕಲಾಗಿದೆ",
+  "Could not remove the payment": "ಪಾವತಿ ತೆಗೆದುಹಾಕಲಾಗಲಿಲ್ಲ",
+  "Could not save the partner's details": "ಪಾಲುದಾರರ ವಿವರ ಉಳಿಸಲಾಗಲಿಲ್ಲ",
+  "Saved. Tell the partner their new login email.": "ಉಳಿಸಲಾಗಿದೆ. ಪಾಲುದಾರರಿಗೆ ಹೊಸ ಲಾಗಿನ್ ಇಮೇಲ್ ತಿಳಿಸಿ.",
 };
 
 /** Word-level fallbacks for text that isn't in the dictionary (product names, specs from the database). */
