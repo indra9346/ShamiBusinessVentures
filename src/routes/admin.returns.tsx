@@ -62,6 +62,11 @@ function AdminReturns() {
 
   const approve = (id: string) => { void setReturnStatus(id, "Approved", "Processing").then((ok) => { if (ok) toast.success(`Return ${id} approved`); }); };
   const reject = (id: string) => { void setReturnStatus(id, "Rejected", "Not Applicable").then((ok) => { if (ok) toast.success(`Return ${id} rejected`); }); };
+  // The refund itself is sent from the bank; this records that it was. It also takes back that item's partner commission.
+  const complete = (id: string) => {
+    if (!window.confirm("Mark this return as refunded? Do this only after the money has gone back to the customer.")) return;
+    void setReturnStatus(id, "Completed", "Refunded").then((ok) => { if (ok) toast.success(`Return ${id} marked refunded`); });
+  };
   return (
     <PanelLayout items={adminNav} tone="admin" title="Returns" subtitle="Return requests and refund workflow">
       <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
@@ -108,7 +113,7 @@ function AdminReturns() {
               <Button size="sm" variant="outline" onClick={() => setView(r)}>View</Button>
               {r.status === "Requested" && <Button size="sm" variant="outline" onClick={() => approve(r.id)}>Approve</Button>}
               {r.status === "Requested" && <Button size="sm" variant="outline" className="text-danger" onClick={() => reject(r.id)}>Reject</Button>}
-              {r.status === "Approved" && <Button size="sm" variant="outline" disabled title="Return refunds require a configured payment gateway or verified bank refund reference">Refund provider required</Button>}
+              {r.status === "Approved" && <Button size="sm" variant="outline" onClick={() => complete(r.id)}>Mark refunded</Button>}
             </div>,
           ])}
         />

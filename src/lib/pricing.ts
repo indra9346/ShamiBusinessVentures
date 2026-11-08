@@ -13,6 +13,24 @@ export const toPaise = (amount: number) => Math.round(Number((amount * 100).toPr
 export const lineGstInside = (price: number, qty: number, gstPercent: number) =>
   gstPercent > 0 ? toPaise((price * qty * gstPercent) / (100 + gstPercent)) : 0;
 
+/** The GST left inside the goods once a coupon has come off each line in proportion to its amount. */
+export function gstAfterCoupon(lines: ReadonlyArray<{ price: number; qty: number; gstPercent: number }>, discount: number) {
+  const gross = lines.map((line) => toPaise(line.price * line.qty));
+  const goods = toPaise(gross.reduce((sum, value) => sum + value, 0));
+  let discountLeft = toPaise(Math.min(discount, goods));
+  let goodsLeft = goods;
+  const ranked = lines.map((line, index) => ({ line, gross: gross[index]! })).sort((a, b) => b.gross - a.gross);
+  let gst = 0;
+  for (const { line, gross: lineGross } of ranked) {
+    const share = goodsLeft > 0 ? Math.min(lineGross, toPaise((discountLeft * lineGross) / goodsLeft)) : 0;
+    const left = toPaise(lineGross - share);
+    gst += line.gstPercent > 0 ? toPaise((left * line.gstPercent) / (100 + line.gstPercent)) : 0;
+    discountLeft = toPaise(discountLeft - share);
+    goodsLeft = toPaise(goodsLeft - lineGross);
+  }
+  return toPaise(gst);
+}
+
 /** One line's figures: what the customer pays, the GST inside it, and the taxable value before GST. */
 export function lineFigures(price: number, qty: number, gstPercent: number) {
   const gross = toPaise(price * qty);

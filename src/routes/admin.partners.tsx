@@ -1,7 +1,7 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { AlertTriangle, Copy, Handshake, IndianRupee, KeyRound, Target, Timer, Trash2, UserPlus } from "lucide-react";
+import { AlertTriangle, Copy, HandCoins, Handshake, IndianRupee, KeyRound, Pencil, Target, Timer, Trash2, UserPlus } from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { FilterNote, Panel, scrollToSection, StatCard } from "@/components/panel/widgets";
 import { CommissionLinesTable, PartnerLeaderboard, commissionTotals, usePartnerData } from "@/components/partners/PartnerWidgets";
@@ -13,7 +13,7 @@ import { godownProductOptions, godownRateWarning, groupGodownProducts } from "@/
 import { useLanguage } from "@/lib/i18n";
 import { inrPrecise } from "@/lib/data";
 import { matchesCommissionStatus } from "@/lib/panel-filters";
-import { describeRate, monthLabel, monthStart, partnerPasswordProblem, suggestPartnerPassword, type CommissionKind } from "@/lib/partners";
+import { describeRate, monthLabel, monthStart, normalisePartnerPhone, partnerEmailProblem, partnerPasswordProblem, partnerPhoneProblem, suggestPartnerPassword, type CommissionKind } from "@/lib/partners";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
 import { Button } from "@/components/ui/button";
@@ -66,6 +66,7 @@ function AdminPartners() {
     <PanelLayout items={adminNav} tone="admin" title="Channel Partners" subtitle="Channel Partner Commission Platform: godown distributors, commissions and targets">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-slate">Partners sign in at <a className="font-semibold text-navy underline" href={PARTNER_LOGIN_URL} target="_blank" rel="noreferrer">{PARTNER_LOGIN_URL}</a></p>
+        <Link to="/admin/partner-payouts" className="inline-flex h-9 items-center gap-1.5 rounded-md bg-navy px-3 text-sm font-semibold text-white hover:bg-midnight"><HandCoins className="h-4 w-4" />Settle commissions</Link>
         <input type="month" value={month.slice(0, 7)} max={monthStart().slice(0, 7)} aria-label="Month"
           onChange={(event) => event.target.value && setMonth(`${event.target.value}-01`)}
           className="h-9 rounded-md border border-input bg-white px-2 text-sm" />
@@ -202,6 +203,26 @@ function PartnerAccount({ partner, onChange }: { partner: Partner; onChange: () 
   const [password, setPassword] = useState("");
   const [shown, setShown] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [contact, setContact] = useState({ email: partner.email, phone: partner.phone });
+  const contactProblem = partnerEmailProblem(contact.email) ?? partnerPhoneProblem(contact.phone);
+  const saveContact = async () => {
+    const email = contact.email.trim().toLowerCase();
+    const emailChanged = email !== partner.email.toLowerCase();
+    if (emailChanged && !window.confirm(`Change the login email to ${email}?\n\nThe partner signs in with the new email from now on. The old one stops working. Their password stays the same.`)) return;
+    setBusy(true);
+    try {
+      const { updateChannelPartnerContact } = await import("@/lib/partners.functions");
+      const result = await updateChannelPartnerContact({ data: { partnerId: partner.id, email, phone: normalisePartnerPhone(contact.phone) } });
+      toast.success(result.emailChanged ? "Saved. Tell the partner their new login email." : "Saved");
+      setEditing(false);
+      await onChange();
+    } catch (cause) {
+      toast.error("Could not save the partner's details", { description: cause instanceof Error ? cause.message : undefined });
+    } finally {
+      setBusy(false);
+    }
+  };
   const reset = async () => {
     const next = password || suggestPartnerPassword();
     const problem = partnerPasswordProblem(next);
@@ -222,7 +243,20 @@ function PartnerAccount({ partner, onChange }: { partner: Partner; onChange: () 
   return (
     <div className="space-y-2 text-sm">
       <p className="font-semibold text-navy">{partner.name}</p>
-      <p className="text-slate">{partner.email}{partner.phone ? ` · ${partner.phone}` : ""}</p>
+      <p className="break-all text-slate">{partner.email}{partner.phone ? ` · ${partner.phone}` : ""}
+        <button type="button" onClick={() => { setContact({ email: partner.email, phone: partner.phone }); setEditing((open) => !open); }} className="ml-2 inline-flex items-center gap-1 text-xs font-semibold text-gold hover:underline"><Pencil className="h-3 w-3" />Change</button>
+      </p>
+      {editing && (
+        <div className="grid gap-2 rounded-lg border border-border bg-ivory/40 p-2 md:grid-cols-2 [&>*]:min-w-0">
+          <div className="grid gap-1"><Label className="text-xs">Login email</Label><Input type="email" value={contact.email} onChange={(e) => setContact({ ...contact, email: e.target.value })} className="h-8" /></div>
+          <div className="grid gap-1"><Label className="text-xs">Phone (printed on this godown's invoices)</Label><Input inputMode="tel" value={contact.phone} onChange={(e) => setContact({ ...contact, phone: e.target.value })} className="h-8" /></div>
+          {contactProblem && <p className="text-[11px] text-amber-700 md:col-span-2">{contactProblem}</p>}
+          <div className="flex gap-2 md:col-span-2">
+            <Button size="sm" className="bg-navy text-white hover:bg-navy/90" disabled={busy || Boolean(contactProblem)} onClick={() => void saveContact()}>Save</Button>
+            <Button size="sm" variant="outline" onClick={() => setEditing(false)}>Cancel</Button>
+          </div>
+        </div>
+      )}
       <div className="flex flex-wrap items-center gap-2">
         <Input placeholder="New password (blank = suggest)" value={password} onChange={(e) => setPassword(e.target.value)} className="h-8 max-w-[220px] font-mono text-xs" />
         <Button size="sm" variant="outline" disabled={busy} onClick={() => void reset()}><KeyRound className="mr-1.5 h-3.5 w-3.5" /> Set new password</Button>

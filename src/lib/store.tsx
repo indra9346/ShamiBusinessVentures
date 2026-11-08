@@ -230,7 +230,7 @@ type AppState = {
   updateOrderStatus: (id: string, status: OrderStatus) => Promise<boolean>;
   updateOrderItem: (orderId: string, index: number, patch: { qty?: number; capacity?: string; unitPrice?: number }) => Promise<boolean>;
   updateOrderDelivery: (orderId: string, delivery: string) => void;
-  confirmPayment: (id: string, amount: number, utr: string, advancePercent?: number) => Promise<boolean>;
+  confirmPayment: (id: string, amount: number, utr: string, advancePercent?: number, method?: string) => Promise<boolean>;
   refundOrder: (id: string) => Promise<boolean>;
 
   vendors: Vendor[];
@@ -529,7 +529,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
                   sold: 0, weight: "", status: "approved" as const, active: true, tags: [], description: "", specs: [],
                   created: "", updated: "",
                 };
-                return { product, qty: Number(item.qty), vendor: item.vendor || "", vendorId: item.vendor_id || "", capacity: item.capacity || product.weight, unitPrice: Number(item.unit_price), gstRate: Number(item.gst_rate), dbItemId: item.id };
+                return { product, qty: Number(item.qty), vendor: item.vendor || "", vendorId: item.vendor_id || "", capacity: item.capacity || product.weight, unitPrice: Number(item.unit_price), gstRate: Number(item.gst_rate), dbItemId: item.id, couponShare: Number(item.coupon_share ?? 0) };
               });
               const paymentStatus = row.payment_status.toLowerCase();
               const latestPayment = latestPaymentByOrder.get(row.id);
@@ -1930,9 +1930,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
         pushNotif("Order updated", `${orderId} item details were updated.`, "info", "admin");
         return true;
       },
-      confirmPayment: async (id, amount, utr, advancePercent = 30) => {
+      confirmPayment: async (id, amount, utr, advancePercent = 30, method) => {
         if (!STATIC_DATA_MODE) {
-          const { data, error } = await supabase.rpc("admin_confirm_manual_payment", { _order_no: id, _amount: amount, _utr: utr.trim() });
+          const { data, error } = await supabase.rpc("admin_confirm_manual_payment", { _order_no: id, _amount: amount, _utr: utr.trim(), ...(method ? { _method: method } : {}) });
           if (error || !data) { toast.error("Could not record payment", { description: error?.message ?? "Order not found." }); return false; }
           pushOrderToZohoInBackground(id);
           return true;

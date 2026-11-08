@@ -14,6 +14,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { GodownSignatureField } from "@/components/panel/GodownSignatureField";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -301,6 +302,7 @@ function AdminBranches() {
                   <div><p className="font-bold text-navy">{inr(stat?.paid ?? 0)}</p><p className="text-slate">paid sales</p></div>
                   <div><p className="font-bold text-navy">{(stat?.units ?? 0).toLocaleString("en-IN")}</p><p className="text-slate">units in stock</p></div>
                 </div>
+                {!branch.vendorId && <GodownSignatureField branch={branch} />}
                 <div className="flex flex-wrap gap-2 pt-1">
                   <Button size="sm" variant="outline" onClick={() => setForm(formFrom(branch))}>Edit</Button>
                   {!branch.isDefault && <Button size="sm" variant="outline" onClick={() => void makeDefault(branch)}>Make default</Button>}

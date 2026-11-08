@@ -6,7 +6,7 @@ import { Check, CreditCard, Loader2, Lock, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { SiteLayout, Breadcrumbs } from "@/components/site/SiteLayout";
 import { getAvailablePurchaseQuantity, inr, inrPrecise } from "@/lib/data";
-import { couponDiscount, lineGstInside, toPaise } from "@/lib/pricing";
+import { couponDiscount, gstAfterCoupon, lineGstInside, toPaise } from "@/lib/pricing";
 import { useApp, type Address } from "@/lib/store";
 import { PickupPointCard } from "@/components/site/PickupPointCard";
 import { usePickupSettings } from "@/lib/pickup-points";
@@ -356,7 +356,9 @@ function Checkout() {
   );
   const discount = appliedCoupon ? couponDiscount(appliedCoupon, subtotal) : 0;
   const total = toPaise(subtotal + shipCost - discount);
-  const summary = confirmationSummary ?? { subtotal, shipCost, tax, discount, total };
+  // A coupon comes off each item in proportion, and the GST inside them with it (the database works it out the same way).
+  const taxShown = discount > 0 ? gstAfterCoupon(checkoutItems.map((line) => ({ price: line.product.price, qty: line.qty, gstPercent: line.product.gst })), discount) : tax;
+  const summary = confirmationSummary ?? { subtotal, shipCost, tax: taxShown, discount, total };
   // The order's value decides how it can be paid; the database checks again on the final total. A cart that
   // splits is several orders, each with its own total.
   const orderTotals = orderGroups.length > 1

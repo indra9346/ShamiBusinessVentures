@@ -12,6 +12,10 @@ import {
 } from "@/lib/pickup-points";
 import { DEMO_BRANCH, branchFromRow, defaultBranchOf, type Branch } from "@/lib/branches";
 import { sellerAddressLines } from "@/lib/invoice-seller";
+import { invoiceBalance, invoiceLines, invoicePayments, issuedZohoNumber, type InvoicePayment, type InvoicePaymentRow, type Line, type ZohoInvoiceCopy } from "@/lib/invoice-lines";
+import { GODOWN_SIGNATURE_BUCKET } from "@/lib/godown-signature";
+
+export { invoiceLines, type Line };
 
 /**
  * Grain Bazar tax invoice (A4, vector PDF). Layout follows the company's Zoho tax invoice
@@ -132,57 +136,44 @@ async function loadLogo(): Promise<string | null> {
   }
 }
 
-export function invoiceNumberFor(order: Order, prefix: string) {
-  return `${prefix}${order.id.replace(/[^0-9]/g, "") || order.id}`;
+/**
+ * The latest facts when the invoice is pulled: Zoho's own invoice number and date, every payment with its mode and UTR, and
+ * what is paid and due. Never from the page's memory, so a payment recorded or removed a moment ago shows at once.
+ */
+type InvoiceFacts = { zoho: ZohoInvoiceCopy | null; payments: InvoicePayment[]; paid: number | null };
+
+async function loadInvoiceFacts(orderNo: string): Promise<InvoiceFacts> {
+  const none: InvoiceFacts = { zoho: null, payments: [], paid: null };
+  if (STATIC_DATA_MODE) return none;
+  try {
+    const { data: row } = await supabase.from("orders").select("id,paid_amount").eq("order_no", orderNo).maybeSingle();
+    if (!row) return none;
+    const [{ data: zoho }, { data: payments }] = await Promise.all([
+      supabase.from("zoho_order_invoices").select("invoice_number,status,invoice_date").eq("order_id", row.id).maybeSingle(),
+      // A vendor's account cannot read payments: its copy shows the totals only.
+      supabase.from("payments").select("amount,method,status,txn_ref,created_at").eq("order_id", row.id),
+    ]);
+    return { zoho: (zoho as ZohoInvoiceCopy | null) ?? null, payments: invoicePayments((payments ?? []) as InvoicePaymentRow[]), paid: Number(row.paid_amount) };
+  } catch {
+    return none;
+  }
 }
 
-export type Line = {
-  name: string;
-  detail: string;
-  vendor: string;
-  hsn: string;
-  qty: number;
-  unit: string;
-  rate: number;
-  taxable: number;
-  gstRate: number;
-  tax: number;
-};
-
-/**
- * Per-line tax, reconciled to the order's GST total (which the database calculated). An order whose prices
- * include GST shows each line's taxable value and the GST inside it (₹130 at 5% = ₹123.81 + ₹6.19), and its
- * rate is the price before GST; an older order's rate already was.
- */
-export function invoiceLines(order: Pick<Order, "items" | "tax" | "pricesIncludeGst">, catalog: Product[]): Line[] {
-  const lines: Line[] = order.items.map((item) => {
-    const product = catalog.find((candidate) => candidate.id === item.product.id) ?? item.product;
-    const price = item.unitPrice ?? item.product.price;
-    const gstRate = Number(item.gstRate ?? item.product.gst ?? 0);
-    const gross = round2(price * item.qty);
-    const inside = order.pricesIncludeGst && gstRate > 0 ? round2((gross * gstRate) / (100 + gstRate)) : 0;
-    const taxable = order.pricesIncludeGst ? round2(gross - inside) : gross;
-    const rate = order.pricesIncludeGst ? round2(taxable / item.qty) : price;
-    return {
-      name: item.product.name || "Item",
-      detail: [item.product.sku ? `SKU ${item.product.sku}` : "", item.capacity || product.weight ? `Pack ${item.capacity || product.weight}` : ""]
-        .filter(Boolean).join("  ·  "),
-      vendor: item.vendor ? `${item.vendor}${item.vendorId ? ` (${item.vendorId})` : ""}` : "",
-      hsn: product.hsn || item.product.hsn || "",
-      qty: item.qty,
-      unit: product.unit || item.product.unit || "nos",
-      rate,
-      taxable,
-      gstRate,
-      tax: order.pricesIncludeGst ? inside : round2((taxable * gstRate) / 100),
-    };
-  });
-  const difference = round2(order.tax - lines.reduce((sum, line) => sum + line.tax, 0));
-  if (lines.length && difference !== 0 && Math.abs(difference) <= 1) {
-    const largest = lines.reduce((best, line) => (line.taxable > best.taxable ? line : best), lines[0]!);
-    largest.tax = round2(largest.tax + difference);
+/** The godown's signature as an image for the PDF, or null (the blank signature line is printed). */
+async function loadSignature(path: string | null | undefined): Promise<string | null> {
+  if (!path || STATIC_DATA_MODE) return null;
+  try {
+    const { data, error } = await supabase.storage.from(GODOWN_SIGNATURE_BUCKET).download(path);
+    if (error || !data) return null;
+    return await new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : null);
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(data);
+    });
+  } catch {
+    return null;
   }
-  return lines;
 }
 
 export type InvoiceOptions = { copy?: InvoiceCopy; catalog?: Product[] };
@@ -190,9 +181,10 @@ export type InvoiceOptions = { copy?: InvoiceCopy; catalog?: Product[] };
 /** Builds the invoice PDF. Returns the document and its file name. */
 export async function buildInvoicePdf(order: Order, options: InvoiceOptions = {}) {
   const copy = options.copy ?? "customer";
-  const [{ GState, jsPDF }, context, logo] = await Promise.all([import("jspdf"), loadInvoiceContext(), loadLogo()]);
+  const [{ GState, jsPDF }, context, logo, facts] = await Promise.all([import("jspdf"), loadInvoiceContext(), loadLogo(), loadInvoiceFacts(order.id)]);
   const { company } = context;
   const pdf: JsPdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+  const signature = await loadSignature((context.branches.find((branch) => branch.id === order.branchId) ?? defaultBranchOf(context.branches))?.signaturePath);
   const W = pdf.internal.pageSize.getWidth();
   const H = pdf.internal.pageSize.getHeight();
   const M = 14;
@@ -205,11 +197,17 @@ export async function buildInvoicePdf(order: Order, options: InvoiceOptions = {}
   const rule: [number, number, number] = [222, 226, 230];
   const card: [number, number, number] = [246, 248, 251];
 
-  const invoiceNo = invoiceNumberFor(order, context.prefix);
+  // The tax invoice is the one Zoho Books issues, so it carries Zoho's number. Until Zoho has one, this is a proforma.
+  const zohoNumber = issuedZohoNumber(facts.zoho);
+  const invoiceNo = zohoNumber ?? "";
   const orderDate = new Date(order.createdAt || order.date);
   const dateText = Number.isNaN(orderDate.getTime())
     ? order.date
     : orderDate.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+  const zohoDate = facts.zoho?.invoice_date ? new Date(`${facts.zoho.invoice_date}T00:00:00Z`) : null;
+  const invoiceDateText = zohoDate && !Number.isNaN(zohoDate.getTime())
+    ? zohoDate.toLocaleDateString("en-IN", { timeZone: "UTC", day: "2-digit", month: "short", year: "numeric" })
+    : dateText;
 
   // Place of supply: goods collected at the godown are supplied in the godown's state; delivered
   // goods in the delivery state. Same state as the seller -> CGST + SGST, otherwise IGST.
@@ -229,12 +227,13 @@ export async function buildInvoicePdf(order: Order, options: InvoiceOptions = {}
   const supplyName = stateNameForCode(supplyCode) || (pickupPoint ? company.stateName : order.state) || company.stateName;
   const intraState = supplyCode === company.stateCode;
 
-  const lines = invoiceLines(order, options.catalog ?? []);
+  const lines = invoiceLines(order, options.catalog ?? [], { intraState });
   const taxableTotal = round2(lines.reduce((sum, line) => sum + line.taxable, 0));
   const taxTotal = round2(lines.reduce((sum, line) => sum + line.tax, 0));
-  const paid = Math.max(0, Math.min(order.amount, order.paidAmount ?? (order.payment === "Paid" ? order.amount : 0)));
-  const balance = round2(order.amount - paid);
-  const computedTotal = round2(taxableTotal - Math.abs(order.discount) + taxTotal + order.shipping);
+  const { paid, balance } = invoiceBalance(order.amount, facts.paid ?? order.paidAmount ?? (order.payment === "Paid" ? order.amount : 0));
+  // A coupon on an order whose prices include GST already came off each line above.
+  const couponInLines = Boolean(order.pricesIncludeGst) && order.discount > 0;
+  const computedTotal = round2(taxableTotal - (couponInLines ? 0 : Math.abs(order.discount)) + taxTotal + order.shipping);
   const roundOff = round2(order.amount - computedTotal);
 
   const watermark = () => {
@@ -264,12 +263,13 @@ export async function buildInvoicePdf(order: Order, options: InvoiceOptions = {}
     pdf.setFont("helvetica", "bold");
     pdf.setFontSize(15);
     pdf.setTextColor(...ink);
-    pdf.text(continued ? "TAX INVOICE (contd.)" : "TAX INVOICE", R, 17, { align: "right" });
+    const heading = zohoNumber ? "TAX INVOICE" : "PROFORMA INVOICE";
+    pdf.text(continued ? `${heading} (contd.)` : heading, R, 17, { align: "right" });
     pdf.setFont("helvetica", "normal");
     pdf.setFontSize(8);
     pdf.setTextColor(...muted);
     pdf.text(copy === "customer" ? "Original for Recipient" : "Duplicate for Supplier (office copy)", R, 22.5, { align: "right" });
-    pdf.text(`Invoice ${invoiceNo}`, R, 27.5, { align: "right" });
+    pdf.text(zohoNumber ? `Invoice ${invoiceNo}` : `Order ${order.id}`, R, 27.5, { align: "right" });
     pdf.setDrawColor(...gold);
     pdf.setLineWidth(0.7);
     pdf.line(M, 32, R, 32);
@@ -287,8 +287,8 @@ export async function buildInvoicePdf(order: Order, options: InvoiceOptions = {}
 
   // Invoice / order details (two columns of label : value).
   const meta: [string, string][] = [
-    ["Invoice No.", invoiceNo],
-    ["Invoice Date", dateText],
+    ["Invoice No.", zohoNumber ? invoiceNo : "To be issued"],
+    ["Invoice Date", zohoNumber ? invoiceDateText : "To be issued"],
     ["Order No.", order.id],
     ["Order Date", dateText],
     ["Place of Supply", `${supplyName} (${supplyCode})`],
@@ -468,7 +468,7 @@ export async function buildInvoicePdf(order: Order, options: InvoiceOptions = {}
 
   // Totals block (right) and amount in words (left).
   const summaryRows: [string, number][] = [["Sub Total (taxable)", taxableTotal]];
-  if (order.discount) summaryRows.push(["Discount", -Math.abs(order.discount)]);
+  if (order.discount && !couponInLines) summaryRows.push(["Discount", -Math.abs(order.discount)]);
   if (intraState) {
     const cgst = round2(taxTotal / 2);
     summaryRows.push(["CGST", cgst], ["SGST", round2(taxTotal - cgst)]);
@@ -533,12 +533,40 @@ export async function buildInvoicePdf(order: Order, options: InvoiceOptions = {}
   const notes = [
     `Order ${order.id} placed on Grain Bazar.`,
     pickupPoint ? `Collect from ${pickupPoint.name}. Bring this invoice or your order number.` : "",
-    order.utr || order.txn ? `Payment reference: ${order.utr || order.txn}` : "",
+    !facts.payments.length && (order.utr || order.txn) ? `Payment reference: ${order.utr || order.txn}` : "",
+    couponInLines ? `Coupon ${order.coupon ?? ""}: Rs. ${money(order.discount)} taken off the items above in proportion, with the GST on it.`.replace("  ", " ") : "",
+    zohoNumber ? "" : "Proforma: the tax invoice number comes from Zoho Books once the invoice is raised.",
     copy === "office" ? "Office copy: includes fulfilling vendor details. Do not share with the customer." : "",
   ].filter(Boolean).flatMap((note) => pdf.splitTextToSize(note, leftW) as string[]);
   pdf.text(notes, M, ly + 4.5);
   ly += 4.5 + notes.length * 3.8;
   y = Math.max(sy + 8, ly + 4);
+
+  // Every payment received, with its mode and UTR; the balance above is worked out from the same record.
+  if (facts.payments.length) {
+    const blockH = 11 + facts.payments.length * 4.8;
+    if (y + blockH + 40 > bottomLimit) newPage(false);
+    pdf.setDrawColor(...rule);
+    pdf.line(M, y, R, y);
+    y += 5;
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(7.8);
+    pdf.setTextColor(...muted);
+    pdf.text("PAYMENTS RECEIVED", M, y);
+    y += 4.8;
+    pdf.setFontSize(8.2);
+    for (const payment of facts.payments) {
+      pdf.setFont("helvetica", "normal");
+      pdf.setTextColor(...ink);
+      pdf.text(payment.date, M, y);
+      pdf.text(payment.mode, M + 26, y);
+      pdf.text(payment.reference ? `UTR / Ref: ${payment.reference}` : "", M + 50, y, { maxWidth: usable - 90 });
+      pdf.setFont("helvetica", "bold");
+      pdf.text(money(payment.amount), R, y, { align: "right" });
+      y += 4.8;
+    }
+    y += 2;
+  }
 
   // Terms & declaration (left) and signatory (right).
   if (y + 40 > bottomLimit) newPage(false);
@@ -563,6 +591,18 @@ export async function buildInvoicePdf(order: Order, options: InvoiceOptions = {}
   pdf.setFontSize(8);
   pdf.setTextColor(...muted);
   pdf.text(`For ${company.legalName}`, R, y + 1, { align: "right" });
+  // The godown's signature, in the space above the line; the line alone when it has none.
+  if (signature) {
+    try {
+      const props = pdf.getImageProperties(signature);
+      const boxW = 58, boxH = 16;
+      const scale = Math.min(boxW / props.width, boxH / props.height);
+      const w = props.width * scale, h = props.height * scale;
+      pdf.addImage(signature, "PNG", R - w, y + 20.5 - h, w, h);
+    } catch {
+      /* a damaged picture must not stop the invoice */
+    }
+  }
   pdf.setDrawColor(...rule);
   pdf.line(R - 58, y + 21, R, y + 21);
   pdf.setFont("helvetica", "bold");
@@ -578,12 +618,12 @@ export async function buildInvoicePdf(order: Order, options: InvoiceOptions = {}
     pdf.setFont("helvetica", "normal");
     pdf.setFontSize(7.2);
     pdf.setTextColor(...muted);
-    pdf.text("This is a computer-generated invoice and does not require a physical signature.", M, H - 10.5);
+    pdf.text(signature ? "This is a computer-generated invoice." : "This is a computer-generated invoice and does not require a physical signature.", M, H - 10.5);
     pdf.text("Whether tax is payable under reverse charge - No", M, H - 6.8);
     pdf.text(`Page ${page} of ${pages}`, R, H - 10.5, { align: "right" });
     pdf.text(`${company.brand}  ·  ${company.email}`, R, H - 6.8, { align: "right" });
   }
 
-  const fileName = `Invoice-${invoiceNo}`.replace(/[^A-Za-z0-9._-]+/g, "-") + ".pdf";
-  return { pdf, fileName, invoiceNo };
+  const fileName = (zohoNumber ? `Invoice-${invoiceNo}` : `Proforma-${order.id}`).replace(/[^A-Za-z0-9._-]+/g, "-") + ".pdf";
+  return { pdf, fileName, invoiceNo: zohoNumber ?? order.id };
 }

@@ -43,7 +43,7 @@ export const godownReport = createServerFn({ method: "POST" })
     if (branchesResult.error || productsResult.error) throw new Error("Could not read godowns and products");
 
     let ordersQuery = db.from("orders")
-      .select("id,order_no,branch_id,created_at,order_status,payment_status,customer_name,subtotal,discount,gst_amount,shipping,total,paid_amount,zoho_salesorder_id")
+      .select("id,order_no,branch_id,created_at,order_status,payment_status,customer_name,subtotal,discount,discount_taxable,gst_amount,shipping,total,paid_amount,zoho_salesorder_id")
       .gte("created_at", fromIso).lt("created_at", toIso).not("order_status", "in", HELD_STATUS_FILTER).order("created_at").limit(5000);
     if (data.branchId) ordersQuery = data.branchId === "none" ? ordersQuery.is("branch_id", null) : ordersQuery.eq("branch_id", data.branchId);
     const { data: orderRows, error: ordersError } = await ordersQuery;
@@ -78,7 +78,7 @@ export const godownReport = createServerFn({ method: "POST" })
 
     const orders: ReportOrder[] = (orderRows ?? []).map((row) => ({
       ...row,
-      subtotal: Number(row.subtotal), discount: Number(row.discount), gst_amount: Number(row.gst_amount),
+      subtotal: Number(row.subtotal), discount: Number(row.discount_taxable ?? row.discount), gst_amount: Number(row.gst_amount),
       shipping: Number(row.shipping), total: Number(row.total), paid_amount: Number(row.paid_amount),
       invoice_number: invoices.get(row.id) ?? null,
     }));

@@ -50,6 +50,24 @@ export function partnerPasswordProblem(password: string) {
   return null;
 }
 
+/** Why a login email will not do, or null. */
+export function partnerEmailProblem(email: string) {
+  const value = email.trim().toLowerCase();
+  if (value.length > 200 || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(value)) return "Enter a valid email";
+  return null;
+}
+
+/** A 10-digit Indian mobile number, or blank (the godown's own phone is printed on invoices then). Spaces and +91 are dropped. */
+export function normalisePartnerPhone(phone: string) {
+  const digits = phone.replace(/\D/g, "");
+  return digits.length === 12 && digits.startsWith("91") ? digits.slice(2) : digits;
+}
+
+export function partnerPhoneProblem(phone: string) {
+  const value = normalisePartnerPhone(phone);
+  return value === "" || /^[6-9]\d{9}$/.test(value) ? null : "Enter a 10-digit mobile number";
+}
+
 /** A strong password suggestion for a new partner login (no look-alike characters). */
 export function suggestPartnerPassword(random: () => number = Math.random) {
   const letters = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ";

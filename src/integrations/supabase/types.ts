@@ -14,10 +14,14 @@ export type Database = {
   }
   public: {
     Tables: {
+      partner_payouts: { Row: { id: string; payout_no: string; partner_id: string; branch_id: string; paid_on: string; amount: number; lines_total: number; recovered_total: number; mode: string; reference: string; note: string; period_from: string | null; period_to: string | null; status: string; request_key: string | null; created_by: string; created_by_name: string; created_at: string; voided_at: string | null; voided_by: string | null; voided_by_name: string; void_reason: string }; Insert: never; Update: never; Relationships: [] }
+      partner_payout_lines: { Row: { id: string; payout_id: string; order_item_id: string; order_id: string | null; order_no: string; partner_id: string; product_name: string; placed_at: string; amount: number }; Insert: never; Update: never; Relationships: [] }
+      partner_payout_events: { Row: { id: string; payout_id: string; event: string; at: string; by_user: string | null; by_name: string; detail: Json }; Insert: never; Update: never; Relationships: [] }
+      deleted_payments_log: { Row: { id: string; order_no: string; payment: Json; order_paid_before: number; order_paid_after: number; reason: string; deleted_by: string; deleted_by_name: string; deleted_at: string }; Insert: never; Update: never; Relationships: [] }
       branches: {
-        Row: { id: string; code: string; name: string; address: string; city: string; state: string; state_code: string; pincode: string; phone: string; email: string; map_url: string; instructions: string; gstin: string; zoho_location_id: string; zoho_location_name: string; zoho_pricebook_id: string; zoho_pricebook_name: string; serves_pincodes: string[]; pickup_enabled: boolean; delivery_enabled: boolean; delivery_fee: number; free_delivery_above: number | null; is_default: boolean; active: boolean; sort_order: number; created_at: string; updated_at: string; vendor_id: string | null; latitude: number | null; longitude: number | null; attendance_radius_m: number; shift_start: string; late_grace_min: number; weekly_off: number | null; shift_end: string; presence_interval_min: number }
-        Insert: { id: string; code: string; name: string; address?: string; city?: string; state?: string; state_code?: string; pincode?: string; phone?: string; email?: string; map_url?: string; instructions?: string; gstin?: string; zoho_location_id?: string; zoho_location_name?: string; zoho_pricebook_id?: string; zoho_pricebook_name?: string; serves_pincodes?: string[]; pickup_enabled?: boolean; delivery_enabled?: boolean; delivery_fee?: number; free_delivery_above?: number | null; is_default?: boolean; active?: boolean; sort_order?: number; created_at?: string; updated_at?: string; vendor_id?: string | null; latitude?: number | null; longitude?: number | null; attendance_radius_m?: number; shift_start?: string; late_grace_min?: number; weekly_off?: number | null; shift_end?: string; presence_interval_min?: number }
-        Update: { id?: string; code?: string; name?: string; address?: string; city?: string; state?: string; state_code?: string; pincode?: string; phone?: string; email?: string; map_url?: string; instructions?: string; gstin?: string; zoho_location_id?: string; zoho_location_name?: string; zoho_pricebook_id?: string; zoho_pricebook_name?: string; serves_pincodes?: string[]; pickup_enabled?: boolean; delivery_enabled?: boolean; delivery_fee?: number; free_delivery_above?: number | null; is_default?: boolean; active?: boolean; sort_order?: number; created_at?: string; updated_at?: string; vendor_id?: string | null; latitude?: number | null; longitude?: number | null; attendance_radius_m?: number; shift_start?: string; late_grace_min?: number; weekly_off?: number | null; shift_end?: string; presence_interval_min?: number }
+        Row: { signature_path: string | null; id: string; code: string; name: string; address: string; city: string; state: string; state_code: string; pincode: string; phone: string; email: string; map_url: string; instructions: string; gstin: string; zoho_location_id: string; zoho_location_name: string; zoho_pricebook_id: string; zoho_pricebook_name: string; serves_pincodes: string[]; pickup_enabled: boolean; delivery_enabled: boolean; delivery_fee: number; free_delivery_above: number | null; is_default: boolean; active: boolean; sort_order: number; created_at: string; updated_at: string; vendor_id: string | null; latitude: number | null; longitude: number | null; attendance_radius_m: number; shift_start: string; late_grace_min: number; weekly_off: number | null; shift_end: string; presence_interval_min: number }
+        Insert: { signature_path?: string | null; id: string; code: string; name: string; address?: string; city?: string; state?: string; state_code?: string; pincode?: string; phone?: string; email?: string; map_url?: string; instructions?: string; gstin?: string; zoho_location_id?: string; zoho_location_name?: string; zoho_pricebook_id?: string; zoho_pricebook_name?: string; serves_pincodes?: string[]; pickup_enabled?: boolean; delivery_enabled?: boolean; delivery_fee?: number; free_delivery_above?: number | null; is_default?: boolean; active?: boolean; sort_order?: number; created_at?: string; updated_at?: string; vendor_id?: string | null; latitude?: number | null; longitude?: number | null; attendance_radius_m?: number; shift_start?: string; late_grace_min?: number; weekly_off?: number | null; shift_end?: string; presence_interval_min?: number }
+        Update: { signature_path?: string | null; id?: string; code?: string; name?: string; address?: string; city?: string; state?: string; state_code?: string; pincode?: string; phone?: string; email?: string; map_url?: string; instructions?: string; gstin?: string; zoho_location_id?: string; zoho_location_name?: string; zoho_pricebook_id?: string; zoho_pricebook_name?: string; serves_pincodes?: string[]; pickup_enabled?: boolean; delivery_enabled?: boolean; delivery_fee?: number; free_delivery_above?: number | null; is_default?: boolean; active?: boolean; sort_order?: number; created_at?: string; updated_at?: string; vendor_id?: string | null; latitude?: number | null; longitude?: number | null; attendance_radius_m?: number; shift_start?: string; late_grace_min?: number; weekly_off?: number | null; shift_end?: string; presence_interval_min?: number }
         Relationships: []
       }
       rice_samples: {
@@ -488,9 +492,9 @@ export type Database = {
         ]
       }
       zoho_order_invoices: {
-        Row: { order_id: string; order_no: string; zoho_invoice_id: string | null; invoice_number: string | null; status: string; total: number | null; balance: number | null; auto_attempts: number; admin_approved: boolean; approved_by: string | null; approved_at: string | null; last_event: string; updated_at: string }
-        Insert: { order_id: string; order_no: string; zoho_invoice_id?: string | null; invoice_number?: string | null; status?: string; total?: number | null; balance?: number | null; auto_attempts?: number; admin_approved?: boolean; approved_by?: string | null; approved_at?: string | null; last_event?: string; updated_at?: string }
-        Update: { order_id?: string; order_no?: string; zoho_invoice_id?: string | null; invoice_number?: string | null; status?: string; total?: number | null; balance?: number | null; auto_attempts?: number; admin_approved?: boolean; approved_by?: string | null; approved_at?: string | null; last_event?: string; updated_at?: string }
+        Row: { invoice_date: string | null; order_id: string; order_no: string; zoho_invoice_id: string | null; invoice_number: string | null; status: string; total: number | null; balance: number | null; auto_attempts: number; admin_approved: boolean; approved_by: string | null; approved_at: string | null; last_event: string; updated_at: string }
+        Insert: { invoice_date?: string | null; order_id: string; order_no: string; zoho_invoice_id?: string | null; invoice_number?: string | null; status?: string; total?: number | null; balance?: number | null; auto_attempts?: number; admin_approved?: boolean; approved_by?: string | null; approved_at?: string | null; last_event?: string; updated_at?: string }
+        Update: { invoice_date?: string | null; order_id?: string; order_no?: string; zoho_invoice_id?: string | null; invoice_number?: string | null; status?: string; total?: number | null; balance?: number | null; auto_attempts?: number; admin_approved?: boolean; approved_by?: string | null; approved_at?: string | null; last_event?: string; updated_at?: string }
         Relationships: []
       }
       stock_counts: {
@@ -721,6 +725,7 @@ export type Database = {
         Row: {
           batch_code: string | null
           capacity: string | null
+          coupon_share: number
           created_at: string
           gst_rate: number
           id: string
@@ -845,6 +850,7 @@ export type Database = {
       }
       orders: {
         Row: {
+          discount_taxable: number | null
           bank_credit_id: string | null
           bank_credit_seen_at: string | null
           zoho_salesorder_id: string | null
@@ -1281,6 +1287,15 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      partner_settlement_summary: { Args: Record<PropertyKey, never>; Returns: { partner_id: string; partner_name: string; godown: string; partner_status: string; earned: number; pending: number; cancelled: number; paid: number; due: number; owed_back: number; payouts: number; last_paid_on: string | null }[] }
+      partner_settlement_lines: { Args: { _partner_id?: string; _from?: string; _to?: string }; Returns: { order_item_id: string; partner_id: string; partner_name: string; order_no: string; placed_at: string; earned_at: string | null; order_status: string; payment_status: string; customer_name: string; pin: string; product_name: string; qty: number; line_total: number; kind: string; rate: number; amount: number; status: string; payable: number; paid_amount: number; due_amount: number; payout_nos: string[] }[] }
+      admin_create_partner_payout: { Args: { _partner_id: string; _item_ids: string[]; _paid_on: string; _mode: string; _reference: string; _note?: string; _amount?: number; _period_from?: string; _period_to?: string; _request_key?: string }; Returns: Json }
+      admin_void_partner_payout: { Args: { _payout_id: string; _reason: string }; Returns: boolean }
+      admin_correct_partner_payout: { Args: { _payout_id: string; _paid_on: string; _mode: string; _reference: string; _note: string; _reason: string }; Returns: boolean }
+      payment_delete_blocker: { Args: { _payment_id: string }; Returns: string | null }
+      admin_delete_payment: { Args: { _payment_id: string; _reason: string }; Returns: Json }
+      order_delete_all_check: { Args: { _order_no: string }; Returns: Json }
+      admin_delete_order_all_details: { Args: { _order_no: string; _reason: string }; Returns: Json }
       rice_sample_save: { Args: { _id: string | null; _arrival_date: string; _variety: string; _method: string; _price_per_qntl: number; _quantity_qntl: number; _party_role: string; _party_name: string; _party_phone: string; _seller_name: string; _notes: string }; Returns: string }
       rice_sample_save_with_bags: { Args: { _id: string | null; _arrival_date: string; _variety: string; _method: string; _price_per_qntl: number; _quantity_qntl: number; _party_role: string; _party_name: string; _party_phone: string; _seller_name: string; _notes: string; _quantity_bags: number | null; _bag_kg: number | null }; Returns: string }
       rice_sample_add_test: { Args: { _sample_id: string; _tested_at: string | null; _tested_by_name: string; _score: number; _grain: string; _swelling: string; _taste: string; _broken: string; _notes: string }; Returns: string }
@@ -1401,7 +1416,7 @@ export type Database = {
       }
       partner_commission_lines: {
         Args: { _month: string }
-        Returns: { order_item_id: string; order_no: string; placed_at: string; order_status: string; payment_status: string; customer_name: string; pin: string; product_name: string; qty: number; line_total: number; kind: string; rate: number; amount: number; status: string; partner_id: string }[]
+        Returns: { order_item_id: string; order_no: string; placed_at: string; order_status: string; payment_status: string; customer_name: string; pin: string; product_name: string; qty: number; line_total: number; kind: string; rate: number; amount: number; status: string; partner_id: string ; paid_amount: number; due_amount: number }[]
       }
       admin_update_payout: { Args: { _id: string; _status: string; _reference?: string | null }; Returns: boolean }
       admin_export_customer_data: { Args: { _customer_id: string }; Returns: Json }
@@ -1457,7 +1472,7 @@ export type Database = {
       admin_update_order_status: { Args: { _order_no: string; _status: string }; Returns: boolean }
       cancel_marketplace_order: { Args: { _order_no: string }; Returns: boolean }
       admin_broadcast_notification: { Args: { _audience: string; _title: string; _message: string }; Returns: number }
-      admin_confirm_manual_payment: { Args: { _order_no: string; _amount: number; _utr: string }; Returns: boolean }
+      admin_confirm_manual_payment: { Args: { _order_no: string; _amount: number; _utr: string; _method?: string | null }; Returns: boolean }
       admin_receive_inventory_batch: { Args: { _batch_code: string; _product_id: string; _quantity: number; _unit_cost: number; _purchase_date: string | null; _warehouse: string }; Returns: string }
       admin_review_vendor_kyc: { Args: { _id: string; _status: string; _notes?: string | null }; Returns: boolean }
       customer_submit_vendor_application: { Args: { _business_name: string; _owner_name: string; _phone: string; _gstin: string; _city: string; _address: string }; Returns: string }

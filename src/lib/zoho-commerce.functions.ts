@@ -11,6 +11,7 @@ import {
   zohoBatchesAtLocation, zohoTracksBatches, type BatchShare, type StockBatch, type ZohoBatch,
 } from "@/lib/batches";
 import { awaitingImportApproval, zohoItemAsHiddenProduct, zohoItemImportable, zohoItemSaleProblem, zohoItemsNotOnWebsite } from "@/lib/zoho-item-import";
+import { zohoDiscountFields } from "@/lib/zoho-sync-core";
 import {
   cleanEmailList, godownPricesFromPricebook, godownStockFromZohoItem, mergeGodownPrices, newOrderEmail, parseZohoItemSyncVendorIds, pendingOrderQty, sameGodownPrices,
   zohoPricebookItemsFor, reconcileCatalog, reconcileCustomers, reconcileOrders, shouldRetryZohoCall,
@@ -412,7 +413,7 @@ export const startZohoAuthorization = createServerFn({ method: "POST" })
       response_type: "code",
       client_id: reqEnv("ZOHO_CLIENT_ID"),
       scope:
-        "ZohoCommerce.items.READ,ZohoCommerce.items.CREATE,ZohoCommerce.items.UPDATE,ZohoCommerce.coupons.READ,ZohoCommerce.coupons.CREATE,ZohoCommerce.coupons.UPDATE,ZohoCommerce.salesorders.READ,ZohoCommerce.salesorders.CREATE,ZohoCommerce.salesorders.UPDATE,ZohoCommerce.settings.READ,ZohoCommerce.settings.UPDATE,ZohoCommerce.sitesIndex.READ,ZohoCommerce.webhooks.READ,ZohoCommerce.webhooks.CREATE,ZohoInventory.contacts.READ,ZohoInventory.contacts.CREATE,ZohoInventory.contacts.UPDATE,ZohoInventory.items.READ,ZohoInventory.items.CREATE,ZohoInventory.items.UPDATE,ZohoInventory.salesorders.READ,ZohoInventory.salesorders.CREATE,ZohoInventory.salesorders.UPDATE,ZohoInventory.inventoryadjustments.READ,ZohoInventory.inventoryadjustments.CREATE,ZohoInventory.settings.READ,ZohoInventory.settings.UPDATE,ZohoBooks.salesorders.CREATE,ZohoBooks.invoices.READ,ZohoBooks.invoices.CREATE,ZohoBooks.customerpayments.READ,ZohoBooks.customerpayments.CREATE,ZohoInventory.packages.READ,ZohoInventory.packages.CREATE,ZohoInventory.shipmentorders.READ,ZohoInventory.shipmentorders.CREATE,ZohoInventory.shipmentorders.UPDATE,ZohoInventory.purchaseorders.READ,ZohoInventory.purchaseorders.CREATE,ZohoInventory.bills.READ,ZohoBooks.invoices.UPDATE,ZohoBooks.banking.READ",
+        "ZohoCommerce.items.READ,ZohoCommerce.items.CREATE,ZohoCommerce.items.UPDATE,ZohoCommerce.coupons.READ,ZohoCommerce.coupons.CREATE,ZohoCommerce.coupons.UPDATE,ZohoCommerce.salesorders.READ,ZohoCommerce.salesorders.CREATE,ZohoCommerce.salesorders.UPDATE,ZohoCommerce.settings.READ,ZohoCommerce.settings.UPDATE,ZohoCommerce.sitesIndex.READ,ZohoCommerce.webhooks.READ,ZohoCommerce.webhooks.CREATE,ZohoInventory.contacts.READ,ZohoInventory.contacts.CREATE,ZohoInventory.contacts.UPDATE,ZohoInventory.items.READ,ZohoInventory.items.CREATE,ZohoInventory.items.UPDATE,ZohoInventory.salesorders.READ,ZohoInventory.salesorders.CREATE,ZohoInventory.salesorders.UPDATE,ZohoInventory.inventoryadjustments.READ,ZohoInventory.inventoryadjustments.CREATE,ZohoInventory.settings.READ,ZohoInventory.settings.UPDATE,ZohoBooks.salesorders.CREATE,ZohoBooks.invoices.READ,ZohoBooks.invoices.CREATE,ZohoBooks.customerpayments.READ,ZohoBooks.customerpayments.CREATE,ZohoBooks.customerpayments.DELETE,ZohoInventory.packages.READ,ZohoInventory.packages.CREATE,ZohoInventory.shipmentorders.READ,ZohoInventory.shipmentorders.CREATE,ZohoInventory.shipmentorders.UPDATE,ZohoInventory.purchaseorders.READ,ZohoInventory.purchaseorders.CREATE,ZohoInventory.bills.READ,ZohoBooks.invoices.UPDATE,ZohoBooks.banking.READ",
       redirect_uri: redirectUri,
       access_type: "offline",
       prompt: "consent",
@@ -1224,7 +1225,7 @@ function inventoryApi(region: Region, resource: string, organizationId: string, 
  * errors only for GET/PUT. A POST is never resent blindly; order creation looks the order up by
  * its Reference# (the website order number) on the next attempt instead (see syncZohoOrder).
  */
-async function fetchWithZohoRetry(send: () => Promise<Response>, resource: string, method: "GET" | "POST" | "PUT") {
+async function fetchWithZohoRetry(send: () => Promise<Response>, resource: string, method: "GET" | "POST" | "PUT" | "DELETE") {
   const MAX_RETRIES = 2;
   let response: Response | null = null;
   for (let retry = 0; ; retry += 1) {
@@ -2280,7 +2281,7 @@ async function pushCommerceProductValues(
   }
 }
 
-type GrainBazarOrderItem = { id?: string; product_id: string | null; product_name: string; sku: string | null; qty: number; unit_price: number; gst_rate: number };
+type GrainBazarOrderItem = { id?: string; product_id: string | null; product_name: string; sku: string | null; qty: number; unit_price: number; gst_rate: number; coupon_share?: number };
 
 /** Batch numbers each order line took (FIFO at the order's godown), by order item id. */
 async function orderItemBatchCodes(db: Awaited<ReturnType<typeof dbAdmin>>, itemIds: string[]) {
@@ -2357,6 +2358,7 @@ async function zohoLineItemsForOrder(
     const batchText = item.id ? batchLineText(batchCodes.get(item.id) ?? [], item.qty) : "";
     lineItems.push({
       item_id: zohoItemId, name: item.product_name, quantity: item.qty, rate: item.unit_price, tax_percentage: item.gst_rate,
+      ...(Number(item.coupon_share) > 0 ? { discount: Number(item.coupon_share) } : {}),
       ...(hsn ? { hsn_or_sac: hsn } : {}),
       ...(batchText ? { description: batchText } : {}),
     });
@@ -2512,9 +2514,7 @@ async function syncLinkedZohoOrder(
         customer_id: str(zoho["customer_id"]),
         date: str(zoho["date"]),
         line_items: lineItems,
-        discount: Number(order.discount) || 0,
-        discount_type: "entity_level",
-        is_discount_before_tax: true,
+        ...zohoDiscountFields(order.discount, items),
         shipping_charge: Number(order.shipping) || 0,
         // Prices include GST on orders from 7 Nov 2026: Zoho takes the rate as GST-inclusive, so its total is the price paid.
         is_inclusive_tax: Boolean(order.prices_include_gst),
@@ -2665,7 +2665,7 @@ async function ensureZohoBooksInvoice(
   const fail = (step: string, cause: unknown): never => {
     throw new Error(failure(step, cause));
   };
-  type BooksInvoice = { invoice_id?: string; invoice_number?: string; status?: string; total?: number; balance?: number; payment_made?: number | null; customer_id?: string; customer_name?: string; gst_treatment?: string; gst_no?: string; place_of_supply?: string; billing_address?: unknown; shipping_address?: unknown };
+  type BooksInvoice = { date?: string; invoice_id?: string; invoice_number?: string; status?: string; total?: number; balance?: number; payment_made?: number | null; customer_id?: string; customer_name?: string; gst_treatment?: string; gst_no?: string; place_of_supply?: string; billing_address?: unknown; shipping_address?: unknown };
   const linked = (Array.isArray(zoho["invoices"]) ? zoho["invoices"] : []).map(plainObject)
     .filter((invoice) => str(invoice["invoice_id"]) && !["void"].includes(str(invoice["status"]).toLowerCase()));
   let invoiceId = str(linked[0]?.["invoice_id"]);
@@ -2864,6 +2864,7 @@ async function recordZohoInvoiceState(
     }
     await saveInvoiceRecord(db, order, {
       zoho_invoice_id: invoice.invoiceId, invoice_number: invoice.number, status,
+      ...(invoice.date ? { invoice_date: invoice.date } : {}),
       total: invoice.total, balance: invoice.balance,
       auto_attempts: Math.max(1, row?.auto_attempts ?? 0),
       last_event: row?.zoho_invoice_id === invoice.invoiceId ? `Invoice ${status.replace("_", " ")} in Zoho` : "Invoice found in Zoho",
@@ -2908,6 +2909,7 @@ async function syncZohoOrderInvoice(
   await saveInvoiceRecord(db, order, {
     zoho_invoice_id: str(invoice.invoice_id) || null,
     invoice_number: str(invoice.invoice_number) || null,
+    ...(/^\d{4}-\d{2}-\d{2}/.test(str(invoice.date)) ? { invoice_date: str(invoice.date).slice(0, 10) } : {}),
     status: websiteInvoiceStatus(str(invoice.status)),
     total: Number.isFinite(Number(invoice.total)) ? Number(invoice.total) : null,
     balance: Number.isFinite(Number(invoice.balance)) ? Number(invoice.balance) : null,
@@ -3729,6 +3731,48 @@ export const listZohoLocations = createServerFn({ method: "GET" })
     }
   });
 
+/**
+ * Admin: removes one recorded payment from an order. If it was posted to Zoho Books it comes out of Zoho first (scope
+ * ZohoBooks.customerpayments.DELETE, after Reauthorize Zoho); if Zoho will not, the admin deletes it there and presses again.
+ * The database then corrects the order and keeps a copy (admin_delete_payment).
+ */
+export const deleteOrderPayment = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator(z.object({ paymentId: z.string().uuid(), reason: z.string().trim().min(4).max(300) }))
+  .handler(async ({ data, context }) => {
+    await ensureAdmin(context.supabase, context.userId);
+    const db = await dbAdmin();
+    const { data: payment } = await db.from("payments").select("id,order_id,zoho_payment_id,zoho_invoice_id,txn_ref").eq("id", data.paymentId).maybeSingle();
+    if (!payment) throw new Error("This payment no longer exists.");
+    const { data: blocker, error: blockerError } = await context.supabase.rpc("payment_delete_blocker", { _payment_id: data.paymentId });
+    if (blockerError) throw new Error(blockerError.message);
+    if (blocker) throw new Error(blocker);
+    if (payment.zoho_payment_id || payment.zoho_invoice_id) {
+      const { region, organizationId, token } = await zohoOrderContext(db);
+      const stillInZoho = async () => {
+        if (!payment.zoho_invoice_id) return Boolean(payment.zoho_payment_id);
+        const listed = await booksRequest<{ payments?: { payment_id?: string; reference_number?: string }[] }>(region, organizationId, token, `invoices/${encodeURIComponent(payment.zoho_invoice_id)}/payments`, "GET");
+        return (listed.payments ?? []).some((row) => (payment.zoho_payment_id && str(row.payment_id) === payment.zoho_payment_id) || (payment.txn_ref && str(row.reference_number) === payment.txn_ref));
+      };
+      if (payment.zoho_payment_id) {
+        try {
+          await booksRequest(region, organizationId, token, `customerpayments/${encodeURIComponent(payment.zoho_payment_id)}`, "DELETE");
+        } catch (cause) {
+          const message = cause instanceof Error ? cause.message : "Zoho refused";
+          if (await stillInZoho()) throw new Error(`Zoho Books would not remove this payment: ${message}${zohoPermissionHint(message)} You can delete it in Zoho Books yourself, then press Remove again.`);
+        }
+      } else if (await stillInZoho()) {
+        throw new Error("Zoho Books holds this payment. Delete it in Zoho Books, then press Remove again.");
+      }
+      const { error: clearError } = await db.from("payments").update({ zoho_payment_id: null, zoho_invoice_id: null, zoho_pushed_at: null }).eq("id", payment.id);
+      if (clearError) throw new Error("Could not update the payment record");
+    }
+    const { data: result, error } = await context.supabase.rpc("admin_delete_payment", { _payment_id: data.paymentId, _reason: data.reason });
+    if (error) throw new Error(error.message);
+    if (payment.order_id) await db.rpc("enqueue_zoho_sync", { _entity_type: "order", _entity_id: payment.order_id });
+    return result as { order_no: string; paid: number; balance: number };
+  });
+
 /** The organisation's active Zoho Books bank and cash accounts (scope ZohoBooks.banking.READ). */
 async function zohoDepositAccounts(region: Region, organizationId: string, token: string): Promise<ZohoDepositAccountOption[]> {
   const result = await booksRequest<{ bankaccounts?: unknown[] }>(region, organizationId, token, "bankaccounts?filter_by=Status.Active&per_page=200", "GET");
@@ -3835,7 +3879,7 @@ async function syncZohoOrder(db: Awaited<ReturnType<typeof dbAdmin>>, region: Re
   const orderId = job.entity_id;
   const [{ data: order, error: orderError }, { data: items, error: itemsError }] = await Promise.all([
     db.from("orders").select("*").eq("id", orderId).maybeSingle(),
-    db.from("order_items").select("id,product_id,product_name,sku,qty,unit_price,gst_rate,line_total").eq("order_id", orderId),
+    db.from("order_items").select("id,product_id,product_name,sku,qty,unit_price,gst_rate,line_total,coupon_share").eq("order_id", orderId),
   ]);
   if (orderError || itemsError) throw new Error("Could not read the order and items from Grain Bazar");
   if (!order) return;
@@ -3969,9 +4013,7 @@ async function syncZohoOrder(db: Awaited<ReturnType<typeof dbAdmin>>, region: Re
     customer_id: customerId,
     date: datePart(order.created_at, new Date().toISOString().slice(0, 10)),
     line_items: locationId ? lineItems.map((line) => ({ ...line, location_id: locationId })) : lineItems,
-    discount: Number(order.discount) || 0,
-    discount_type: "entity_level",
-    is_discount_before_tax: true,
+    ...zohoDiscountFields(order.discount, items),
     shipping_charge: Number(order.shipping) || 0,
     // Prices include GST on orders from 7 Nov 2026: Zoho takes the rate as GST-inclusive, so its total is the price paid.
     is_inclusive_tax: Boolean(order.prices_include_gst),
@@ -5392,7 +5434,7 @@ async function readOrderEmailConfig(db: Awaited<ReturnType<typeof dbAdmin>>): Pr
 }
 
 /** Zoho Books API v3 (same organization as Inventory). */
-async function booksRequest<T>(region: Region, organizationId: string, token: string, resource: string, method: "GET" | "POST" | "PUT", body?: Record<string, unknown>) {
+async function booksRequest<T>(region: Region, organizationId: string, token: string, resource: string, method: "GET" | "POST" | "PUT" | "DELETE", body?: Record<string, unknown>) {
   const url = new URL(`${REGIONS[region][2]}/books/v3/${resource}`);
   url.searchParams.set("organization_id", organizationId);
   const send = () => fetch(url, {

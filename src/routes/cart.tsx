@@ -9,7 +9,7 @@ import { useApp } from "@/lib/store";
 import { resizedImage } from "@/lib/image-url";
 import { useStorefrontDisplay } from "@/lib/storefront-display";
 import { branchDeliveryFee, defaultBranchOf, useBranches } from "@/lib/branches";
-import { couponDiscount, lineGstInside } from "@/lib/pricing";
+import { couponDiscount, gstAfterCoupon, lineGstInside } from "@/lib/pricing";
 import { Input } from "@/components/ui/input";
 import { showCartNotification } from "@/components/site/CartFloatingNotification";
 
@@ -34,9 +34,10 @@ function Cart() {
   const pickup = godown ? godown.pickupEnabled : true;
   const delivery = pickup ? 0 : branchDeliveryFee(godown, subtotal);
   // Prices include GST: the subtotal is what the customer pays for the goods, and this is the GST inside it.
-  const tax = cartItems.reduce((sum, line) => sum + lineGstInside(line.product.price, line.qty, line.product.gst), 0);
+  const taxBeforeCoupon = cartItems.reduce((sum, line) => sum + lineGstInside(line.product.price, line.qty, line.product.gst), 0);
   const appliedCoupon = applied ? coupons.find((c) => c.code === applied) : undefined;
   const discount = appliedCoupon ? couponDiscount(appliedCoupon, subtotal) : 0;
+  const tax = discount > 0 ? gstAfterCoupon(cartItems.map((line) => ({ price: line.product.price, qty: line.qty, gstPercent: line.product.gst })), discount) : taxBeforeCoupon;
   const total = subtotal + delivery - discount;
 
   const applyCoupon = () => {

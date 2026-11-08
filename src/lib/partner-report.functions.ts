@@ -52,7 +52,7 @@ async function loadPartnerReport(db: ReturnType<typeof serviceClient>, from: str
   if (!branchIds.length) return buildPartnerReport({ partners, orders: [], items: [], costs: {}, commissionRows: [], targets: [], from, to });
 
   const { data: orderRows, error: ordersError } = await db.from("orders")
-    .select("id,order_no,branch_id,created_at,order_status,payment_status,customer_name,subtotal,discount,gst_amount,shipping,total,paid_amount,zoho_salesorder_id")
+    .select("id,order_no,branch_id,created_at,order_status,payment_status,customer_name,subtotal,discount,discount_taxable,gst_amount,shipping,total,paid_amount,zoho_salesorder_id")
     .in("branch_id", branchIds).gte("created_at", fromIso).lt("created_at", toIso).not("order_status", "in", HELD_STATUS_FILTER).order("created_at").limit(MAX_ORDERS);
   if (ordersError) throw new Error("Could not read orders");
   const orderIds = (orderRows ?? []).map((row) => row.id);
@@ -67,11 +67,21 @@ async function loadPartnerReport(db: ReturnType<typeof serviceClient>, from: str
       db.from("partner_commissions").select("order_item_id,order_id,partner_id,amount,status,kind,rate,line_total").in("order_id", ids),
       db.from("zoho_order_invoices").select("order_id,invoice_number,status").in("order_id", ids),
     ]);
+    const payoutLines = await db.from("partner_payout_lines").select("order_item_id,amount,payout_id").in("order_id", ids);
+    if (payoutLines.error) throw new Error("Could not read partner payouts");
+    const payoutIds = [...new Set((payoutLines.data ?? []).map((line) => line.payout_id))];
+    const live = new Set<string>();
+    for (let at = 0; at < payoutIds.length; at += IN_CHUNK) {
+      const { data: rows } = await db.from("partner_payouts").select("id").eq("status", "paid").in("id", payoutIds.slice(at, at + IN_CHUNK));
+      for (const row of rows ?? []) live.add(row.id);
+    }
+    const settled = new Map<string, number>();
+    for (const line of payoutLines.data ?? []) if (live.has(line.payout_id)) settled.set(line.order_item_id, (settled.get(line.order_item_id) ?? 0) + Number(line.amount));
     if (itemsResult.error || commissionResult.error) throw new Error("Could not read order items and commissions");
     for (const row of itemsResult.data ?? [])
       items.push({ ...row, qty: Number(row.qty), unit_price: Number(row.unit_price), line_total: Number(row.line_total) });
     for (const row of commissionResult.data ?? [])
-      commissionRows.push({ ...row, amount: Number(row.amount), rate: Number(row.rate), line_total: Number(row.line_total) });
+      commissionRows.push({ ...row, amount: Number(row.amount), rate: Number(row.rate), line_total: Number(row.line_total), paid: settled.get(row.order_item_id) ?? 0 });
     for (const row of invoiceResult.data ?? [])
       if (row.invoice_number) invoices.set(row.order_id, row.status ? `${row.invoice_number} (${row.status})` : row.invoice_number);
   }
@@ -82,7 +92,7 @@ async function loadPartnerReport(db: ReturnType<typeof serviceClient>, from: str
   }
   const orders: ReportOrder[] = (orderRows ?? []).map((row) => ({
     ...row,
-    subtotal: Number(row.subtotal), discount: Number(row.discount), gst_amount: Number(row.gst_amount),
+    subtotal: Number(row.subtotal), discount: Number(row.discount_taxable ?? row.discount), gst_amount: Number(row.gst_amount),
     shipping: Number(row.shipping), total: Number(row.total), paid_amount: Number(row.paid_amount),
     invoice_number: invoices.get(row.id) ?? null,
   }));

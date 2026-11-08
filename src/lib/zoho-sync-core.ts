@@ -13,7 +13,7 @@ export function zohoOrderNumber(orderNo: string | number) {
   return `GB-${String(orderNo).replace(/[^A-Za-z0-9-]/g, "-").slice(-40)}`;
 }
 
-export type HttpMethod = "GET" | "POST" | "PUT";
+export type HttpMethod = "GET" | "POST" | "PUT" | "DELETE";
 
 /**
  * Whether a failed Zoho call may be sent again.
@@ -749,7 +749,17 @@ export function zohoStatusMovesForward(currentStatus: string, incoming: string) 
  * Zoho the website records that, and a new one is created only after an admin approves it.
  * ------------------------------------------------------------------------------------------- */
 
-export type ZohoInvoiceRef = { invoiceId: string; number: string; status: string; total: number | null; balance: number | null };
+/**
+ * How an order's coupon goes to Zoho: each line carries its own share, so the tax is worked out on what is left of each line
+ * (prices include GST). An order without per-line shares is sent as before.
+ */
+export function zohoDiscountFields(orderDiscount: unknown, items: ReadonlyArray<{ coupon_share?: unknown }>) {
+  return items.some((item) => Number(item.coupon_share) > 0)
+    ? { discount_type: "item_level" as const }
+    : { discount: Number(orderDiscount) || 0, discount_type: "entity_level" as const, is_discount_before_tax: true };
+}
+
+export type ZohoInvoiceRef = { invoiceId: string; number: string; status: string; total: number | null; balance: number | null; date?: string };
 export type InvoiceRecord = { zohoInvoiceId: string | null; invoiceNumber: string | null; status: string; autoAttempts: number; adminApproved: boolean };
 
 const amountOrNull = (value: unknown) => {
@@ -779,6 +789,7 @@ export function zohoInvoicesOf(salesOrder: Record<string, unknown>): ZohoInvoice
     status: String(invoice["status"] ?? "").toLowerCase(),
     total: amountOrNull(invoice["total"]),
     balance: amountOrNull(invoice["balance"]),
+    ...(/^\d{4}-\d{2}-\d{2}/.test(String(invoice["date"] ?? "")) ? { date: String(invoice["date"]).slice(0, 10) } : {}),
   })).filter((invoice) => invoice.invoiceId);
 }
 

@@ -13,6 +13,8 @@ export { branchForPin, branchStockOf, defaultBranchOf, godownOfferOf, godownPric
  * with realtime updates, and shared by every component through a small module cache.
  */
 export type Branch = {
+  /** Path of the godown's signature in the private signature bucket; printed on its invoices. */
+  signaturePath?: string | null;
   id: string;
   code: string;
   name: string;
@@ -81,6 +83,7 @@ export function branchFromRow(row: Row): Branch {
     deliveryFee: Number(row["delivery_fee"]) || 0, freeDeliveryAbove: Number.isFinite(free) ? free : null,
     isDefault: row["is_default"] === true, active: row["active"] !== false, sortOrder: Number(row["sort_order"]) || 0,
     vendorId: typeof row["vendor_id"] === "string" && row["vendor_id"] ? row["vendor_id"] : null,
+    signaturePath: typeof row["signature_path"] === "string" && row["signature_path"] ? row["signature_path"] : null,
   };
 }
 

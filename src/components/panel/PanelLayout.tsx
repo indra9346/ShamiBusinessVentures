@@ -1,5 +1,5 @@
 import { Link, useNavigate, useRouter, useRouterState } from "@tanstack/react-router";
-import { AlertTriangle, Bell, ChevronsLeft, ChevronsRight, LogOut, Menu, RefreshCw, Search, X } from "lucide-react";
+import { AlertTriangle, Bell, ChevronDown, ChevronsLeft, ChevronsRight, LogOut, Menu, RefreshCw, Search, X } from "lucide-react";
 import { useState, useMemo, useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
 import { toast } from "sonner";
 import { BrandLogo, LogoMark } from "@/components/brand/Logo";
@@ -20,12 +20,17 @@ import { AccountMenu } from "@/components/panel/AccountMenu";
 import { useBranches } from "@/lib/branches";
 import {
   activeNavTarget,
+  adminNavGroups,
   forgetPanelAccess,
+  groupOpenState,
   hasRecentPanelAccess,
   keepInView,
+  nextGroupOpenState,
+  readMenuGroups,
   readMenuScroll,
   rememberMenuScroll,
   rememberPanelAccess,
+  saveMenuGroups,
 } from "@/lib/panel-menu";
 
 export type NavItem = {
@@ -101,6 +106,21 @@ export function PanelLayout({
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   // The menu item for this page, also on pages inside it (an order lights up Orders).
   const activeTo = useMemo(() => activeNavTarget(pathname, items), [pathname, items]);
+  // The admin menu in sections. Read before the first paint: the menu's height must be right when its scroll is put back.
+  const navGroups = useMemo(() => (tone === "admin" ? adminNavGroups(items) : [{ key: "", label: "", items }]), [tone, items]);
+  const activeGroup = navGroups.find((group) => group.items.some((item) => item.to === activeTo))?.key;
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() => readMenuGroups());
+  // Each page starts with its own section open, so where you are always shows; closing it lasts until you move on.
+  const [closedHere, setClosedHere] = useState(false);
+  useEffect(() => { setClosedHere(false); }, [activeTo]);
+  const isGroupOpen = (key: string) => (key === activeGroup && closedHere ? false : groupOpenState(key, openGroups, activeGroup));
+  const toggleGroup = (key: string) => {
+    const open = !isGroupOpen(key);
+    if (key === activeGroup) setClosedHere(!open);
+    const next = nextGroupOpenState(openGroups, key, open);
+    setOpenGroups(next);
+    saveMenuGroups(next);
+  };
   // Passed the sign-in check a moment ago in this tab: draw the page at once, the check runs again behind it.
   // Who passed the check: the signed-in account (the preview demo has no account id, so its email).
   const accessKey = user?.id || user?.email || undefined;
@@ -565,31 +585,60 @@ export function PanelLayout({
         ref={place === "side" ? sideMenu : drawerMenu}
         onScroll={(event) => saveMenuScroll(place, event.currentTarget)}
         className={cn("flex-1 overflow-x-hidden overflow-y-auto pb-6", rail ? "space-y-0.5 px-1 pt-3 [scrollbar-width:thin]" : "space-y-1 px-3")}>
-        {items.map((item) => {
-          const active = item.to === activeTo;
+        {navGroups.map((group, groupIndex) => {
+          // The folded rail has no room for headings: all its icons, with a thin line between sections.
+          const collapsible = !rail && Boolean(group.key);
+          const showItems = !collapsible || isGroupOpen(group.key);
+          const panelId = `panel-menu-${place}-${group.key || "top"}`;
           return (
-            <Link
-              key={item.to}
-              to={item.to}
-              data-nav-active={active ? "" : undefined}
-              onClick={() => setOpen(false)}
-              title={rail ? item.label : undefined}
-              aria-label={rail ? item.label : undefined}
-              className={cn(
-                "rounded-lg font-medium transition-colors",
-                rail
-                  ? "flex flex-col items-center gap-1 px-0.5 py-2 text-[10px] leading-tight"
-                  : "flex items-center gap-3 px-3 py-2.5 text-sm",
-                active
-                  ? rail
-                    ? "bg-white/10 text-gold"
-                    : "bg-white/10 text-gold shadow-[inset_3px_0_0_0_var(--gold)]"
-                  : "text-white/70 hover:bg-white/5 hover:text-gold",
+            <div key={group.key || "top"} className={cn(rail && groupIndex > 0 && "mt-1 border-t border-white/10 pt-1")}>
+              {collapsible && (
+                <button
+                  type="button"
+                  onClick={() => toggleGroup(group.key)}
+                  aria-expanded={showItems}
+                  aria-controls={panelId}
+                  className={cn(
+                    "mt-1 flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-xs font-semibold tracking-wide uppercase transition-colors hover:bg-white/5 hover:text-gold",
+                    group.key === activeGroup ? "text-gold" : "text-white/55",
+                  )}
+                >
+                  <span className="truncate">{group.label}</span>
+                  <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 transition-transform", showItems && "rotate-180")} />
+                </button>
               )}
-            >
-              <item.icon className={cn("shrink-0", rail ? "h-5 w-5" : "h-4 w-4")} />
-              <span className={cn(rail ? "line-clamp-2 w-full text-center" : "truncate")}>{item.label}</span>
-            </Link>
+              {showItems && (
+                <div id={panelId} className={cn(rail ? "space-y-0.5" : "space-y-1")}>
+                  {group.items.map((item) => {
+                    const active = item.to === activeTo;
+                    return (
+                      <Link
+                        key={item.to}
+                        to={item.to}
+                        data-nav-active={active ? "" : undefined}
+                        onClick={() => setOpen(false)}
+                        title={rail ? item.label : undefined}
+                        aria-label={rail ? item.label : undefined}
+                        className={cn(
+                          "rounded-lg font-medium transition-colors",
+                          rail
+                            ? "flex flex-col items-center gap-1 px-0.5 py-2 text-[10px] leading-tight"
+                            : "flex items-center gap-3 px-3 py-2.5 text-sm",
+                          active
+                            ? rail
+                              ? "bg-white/10 text-gold"
+                              : "bg-white/10 text-gold shadow-[inset_3px_0_0_0_var(--gold)]"
+                            : "text-white/70 hover:bg-white/5 hover:text-gold",
+                        )}
+                      >
+                        <item.icon className={cn("shrink-0", rail ? "h-5 w-5" : "h-4 w-4")} />
+                        <span className={cn(rail ? "line-clamp-2 w-full text-center" : "truncate")}>{item.label}</span>
+                      </Link>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           );
         })}
         <button

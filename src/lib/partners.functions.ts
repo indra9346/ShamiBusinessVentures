@@ -3,7 +3,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import type { Database } from "@/integrations/supabase/types";
-import { partnerPasswordProblem } from "@/lib/partners";
+import { normalisePartnerPhone, partnerEmailProblem, partnerPasswordProblem, partnerPhoneProblem } from "@/lib/partners";
 
 /*
  * Channel partner (godown distributor) accounts. Only administrators create them: the admin enters
@@ -82,6 +82,52 @@ export const resetChannelPartnerPassword = createServerFn({ method: "POST" })
     const { error } = await db.auth.admin.updateUserById(partner.user_id, { password: data.password });
     if (error) throw new Error(`The password could not be changed: ${error.message}`);
     return { ok: true };
+  });
+
+/**
+ * Changes a partner's phone and login email. The email is the one they sign in with (the real sign-in account changes, at
+ * once and without a confirmation mail, since the admin is setting it); their password and any open session stay. The phone
+ * is the one printed on the godown's invoices. Each change goes in the partner's log.
+ */
+export const updateChannelPartnerContact = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator(z.object({ partnerId: z.string().uuid(), email: z.string().trim().toLowerCase().max(200), phone: z.string().trim().max(20) }))
+  .handler(async ({ data, context }) => {
+    await ensureAdmin(context.supabase, context.userId);
+    const emailProblem = partnerEmailProblem(data.email);
+    if (emailProblem) throw new Error(emailProblem);
+    const phoneProblem = partnerPhoneProblem(data.phone);
+    if (phoneProblem) throw new Error(phoneProblem);
+    const phone = normalisePartnerPhone(data.phone);
+    const db = serviceClient();
+    const { data: partner } = await db.from("channel_partners").select("id,user_id,branch_id,email,phone").eq("id", data.partnerId).maybeSingle();
+    if (!partner) throw new Error("Partner not found");
+    const emailChanged = data.email !== partner.email.toLowerCase();
+    const phoneChanged = phone !== partner.phone;
+    if (!emailChanged && !phoneChanged) return { emailChanged: false, phoneChanged: false };
+    if (emailChanged) {
+      const { data: other } = await db.from("channel_partners").select("name").eq("email", data.email).neq("id", partner.id).maybeSingle();
+      if (other) throw new Error(`${other.name} already signs in with this email.`);
+      const { error } = await db.auth.admin.updateUserById(partner.user_id, { email: data.email, email_confirm: true });
+      if (error) {
+        throw new Error(/already been registered|already exists|already registered/i.test(error.message)
+          ? "This email already has a Grain Bazar account. Use a different email for the partner login."
+          : `The login email could not be changed: ${error.message}`);
+      }
+    }
+    await db.auth.admin.updateUserById(partner.user_id, { user_metadata: { phone } });
+    const { error: saveError } = await db.from("channel_partners").update({ email: data.email, phone, updated_at: new Date().toISOString() }).eq("id", partner.id);
+    if (saveError) {
+      // The sign-in account already moved: put it back, so the page and the login never disagree.
+      if (emailChanged) await db.auth.admin.updateUserById(partner.user_id, { email: partner.email, email_confirm: true });
+      throw new Error("The partner could not be saved; nothing was changed. Try again.");
+    }
+    const { data: actor } = await db.from("profiles").select("full_name").eq("id", context.userId).maybeSingle();
+    await db.from("channel_partner_events").insert({
+      partner_id: partner.id, branch_id: partner.branch_id, event: "contact_changed", by_user: context.userId, by_name: actor?.full_name ?? "",
+      detail: [emailChanged ? `Email ${partner.email} to ${data.email}` : "", phoneChanged ? `Phone ${partner.phone || "none"} to ${phone || "none"}` : ""].filter(Boolean).join("; "),
+    } as never);
+    return { emailChanged, phoneChanged };
   });
 
 /** Suspends (the panel stops opening for them at once) or reactivates a partner. */

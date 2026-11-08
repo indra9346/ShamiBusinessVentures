@@ -726,7 +726,7 @@ export const orderStages: OrderStatus[] = [
 ];
 
 export type OrderItem = {
-  product: Product; qty: number; vendor: string; vendorId: string; capacity?: string; unitPrice?: number; dbItemId?: string;
+  product: Product; qty: number; vendor: string; vendorId: string; capacity?: string; unitPrice?: number; dbItemId?: string; couponShare?: number;
   /** GST % captured on the order line (the catalog rate may have changed since). */
   gstRate?: number;
 };

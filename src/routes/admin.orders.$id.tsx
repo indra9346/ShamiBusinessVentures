@@ -54,6 +54,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
 import { DeleteOrderButton } from "@/components/panel/DeleteOrderDialog";
+import { DeleteAllDetailsButton, OrderPaymentsPanel } from "@/components/panel/OrderPaymentsPanel";
 import { InvoicePreviewButton } from "@/components/site/InvoicePreviewDialog";
 import { ResizableTable } from "@/hooks/use-column-resize";
 import { ItemBatchCodes, useOrderItemBatches } from "@/components/batches/OrderItemBatches";
@@ -279,6 +280,7 @@ function AdminOrderDetail() {
           </AlertDialog>
           )}
           {isCancelled && <DeleteOrderButton orderNo={order.id} voidInZoho={voidInZoho} />}
+          {(isCancelled || voidInZoho) && <DeleteAllDetailsButton orderNo={order.id} />}
         </div>
       </div>
 
@@ -696,6 +698,8 @@ function AdminOrderDetail() {
           </dl>
         </Panel>
       </div>
+
+      <OrderPaymentsPanel orderNo={order.id} total={order.amount} />
 
       {/* Items Table with FIFO Cost and Pricing Breakdown */}
       <div className="mt-6">
