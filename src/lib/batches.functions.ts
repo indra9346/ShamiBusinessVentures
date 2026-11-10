@@ -65,7 +65,7 @@ export const getBatchData = createServerFn({ method: "GET" })
       allRows((from, to) => db.from("batch_code_reservations").select("code").order("code").range(from, to), "batch numbers"),
       // Moves between godowns (10 Nov 2026): received bills at another place, batches sent to other godowns.
       allRows((from, to) => db.from("batch_transfers")
-        .select("id,transfer_no,kind,status,from_branch_id,from_location_id,from_location_name,to_branch_id,to_location_id,parent_batch_id,quantity,bill,lines,zoho_transfer_order_id,zoho_status,attempts,last_error,result,created_at,created_by_name")
+        .select("id,transfer_no,kind,status,from_branch_id,from_location_id,from_location_name,to_branch_id,to_location_id,parent_batch_id,quantity,bill,lines,zoho_transfer_order_id,zoho_status,attempts,last_error,result,created_at,created_by_name,sent_at,received_at,received_by_name,received_by_role")
         .order("id", { ascending: false }).range(from, to), "transfers between godowns"),
     ]);
     if (branchesResult.error || masterResult.error) throw new Error("Could not read godowns and settings");
@@ -126,6 +126,8 @@ export const getBatchData = createServerFn({ method: "GET" })
       kind: t.kind as BatchTransfer["kind"], status: t.status as BatchTransfer["status"],
       quantity: t.quantity === null ? null : n(t.quantity),
       to_name: godownNames.get(t.to_branch_id) ?? t.to_branch_id,
+      from_name: t.from_branch_id ? godownNames.get(t.from_branch_id) ?? t.from_location_name : t.from_location_name,
+      received_by_role: (t.received_by_role ?? null) as "admin" | "staff" | "partner" | "zoho" | null,
       parent_batch_code: t.parent_batch_id ? batchCodes.get(t.parent_batch_id) ?? null : null,
       bill_number: t.bill && typeof t.bill === "object" && !Array.isArray(t.bill) ? String((t.bill as Record<string, unknown>)["bill_number"] ?? "") : null,
       lines: (Array.isArray(t.lines) ? t.lines : []) as unknown as BatchTransfer["lines"],

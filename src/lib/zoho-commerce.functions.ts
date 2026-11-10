@@ -6580,7 +6580,9 @@ async function runBatchTransfer(db: Awaited<ReturnType<typeof dbAdmin>>, start: 
         } else found = { id: answer.id, status: answer.status };
       }
       if (found.status === "void") return await cancel(`Transfer ${start.transfer_no} is void in Zoho, so nothing moved.`);
-      if (!isTransferred(found.status)) {
+      // A bill received at its unloading godown is already there: received at once. A batch sent to another godown stays
+      // in transit until that godown marks it received (markTransferReceived).
+      if (start.kind === "receive" && !isTransferred(found.status)) {
         await zoho.send(`transferorders/${encodeURIComponent(found.id)}/markastransferred`, "POST", undefined, { date: today });
         const again = await zoho.send(`transferorders/${encodeURIComponent(found.id)}`, "GET");
         found = readZohoTransfer(again.body?.["transfer_order"]) ?? found;
@@ -6589,7 +6591,7 @@ async function runBatchTransfer(db: Awaited<ReturnType<typeof dbAdmin>>, start: 
       // No answer at all (network, timeout): it may or may not be in Zoho. Retry looks it up.
       return await note(`Zoho did not answer: ${cause instanceof Error ? cause.message : String(cause)}. Press Retry: it looks ${start.transfer_no} up in Zoho first.`, found?.id ?? "", found?.status ?? "");
     }
-    const { data, error } = await db.rpc("finish_batch_transfer", { _transfer_id: start.id, _zoho_transfer_order_id: found.id, _zoho_status: found.status });
+    const { data, error } = await db.rpc("finish_batch_transfer", { _transfer_id: start.id, _zoho_transfer_order_id: found.id, _zoho_status: found.status, _actor: null as unknown as string });
     if (error) return await note(`Zoho moved it (${start.transfer_no}), but the website could not finish: ${error.message}. Press Retry.`, found.id, found.status);
     return data as unknown as BatchTransfer;
   });
@@ -6619,6 +6621,102 @@ export const sendBatchToGodowns = createServerFn({ method: "POST" })
     // One at a time: each is its own Zoho transfer order.
     for (const transfer of begun as unknown as BatchTransfer[]) results.push(await runBatchTransfer(db, transfer));
     return results;
+  });
+
+/**
+ * Who may mark a transfer received at a godown: an administrator, or that godown's active staff or channel partner.
+ * Checked before anything is written to Zoho; the database checks it again when it finishes.
+ */
+async function godownReceiver(db: Awaited<ReturnType<typeof dbAdmin>>, userId: string, branchId: string) {
+  const [{ data: admin }, { data: staff }, { data: partner }] = await Promise.all([
+    db.from("user_roles").select("role").eq("user_id", userId).eq("role", "admin").maybeSingle(),
+    db.from("staff_employees").select("name").eq("user_id", userId).eq("status", "active").eq("branch_id", branchId).maybeSingle(),
+    db.from("channel_partners").select("name").eq("user_id", userId).eq("status", "active").eq("branch_id", branchId).maybeSingle(),
+  ]);
+  return Boolean(admin || staff || partner);
+}
+
+/** The godown of a signed-in godown staff member or channel partner, or null for anyone else. */
+async function godownOfUser(db: Awaited<ReturnType<typeof dbAdmin>>, userId: string) {
+  const [{ data: staff }, { data: partner }] = await Promise.all([
+    db.from("staff_employees").select("branch_id").eq("user_id", userId).eq("status", "active").maybeSingle(),
+    db.from("channel_partners").select("branch_id").eq("user_id", userId).eq("status", "active").maybeSingle(),
+  ]);
+  return staff?.branch_id ?? partner?.branch_id ?? null;
+}
+
+/**
+ * The receiving godown marks a batch sent to it as received (owner, 10 Nov 2026): Zoho's transfer order is marked
+ * received, then the new batch is made at that godown and its stock goes up. Pressing twice, or after Zoho already shows
+ * it received, finishes it once.
+ */
+export const markTransferReceived = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator(z.object({ transferId: z.number().int().positive() }))
+  .handler(async ({ data, context }) => withZohoPurpose("Batch transfer: received at the godown", async () => {
+    const db = await dbAdmin();
+    const { data: row, error } = await db.from("batch_transfers")
+      .select("id,transfer_no,status,kind,to_branch_id,zoho_transfer_order_id").eq("id", data.transferId).maybeSingle();
+    if (error || !row) throw new Error("Transfer not found");
+    if (!(await godownReceiver(db, context.userId, row.to_branch_id)))
+      throw new Error("Only the receiving godown's staff, its channel partner or the office can mark this received");
+    if (row.status === "done") throw new Error(`Transfer ${row.transfer_no} is already received`);
+    if (row.status !== "in_transit" || !row.zoho_transfer_order_id) throw new Error(`Transfer ${row.transfer_no} is not on its way yet. Refresh the page.`);
+    const zoho = await openZohoInventory();
+    const path = `transferorders/${encodeURIComponent(row.zoho_transfer_order_id)}`;
+    let found = readZohoTransfer((await zoho.send(path, "GET")).body?.["transfer_order"]);
+    if (!found) throw new Error(`Could not read transfer ${row.transfer_no} from Zoho. Nothing changed; try again.`);
+    if (found.status === "void") throw new Error(`Transfer ${row.transfer_no} is void in Zoho. Ask the office.`);
+    if (!isTransferred(found.status)) {
+      const marked = await zoho.send(`${path}/markastransferred`, "POST", undefined, { date: todayInIndia() });
+      found = readZohoTransfer((await zoho.send(path, "GET")).body?.["transfer_order"]) ?? found;
+      if (!isTransferred(found.status)) {
+        const message = str(marked.body?.["message"]);
+        throw new Error(`Zoho did not mark ${row.transfer_no} received${message ? `: ${message}` : ""}.${zohoPermissionHint(message)} Nothing changed here; try again.`);
+      }
+    }
+    const { data: done, error: finishError } = await db.rpc("finish_batch_transfer", {
+      _transfer_id: row.id, _zoho_transfer_order_id: found.id, _zoho_status: found.status, _actor: context.userId,
+    });
+    if (finishError) throw new Error(finishError.message);
+    return done as unknown as BatchTransfer;
+  }));
+
+/**
+ * For the staff and partner apps: transfers to and from the signed-in person's godown. What is on its way to them (to
+ * mark received), what they sent that is still on its way, and the latest received, with where from and where to.
+ */
+export const listGodownTransfers = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const db = await dbAdmin();
+    const branchId = await godownOfUser(db, context.userId);
+    if (!branchId) return { godownId: null as string | null, transfers: [] as BatchTransfer[] };
+    const { data: rows, error } = await db.from("batch_transfers")
+      .select("id,transfer_no,kind,status,from_branch_id,from_location_id,from_location_name,to_branch_id,to_location_id,parent_batch_id,quantity,bill,lines,zoho_transfer_order_id,zoho_status,attempts,last_error,result,created_at,created_by_name,sent_at,received_at,received_by_name,received_by_role")
+      .or(`to_branch_id.eq.${branchId},from_branch_id.eq.${branchId}`).in("status", ["in_transit", "done"])
+      .order("id", { ascending: false }).limit(40);
+    if (error) throw new Error("Could not read the transfers");
+    const [{ data: branches }, { data: parents }] = await Promise.all([
+      db.from("branches").select("id,name"),
+      db.from("batches").select("id,batch_code").in("id", [...new Set((rows ?? []).map((r) => r.parent_batch_id).filter((id): id is string => Boolean(id)))]),
+    ]);
+    const nameOf = new Map((branches ?? []).map((b) => [b.id, b.name]));
+    const codeOf = new Map((parents ?? []).map((b) => [b.id, b.batch_code]));
+    return {
+      godownId: branchId,
+      transfers: (rows ?? []).map((t) => ({
+        ...t, kind: t.kind as BatchTransfer["kind"], status: t.status as BatchTransfer["status"],
+        quantity: t.quantity === null ? null : Number(t.quantity),
+        from_name: t.from_branch_id ? nameOf.get(t.from_branch_id) ?? t.from_location_name : t.from_location_name,
+        to_name: nameOf.get(t.to_branch_id) ?? t.to_branch_id,
+        parent_batch_code: t.parent_batch_id ? codeOf.get(t.parent_batch_id) ?? null : null,
+        bill_number: t.bill && typeof t.bill === "object" && !Array.isArray(t.bill) ? str((t.bill as Record<string, unknown>)["bill_number"]) : null,
+        lines: (Array.isArray(t.lines) ? t.lines : []) as unknown as BatchTransfer["lines"],
+        result: (Array.isArray(t.result) ? t.result : null) as unknown as BatchTransfer["result"],
+        received_by_role: (t.received_by_role ?? null) as BatchTransfer["received_by_role"],
+      })) as BatchTransfer[],
+    };
   });
 
 /** Tries a pending transfer again: looks it up in Zoho by its number first, then finishes it. */

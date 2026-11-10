@@ -24,6 +24,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ReceiveFromBillDialog } from "@/components/batches/ReceiveFromBill";
 import { SendToGodownsDialog, TransferList } from "@/components/batches/BatchTransfers";
+import { transferProgress } from "@/lib/batch-transfers";
 import { batchDeleteBlocker } from "@/lib/bill-batches";
 import { cn } from "@/lib/utils";
 
@@ -176,6 +177,11 @@ function AdminBatches() {
       {data && data.transfers.some((t) => t.status === "pending") && (
         <Panel title="Transfers waiting for Zoho" className="mb-4 border-amber-300">
           <TransferList transfers={data.transfers.filter((t) => t.status === "pending")} onChanged={load} />
+        </Panel>
+      )}
+      {data && data.transfers.some((t) => t.status === "in_transit") && (
+        <Panel title="On the way between godowns" className="mb-4 border-sky-300">
+          <TransferList transfers={data.transfers.filter((t) => t.status === "in_transit")} onChanged={load} />
         </Panel>
       )}
 
@@ -405,6 +411,9 @@ function BatchDetail({ row, report, data, adjustments, orderId, go, onEdit, onDe
   const myTransfers = data.transfers.filter((t) => t.parent_batch_id === row.batch.id || t.id === row.batch.transfer_id);
   const parent = row.batch.parent_batch_id ? data.batches.find((b) => b.id === row.batch.parent_batch_id) : undefined;
   const children = data.batches.filter((b) => b.parent_batch_id === row.batch.id);
+  // The transfer that brought this batch here, and those still on their way from it.
+  const arrival = data.transfers.find((t) => t.id === row.batch.transfer_id && t.kind === "split");
+  const onTheWay = myTransfers.filter((t) => t.parent_batch_id === row.batch.id && t.status === "in_transit");
   const product = data.products.find((p) => p.id === row.batch.product_id);
   const canSend = row.available > 0 && Boolean(product?.zohoLinked) && !product?.zohoTracksBatches
     && data.godowns.some((g) => g.active && g.zohoLinked && g.id !== row.batch.branch_id)
@@ -468,9 +477,15 @@ function BatchDetail({ row, report, data, adjustments, orderId, go, onEdit, onDe
           {parent && (
             <p className="mt-1 text-xs text-slate">Sent here from batch{" "}
               <button type="button" className="font-mono font-semibold text-navy hover:underline" onClick={() => go({ batch: parent.id, order: undefined })}>{parent.batch_code}</button>
-              {` (${data.godowns.find((g) => g.id === parent.branch_id)?.name ?? "another godown"})`}
+              {` (${data.godowns.find((g) => g.id === parent.branch_id)?.name ?? "another godown"}). `}
+              {arrival ? transferProgress(arrival) : ""}
             </p>
           )}
+          {onTheWay.map((t) => (
+            <p key={t.id} className="mt-1 text-xs font-semibold text-sky-900">
+              {`On the way to ${t.to_name ?? "another godown"}: ${t.quantity ?? ""} (${t.transfer_no}). ${transferProgress(t)}`}
+            </p>
+          ))}
           {children.length > 0 && (
             <p className="mt-1 flex flex-wrap gap-x-2 text-xs text-slate">
               <span>Sent to other godowns as</span>

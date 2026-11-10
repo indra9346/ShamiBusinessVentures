@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
-  findTransferByNumber, isTransferred, readCreateAnswer, readZohoTransfer, splitPlanProblem, TRANSFER_STATUS_WORDS, transferOrderBody, transferSummary,
+  findTransferByNumber, isTransferred, readCreateAnswer, readZohoTransfer, splitPlanProblem, TRANSFER_STATUS_WORDS, transferOrderBody, transferProgress, transferSummary,
   type BatchTransfer,
 } from "../src/lib/batch-transfers.ts";
 import { buildBatchReport, type BatchRecord } from "../src/lib/batches.ts";
@@ -20,12 +20,12 @@ const split: BatchTransfer = {
   zoho_transfer_order_id: "", zoho_status: "", attempts: 0, last_error: "", result: null, created_at: "2026-11-10T10:00:00Z", created_by_name: "Office",
 };
 
-test("the transfer order carries our number, both locations and each item's units, received at once", () => {
+test("the transfer order carries our number, both locations and each item's units; a sent batch travels, a received bill doesn't", () => {
   const body = transferOrderBody(split, "2026-11-10");
   assert.deepEqual(body, {
     transfer_order_number: "GB-TR-000001", date: "2026-11-10",
     description: "Grain Bazar: batch CLK-031126-08 sent to Grain Bazar Hubli Godown",
-    from_location_id: "LOC-CLK", to_location_id: "LOC-HBL", is_intransit_order: false,
+    from_location_id: "LOC-CLK", to_location_id: "LOC-HBL", is_intransit_order: true,
     line_items: [{ item_id: "3579709000003476321", name: "Ekadantha OIL 850ML", quantity_transfer: 5, unit: "pcs" }],
   });
   const receive = transferOrderBody({ ...split, kind: "receive", bill_number: "SS4463", from_location_id: "LOC-HO", lines: [
@@ -33,6 +33,7 @@ test("the transfer order carries our number, both locations and each item's unit
   ] }, "2026-11-10");
   assert.equal(receive.description, "Grain Bazar: bill SS4463 unloaded at Grain Bazar Hubli Godown");
   assert.equal(receive.from_location_id, "LOC-HO");
+  assert.equal(receive.is_intransit_order, false, "a bill received at its unloading godown is already there");
   assert.equal(receive.line_items.length, 2);
   assert.equal(transferOrderBody({ ...split, parent_batch_code: "X".repeat(600) }, "2026-11-10").description.length, 500);
 });
@@ -79,12 +80,22 @@ test("a split plan: own godown, twice, too many and decimals are refused before 
 });
 
 test("words for transfers", () => {
-  assert.equal(transferSummary(split), "GB-TR-000001: 5 Ekadantha OIL 850ML of batch CLK-031126-08 to Grain Bazar Hubli Godown");
+  assert.equal(transferSummary(split), "GB-TR-000001: 5 Ekadantha OIL 850ML of batch CLK-031126-08 from Grain Bazar Challakere Godown to Grain Bazar Hubli Godown");
   assert.equal(transferSummary({ ...split, kind: "receive", bill_number: "SS4463", from_location_name: "Head Office" }),
     "GB-TR-000001: bill SS4463 from Head Office to Grain Bazar Hubli Godown (5 Ekadantha OIL 850ML)");
-  assert.deepEqual(Object.keys(TRANSFER_STATUS_WORDS).sort(), ["cancelled", "done", "pending"]);
-  const statuses = MIGRATION.match(/status IN \('pending', 'done', 'cancelled'\)/);
+  assert.deepEqual(Object.keys(TRANSFER_STATUS_WORDS).sort(), ["cancelled", "done", "in_transit", "pending"]);
+  const statuses = MIGRATION.match(/status IN \('pending', 'in_transit', 'done', 'cancelled'\)/);
   assert.ok(statuses, "the words cover every status the database allows");
+});
+
+test("both ends see where it went: on the way, then who received it, where and when", () => {
+  const onTheWay = transferProgress({ ...split, status: "in_transit", sent_at: "2026-11-10T08:30:00Z", created_by_name: "Office Admin" });
+  assert.equal(onTheWay, "Sent 10 Nov 2026, 02:00 pm by Office Admin. On the way: waiting for Grain Bazar Hubli Godown to mark it received.");
+  const received = transferProgress({ ...split, status: "done", sent_at: "2026-11-10T08:30:00Z", received_at: "2026-11-11T04:45:00Z", received_by_name: "Hanu", received_by_role: "staff" });
+  assert.equal(received, "Sent 10 Nov 2026, 02:00 pm. Received at Grain Bazar Hubli Godown 11 Nov 2026, 10:15 am by Hanu (staff).");
+  assert.match(transferProgress({ ...split, status: "done", received_at: "2026-11-11T04:45:00Z", received_by_name: "Hubli Partner", received_by_role: "partner" }), /by Hubli Partner \(channel partner\)/);
+  assert.match(transferProgress({ ...split, status: "done", received_at: "2026-11-11T04:45:00Z", received_by_name: "x", received_by_role: "zoho" }), /marked received in Zoho/);
+  assert.equal(transferProgress({ ...split, status: "pending" }), "");
 });
 
 test("the website asks Zoho for transfer orders, so the owner reauthorizes once", () => {

@@ -15,8 +15,12 @@
 --     transfer first and keeps the units aside; then the server asks Zoho; then the website finishes it. A transfer
 --     whose Zoho answer was lost stays "pending", and a retry looks the number up in Zoho before creating anything, so
 --     one transfer never becomes two. One Zoho refused (nothing there) is cancelled and its units go back.
---   * When it finishes, the godowns' website stock moves with it at once (Zoho moved it too), so the 15-minute stock
---     sync finds nothing to change.
+--   * A batch sent to another godown travels: Zoho holds it "in transit" and it leaves the sending godown's stock at
+--     once. The receiving godown (its staff, its channel partner, or an administrator) marks it received when it
+--     arrives (owner, 10 Nov 2026); only then is the new batch made and the receiving godown's stock raised, in Zoho
+--     and here. Both sides see where it came from and where it went, when and by whom.
+--   * A bill received at the godown where it was unloaded is already there, so its transfer is received at once.
+--   * The godowns' website stock moves with Zoho at each step, so the 15-minute stock sync finds nothing to change.
 -- Only adds: tables, columns, functions; admin_delete_batch is the 6 Nov definition plus one rule (see there).
 
 -- ---------------------------------------------------------------- transfers
@@ -49,8 +53,9 @@ CREATE TABLE IF NOT EXISTS public.batch_transfers (
   -- Also the transfer order's number in Zoho: a retry finds it by this.
   transfer_no text NOT NULL UNIQUE,
   kind text NOT NULL CHECK (kind IN ('receive', 'split')),
-  -- pending: units kept aside, Zoho not confirmed yet. done: moved in Zoho and here. cancelled: nothing in Zoho, units back.
-  status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'done', 'cancelled')),
+  -- pending: units kept aside, Zoho not confirmed yet. in_transit: Zoho has it on the way (a batch sent to another godown),
+  -- waiting for that godown to mark it received. done: received there, in Zoho and here. cancelled: nothing in Zoho, units back.
+  status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'in_transit', 'done', 'cancelled')),
   -- The godown the units leave; NULL when the bill's Zoho location is not a godown (Head Office).
   from_branch_id text REFERENCES public.branches(id),
   from_location_id text NOT NULL,
@@ -71,6 +76,12 @@ CREATE TABLE IF NOT EXISTS public.batch_transfers (
   last_error text NOT NULL DEFAULT '',
   -- What finishing made: the new batches.
   result jsonb,
+  -- When it left (Zoho has it in transit, or received at once) and who at the receiving godown marked it received.
+  sent_at timestamptz,
+  received_at timestamptz,
+  received_by uuid,
+  received_by_name text NOT NULL DEFAULT '',
+  received_by_role text CHECK (received_by_role IS NULL OR received_by_role IN ('admin', 'staff', 'partner', 'zoho')),
   created_by uuid,
   created_by_name text NOT NULL DEFAULT '',
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -120,10 +131,10 @@ END $function$;
 REVOKE ALL ON FUNCTION private.next_batch_transfer_no() FROM PUBLIC, anon, authenticated;
 
 /*
- * Units that moved in Zoho from one godown to another move on the website too, at once: the source godown's stock goes
- * down (never below 0) and the destination's up. _from NULL: the units came from a Zoho location that is no godown
- * (Head Office), so only the destination changes. updated_at is now, so a stock sync that read Zoho before the
- * transfer doesn't put the old numbers back (apply_zoho_branch_stock skips rows changed after its read).
+ * Units that moved in Zoho move on the website too, at once: the source godown's stock goes down (never below 0) and
+ * the destination's up. _from NULL: the units came from a Zoho location that is no godown (Head Office). _to NULL: the
+ * units left and are on the way (in transit), so only the source changes. updated_at is now, so a stock sync that read
+ * Zoho before the transfer doesn't put the old numbers back (apply_zoho_branch_stock skips rows changed after its read).
  */
 CREATE OR REPLACE FUNCTION private.batch_transfer_stock(_from text, _to text, _product text, _qty numeric)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public' AS $function$
@@ -135,8 +146,10 @@ BEGIN
     UPDATE public.branch_stock SET stock = GREATEST(0, stock - _qty), updated_at = now()
       WHERE branch_id = _from AND product_id = _product;
   END IF;
-  INSERT INTO public.branch_stock (branch_id, product_id, stock, zoho_pending) VALUES (_to, _product, _qty, false)
-  ON CONFLICT (branch_id, product_id) DO UPDATE SET stock = public.branch_stock.stock + EXCLUDED.stock, updated_at = now();
+  IF _to IS NOT NULL THEN
+    INSERT INTO public.branch_stock (branch_id, product_id, stock, zoho_pending) VALUES (_to, _product, _qty, false)
+    ON CONFLICT (branch_id, product_id) DO UPDATE SET stock = public.branch_stock.stock + EXCLUDED.stock, updated_at = now();
+  END IF;
   SELECT COALESCE(sum(stock), 0) INTO total FROM public.branch_stock WHERE product_id = _product;
   -- As apply_zoho_branch_stock does: the product's total follows its godowns, and this is Zoho's own change.
   PERFORM set_config('app.zoho_inbound', 'on', true);
@@ -154,12 +167,14 @@ RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public' A
   SELECT jsonb_build_object(
     'id', _t.id, 'transfer_no', _t.transfer_no, 'kind', _t.kind, 'status', _t.status,
     'from_branch_id', _t.from_branch_id, 'from_location_id', _t.from_location_id, 'from_location_name', _t.from_location_name,
+    'from_name', COALESCE((SELECT name FROM public.branches WHERE id = _t.from_branch_id), _t.from_location_name),
     'to_branch_id', _t.to_branch_id, 'to_location_id', _t.to_location_id,
     'to_name', (SELECT name FROM public.branches WHERE id = _t.to_branch_id),
     'parent_batch_id', _t.parent_batch_id, 'parent_batch_code', (SELECT batch_code FROM public.batches WHERE id = _t.parent_batch_id),
     'quantity', _t.quantity, 'bill_number', _t.bill->>'bill_number', 'lines', _t.lines,
     'zoho_transfer_order_id', _t.zoho_transfer_order_id, 'zoho_status', _t.zoho_status, 'attempts', _t.attempts,
-    'last_error', _t.last_error, 'result', _t.result, 'created_at', _t.created_at, 'created_by_name', _t.created_by_name)
+    'last_error', _t.last_error, 'result', _t.result, 'created_at', _t.created_at, 'created_by_name', _t.created_by_name,
+    'sent_at', _t.sent_at, 'received_at', _t.received_at, 'received_by_name', _t.received_by_name, 'received_by_role', _t.received_by_role)
 $function$;
 REVOKE ALL ON FUNCTION private.batch_transfer_json(public.batch_transfers) FROM PUBLIC, anon, authenticated;
 
@@ -293,10 +308,37 @@ GRANT EXECUTE ON FUNCTION public.begin_bill_receive(text, text, text, jsonb, jso
 
 -- ---------------------------------------------------------------- finish, note an attempt, cancel (server only)
 /*
- * Zoho has moved the units (_zoho_status 'transferred'): make the new batches and move the godowns' website stock.
- * Finishing twice returns the first result. Any other Zoho status keeps the transfer pending, with Zoho's word noted.
+ * Who may mark a transfer received at a godown: an administrator, or that godown's active staff or channel partner.
+ * Returns {role, name}, or NULL for anyone else. public.has_role is false for the service role, so all are looked up.
  */
-CREATE OR REPLACE FUNCTION public.finish_batch_transfer(_transfer_id bigint, _zoho_transfer_order_id text, _zoho_status text)
+CREATE OR REPLACE FUNCTION private.batch_transfer_receiver(_actor uuid, _branch_id text)
+RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path TO 'public' AS $function$
+DECLARE who text;
+BEGIN
+  IF _actor IS NULL THEN RETURN NULL; END IF;
+  IF private.batch_transfer_admin(_actor) THEN
+    SELECT COALESCE(NULLIF(btrim(p.full_name), ''), NULLIF(btrim(p.email), '')) INTO who FROM public.profiles p WHERE p.id = _actor;
+    RETURN jsonb_build_object('role', 'admin', 'name', COALESCE(who, 'Admin ' || left(_actor::text, 8)));
+  END IF;
+  SELECT name INTO who FROM public.staff_employees WHERE user_id = _actor AND status = 'active' AND branch_id = _branch_id;
+  IF FOUND THEN RETURN jsonb_build_object('role', 'staff', 'name', who); END IF;
+  SELECT name INTO who FROM public.channel_partners WHERE user_id = _actor AND status = 'active' AND branch_id = _branch_id;
+  IF FOUND THEN RETURN jsonb_build_object('role', 'partner', 'name', who); END IF;
+  RETURN NULL;
+END $function$;
+REVOKE ALL ON FUNCTION private.batch_transfer_receiver(uuid, text) FROM PUBLIC, anon, authenticated;
+
+/*
+ * Takes a transfer forward on what Zoho says now (the server read it a moment ago).
+ *   A bill received elsewhere: Zoho 'transferred' makes its batches at the unloading godown at once.
+ *   A batch sent to another godown:
+ *     Zoho 'in_transit': it left. The sending godown's stock goes down; the transfer waits for the receiving godown.
+ *     Zoho 'transferred': it arrived. _actor (who pressed Mark received) must be an administrator or that godown's
+ *     staff or channel partner; NULL means Zoho shows it received already (marked in Zoho itself). The new batch is
+ *     made and the receiving godown's stock goes up.
+ * Finishing twice returns the first result. Any other Zoho status leaves it as it is, with Zoho's word noted.
+ */
+CREATE OR REPLACE FUNCTION public.finish_batch_transfer(_transfer_id bigint, _zoho_transfer_order_id text, _zoho_status text, _actor uuid)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public' AS $function$
 DECLARE
   t public.batch_transfers%ROWTYPE;
@@ -307,6 +349,7 @@ DECLARE
   child_id uuid;
   n integer;
   line jsonb;
+  receiver jsonb;
   status_now text := lower(btrim(COALESCE(_zoho_status, '')));
 BEGIN
   SELECT * INTO t FROM public.batch_transfers WHERE id = _transfer_id FOR UPDATE;
@@ -314,15 +357,30 @@ BEGIN
   IF t.status = 'done' THEN RETURN private.batch_transfer_json(t); END IF;
   IF t.status = 'cancelled' THEN RAISE EXCEPTION 'Transfer % was cancelled', t.transfer_no; END IF;
   IF btrim(COALESCE(_zoho_transfer_order_id, '')) = '' THEN RAISE EXCEPTION 'Zoho''s transfer order is missing'; END IF;
-  IF status_now <> 'transferred' THEN
-    UPDATE public.batch_transfers SET zoho_transfer_order_id = _zoho_transfer_order_id, zoho_status = status_now,
-        attempts = attempts + 1, last_error = format('Zoho shows transfer %s as "%s", not received yet', t.transfer_no, status_now)
-      WHERE id = t.id RETURNING * INTO t;
-    RETURN private.batch_transfer_json(t);
-  END IF;
   SELECT * INTO dst FROM public.branches WHERE id = t.to_branch_id;
 
+  IF t.kind = 'split' AND status_now IN ('in_transit', 'transferred') AND t.status = 'pending' THEN
+    -- It left the sending godown.
+    PERFORM private.batch_transfer_stock(t.from_branch_id, NULL, t.product_id, t.quantity);
+    UPDATE public.batch_transfers SET status = 'in_transit', sent_at = now(), zoho_transfer_order_id = _zoho_transfer_order_id,
+        zoho_status = status_now, last_error = ''
+      WHERE id = t.id RETURNING * INTO t;
+  END IF;
+  IF status_now <> 'transferred' THEN
+    IF t.status = 'pending' THEN
+      UPDATE public.batch_transfers SET zoho_transfer_order_id = _zoho_transfer_order_id, zoho_status = status_now,
+          attempts = attempts + 1, last_error = format('Zoho shows transfer %s as "%s", not received yet', t.transfer_no, status_now)
+        WHERE id = t.id RETURNING * INTO t;
+    END IF;
+    RETURN private.batch_transfer_json(t);
+  END IF;
+
   IF t.kind = 'split' THEN
+    receiver := CASE WHEN _actor IS NULL THEN jsonb_build_object('role', 'zoho', 'name', 'Marked received in Zoho')
+      ELSE private.batch_transfer_receiver(_actor, t.to_branch_id) END;
+    IF receiver IS NULL THEN
+      RAISE EXCEPTION 'Only % staff, its channel partner or an administrator can mark transfer % received', dst.name, t.transfer_no;
+    END IF;
     SELECT * INTO b FROM public.batches WHERE id = t.parent_batch_id FOR UPDATE;
     SELECT count(*) + 1 INTO n FROM public.batches WHERE parent_batch_id = b.id AND branch_id = dst.id;
     child_code := b.batch_code || '-' || upper(COALESCE(NULLIF(btrim(dst.code), ''), regexp_replace(dst.id, '^BR-', ''))) || n;
@@ -332,12 +390,14 @@ BEGIN
       zoho_bill_id, zoho_bill_number, zoho_bill_modified, zoho_bill_total, status, parent_batch_id, transfer_id)
     VALUES (child_code, b.product_id, b.product_name, b.vendor, b.vendor_id, t.quantity, t.quantity, b.unit,
       b.unit_cost, b.unit_cost_ex_gst, b.unit_cost_inc_gst, b.cost_basis, b.purchase_date, b.mfg_date, b.expiry_date, dst.name, dst.id,
-      'website', b.supplier, b.purchase_ref, left(format('From %s (%s)', b.batch_code, t.transfer_no), 300), t.created_by, t.created_by_name,
+      'website', b.supplier, b.purchase_ref, left(format('From %s (%s)', b.batch_code, t.transfer_no), 300), _actor, left(receiver->>'name', 120),
       b.zoho_item_id, b.zoho_bill_id, b.zoho_bill_number, b.zoho_bill_modified, b.zoho_bill_total, 'Active', b.id, t.id)
     RETURNING id INTO child_id;
     made := jsonb_build_array(jsonb_build_object('batch_id', child_id, 'batch_code', child_code, 'qty', t.quantity));
-    PERFORM private.batch_transfer_stock(t.from_branch_id, t.to_branch_id, t.product_id, t.quantity);
+    -- It arrived: only the receiving godown changes now (the sender's stock went down when it left).
+    PERFORM private.batch_transfer_stock(NULL, t.to_branch_id, t.product_id, t.quantity);
   ELSE
+    receiver := jsonb_build_object('role', 'admin', 'name', t.created_by_name);
     made := public.create_batches_from_bill(t.to_branch_id, t.bill, t.lines, t.cost_basis, t.created_by, t.created_by_name);
     UPDATE public.batches SET transfer_id = t.id WHERE id IN (SELECT (m->>'batch_id')::uuid FROM jsonb_array_elements(made) m);
     FOR line IN SELECT value FROM jsonb_array_elements(t.lines) LOOP
@@ -346,12 +406,14 @@ BEGIN
   END IF;
 
   UPDATE public.batch_transfers SET status = 'done', zoho_transfer_order_id = _zoho_transfer_order_id, zoho_status = status_now,
-      last_error = '', result = made, finished_at = now()
+      last_error = '', result = made, finished_at = now(), sent_at = COALESCE(sent_at, now()), received_at = now(),
+      received_by = CASE WHEN t.kind = 'split' THEN _actor ELSE t.created_by END,
+      received_by_name = left(COALESCE(receiver->>'name', ''), 120), received_by_role = receiver->>'role'
     WHERE id = t.id RETURNING * INTO t;
   RETURN private.batch_transfer_json(t);
 END $function$;
-REVOKE ALL ON FUNCTION public.finish_batch_transfer(bigint, text, text) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.finish_batch_transfer(bigint, text, text) TO service_role;
+REVOKE ALL ON FUNCTION public.finish_batch_transfer(bigint, text, text, uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.finish_batch_transfer(bigint, text, text, uuid) TO service_role;
 
 -- A try that didn't finish (Zoho gave no answer, or not received yet): noted, and the transfer stays pending.
 CREATE OR REPLACE FUNCTION public.note_batch_transfer_attempt(_transfer_id bigint, _error text, _zoho_transfer_order_id text, _zoho_status text)
@@ -382,6 +444,7 @@ BEGIN
   IF NOT FOUND THEN RAISE EXCEPTION 'Transfer not found'; END IF;
   IF t.status = 'cancelled' THEN RETURN private.batch_transfer_json(t); END IF;
   IF t.status = 'done' THEN RAISE EXCEPTION 'Transfer % is done: its units are at the other godown', t.transfer_no; END IF;
+  IF t.status = 'in_transit' THEN RAISE EXCEPTION 'Transfer % is on its way in Zoho: mark it received at the godown, or void it in Zoho first', t.transfer_no; END IF;
   IF t.kind = 'split' THEN
     UPDATE public.batches SET remaining_quantity = remaining_quantity + t.quantity WHERE id = t.parent_batch_id;
   END IF;

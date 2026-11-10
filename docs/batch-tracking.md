@@ -56,6 +56,14 @@ bill; and "make batches from super batch and those batches can be sent for multi
 - **Send to other godowns** (on a batch with units left): one row per godown and quantity. Each godown gets a Zoho
   transfer order and a batch of its own named after the super batch (`CLK-031126-08` → `CLK-031126-08-HBL1`) with the
   same cost, bill, supplier and dates. The super batch keeps the rest.
+- **In transit until the receiving godown marks it received** (owner, 10 Nov 2026). A sent batch goes to Zoho as an
+  in-transit transfer order and leaves the sending godown's stock at once. The receiving godown's staff app and
+  channel partner page show **Stock between godowns → Coming to your godown** (what, how many, from which godown and
+  batch, sent when and by whom) with **Mark received** (after counting it). Only that godown's staff, its partner or an
+  administrator can mark it; Zoho is marked received first, then the new batch appears there and that godown's stock
+  goes up. The sender sees **Sent from your godown, on the way** and later who received it and when; the admin sees
+  **On the way between godowns** and the full trail on both batches. A bill received at the godown where it was
+  unloaded is already there, so it is received at once. Only administrators send batches (owner).
 - **Safe with Zoho:** every transfer has a fixed number, `GB-TR-000001`, which is also its Zoho transfer order number.
   The website records it and sets the units aside first; then asks Zoho; then finishes. A lost Zoho reply leaves it
   "Waiting for Zoho" under **Transfers waiting for Zoho** with **Retry**, which looks the number up in Zoho first and

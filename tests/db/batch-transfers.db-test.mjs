@@ -52,14 +52,16 @@ for (const file of files) await db.exec(readFileSync(join(dir, file), "utf8"));
 
 const q = async (text, params) => (await db.query(text, params)).rows;
 const uid = (s) => `00000000-0000-4000-8000-${s.padStart(12, "0")}`;
-const ADMIN = uid("a1"), CUSTOMER = uid("c1");
-await q(`INSERT INTO auth.users (id, email) VALUES ('${ADMIN}','a@test.local'),('${CUSTOMER}','c@test.local') ON CONFLICT DO NOTHING`);
+const ADMIN = uid("a1"), CUSTOMER = uid("c1"), HBL_STAFF = uid("e1"), CLK_STAFF = uid("e2"), HBL_PARTNER = uid("b1");
+await q(`INSERT INTO auth.users (id, email) VALUES ('${ADMIN}','a@test.local'),('${CUSTOMER}','c@test.local'),('${HBL_STAFF}','e1@test.local'),('${CLK_STAFF}','e2@test.local'),('${HBL_PARTNER}','b1@test.local') ON CONFLICT DO NOTHING`);
 await q(`DELETE FROM public.user_roles WHERE user_id IN ('${ADMIN}','${CUSTOMER}')`);
 await q(`INSERT INTO public.user_roles (user_id, role) VALUES ('${ADMIN}','admin'),('${CUSTOMER}','customer')`);
 const L_CLK = "LOC-CLK", L_HBL = "LOC-HBL", L_HO = "LOC-HEAD-OFFICE";
 await q("INSERT INTO public.branches (id, code, name, active, zoho_location_id) VALUES ('BR-CLK','CLK','Challakere Godown',true,$1) ON CONFLICT (id) DO UPDATE SET active = true, zoho_location_id = $1, code = 'CLK'", [L_CLK]);
 await q("INSERT INTO public.branches (id, code, name, active, zoho_location_id) VALUES ('BR-HBL','HBL','Hubli Godown',true,$1) ON CONFLICT (id) DO UPDATE SET active = true, zoho_location_id = $1, code = 'HBL'", [L_HBL]);
 await q("INSERT INTO public.branches (id, code, name, active, zoho_location_id) VALUES ('BR-NOZ','NOZ','Unlinked Godown',true,'') ON CONFLICT (id) DO NOTHING");
+await q(`INSERT INTO public.staff_employees (user_id, branch_id, name, phone) VALUES ('${HBL_STAFF}','BR-HBL','Hanu at Hubli','9000000011'),('${CLK_STAFF}','BR-CLK','Ravi at Challakere','9000000012')`);
+await q(`INSERT INTO public.channel_partners (user_id, branch_id, name, email, phone) VALUES ('${HBL_PARTNER}','BR-HBL','Hubli Partner','b1@test.local','9000000013')`);
 await q("ALTER TABLE public.catalog_products DISABLE TRIGGER USER");
 for (const [id, name] of [["P1", "TEST Oil 850 ML"], ["P2", "TEST Sambar 17 GM"], ["P3", "TEST Tracked Rice"]])
   await q("INSERT INTO public.catalog_products (id, vendor_id, category, status, active, payload) VALUES ($1,'V1','Oil','approved',true,$2)", [id, JSON.stringify({ id, name, stock: 0, sold: 0, unit: "pcs" })]);
@@ -89,7 +91,7 @@ const batch = async (id) => (await q("SELECT * FROM public.batches WHERE id = $1
 const stock = async (branch, product) => Number((await q("SELECT stock FROM public.branch_stock WHERE branch_id = $1 AND product_id = $2", [branch, product]))[0]?.stock ?? 0);
 const total = async (product) => Number((await q("SELECT payload->>'stock' AS s FROM public.catalog_products WHERE id = $1", [product]))[0].s);
 const split = (targets, by = ADMIN, batchId = SUPER) => one("SELECT public.begin_batch_split($1, $2, $3, 'Office Admin') AS r", [batchId, JSON.stringify(targets), by]);
-const finish = (id, zohoId, status) => one("SELECT public.finish_batch_transfer($1, $2, $3) AS r", [id, zohoId, status]);
+const finish = (id, zohoId, status, actor = null) => one("SELECT public.finish_batch_transfer($1, $2, $3, $4) AS r", [id, zohoId, status, actor]);
 const cancel = (id, reason) => one("SELECT public.cancel_batch_transfer($1, $2, $3) AS r", [id, reason, ADMIN]);
 
 // ---- splitting: refusals first
@@ -120,16 +122,36 @@ assert.deepEqual(t.lines, [{ product_id: "P1", zoho_item_id: "Z1", name: "TEST O
 assert.equal(Number((await batch(SUPER)).remaining_quantity), 7, "kept aside: no order can take them");
 assert.equal(await stock("BR-CLK", "P1"), 12, "website stock moves only when Zoho has moved");
 
-// Zoho says in transit: still pending, Zoho's word kept.
-t = await finish(t.id, "ZT-1", "in_transit");
+// A Zoho status that is neither: still pending, Zoho's word kept.
+t = await finish(t.id, "ZT-1", "draft");
 assert.equal(t.status, "pending");
 assert.equal(t.zoho_transfer_order_id, "ZT-1");
-assert.match(t.last_error, /in_transit/);
-assert.equal((await q("SELECT count(*)::int AS c FROM public.batches WHERE parent_batch_id = $1", [SUPER]))[0].c, 0);
+assert.match(t.last_error, /draft/);
+assert.equal(await stock("BR-CLK", "P1"), 12);
 
-// Received: the Hubli batch appears, numbered after the super batch, with its cost and bill.
-t = await finish(t.id, "ZT-1", "transferred");
+// Zoho has it in transit: it left Challakere, and waits for Hubli to mark it received.
+t = await finish(t.id, "ZT-1", "in_transit");
+assert.equal(t.status, "in_transit");
+assert.ok(t.sent_at, "when it left");
+assert.equal(t.received_at, null);
+assert.match(t.from_name, /Challakere/);
+assert.equal(await stock("BR-CLK", "P1"), 7, "it left the sending godown");
+assert.equal(await stock("BR-HBL", "P1"), 0, "not at Hubli until received");
+assert.equal((await q("SELECT count(*)::int AS c FROM public.batches WHERE parent_batch_id = $1", [SUPER]))[0].c, 0, "no batch at Hubli yet");
+assert.equal((await finish(t.id, "ZT-1", "in_transit")).status, "in_transit", "told twice: nothing more moves");
+assert.equal(await stock("BR-CLK", "P1"), 7);
+await refuses(() => cancel(t.id, "changed my mind"), /on its way in Zoho/, "cancelling a transfer on its way");
+// Only the receiving godown (or the office) marks it received.
+await refuses(() => finish(t.id, "ZT-1", "transferred", CLK_STAFF), /Only .*Hubli.* staff, its channel partner or an administrator/, "the sending godown's staff");
+await refuses(() => finish(t.id, "ZT-1", "transferred", CUSTOMER), /Only .*Hubli/, "a customer");
+assert.equal((await q("SELECT status FROM public.batch_transfers WHERE id = $1", [t.id]))[0].status, "in_transit");
+
+// Received at Hubli by its staff: the Hubli batch appears, numbered after the super batch, with its cost and bill.
+t = await finish(t.id, "ZT-1", "transferred", HBL_STAFF);
 assert.equal(t.status, "done");
+assert.equal(t.received_by_name, "Hanu at Hubli");
+assert.equal(t.received_by_role, "staff");
+assert.ok(t.received_at);
 const superCode = (await batch(SUPER)).batch_code;
 assert.equal(t.result[0].batch_code, `${superCode}-HBL1`);
 const child = await batch(t.result[0].batch_id);
@@ -174,12 +196,28 @@ assert.equal(toDvg.status, "cancelled");
 assert.equal(Number((await batch(SUPER)).remaining_quantity), 5, "cancelled units are back");
 assert.equal((await cancel(started[1].id, "again")).status, "cancelled", "cancelling twice is harmless");
 await refuses(() => finish(started[1].id, "ZT-3", "transferred"), /was cancelled/, "finishing a cancelled transfer");
-const second = await finish(started[0].id, "ZT-2", "transferred");
+// Zoho shows it received straight away (marked in Zoho): it leaves and arrives in one go; the Hubli partner pressed.
+const second = await finish(started[0].id, "ZT-2", "transferred", HBL_PARTNER);
 assert.equal(second.result[0].batch_code, `${superCode}-HBL2`, "a second batch at the same godown gets the next number");
+assert.equal(second.received_by_role, "partner");
+assert.equal(second.received_by_name, "Hubli Partner");
 await refuses(() => cancel(started[0].id, "too late"), /is done/, "cancelling a done transfer");
 assert.equal(await stock("BR-HBL", "P1"), 7);
 assert.equal(await stock("BR-CLK", "P1"), 5);
 assert.equal(await stock("BR-DVG", "P1"), 0);
+
+// Marked received in Zoho itself (no one pressed here): it still finishes, saying so.
+const viaZoho = (await split([{ branch_id: "BR-HBL", qty: 1 }]))[0];
+await finish(viaZoho.id, "ZT-4", "in_transit");
+const viaZohoDone = await finish(viaZoho.id, "ZT-4", "transferred");
+assert.equal(viaZohoDone.received_by_role, "zoho");
+assert.equal(viaZohoDone.received_by_name, "Marked received in Zoho");
+// An administrator may mark one received too.
+const byAdmin = (await split([{ branch_id: "BR-HBL", qty: 1 }]))[0];
+await finish(byAdmin.id, "ZT-5", "in_transit");
+assert.equal((await finish(byAdmin.id, "ZT-5", "transferred", ADMIN)).received_by_role, "admin");
+assert.equal(await stock("BR-CLK", "P1"), 3);
+assert.equal(await stock("BR-HBL", "P1"), 9);
 
 // A batch-tracked Zoho item is moved in Zoho itself.
 await q("INSERT INTO public.batches (batch_code, product_id, product_name, quantity, remaining_quantity, unit, unit_cost, branch_id, status) VALUES ('CLK-TRACKED-01','P3','TEST Tracked Rice',10,10,'bag',50,'BR-CLK','Active')");
@@ -214,8 +252,8 @@ const received = await q("SELECT batch_code, branch_id, quantity, unit_cost, cos
 assert.ok(received.every((row) => row.branch_id === "BR-HBL" && Number(row.transfer_id) === Number(r.id) && row.cost_basis === "inc_gst"));
 assert.ok(received.every((row) => row.batch_code.startsWith("HBL-031126-")), "numbered at the unloading godown");
 assert.equal(await stock("BR-HBL", "P2"), 6);
-assert.equal(await stock("BR-HBL", "P1"), 11);
-assert.equal(await stock("BR-CLK", "P1"), 5, "Head Office is no godown: Challakere is untouched");
+assert.equal(await stock("BR-HBL", "P1"), 13);
+assert.equal(await stock("BR-CLK", "P1"), 3, "Head Office is no godown: Challakere is untouched");
 assert.equal(await total("P2"), 6);
 // The bill can't be received again.
 await refuses(() => receive("BR-HBL", L_HO, "Head Office", bill2, lines2), /already batch/, "a received bill");
@@ -226,8 +264,8 @@ await q("UPDATE public.branch_stock SET stock = stock + 3 WHERE branch_id = 'BR-
 r = await receive("BR-HBL", L_CLK, "CLK Shami Business Ventures", bill3, [line("L31", "P1", 3, 123.81, 130, "TEST Oil 850 ML", "Z1")]);
 assert.equal(r.from_branch_id, "BR-CLK");
 r = await finish(r.id, "ZT-10", "transferred");
-assert.equal(await stock("BR-CLK", "P1"), 5);
-assert.equal(await stock("BR-HBL", "P1"), 14);
+assert.equal(await stock("BR-CLK", "P1"), 3);
+assert.equal(await stock("BR-HBL", "P1"), 16);
 // Cancelling a pending receive frees the bill.
 const bill4 = bill("BILL-4", "VS911");
 r = await receive("BR-HBL", L_HO, "Head Office", bill4, [line("L41", "P2", 2, 9.52, 10, "TEST Sambar 17 GM", "Z2")]);
@@ -246,7 +284,7 @@ await refuses(() => as(ADMIN, "authenticated", () => q("SELECT public.admin_dele
 
 // ---- who may call and read what
 await refuses(() => as(ADMIN, "authenticated", () => q("SELECT public.begin_batch_split($1,$2,$3,'x')", [SUPER, JSON.stringify([{ branch_id: "BR-HBL", qty: 1 }]), ADMIN])), /permission denied/, "a browser starting a split");
-await refuses(() => as(ADMIN, "authenticated", () => q("SELECT public.finish_batch_transfer(1,'x','transferred')")), /permission denied/, "a browser finishing a transfer");
+await refuses(() => as(ADMIN, "authenticated", () => q("SELECT public.finish_batch_transfer(1,'x','transferred',NULL)")), /permission denied/, "a browser finishing a transfer");
 await refuses(() => as(null, "anon", () => q("SELECT * FROM public.batch_transfers")), /permission denied/, "anon reading transfers");
 assert.ok((await as(ADMIN, "authenticated", () => q("SELECT count(*)::int AS c FROM public.batch_transfers")))[0].c >= 5, "admins read transfers");
 assert.equal((await as(CUSTOMER, "authenticated", () => q("SELECT count(*)::int AS c FROM public.batch_transfers")))[0].c, 0, "others see none");

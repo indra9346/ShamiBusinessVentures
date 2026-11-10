@@ -15,10 +15,12 @@ export type BatchTransfer = {
   id: number;
   transfer_no: string;
   kind: "receive" | "split";
-  status: "pending" | "done" | "cancelled";
+  status: "pending" | "in_transit" | "done" | "cancelled";
   from_branch_id: string | null;
   from_location_id: string;
   from_location_name: string;
+  /** The sending godown's name, else the Zoho location's (Head Office). */
+  from_name?: string | null;
   to_branch_id: string;
   to_location_id: string;
   to_name: string | null;
@@ -34,12 +36,21 @@ export type BatchTransfer = {
   result: { batch_id: string; batch_code: string; qty?: number; line_id?: string }[] | null;
   created_at: string;
   created_by_name: string;
+  /** When it left, and who at the receiving godown marked it received (staff, partner, admin, or Zoho itself). */
+  sent_at?: string | null;
+  received_at?: string | null;
+  received_by_name?: string;
+  received_by_role?: "admin" | "staff" | "partner" | "zoho" | null;
   resumed?: boolean;
 };
 
 const text = (value: unknown) => (typeof value === "string" ? value : value === null || value === undefined ? "" : String(value));
 
-/** The transfer order Zoho gets: our number, the two locations, and the units of each item. */
+/**
+ * The transfer order Zoho gets: our number, the two locations, and the units of each item. A batch sent to another
+ * godown travels: Zoho holds it in transit until that godown marks it received (owner, 10 Nov 2026). A bill received at
+ * the godown where it was unloaded is already there.
+ */
 export function transferOrderBody(t: Pick<BatchTransfer, "transfer_no" | "kind" | "from_location_id" | "to_location_id" | "lines" | "bill_number" | "parent_batch_code" | "to_name">, date: string) {
   const why = t.kind === "receive"
     ? `Grain Bazar: bill ${t.bill_number ?? ""} unloaded at ${t.to_name ?? "another godown"}`
@@ -50,7 +61,7 @@ export function transferOrderBody(t: Pick<BatchTransfer, "transfer_no" | "kind" 
     description: why.slice(0, 500),
     from_location_id: t.from_location_id,
     to_location_id: t.to_location_id,
-    is_intransit_order: false,
+    is_intransit_order: t.kind === "split",
     line_items: t.lines.map((line) => ({ item_id: line.zoho_item_id, name: line.name, quantity_transfer: Number(line.qty), unit: line.unit })),
   };
 }
@@ -123,14 +134,32 @@ export function splitPlanProblem(available: number, sourceBranchId: string, targ
 
 export const TRANSFER_STATUS_WORDS: Record<BatchTransfer["status"], string> = {
   pending: "Waiting for Zoho",
-  done: "Done",
+  in_transit: "On the way",
+  done: "Received",
   cancelled: "Cancelled: units back",
 };
 
+const ROLE_WORDS: Record<string, string> = { admin: "office", staff: "staff", partner: "channel partner", zoho: "in Zoho" };
+
+const at = (iso: string | null | undefined) => (iso
+  ? new Date(iso).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })
+  : "");
+
+/** Where a transfer stands, said from both ends: when it left, and who received it, where and when. */
+export function transferProgress(t: Pick<BatchTransfer, "status" | "kind" | "to_name" | "sent_at" | "received_at" | "received_by_name" | "received_by_role" | "created_by_name">) {
+  if (t.status === "in_transit") return `Sent ${at(t.sent_at)}${t.created_by_name ? ` by ${t.created_by_name}` : ""}. On the way: waiting for ${t.to_name ?? "the godown"} to mark it received.`;
+  if (t.status === "done" && t.kind === "split") {
+    const who = t.received_by_role === "zoho" ? "marked received in Zoho" : `by ${t.received_by_name || "the godown"}${t.received_by_role ? ` (${ROLE_WORDS[t.received_by_role] ?? t.received_by_role})` : ""}`;
+    return `Sent ${at(t.sent_at)}. Received at ${t.to_name ?? "the godown"} ${at(t.received_at)} ${who}.`;
+  }
+  if (t.status === "done") return `Received at ${t.to_name ?? "the godown"} ${at(t.received_at)}${t.received_by_name ? ` by ${t.received_by_name}` : ""}.`;
+  return "";
+}
+
 /** One line saying what a transfer moves, for lists and toasts. */
-export function transferSummary(t: Pick<BatchTransfer, "kind" | "transfer_no" | "lines" | "to_name" | "from_location_name" | "bill_number" | "parent_batch_code">) {
+export function transferSummary(t: Pick<BatchTransfer, "kind" | "transfer_no" | "lines" | "to_name" | "from_location_name" | "bill_number" | "parent_batch_code"> & { from_name?: string | null }) {
   const units = t.lines.map((line) => `${line.qty} ${line.name}`).join(", ");
   return t.kind === "receive"
     ? `${t.transfer_no}: bill ${t.bill_number ?? ""} from ${t.from_location_name || "the bill's Zoho location"} to ${t.to_name ?? "the godown"} (${units})`
-    : `${t.transfer_no}: ${units} of batch ${t.parent_batch_code ?? ""} to ${t.to_name ?? "the godown"}`;
+    : `${t.transfer_no}: ${units} of batch ${t.parent_batch_code ?? ""} from ${t.from_name || t.from_location_name || "the godown"} to ${t.to_name ?? "the godown"}`;
 }
