@@ -427,7 +427,8 @@ function BatchDetail({ row, report, data, adjustments, orderId, go, onEdit, onDe
   };
   const deleteBlocker = batchDeleteBlocker(row.batch, batchAllocations,
     adjustments.filter((a) => a.batch_id === row.batch.id).length, orderOf,
-    Boolean(row.batch.transfer_id || row.batch.parent_batch_id || myTransfers.some((t) => t.parent_batch_id === row.batch.id && t.status !== "cancelled")));
+    // Any transfer that names it as the super batch keeps it, even a cancelled one (as admin_delete_batch).
+    Boolean(row.batch.transfer_id || row.batch.parent_batch_id || myTransfers.some((t) => t.parent_batch_id === row.batch.id)));
   const remove = async (): Promise<void> => {
     setDeleting(true);
     const { data: gone, error } = await supabase.rpc("admin_delete_batch", { _batch_id: row.batch.id });

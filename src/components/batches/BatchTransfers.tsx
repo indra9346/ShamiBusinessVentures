@@ -4,7 +4,7 @@ import { AlertTriangle, ArrowRightLeft, PackageCheck, Plus, RefreshCw, Trash2, T
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { splitPlanProblem, transferProgress, TRANSFER_STATUS_WORDS, transferSummary, type BatchTransfer } from "@/lib/batch-transfers";
+import { createHoldUntil, splitPlanProblem, transferProgress, TRANSFER_STATUS_WORDS, transferSummary, type BatchTransfer } from "@/lib/batch-transfers";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { cn } from "@/lib/utils";
 
@@ -127,8 +127,13 @@ export function TransferList({ transfers, onChanged, compact }: { transfers: Bat
         : action === "receive"
           ? await functions.markTransferReceived({ data: { transferId: t.id } })
           : await functions.cancelBatchTransfer({ data: { transferId: t.id } });
-      if (action === "cancel") toast.success(`${t.transfer_no} cancelled`, { description: "Nothing moved in Zoho; the units are back." });
-      else announceTransfer(result);
+      if (action === "cancel") {
+        toast.success(`${t.transfer_no} cancelled`, {
+          description: t.status === "in_transit"
+            ? `Zoho no longer has it on the way: the units are back on batch ${t.parent_batch_code ?? ""} at ${t.from_name || "the sending godown"}.`
+            : "Nothing moved in Zoho; the units are back.",
+        });
+      } else announceTransfer(result);
       await onChanged();
     } catch (cause) {
       toast.error(action === "retry" ? "Could not finish the transfer" : action === "receive" ? "Not marked received" : "Could not cancel the transfer",
@@ -161,7 +166,10 @@ export function TransferList({ transfers, onChanged, compact }: { transfers: Bat
               <Button size="sm" className="bg-emerald-700 text-white hover:bg-emerald-800" disabled={busy !== 0} onClick={() => void act(t, "receive")}>
                 <PackageCheck className={cn("mr-1.5 h-3.5 w-3.5", busy === t.id && "animate-pulse")} />Mark received
               </Button>
-              <span className="self-center text-[11px] text-slate">{`For when it has reached ${t.to_name ?? "the godown"}. Their staff or partner can also mark it in their app.`}</span>
+              <Button size="sm" variant="outline" className="border-red-200 text-red-700 hover:bg-red-50" disabled={busy !== 0} onClick={() => void act(t, "cancel")}>
+                <Trash2 className="mr-1.5 h-3.5 w-3.5" />Cancel
+              </Button>
+              <span className="self-center text-[11px] text-slate">{`Mark received when it has reached ${t.to_name ?? "the godown"} (their staff or partner can also mark it in their app). Cancel works once the transfer is voided or deleted in Zoho: the units go back.`}</span>
             </div>
           )}
           {t.last_error && t.status === "pending" && (
@@ -175,7 +183,11 @@ export function TransferList({ transfers, onChanged, compact }: { transfers: Bat
               <Button size="sm" variant="outline" className="border-red-200 text-red-700 hover:bg-red-50" disabled={busy !== 0} onClick={() => void act(t, "cancel")}>
                 <Trash2 className="mr-1.5 h-3.5 w-3.5" />Cancel
               </Button>
-              <span className="self-center text-[11px] text-slate">Retry looks it up in Zoho first. Cancel works only if Zoho doesn't have it.</span>
+              <span className="self-center text-[11px] text-slate">
+                {createHoldUntil(t)
+                  ? `Zoho may still be making it (its answer was lost). Retry and Cancel look it up from ${new Date(createHoldUntil(t)).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" })}.`
+                  : "Retry looks it up in Zoho first. Cancel works only if Zoho doesn't have it."}
+              </span>
             </div>
           )}
         </li>

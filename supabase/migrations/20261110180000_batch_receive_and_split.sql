@@ -20,7 +20,11 @@
 --     arrives (owner, 10 Nov 2026); only then is the new batch made and the receiving godown's stock raised, in Zoho
 --     and here. Both sides see where it came from and where it went, when and by whom.
 --   * A bill received at the godown where it was unloaded is already there, so its transfer is received at once.
---   * The godowns' website stock moves with Zoho at each step, so the 15-minute stock sync finds nothing to change.
+--   * The godowns' website stock takes Zoho's own numbers, read by the server right after Zoho moved the units, so a
+--     stock sync that already pulled the move can't count it twice (private.batch_transfer_stock).
+--   * One server call at a time works on a transfer (a claim that runs out after a few minutes), and a create whose
+--     answer was lost is looked up, never sent again, until Zoho has had 10 minutes to finish it (the server's rule).
+--   * A transfer on its way that is voided or deleted in Zoho is cancelled: its units go back to the super batch.
 -- Only adds: tables, columns, functions; admin_delete_batch is the 6 Nov definition plus one rule (see there).
 
 -- ---------------------------------------------------------------- transfers
@@ -86,6 +90,11 @@ CREATE TABLE IF NOT EXISTS public.batch_transfers (
   created_by_name text NOT NULL DEFAULT '',
   created_at timestamptz NOT NULL DEFAULT now(),
   finished_at timestamptz,
+  -- The server call working on it now (claim_batch_transfer), and until when; another call waits for it or for the time.
+  claim_id uuid,
+  claimed_until timestamptz,
+  -- When a create was last sent to Zoho. Its answer may have been lost, so the next try looks the number up first.
+  create_sent_at timestamptz,
   CHECK (kind <> 'split' OR (parent_batch_id IS NOT NULL AND product_id IS NOT NULL AND quantity > 0)),
   CHECK (kind <> 'receive' OR (bill IS NOT NULL AND cost_basis IS NOT NULL)),
   CHECK (from_branch_id IS NULL OR from_branch_id <> to_branch_id)
@@ -96,9 +105,12 @@ CREATE INDEX IF NOT EXISTS batch_transfers_open_idx ON public.batch_transfers (c
 CREATE UNIQUE INDEX IF NOT EXISTS batch_transfers_open_bill ON public.batch_transfers ((bill->>'bill_id'))
   WHERE kind = 'receive' AND status = 'pending';
 
+-- sent_quantity: units this batch sent to other godowns (on the way, or arrived), kept with the batch so the report reads
+-- one row, not two tables at two moments.
 ALTER TABLE public.batches
   ADD COLUMN IF NOT EXISTS parent_batch_id uuid REFERENCES public.batches(id),
-  ADD COLUMN IF NOT EXISTS transfer_id bigint REFERENCES public.batch_transfers(id);
+  ADD COLUMN IF NOT EXISTS transfer_id bigint REFERENCES public.batch_transfers(id),
+  ADD COLUMN IF NOT EXISTS sent_quantity numeric(14,2) NOT NULL DEFAULT 0 CHECK (sent_quantity >= 0);
 CREATE INDEX IF NOT EXISTS batches_parent_idx ON public.batches (parent_batch_id) WHERE parent_batch_id IS NOT NULL;
 
 -- Supabase's default privileges hand new tables to anon, authenticated and service_role: take them back. Writes go only
@@ -131,25 +143,47 @@ END $function$;
 REVOKE ALL ON FUNCTION private.next_batch_transfer_no() FROM PUBLIC, anon, authenticated;
 
 /*
- * Units that moved in Zoho move on the website too, at once: the source godown's stock goes down (never below 0) and
- * the destination's up. _from NULL: the units came from a Zoho location that is no godown (Head Office). _to NULL: the
- * units left and are on the way (in transit), so only the source changes. updated_at is now, so a stock sync that read
- * Zoho before the transfer doesn't put the old numbers back (apply_zoho_branch_stock skips rows changed after its read).
+ * Units that moved in Zoho move on the website too, at once. _from loses _qty, _to gains it. _from NULL: the units came
+ * from a Zoho location that is no godown (Head Office). _to NULL: the units left and are on the way (in transit), so
+ * only the source changes.
+ * _readings: what Zoho has at the godowns now, read by the server after Zoho moved the units, less website orders Zoho
+ * doesn't hold yet ([{branch_id, product_id, stock}], as the stock sync works it out). A moving godown takes Zoho's
+ * number, so a stock sync that already pulled the move can't count it twice. Moved by _qty instead: every godown when
+ * _readings is NULL (Zoho is not the stock master: the website keeps godown stock itself); a godown Zoho gave no number
+ * for; and a godown with a website stock edit still waiting for Zoho (zoho_pending), whose count the next sync sends to
+ * Zoho, so it has to move with the transfer. updated_at is now, so a sync that read Zoho before the move doesn't put
+ * the old number back (apply_zoho_branch_stock skips rows changed after its read).
  */
-CREATE OR REPLACE FUNCTION private.batch_transfer_stock(_from text, _to text, _product text, _qty numeric)
+CREATE OR REPLACE FUNCTION private.batch_transfer_stock(_from text, _to text, _product text, _qty numeric, _readings jsonb)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public' AS $function$
-DECLARE total numeric;
+DECLARE
+  total numeric;
+  godown text;
+  dir integer;
+  reading numeric;
+  waiting boolean;
 BEGIN
   IF COALESCE(_qty, 0) <= 0 THEN RETURN; END IF;
   PERFORM 1 FROM public.catalog_products WHERE id = _product FOR UPDATE;
-  IF _from IS NOT NULL THEN
-    UPDATE public.branch_stock SET stock = GREATEST(0, stock - _qty), updated_at = now()
-      WHERE branch_id = _from AND product_id = _product;
-  END IF;
-  IF _to IS NOT NULL THEN
-    INSERT INTO public.branch_stock (branch_id, product_id, stock, zoho_pending) VALUES (_to, _product, _qty, false)
-    ON CONFLICT (branch_id, product_id) DO UPDATE SET stock = public.branch_stock.stock + EXCLUDED.stock, updated_at = now();
-  END IF;
+  FOR godown, dir IN SELECT v.g, v.d FROM (VALUES (_from, -1), (_to, 1)) AS v(g, d) WHERE v.g IS NOT NULL LOOP
+    reading := NULL;
+    IF jsonb_typeof(_readings) = 'array' THEN
+      SELECT (r->>'stock')::numeric INTO reading FROM jsonb_array_elements(_readings) AS r
+        WHERE r->>'branch_id' = godown AND r->>'product_id' = _product AND jsonb_typeof(r->'stock') = 'number' LIMIT 1;
+    END IF;
+    waiting := false;
+    SELECT zoho_pending INTO waiting FROM public.branch_stock WHERE branch_id = godown AND product_id = _product FOR UPDATE;
+    IF reading IS NOT NULL AND NOT COALESCE(waiting, false) THEN
+      INSERT INTO public.branch_stock (branch_id, product_id, stock, zoho_pending) VALUES (godown, _product, GREATEST(0, round(reading, 2)), false)
+      ON CONFLICT (branch_id, product_id) DO UPDATE SET stock = EXCLUDED.stock, updated_at = now();
+    ELSIF dir < 0 THEN
+      UPDATE public.branch_stock SET stock = GREATEST(0, stock - _qty), updated_at = now()
+        WHERE branch_id = godown AND product_id = _product;
+    ELSE
+      INSERT INTO public.branch_stock (branch_id, product_id, stock, zoho_pending) VALUES (godown, _product, _qty, false)
+      ON CONFLICT (branch_id, product_id) DO UPDATE SET stock = public.branch_stock.stock + EXCLUDED.stock, updated_at = now();
+    END IF;
+  END LOOP;
   SELECT COALESCE(sum(stock), 0) INTO total FROM public.branch_stock WHERE product_id = _product;
   -- As apply_zoho_branch_stock does: the product's total follows its godowns, and this is Zoho's own change.
   PERFORM set_config('app.zoho_inbound', 'on', true);
@@ -159,7 +193,7 @@ BEGIN
   PERFORM set_config('app.branch_stock_sync', 'off', true);
   PERFORM set_config('app.zoho_inbound', 'off', true);
 END $function$;
-REVOKE ALL ON FUNCTION private.batch_transfer_stock(text, text, text, numeric) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION private.batch_transfer_stock(text, text, text, numeric, jsonb) FROM PUBLIC, anon, authenticated;
 
 -- What the server needs to send a transfer to Zoho, and to show it.
 CREATE OR REPLACE FUNCTION private.batch_transfer_json(_t public.batch_transfers)
@@ -174,9 +208,66 @@ RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public' A
     'quantity', _t.quantity, 'bill_number', _t.bill->>'bill_number', 'lines', _t.lines,
     'zoho_transfer_order_id', _t.zoho_transfer_order_id, 'zoho_status', _t.zoho_status, 'attempts', _t.attempts,
     'last_error', _t.last_error, 'result', _t.result, 'created_at', _t.created_at, 'created_by_name', _t.created_by_name,
-    'sent_at', _t.sent_at, 'received_at', _t.received_at, 'received_by_name', _t.received_by_name, 'received_by_role', _t.received_by_role)
+    'sent_at', _t.sent_at, 'received_at', _t.received_at, 'received_by_name', _t.received_by_name, 'received_by_role', _t.received_by_role,
+    'create_sent_at', _t.create_sent_at)
 $function$;
 REVOKE ALL ON FUNCTION private.batch_transfer_json(public.batch_transfers) FROM PUBLIC, anon, authenticated;
+
+-- ---------------------------------------------------------------- one server call at a time (server only)
+/*
+ * A server call claims a transfer before it asks Zoho anything and lets it go when done, so two presses, two admins or
+ * a press during the stock sync never create, cancel or finish one transfer at the same time. A claim runs out by
+ * itself (_seconds, 30 to 900) if the server stops midway. Returns the transfer as it is now, with claimed true, or
+ * claimed false while another call holds it.
+ */
+CREATE OR REPLACE FUNCTION public.claim_batch_transfer(_transfer_id bigint, _claim uuid, _seconds integer)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public' AS $function$
+DECLARE t public.batch_transfers%ROWTYPE;
+BEGIN
+  IF _claim IS NULL THEN RAISE EXCEPTION 'No claim given'; END IF;
+  SELECT * INTO t FROM public.batch_transfers WHERE id = _transfer_id FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Transfer not found'; END IF;
+  IF t.claim_id IS NOT NULL AND t.claim_id <> _claim AND t.claimed_until > now() THEN
+    RETURN private.batch_transfer_json(t) || jsonb_build_object('claimed', false, 'busy_until', t.claimed_until);
+  END IF;
+  UPDATE public.batch_transfers SET claim_id = _claim,
+      claimed_until = now() + make_interval(secs => LEAST(GREATEST(COALESCE(_seconds, 300), 30), 900))
+    WHERE id = t.id RETURNING * INTO t;
+  RETURN private.batch_transfer_json(t) || jsonb_build_object('claimed', true);
+END $function$;
+REVOKE ALL ON FUNCTION public.claim_batch_transfer(bigint, uuid, integer) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.claim_batch_transfer(bigint, uuid, integer) TO service_role;
+
+CREATE OR REPLACE FUNCTION public.release_batch_transfer(_transfer_id bigint, _claim uuid)
+RETURNS void LANGUAGE sql SECURITY DEFINER SET search_path TO 'public' AS $function$
+  UPDATE public.batch_transfers SET claim_id = NULL, claimed_until = NULL WHERE id = _transfer_id AND claim_id = _claim
+$function$;
+REVOKE ALL ON FUNCTION public.release_batch_transfer(bigint, uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.release_batch_transfer(bigint, uuid) TO service_role;
+
+-- Free for this call: nobody holds it, the claim ran out, or the claim is this call's.
+CREATE OR REPLACE FUNCTION private.batch_transfer_claim_ok(_t public.batch_transfers, _claim uuid)
+RETURNS boolean LANGUAGE sql STABLE SET search_path TO 'public' AS $function$
+  SELECT _t.claim_id IS NULL OR _t.claimed_until IS NULL OR _t.claimed_until <= now() OR _t.claim_id = _claim
+$function$;
+REVOKE ALL ON FUNCTION private.batch_transfer_claim_ok(public.batch_transfers, uuid) FROM PUBLIC, anon, authenticated;
+
+/*
+ * Written, and committed, just before a create goes to Zoho: if its answer is lost, every later try knows a create may
+ * be in Zoho and looks the number up first.
+ */
+CREATE OR REPLACE FUNCTION public.note_batch_transfer_create(_transfer_id bigint, _claim uuid)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public' AS $function$
+DECLARE t public.batch_transfers%ROWTYPE;
+BEGIN
+  SELECT * INTO t FROM public.batch_transfers WHERE id = _transfer_id FOR UPDATE;
+  IF NOT FOUND OR t.status <> 'pending' THEN RAISE EXCEPTION 'No pending transfer %', _transfer_id; END IF;
+  IF NOT private.batch_transfer_claim_ok(t, _claim) THEN RAISE EXCEPTION 'Transfer % is being worked on right now', t.transfer_no; END IF;
+  UPDATE public.batch_transfers SET create_sent_at = now() WHERE id = t.id RETURNING * INTO t;
+  RETURN private.batch_transfer_json(t);
+END $function$;
+REVOKE ALL ON FUNCTION public.note_batch_transfer_create(bigint, uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.note_batch_transfer_create(bigint, uuid) TO service_role;
 
 -- ---------------------------------------------------------------- send part of a batch to other godowns (server only)
 /*
@@ -201,7 +292,9 @@ DECLARE
 BEGIN
   IF NOT private.batch_transfer_admin(_by) THEN RAISE EXCEPTION 'Only administrators can send stock to another godown'; END IF;
   IF jsonb_typeof(_targets) <> 'array' OR jsonb_array_length(_targets) = 0 THEN RAISE EXCEPTION 'Choose a godown and how many to send'; END IF;
-  -- Orders take from the batch FOR UPDATE too, so nothing slips in between the check and the move.
+  -- Orders take from the batch FOR UPDATE too, so nothing slips in between the check and the move. The product is
+  -- locked first, as orders lock it (place_marketplace_order), so the two never wait on each other.
+  PERFORM 1 FROM public.catalog_products WHERE id = (SELECT product_id FROM public.batches WHERE id = _batch_id) FOR UPDATE;
   SELECT * INTO b FROM public.batches WHERE id = _batch_id FOR UPDATE;
   IF NOT FOUND THEN RAISE EXCEPTION 'Batch not found'; END IF;
   SELECT * INTO src FROM public.branches WHERE id = b.branch_id;
@@ -229,7 +322,7 @@ BEGIN
     RAISE EXCEPTION 'Batch % has % left; % were chosen', b.batch_code, b.remaining_quantity, total;
   END IF;
 
-  UPDATE public.batches SET remaining_quantity = remaining_quantity - total WHERE id = b.id;
+  UPDATE public.batches SET remaining_quantity = remaining_quantity - total, sent_quantity = sent_quantity + total WHERE id = b.id;
   FOR target IN SELECT value FROM jsonb_array_elements(_targets) LOOP
     SELECT * INTO dst FROM public.branches WHERE id = target->>'branch_id';
     qty := (target->>'qty')::numeric;
@@ -306,6 +399,31 @@ END $function$;
 REVOKE ALL ON FUNCTION public.begin_bill_receive(text, text, text, jsonb, jsonb, text, uuid, text) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.begin_bill_receive(text, text, text, jsonb, jsonb, text, uuid, text) TO service_role;
 
+/*
+ * A bill received at the godown where Zoho already has it: its batches at once (create_batches_from_bill), unless the
+ * same bill is being moved to another godown right now. Zoho may have moved its units there already, so batches here
+ * would sit where the units are not, and that transfer could never finish. Same lock as begin_bill_receive.
+ */
+CREATE OR REPLACE FUNCTION public.receive_bill_here(_branch_id text, _bill jsonb, _lines jsonb, _cost_basis text, _by uuid, _by_name text)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public' AS $function$
+DECLARE
+  t public.batch_transfers%ROWTYPE;
+  bill_id text := btrim(COALESCE(_bill->>'bill_id', ''));
+BEGIN
+  IF NOT private.batch_transfer_admin(_by) THEN RAISE EXCEPTION 'Only administrators can receive purchases'; END IF;
+  IF bill_id <> '' THEN
+    PERFORM pg_advisory_xact_lock(hashtext('bill_batches:' || bill_id));
+    SELECT * INTO t FROM public.batch_transfers WHERE kind = 'receive' AND status = 'pending' AND bill->>'bill_id' = bill_id LIMIT 1;
+    IF FOUND THEN
+      RAISE EXCEPTION 'Bill % is being moved to % in Zoho (transfer %). Press Retry or Cancel on it under Transfers waiting for Zoho first.',
+        COALESCE(_bill->>'bill_number', ''), COALESCE((SELECT name FROM public.branches WHERE id = t.to_branch_id), 'another godown'), t.transfer_no;
+    END IF;
+  END IF;
+  RETURN public.create_batches_from_bill(_branch_id, _bill, _lines, _cost_basis, _by, _by_name);
+END $function$;
+REVOKE ALL ON FUNCTION public.receive_bill_here(text, jsonb, jsonb, text, uuid, text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.receive_bill_here(text, jsonb, jsonb, text, uuid, text) TO service_role;
+
 -- ---------------------------------------------------------------- finish, note an attempt, cancel (server only)
 /*
  * Who may mark a transfer received at a godown: an administrator, or that godown's active staff or channel partner.
@@ -336,9 +454,12 @@ REVOKE ALL ON FUNCTION private.batch_transfer_receiver(uuid, text) FROM PUBLIC, 
  *     Zoho 'transferred': it arrived. _actor (who pressed Mark received) must be an administrator or that godown's
  *     staff or channel partner; NULL means Zoho shows it received already (marked in Zoho itself). The new batch is
  *     made and the receiving godown's stock goes up.
+ * _stock: Zoho's numbers at the godowns, read after the move (see private.batch_transfer_stock); NULL when Zoho is not
+ * the stock master. _claim: the calling server's claim (claim_batch_transfer); another call's live claim refuses.
  * Finishing twice returns the first result. Any other Zoho status leaves it as it is, with Zoho's word noted.
  */
-CREATE OR REPLACE FUNCTION public.finish_batch_transfer(_transfer_id bigint, _zoho_transfer_order_id text, _zoho_status text, _actor uuid)
+CREATE OR REPLACE FUNCTION public.finish_batch_transfer(_transfer_id bigint, _zoho_transfer_order_id text, _zoho_status text, _actor uuid,
+  _stock jsonb, _claim uuid)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public' AS $function$
 DECLARE
   t public.batch_transfers%ROWTYPE;
@@ -356,12 +477,20 @@ BEGIN
   IF NOT FOUND THEN RAISE EXCEPTION 'Transfer not found'; END IF;
   IF t.status = 'done' THEN RETURN private.batch_transfer_json(t); END IF;
   IF t.status = 'cancelled' THEN RAISE EXCEPTION 'Transfer % was cancelled', t.transfer_no; END IF;
+  IF NOT private.batch_transfer_claim_ok(t, _claim) THEN
+    RAISE EXCEPTION 'Transfer % is being worked on right now. Try again in a minute.', t.transfer_no;
+  END IF;
   IF btrim(COALESCE(_zoho_transfer_order_id, '')) = '' THEN RAISE EXCEPTION 'Zoho''s transfer order is missing'; END IF;
   SELECT * INTO dst FROM public.branches WHERE id = t.to_branch_id;
+  -- Products first, then batches: the order orders take their locks in (place_marketplace_order), so a Mark received
+  -- and a customer's checkout never wait on each other.
+  PERFORM 1 FROM public.catalog_products
+    WHERE id IN (SELECT t.product_id UNION SELECT l->>'product_id' FROM jsonb_array_elements(t.lines) AS l)
+    ORDER BY id FOR UPDATE;
 
   IF t.kind = 'split' AND status_now IN ('in_transit', 'transferred') AND t.status = 'pending' THEN
     -- It left the sending godown.
-    PERFORM private.batch_transfer_stock(t.from_branch_id, NULL, t.product_id, t.quantity);
+    PERFORM private.batch_transfer_stock(t.from_branch_id, NULL, t.product_id, t.quantity, _stock);
     UPDATE public.batch_transfers SET status = 'in_transit', sent_at = now(), zoho_transfer_order_id = _zoho_transfer_order_id,
         zoho_status = status_now, last_error = ''
       WHERE id = t.id RETURNING * INTO t;
@@ -394,14 +523,14 @@ BEGIN
       b.zoho_item_id, b.zoho_bill_id, b.zoho_bill_number, b.zoho_bill_modified, b.zoho_bill_total, 'Active', b.id, t.id)
     RETURNING id INTO child_id;
     made := jsonb_build_array(jsonb_build_object('batch_id', child_id, 'batch_code', child_code, 'qty', t.quantity));
-    -- It arrived: only the receiving godown changes now (the sender's stock went down when it left).
-    PERFORM private.batch_transfer_stock(NULL, t.to_branch_id, t.product_id, t.quantity);
+    -- It arrived: the receiving godown gains it (the sender's stock went down when it left).
+    PERFORM private.batch_transfer_stock(NULL, t.to_branch_id, t.product_id, t.quantity, _stock);
   ELSE
     receiver := jsonb_build_object('role', 'admin', 'name', t.created_by_name);
     made := public.create_batches_from_bill(t.to_branch_id, t.bill, t.lines, t.cost_basis, t.created_by, t.created_by_name);
     UPDATE public.batches SET transfer_id = t.id WHERE id IN (SELECT (m->>'batch_id')::uuid FROM jsonb_array_elements(made) m);
     FOR line IN SELECT value FROM jsonb_array_elements(t.lines) LOOP
-      PERFORM private.batch_transfer_stock(t.from_branch_id, t.to_branch_id, line->>'product_id', (line->>'qty')::numeric);
+      PERFORM private.batch_transfer_stock(t.from_branch_id, t.to_branch_id, line->>'product_id', (line->>'qty')::numeric, _stock);
     END LOOP;
   END IF;
 
@@ -412,30 +541,34 @@ BEGIN
     WHERE id = t.id RETURNING * INTO t;
   RETURN private.batch_transfer_json(t);
 END $function$;
-REVOKE ALL ON FUNCTION public.finish_batch_transfer(bigint, text, text, uuid) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.finish_batch_transfer(bigint, text, text, uuid) TO service_role;
+REVOKE ALL ON FUNCTION public.finish_batch_transfer(bigint, text, text, uuid, jsonb, uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.finish_batch_transfer(bigint, text, text, uuid, jsonb, uuid) TO service_role;
 
 -- A try that didn't finish (Zoho gave no answer, or not received yet): noted, and the transfer stays pending.
-CREATE OR REPLACE FUNCTION public.note_batch_transfer_attempt(_transfer_id bigint, _error text, _zoho_transfer_order_id text, _zoho_status text)
+CREATE OR REPLACE FUNCTION public.note_batch_transfer_attempt(_transfer_id bigint, _error text, _zoho_transfer_order_id text, _zoho_status text, _claim uuid)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public' AS $function$
 DECLARE t public.batch_transfers%ROWTYPE;
 BEGIN
+  SELECT * INTO t FROM public.batch_transfers WHERE id = _transfer_id FOR UPDATE;
+  IF NOT FOUND OR t.status <> 'pending' THEN RAISE EXCEPTION 'No pending transfer %', _transfer_id; END IF;
+  IF NOT private.batch_transfer_claim_ok(t, _claim) THEN RAISE EXCEPTION 'Transfer % is being worked on right now', t.transfer_no; END IF;
   UPDATE public.batch_transfers
     SET attempts = attempts + 1, last_error = left(COALESCE(_error, ''), 500),
         zoho_transfer_order_id = COALESCE(NULLIF(btrim(COALESCE(_zoho_transfer_order_id, '')), ''), zoho_transfer_order_id),
         zoho_status = COALESCE(NULLIF(lower(btrim(COALESCE(_zoho_status, ''))), ''), zoho_status)
-    WHERE id = _transfer_id AND status = 'pending' RETURNING * INTO t;
-  IF NOT FOUND THEN RAISE EXCEPTION 'No pending transfer %', _transfer_id; END IF;
+    WHERE id = t.id RETURNING * INTO t;
   RETURN private.batch_transfer_json(t);
 END $function$;
-REVOKE ALL ON FUNCTION public.note_batch_transfer_attempt(bigint, text, text, text) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.note_batch_transfer_attempt(bigint, text, text, text) TO service_role;
+REVOKE ALL ON FUNCTION public.note_batch_transfer_attempt(bigint, text, text, text, uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.note_batch_transfer_attempt(bigint, text, text, text, uuid) TO service_role;
 
 /*
- * A pending transfer that Zoho does not have (the server checked: Zoho refused it, or has no transfer with its number,
- * or Zoho's is void). The units go back to the super batch; a bill can be received again.
+ * A transfer that Zoho does not have (the server checked under its claim: Zoho refused it, has no transfer with its
+ * number, or Zoho's is void). Nothing arrived, so the units go back to the super batch, and a bill can be received
+ * again. A batch already on its way (in transit) whose transfer was voided or deleted in Zoho is back at the sending
+ * godown in Zoho, so that godown's stock comes back too (_stock: Zoho's numbers there now, as in finish).
  */
-CREATE OR REPLACE FUNCTION public.cancel_batch_transfer(_transfer_id bigint, _reason text, _by uuid)
+CREATE OR REPLACE FUNCTION public.cancel_batch_transfer(_transfer_id bigint, _reason text, _by uuid, _stock jsonb, _claim uuid)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public' AS $function$
 DECLARE t public.batch_transfers%ROWTYPE;
 BEGIN
@@ -444,21 +577,29 @@ BEGIN
   IF NOT FOUND THEN RAISE EXCEPTION 'Transfer not found'; END IF;
   IF t.status = 'cancelled' THEN RETURN private.batch_transfer_json(t); END IF;
   IF t.status = 'done' THEN RAISE EXCEPTION 'Transfer % is done: its units are at the other godown', t.transfer_no; END IF;
-  IF t.status = 'in_transit' THEN RAISE EXCEPTION 'Transfer % is on its way in Zoho: mark it received at the godown, or void it in Zoho first', t.transfer_no; END IF;
+  IF NOT private.batch_transfer_claim_ok(t, _claim) THEN RAISE EXCEPTION 'Transfer % is being worked on right now. Try again in a minute.', t.transfer_no; END IF;
   IF t.kind = 'split' THEN
-    UPDATE public.batches SET remaining_quantity = remaining_quantity + t.quantity WHERE id = t.parent_batch_id;
+    -- Product, then batch: the order checkout locks them in.
+    PERFORM 1 FROM public.catalog_products WHERE id = t.product_id FOR UPDATE;
+    UPDATE public.batches SET remaining_quantity = remaining_quantity + t.quantity,
+        sent_quantity = GREATEST(0, sent_quantity - t.quantity)
+      WHERE id = t.parent_batch_id;
+    IF t.status = 'in_transit' THEN
+      PERFORM private.batch_transfer_stock(NULL, t.from_branch_id, t.product_id, t.quantity, _stock);
+    END IF;
   END IF;
   UPDATE public.batch_transfers SET status = 'cancelled', last_error = left(COALESCE(_reason, ''), 500), finished_at = now()
     WHERE id = t.id RETURNING * INTO t;
   RETURN private.batch_transfer_json(t);
 END $function$;
-REVOKE ALL ON FUNCTION public.cancel_batch_transfer(bigint, text, uuid) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.cancel_batch_transfer(bigint, text, uuid) TO service_role;
+REVOKE ALL ON FUNCTION public.cancel_batch_transfer(bigint, text, uuid, jsonb, uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.cancel_batch_transfer(bigint, text, uuid, jsonb, uuid) TO service_role;
 
 -- ---------------------------------------------------------------- delete: a batch in a transfer stays
 /**
- * As 20261106140000 (owner, 6 Nov 2026), plus: a batch that came from a transfer, or has sent units in one (pending or
- * done), is kept. Its units are at a godown in Zoho because of that transfer, so deleting it would lose them here.
+ * As 20261106140000 (owner, 6 Nov 2026), plus: a batch that came from a transfer, or appears in one as the super batch
+ * (even a cancelled one, which still names it), is kept. Its units are at a godown in Zoho because of that transfer,
+ * so deleting it would lose them here.
  */
 CREATE OR REPLACE FUNCTION public.admin_delete_batch(_batch_id uuid)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public' AS $function$
@@ -471,7 +612,7 @@ BEGIN
   SELECT * INTO batch_row FROM public.batches WHERE id = _batch_id FOR UPDATE;
   IF NOT FOUND THEN RAISE EXCEPTION 'Batch not found'; END IF;
   IF batch_row.transfer_id IS NOT NULL OR batch_row.parent_batch_id IS NOT NULL
-     OR EXISTS (SELECT 1 FROM public.batch_transfers WHERE parent_batch_id = batch_row.id AND status <> 'cancelled') THEN
+     OR EXISTS (SELECT 1 FROM public.batch_transfers WHERE parent_batch_id = batch_row.id) THEN
     RAISE EXCEPTION 'Batch % is part of a transfer between godowns, so it is kept for the record.', batch_row.batch_code;
   END IF;
   -- An order placed now waits for this lock (its FIFO takes the batch FOR UPDATE), so nothing slips in between.

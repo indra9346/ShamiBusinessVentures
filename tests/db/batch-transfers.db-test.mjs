@@ -91,8 +91,15 @@ const batch = async (id) => (await q("SELECT * FROM public.batches WHERE id = $1
 const stock = async (branch, product) => Number((await q("SELECT stock FROM public.branch_stock WHERE branch_id = $1 AND product_id = $2", [branch, product]))[0]?.stock ?? 0);
 const total = async (product) => Number((await q("SELECT payload->>'stock' AS s FROM public.catalog_products WHERE id = $1", [product]))[0].s);
 const split = (targets, by = ADMIN, batchId = SUPER) => one("SELECT public.begin_batch_split($1, $2, $3, 'Office Admin') AS r", [batchId, JSON.stringify(targets), by]);
-const finish = (id, zohoId, status, actor = null) => one("SELECT public.finish_batch_transfer($1, $2, $3, $4) AS r", [id, zohoId, status, actor]);
-const cancel = (id, reason) => one("SELECT public.cancel_batch_transfer($1, $2, $3) AS r", [id, reason, ADMIN]);
+const json = (value) => (value === null ? null : JSON.stringify(value));
+// readings: Zoho's numbers at the godowns after the move (the server reads them); null when Zoho is not the stock master.
+const finish = (id, zohoId, status, actor = null, readings = null, claim = null) =>
+  one("SELECT public.finish_batch_transfer($1, $2, $3, $4, $5, $6) AS r", [id, zohoId, status, actor, json(readings), claim]);
+const cancel = (id, reason, by = ADMIN, readings = null, claim = null) =>
+  one("SELECT public.cancel_batch_transfer($1, $2, $3, $4, $5) AS r", [id, reason, by, json(readings), claim]);
+const claimIt = (id, claim, seconds = 300) => one("SELECT public.claim_batch_transfer($1, $2, $3) AS r", [id, claim, seconds]);
+const release = (id, claim) => service(() => q("SELECT public.release_batch_transfer($1, $2)", [id, claim]));
+const C1 = "11111111-1111-4111-8111-111111111111", C2 = "22222222-2222-4222-8222-222222222222";
 
 // ---- splitting: refusals first
 await refuses(() => split([{ branch_id: "BR-HBL", qty: 5 }], CUSTOMER), /Only administrators/, "a customer");
@@ -140,7 +147,20 @@ assert.equal(await stock("BR-HBL", "P1"), 0, "not at Hubli until received");
 assert.equal((await q("SELECT count(*)::int AS c FROM public.batches WHERE parent_batch_id = $1", [SUPER]))[0].c, 0, "no batch at Hubli yet");
 assert.equal((await finish(t.id, "ZT-1", "in_transit")).status, "in_transit", "told twice: nothing more moves");
 assert.equal(await stock("BR-CLK", "P1"), 7);
-await refuses(() => cancel(t.id, "changed my mind"), /on its way in Zoho/, "cancelling a transfer on its way");
+assert.equal(Number((await batch(SUPER)).sent_quantity), 5, "the super batch counts what it sent");
+// One server call at a time: another call's live claim refuses finish and cancel; a claim that ran out doesn't.
+assert.equal((await claimIt(t.id, C1)).claimed, true);
+assert.equal((await claimIt(t.id, C2)).claimed, false, "a second call waits");
+await refuses(() => finish(t.id, "ZT-1", "transferred", HBL_STAFF, null, C2), /being worked on/, "finishing under another call's claim");
+await refuses(() => cancel(t.id, "x", ADMIN, null, C2), /being worked on/, "cancelling under another call's claim");
+await release(t.id, C2);
+assert.equal((await claimIt(t.id, C2)).claimed, false, "only the holder lets it go");
+await release(t.id, C1);
+assert.equal((await claimIt(t.id, C2)).claimed, true, "free once let go");
+await q("UPDATE public.batch_transfers SET claimed_until = now() - interval '1 second' WHERE id = $1", [t.id]);
+assert.equal((await claimIt(t.id, C1)).claimed, true, "a claim that ran out is taken over");
+await release(t.id, C1);
+assert.equal((await q("SELECT claim_id FROM public.batch_transfers WHERE id = $1", [t.id]))[0].claim_id, null);
 // Only the receiving godown (or the office) marks it received.
 await refuses(() => finish(t.id, "ZT-1", "transferred", CLK_STAFF), /Only .*Hubli.* staff, its channel partner or an administrator/, "the sending godown's staff");
 await refuses(() => finish(t.id, "ZT-1", "transferred", CUSTOMER), /Only .*Hubli/, "a customer");
@@ -218,6 +238,22 @@ await finish(byAdmin.id, "ZT-5", "in_transit");
 assert.equal((await finish(byAdmin.id, "ZT-5", "transferred", ADMIN)).received_by_role, "admin");
 assert.equal(await stock("BR-CLK", "P1"), 3);
 assert.equal(await stock("BR-HBL", "P1"), 9);
+assert.equal(Number((await batch(SUPER)).sent_quantity), 9, "5 + 2 + 1 + 1 sent; the 3 cancelled came back");
+
+// A batch on its way whose Zoho transfer was voided or deleted (the server checked): cancelled, and the units are
+// back on the super batch and at the sending godown.
+const voided = (await split([{ branch_id: "BR-HBL", qty: 1 }]))[0];
+await finish(voided.id, "ZT-6", "in_transit");
+assert.equal(await stock("BR-CLK", "P1"), 2);
+assert.equal(Number((await batch(SUPER)).remaining_quantity), 2);
+const voidedBack = await cancel(voided.id, "Voided in Zoho");
+assert.equal(voidedBack.status, "cancelled");
+assert.equal(voidedBack.last_error, "Voided in Zoho");
+assert.equal(Number((await batch(SUPER)).remaining_quantity), 3, "back on the super batch");
+assert.equal(Number((await batch(SUPER)).sent_quantity), 9);
+assert.equal(await stock("BR-CLK", "P1"), 3, "back at Challakere");
+assert.equal(await stock("BR-HBL", "P1"), 9, "Hubli never had it");
+await refuses(() => finish(voided.id, "ZT-6", "transferred", HBL_STAFF), /was cancelled/, "receiving a cancelled transfer");
 
 // A batch-tracked Zoho item is moved in Zoho itself.
 await q("INSERT INTO public.batches (batch_code, product_id, product_name, quantity, remaining_quantity, unit, unit_cost, branch_id, status) VALUES ('CLK-TRACKED-01','P3','TEST Tracked Rice',10,10,'bag',50,'BR-CLK','Active')");
@@ -273,18 +309,69 @@ await cancel(r.id, "Zoho refused");
 r = await receive("BR-CLK", L_HO, "Head Office", bill4, [line("L41", "P2", 2, 9.52, 10, "TEST Sambar 17 GM", "Z2")]);
 assert.equal(r.to_branch_id, "BR-CLK", "after a cancel the bill can go elsewhere");
 
-// ---- a pending try noted
-const noted = await one("SELECT public.note_batch_transfer_attempt($1, 'Zoho gave no answer', '', '') AS r", [r.id]);
+// ---- a pending try noted; a create sent to Zoho is written down first
+const noted = await one("SELECT public.note_batch_transfer_attempt($1, 'Zoho gave no answer', '', '', NULL) AS r", [r.id]);
 assert.equal(noted.attempts, 1);
 assert.equal(noted.last_error, "Zoho gave no answer");
+assert.equal(noted.create_sent_at, null);
+assert.equal((await claimIt(r.id, C1)).claimed, true);
+await refuses(() => one("SELECT public.note_batch_transfer_attempt($1, 'x', '', '', $2) AS r", [r.id, C2]), /being worked on/, "noting under another call's claim");
+await refuses(() => one("SELECT public.note_batch_transfer_create($1, $2) AS r", [r.id, C2]), /being worked on/, "a create under another call's claim");
+assert.ok((await one("SELECT public.note_batch_transfer_create($1, $2) AS r", [r.id, C1])).create_sent_at, "when the create went to Zoho");
+await release(r.id, C1);
+
+// ---- the same bill received at its own godown while it is being moved: refused (Zoho may have moved it already)
+const here = (branch, b, lines, by = ADMIN) => one("SELECT public.receive_bill_here($1, $2, $3, 'ex_gst', $4, 'Office Admin') AS r",
+  [branch, JSON.stringify(b), JSON.stringify(lines), by]);
+await refuses(() => here("BR-HBL", bill4, [line("L41", "P2", 2, 9.52, 10, "TEST Sambar 17 GM", "Z2")]), /VS911 is being moved to .*Challakere.*GB-TR-/, "a bill that is being moved");
+await refuses(() => here("BR-HBL", bill("BILL-6", "VS930"), [line("L61", "P2", 1, 9.52, 10, "TEST Sambar 17 GM", "Z2")], CUSTOMER), /Only administrators/, "a customer receiving");
+const direct = await here("BR-HBL", bill("BILL-6", "VS930"), [line("L61", "P2", 1, 9.52, 10, "TEST Sambar 17 GM", "Z2")]);
+assert.equal(direct.length, 1, "another bill is received as before");
+await cancel(r.id, "Not in Zoho");
+assert.equal((await here("BR-HBL", bill4, [line("L41", "P2", 2, 9.52, 10, "TEST Sambar 17 GM", "Z2")])).length, 1, "after the cancel it can be received here");
+
+// ---- Zoho's own numbers (Zoho is the stock master): a stock sync that already pulled the move can't count it twice
+assert.equal(Number((await batch(SUPER)).remaining_quantity), 3);
+const synced = (await split([{ branch_id: "BR-HBL", qty: 2 }]))[0];
+// The sync pulled Zoho after Zoho moved the units, before the website finished: Challakere already shows 1.
+await q("UPDATE public.branch_stock SET stock = 1 WHERE branch_id = 'BR-CLK' AND product_id = 'P1'");
+await finish(synced.id, "ZT-11", "in_transit", null, [{ branch_id: "BR-CLK", product_id: "P1", stock: 1 }, { branch_id: "BR-HBL", product_id: "P1", stock: 16 }]);
+assert.equal(await stock("BR-CLK", "P1"), 1, "Zoho's number, not 1 - 2");
+assert.equal(await stock("BR-HBL", "P1"), 16, "Hubli doesn't change while it travels");
+// The sync again, after the transfer was marked received in Zoho: Hubli already shows 18.
+await q("UPDATE public.branch_stock SET stock = 18 WHERE branch_id = 'BR-HBL' AND product_id = 'P1'");
+await finish(synced.id, "ZT-11", "transferred", HBL_STAFF, [{ branch_id: "BR-CLK", product_id: "P1", stock: 1 }, { branch_id: "BR-HBL", product_id: "P1", stock: 18 }]);
+assert.equal(await stock("BR-HBL", "P1"), 18, "not 20");
+assert.equal(await total("P1"), 19);
+// A website stock edit still waiting for Zoho keeps the website's count and moves with the transfer; a godown Zoho gave
+// no number for moves by the quantity.
+const waiting = (await split([{ branch_id: "BR-HBL", qty: 1 }]))[0];
+await q("UPDATE public.branch_stock SET stock = 10, zoho_pending = true WHERE branch_id = 'BR-CLK' AND product_id = 'P1'");
+await finish(waiting.id, "ZT-12", "in_transit", null, [{ branch_id: "BR-CLK", product_id: "P1", stock: 0 }]);
+assert.equal(await stock("BR-CLK", "P1"), 9, "the waiting edit moves by 1; Zoho's 0 is not taken");
+await finish(waiting.id, "ZT-12", "transferred", ADMIN, [{ branch_id: "BR-CLK", product_id: "P1", stock: 0 }]);
+assert.equal(await stock("BR-HBL", "P1"), 19);
+const superNow = await batch(SUPER);
+assert.equal(Number(superNow.remaining_quantity), 0);
+assert.equal(Number(superNow.sent_quantity), 12, "everything was sent on");
 
 // ---- batches in a transfer are kept
 await refuses(() => as(ADMIN, "authenticated", () => q("SELECT public.admin_delete_batch($1)", [SUPER])), /part of a transfer/, "deleting the super batch");
 await refuses(() => as(ADMIN, "authenticated", () => q("SELECT public.admin_delete_batch($1)", [child.id])), /part of a transfer/, "deleting a sent batch");
+// Even when its only transfer was cancelled (the transfer still names it): the friendly refusal, not a database error.
+const lone = (await one("SELECT public.create_batches_from_bill('BR-CLK', $1, $2, 'ex_gst', $3, 'Office Admin') AS r",
+  [JSON.stringify(bill("BILL-7", "VS931")), JSON.stringify([line("L71", "P2", 4, 9.52, 10, "TEST Sambar 17 GM", "Z2")]), ADMIN]))[0].batch_id;
+const loneTransfer = (await split([{ branch_id: "BR-HBL", qty: 1 }], ADMIN, lone))[0];
+await cancel(loneTransfer.id, "Zoho refused");
+assert.equal(Number((await batch(lone)).remaining_quantity), 4);
+assert.equal(Number((await batch(lone)).sent_quantity), 0);
+await refuses(() => as(ADMIN, "authenticated", () => q("SELECT public.admin_delete_batch($1)", [lone])), /part of a transfer/, "deleting a super batch whose transfer was cancelled");
 
 // ---- who may call and read what
 await refuses(() => as(ADMIN, "authenticated", () => q("SELECT public.begin_batch_split($1,$2,$3,'x')", [SUPER, JSON.stringify([{ branch_id: "BR-HBL", qty: 1 }]), ADMIN])), /permission denied/, "a browser starting a split");
-await refuses(() => as(ADMIN, "authenticated", () => q("SELECT public.finish_batch_transfer(1,'x','transferred',NULL)")), /permission denied/, "a browser finishing a transfer");
+await refuses(() => as(ADMIN, "authenticated", () => q("SELECT public.finish_batch_transfer(1,'x','transferred',NULL,NULL,NULL)")), /permission denied/, "a browser finishing a transfer");
+await refuses(() => as(ADMIN, "authenticated", () => q(`SELECT public.claim_batch_transfer(1,'${C1}',60)`)), /permission denied/, "a browser claiming a transfer");
+await refuses(() => as(ADMIN, "authenticated", () => q("SELECT public.receive_bill_here('BR-CLK','{}','[]','ex_gst',NULL,'x')")), /permission denied/, "a browser receiving a bill");
 await refuses(() => as(null, "anon", () => q("SELECT * FROM public.batch_transfers")), /permission denied/, "anon reading transfers");
 assert.ok((await as(ADMIN, "authenticated", () => q("SELECT count(*)::int AS c FROM public.batch_transfers")))[0].c >= 5, "admins read transfers");
 assert.equal((await as(CUSTOMER, "authenticated", () => q("SELECT count(*)::int AS c FROM public.batch_transfers")))[0].c, 0, "others see none");

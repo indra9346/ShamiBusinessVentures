@@ -228,6 +228,8 @@ export type BatchRecord = {
   /** A batch made by sending units from another batch (the super batch) to this godown, and that transfer. */
   parent_batch_id?: string | null;
   transfer_id?: number | null;
+  /** Units this batch sent to other godowns (on the way or arrived), kept on the batch row itself. */
+  sent_quantity?: number | null;
 };
 
 /** A transfer between godowns, as far as the report needs it (public.batch_transfers). */
@@ -346,7 +348,9 @@ export function buildBatchReport(input: {
     const fromTransfer = Boolean(batch.parent_batch_id);
     t.purchased = fromTransfer ? 0 : num(batch.quantity);
     t.received = fromTransfer ? num(batch.quantity) : 0;
-    t.sent = sentFrom.get(batch.id) ?? 0;
+    // From the batch row when it has it: the same row as remaining_quantity, so a transfer made or cancelled while the
+    // page loads can't show as a gap. Summed from the transfers otherwise.
+    t.sent = batch.sent_quantity !== undefined && batch.sent_quantity !== null ? qty(num(batch.sent_quantity)) : sentFrom.get(batch.id) ?? 0;
     t.available = num(batch.remaining_quantity);
     t.purchaseValue = paise(t.purchased * costBeforeGst(batch));
     t.stockValue = paise(t.available * costBeforeGst(batch));

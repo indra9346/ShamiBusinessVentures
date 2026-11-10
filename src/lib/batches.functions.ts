@@ -73,6 +73,7 @@ export const getBatchData = createServerFn({ method: "GET" })
       ...b,
       quantity: n(b.quantity), remaining_quantity: n(b.remaining_quantity), unit_cost: n(b.unit_cost),
       zoho_balance: b.zoho_balance === null ? null : n(b.zoho_balance),
+      sent_quantity: b.sent_quantity === undefined || b.sent_quantity === null ? null : n(b.sent_quantity),
     }));
     const batchIds = batches.map((b) => b.id);
 

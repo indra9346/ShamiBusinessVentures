@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { ArrowDownToLine, ArrowUpFromLine, PackageCheck, RefreshCw, Truck } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { transferProgress, type BatchTransfer } from "@/lib/batch-transfers";
+import { transferProgress, type GodownTransfer } from "@/lib/batch-transfers";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { cn } from "@/lib/utils";
 
@@ -15,11 +15,11 @@ import { cn } from "@/lib/utils";
 const at = (iso: string | null | undefined) => (iso
   ? new Date(iso).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })
   : "");
-const units = (t: BatchTransfer) => t.lines.map((line) => `${line.qty} × ${line.name}`).join(", ");
+const units = (t: GodownTransfer) => t.lines.map((line) => `${line.qty} × ${line.name}`).join(", ");
 
 export function GodownTransfers() {
   const [godownId, setGodownId] = useState<string | null>(null);
-  const [transfers, setTransfers] = useState<BatchTransfer[]>([]);
+  const [transfers, setTransfers] = useState<GodownTransfer[]>([]);
   const [confirming, setConfirming] = useState(0);
   const [busy, setBusy] = useState(0);
 
@@ -38,16 +38,20 @@ export function GodownTransfers() {
     return () => clearInterval(timer);
   }, [load]);
 
-  const receive = async (t: BatchTransfer): Promise<void> => {
+  const receive = async (t: GodownTransfer): Promise<void> => {
     setBusy(t.id);
     try {
       const { markTransferReceived } = await import("@/lib/zoho-commerce.functions");
       const done = await markTransferReceived({ data: { transferId: t.id } });
-      toast.success(`Received: ${units(t)}`, { description: `${(done.result ?? []).map((m) => m.batch_code).join(", ")} is now in your godown's stock.` });
+      // Voided or deleted in Zoho meanwhile: nothing arrived, so it was cancelled instead.
+      if (done.status === "cancelled") toast.error(`${t.transfer_no} was cancelled`, { description: `${done.last_error} Tell the office if goods did arrive.`, duration: 15000 });
+      else toast.success(`Received: ${units(t)}`, { description: `${(done.result ?? []).map((m) => m.batch_code).join(", ")} is now in your godown's stock.` });
       setConfirming(0);
       await load();
     } catch (cause) {
       toast.error("Not marked received", { description: cause instanceof Error ? cause.message : String(cause), duration: 12000 });
+      // It may have changed meanwhile (received or cancelled by the office or the stock check).
+      await load();
     } finally {
       setBusy(0);
     }

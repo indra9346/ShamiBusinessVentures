@@ -22,7 +22,9 @@ import { cn } from "@/lib/utils";
 const BASIS: CostBasis = "ex_gst";
 
 type Godown = { id: string; name: string; zohoLinked: boolean };
-type BillRow = { billId: string; billNumber: string; vendorName: string; date: string; total: number; status: string; batchedLines: number; locationName: string; otherLocation: boolean };
+/** A bill being moved to a godown right now (a receive transfer waiting for Zoho). */
+type Moving = { transferNo: string; godownId: string; godownName: string } | null;
+type BillRow = { billId: string; billNumber: string; vendorName: string; date: string; total: number; status: string; batchedLines: number; locationName: string; otherLocation: boolean; movingTo: Moving };
 type Line = BillLine & { productId: string; productName: string; batchId: string; batchCode: string; blocker: string };
 type Bill = Omit<ReturnType<typeof billPlan>, "lines"> & { lines: Line[] };
 type Extra = { mfgDate: string; expiryDate: string; notes: string };
@@ -41,6 +43,7 @@ export function ReceiveFromBillDialog({ open, onOpenChange, godowns, defaultGodo
   const [loading, setLoading] = useState(false);
   const [bill, setBill] = useState<Bill | null>(null);
   const [otherGodown, setOtherGodown] = useState(false);
+  const [movingTo, setMovingTo] = useState<Moving>(null);
   const [billError, setBillError] = useState("");
   const basis = BASIS;
   const [extras, setExtras] = useState<Record<string, Extra>>({});
@@ -71,11 +74,12 @@ export function ReceiveFromBillDialog({ open, onOpenChange, godowns, defaultGodo
   const pick = async (billId: string) => {
     setLoading(true); setBillError(""); setBill(null); setExtras({});
     try {
-      if (STATIC_DATA_MODE) { setBill(demoBill(billId)); setOtherGodown(false); return; }
+      if (STATIC_DATA_MODE) { setBill(demoBill(billId)); setOtherGodown(false); setMovingTo(null); return; }
       const { getBatchBill } = await import("@/lib/zoho-commerce.functions");
       const answer = await getBatchBill({ data: { branchId, billId } });
       setBill(answer.bill as Bill);
       setOtherGodown(answer.otherGodown);
+      setMovingTo(answer.movingTo);
     } catch (cause) {
       setBillError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -84,7 +88,10 @@ export function ReceiveFromBillDialog({ open, onOpenChange, godowns, defaultGodo
   };
 
   const open_ = bill?.lines.filter((line) => !line.blocker) ?? [];
-  const blockedBill = !bill || bill.status === "void";
+  // Being moved to another godown: that transfer is retried or cancelled first (the server refuses too). Being moved
+  // here: pressing again tries that same transfer again.
+  const movingElsewhere = Boolean(movingTo && movingTo.godownId !== branchId);
+  const blockedBill = !bill || bill.status === "void" || movingElsewhere;
   const godownName = godowns.find((g) => g.id === branchId)?.name ?? "this godown";
   const extra = (lineId: string): Extra => extras[lineId] ?? { mfgDate: "", expiryDate: "", notes: "" };
   const setExtra = (lineId: string, key: keyof Extra, value: string) => setExtras((all) => ({ ...all, [lineId]: { ...extra(lineId), [key]: value } }));
@@ -153,7 +160,10 @@ export function ReceiveFromBillDialog({ open, onOpenChange, godowns, defaultGodo
                   {b.batchedLines ? `${b.batchedLines} line${b.batchedLines === 1 ? "" : "s"} already batched` : "No batches yet"}
                   {b.locationName ? ` · In Zoho at ${b.locationName}` : ""}
                 </span>
-                {b.otherLocation && !b.batchedLines && (
+                {b.movingTo && (
+                  <span className="col-span-2 text-xs font-semibold text-amber-800">{`Being moved to ${b.movingTo.godownName} in Zoho (${b.movingTo.transferNo}), waiting for Zoho`}</span>
+                )}
+                {b.otherLocation && !b.batchedLines && !b.movingTo && (
                   <span className="col-span-2 text-xs font-semibold text-amber-800">{`Receiving here moves it from ${b.locationName || "its Zoho location"} to ${godownName} in Zoho`}</span>
                 )}
               </button>
@@ -186,6 +196,11 @@ export function ReceiveFromBillDialog({ open, onOpenChange, godowns, defaultGodo
                 <AlertTriangle className="h-4 w-4 shrink-0" />
                 {`Zoho has this bill's stock at ${bill.locationName || "another location"}. Receiving it at ${godownName} first moves the units there in Zoho with a transfer order (numbered GB-TR-…), then makes the batches here. The bill itself is not changed.`}
               </p>
+            )}
+            {movingTo && (
+              <Warning text={movingTo.godownId === branchId
+                ? `This bill is already being moved here in Zoho (${movingTo.transferNo}) and waits for Zoho. Pressing below tries that same transfer again: it looks it up in Zoho first and never makes a second one.`
+                : `This bill is being moved to ${movingTo.godownName} in Zoho (${movingTo.transferNo}). Press Retry or Cancel on it under Transfers waiting for Zoho before receiving it anywhere else.`} />
             )}
             {bill.warnings.map((w) => <Warning key={w} text={w} />)}
 
@@ -282,7 +297,7 @@ const DEMO = [
     ] },
 ];
 function demoBills(): BillRow[] {
-  return DEMO.map((b) => ({ ...billSummary(b), batchedLines: b.bill_id === "B2" ? 1 : 0, otherLocation: false }));
+  return DEMO.map((b) => ({ ...billSummary(b), batchedLines: b.bill_id === "B2" ? 1 : 0, otherLocation: false, movingTo: null }));
 }
 function demoBill(billId: string): Bill {
   const raw = DEMO.find((b) => b.bill_id === billId) ?? DEMO[0]!;

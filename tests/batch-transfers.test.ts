@@ -2,7 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
-  findTransferByNumber, isTransferred, readCreateAnswer, readZohoTransfer, splitPlanProblem, TRANSFER_STATUS_WORDS, transferOrderBody, transferProgress, transferSummary,
+  CREATE_HOLD_MINUTES, createHoldUntil, findTransferByNumber, godownTransferLines, godownTransferResult, isTransferred, readCreateAnswer, readZohoTransfer,
+  splitPlanProblem, TRANSFER_STATUS_WORDS, transferOrderBody, transferProgress, transferSummary, zohoSaysMissing,
   type BatchTransfer,
 } from "../src/lib/batch-transfers.ts";
 import { buildBatchReport, type BatchRecord } from "../src/lib/batches.ts";
@@ -139,4 +140,52 @@ test("the report counts a purchase once: the super batch sent units, the new bat
 test("a batch in a transfer is kept", () => {
   assert.match(batchDeleteBlocker({ quantity: 5, remaining_quantity: 5 }, [], 0, undefined, true), /part of a transfer/);
   assert.equal(batchDeleteBlocker({ quantity: 5, remaining_quantity: 5 }, [], 0), "");
+});
+
+test("after a create whose answer was lost, nothing is created again or cancelled for 10 minutes", () => {
+  const sent = "2026-11-10T10:00:00Z";
+  const at = (minutes: number) => Date.parse(sent) + minutes * 60_000;
+  assert.equal(CREATE_HOLD_MINUTES, 10);
+  assert.equal(createHoldUntil({ create_sent_at: null, zoho_transfer_order_id: "" }, at(1)), 0, "never sent: no wait");
+  assert.equal(createHoldUntil({ create_sent_at: sent, zoho_transfer_order_id: "" }, at(3)), at(10), "sent 3 minutes ago: wait until 10");
+  assert.equal(createHoldUntil({ create_sent_at: sent, zoho_transfer_order_id: "" }, at(10)), 0, "10 minutes on: look it up, then act");
+  assert.equal(createHoldUntil({ create_sent_at: sent, zoho_transfer_order_id: "ZT-1" }, at(1)), 0, "Zoho's answer came: no wait");
+});
+
+test("Zoho saying a transfer order is gone is told apart from an error", () => {
+  assert.equal(zohoSaysMissing(404, null), true);
+  assert.equal(zohoSaysMissing(400, { code: 1002, message: "Transfer Order does not exist." }), true);
+  assert.equal(zohoSaysMissing(400, { code: 5, message: "Transfer order not found" }), true);
+  assert.equal(zohoSaysMissing(401, { code: 57, message: "You are not authorized to perform this operation" }), false, "no permission is not gone");
+  assert.equal(zohoSaysMissing(429, { code: 44, message: "Too many requests" }), false);
+  assert.equal(zohoSaysMissing(500, { code: 1002 }), false, "a server error is not gone");
+  assert.equal(zohoSaysMissing(200, { code: 0 }), false);
+});
+
+test("the staff and partner apps get what moves and the new batch number, never costs or Zoho ids", () => {
+  const lines = godownTransferLines([{ product_id: "P1", zoho_item_id: "3579709000003476321", name: "Ekadantha OIL 850ML", qty: 5, unit: "pcs", unit_ex_gst: 123.81, unit_inc_gst: 130, notes: "rate agreed" }]);
+  assert.deepEqual(lines, [{ product_id: "P1", zoho_item_id: "", name: "Ekadantha OIL 850ML", qty: 5, unit: "pcs" }]);
+  assert.deepEqual(godownTransferLines(null), []);
+  assert.deepEqual(godownTransferResult([{ batch_id: "b2", batch_code: "CLK-031126-08-HBL1", qty: 5, line_id: "L1" }]), [{ batch_id: "", batch_code: "CLK-031126-08-HBL1", qty: 5 }]);
+  assert.equal(godownTransferResult(null), null);
+});
+
+test("the report takes what a batch sent from the batch row itself, so a transfer made while the page loads shows no gap", () => {
+  // The batch row (one snapshot) says 6 left and 6 sent; the transfers list, read a moment later, already has a 7th unit.
+  const report = buildBatchReport({
+    batches: [batch({ remaining_quantity: 6, sent_quantity: 6 })], allocations: [], items: [], orders: [], adjustments: [],
+    godowns: [{ id: "BR-CLK", name: "Challakere" }], today: "2026-11-10",
+    transfers: [{ kind: "split", status: "done", parent_batch_id: "b1", quantity: 6 }, { kind: "split", status: "pending", parent_batch_id: "b1", quantity: 1 }],
+  });
+  assert.equal(report.rows[0]!.sent, 6);
+  assert.equal(report.rows[0]!.ledgerGap, 0);
+});
+
+test("the database keeps the transfer safety rules", () => {
+  // Each one is exercised in tests/db/batch-transfers.db-test.mjs; these keep them from being dropped by an edit.
+  assert.match(MIGRATION, /CREATE OR REPLACE FUNCTION public\.claim_batch_transfer/);
+  assert.match(MIGRATION, /CREATE OR REPLACE FUNCTION public\.receive_bill_here/);
+  assert.match(MIGRATION, /sent_quantity numeric\(14,2\) NOT NULL DEFAULT 0/);
+  assert.match(MIGRATION, /WHERE parent_batch_id = batch_row\.id\) THEN/, "a cancelled transfer still keeps its super batch");
+  assert.doesNotMatch(MIGRATION, /on its way in Zoho: mark it received at the godown, or void it in Zoho first/, "a transfer on its way can be cancelled once Zoho voided it");
 });
