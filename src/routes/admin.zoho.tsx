@@ -44,6 +44,9 @@ import {
 } from "@/components/ui/select";
 import {
   getZohoConnectionStatus,
+  getZohoCommerceMode,
+  setZohoCommerceMode,
+  refreshZohoCommerceProductPages,
   getZohoCommerceReadMirror,
   getZohoSyncQueueStatus,
   getZohoWriteSyncConfig,
@@ -541,6 +544,41 @@ function ZohoCommerceAdmin() {
   const [syncOutboxBusy, setSyncOutboxBusy] = useState(false);
   const [writeSyncEnabled, setWriteSyncEnabled] = useState(true);
   const [writeSyncBusy, setWriteSyncBusy] = useState(false);
+  // null until read: the switch stays hidden rather than showing a guess.
+  const [commerceInUse, setCommerceInUse] = useState<boolean | null>(null);
+  const [commerceBusy, setCommerceBusy] = useState(false);
+  const toggleCommerce = async (inUse: boolean) => {
+    setCommerceBusy(true);
+    try {
+      await setZohoCommerceMode({ data: { inUse } });
+      setCommerceInUse(inUse);
+      toast.success(inUse ? "Zoho Commerce is on" : "Zoho Commerce is off", {
+        description: inUse
+          ? "Next: press Reauthorize Zoho and accept the Zoho Commerce permissions, then \"Send descriptions and MRP\" and \"Sync catalog\"."
+          : "Press Reauthorize Zoho once, so the Zoho connection no longer asks for Zoho Commerce.",
+        duration: 12_000,
+      });
+    } catch (error) {
+      toast.error("Could not change the Zoho Commerce setting", { description: error instanceof Error ? error.message : "Try again" });
+    } finally {
+      setCommerceBusy(false);
+    }
+  };
+  const sendCommercePages = async () => {
+    setCommerceBusy(true);
+    try {
+      const result = await refreshZohoCommerceProductPages();
+      toast.success(`Sent ${result.sent} of ${result.products} products to Zoho Commerce`, {
+        description: result.failed
+          ? `${result.failed} could not be read from Zoho Inventory; press the button again later.`
+          : `${result.skipped} had no description or MRP to send. A product Zoho Commerce refused shows the reason on its Zoho page in Admin > Products.`,
+      });
+    } catch (error) {
+      toast.error("Could not update the Zoho Commerce product pages", { description: error instanceof Error ? error.message : "Try again", duration: 12_000 });
+    } finally {
+      setCommerceBusy(false);
+    }
+  };
 
   const quotaFailedJobs = useMemo(() => {
     return syncQueue.jobs.filter((j) => {
@@ -718,6 +756,9 @@ function ZohoCommerceAdmin() {
       .then((cfg) => {
         if (cfg && typeof cfg.enabled === "boolean") setWriteSyncEnabled(cfg.enabled);
       })
+      .catch(() => {});
+    void getZohoCommerceMode()
+      .then((mode) => setCommerceInUse(mode.inUse))
       .catch(() => {});
     const params = new URLSearchParams(window.location.search);
     if (params.has("connected")) toast.success("Zoho Commerce connected with read and write access");
@@ -1020,15 +1061,18 @@ function ZohoCommerceAdmin() {
                 >
                   {connection ? "Reauthorize Zoho" : "Connect Zoho"}
                 </Button>
-                <Button
-                  disabled={busy || refreshBusy || mirrorBusy || !connection}
-                  variant="outline"
-                  onClick={() => void sync()}
-                  className="border-white/25 bg-white/10 text-white hover:bg-white/20 hover:text-white"
-                >
-                  <CloudDownload className={`mr-2 h-4 w-4 ${busy ? "animate-bounce" : ""}`} />
-                  {busy ? "Syncing catalog…" : "Sync catalog"}
-                </Button>
+                {/* The catalogue and coupon import reads Zoho Commerce's products: nothing to read once it is off. */}
+                {commerceInUse !== false && (
+                  <Button
+                    disabled={busy || refreshBusy || mirrorBusy || !connection}
+                    variant="outline"
+                    onClick={() => void sync()}
+                    className="border-white/25 bg-white/10 text-white hover:bg-white/20 hover:text-white"
+                  >
+                    <CloudDownload className={`mr-2 h-4 w-4 ${busy ? "animate-bounce" : ""}`} />
+                    {busy ? "Syncing catalog…" : "Sync catalog"}
+                  </Button>
+                )}
                 <Button
                   disabled={busy || refreshBusy || mirrorBusy || !connection}
                   variant="outline"
@@ -1060,6 +1104,61 @@ function ZohoCommerceAdmin() {
             )}
           </div>
         </Panel>
+
+        {commerceInUse !== null && (
+          <Panel title="Zoho Commerce subscription">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0 space-y-2 text-sm leading-relaxed text-slate">
+                <p>
+                  {commerceInUse
+                    ? "Zoho Commerce is in use. Turn this off before the Zoho Commerce subscription ends."
+                    : "Zoho Commerce is off. The website keeps working with Zoho Inventory and Zoho Books only."}
+                </p>
+                <ul className="list-disc space-y-1 pl-5">
+                  <li>Website orders still go to Zoho Inventory as sales orders, then invoice and payment in Zoho Books.</li>
+                  <li>The order's delivery address is written through Zoho Books instead of Zoho Commerce.</li>
+                  <li>Product description goes on the Zoho Inventory item; the MRP stays on the website.</li>
+                  <li>"Sync catalog" (Zoho Commerce products and coupons) is hidden: add products on the website and coupons in Admin &gt; Coupons.</li>
+                  <li>"Sync account data" reads sales orders from Zoho Inventory; categories and tax rules keep their last copy.</li>
+                </ul>
+                {!commerceInUse && (
+                  <p className="font-medium text-navy">
+                    After turning it off, press <strong>Reauthorize Zoho</strong> once and accept, so the connection stops asking for Zoho Commerce.
+                  </p>
+                )}
+                {commerceInUse && (
+                  <div className="space-y-2">
+                    <p className="font-medium text-navy">
+                      Turning it back on after buying Zoho Commerce again: press <strong>Reauthorize Zoho</strong>, then the button below, then <strong>Sync catalog</strong>.
+                    </p>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={commerceBusy || !connection}
+                      onClick={() => void sendCommercePages()}
+                      title="Copies each product's description and MRP from the website to its Zoho Commerce product page. No stock or price is changed."
+                    >
+                      <UploadCloud className={`mr-1.5 h-4 w-4 ${commerceBusy ? "animate-bounce" : ""}`} />
+                      Send descriptions and MRP to Zoho Commerce
+                    </Button>
+                  </div>
+                )}
+              </div>
+              <div className="flex shrink-0 items-center gap-3">
+                <Label htmlFor="zoho-commerce-in-use" className="text-sm font-semibold">
+                  {commerceInUse ? "On" : "Off"}
+                </Label>
+                <Switch
+                  id="zoho-commerce-in-use"
+                  checked={commerceInUse}
+                  disabled={commerceBusy}
+                  onCheckedChange={(on) => void toggleCommerce(on)}
+                  aria-label="Zoho Commerce in use"
+                />
+              </div>
+            </div>
+          </Panel>
+        )}
 
         <Panel title="Customer, vendor, catalogue & order sync health">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
