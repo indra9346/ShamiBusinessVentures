@@ -37,6 +37,7 @@ import {
   DEPOSIT_ACCOUNTS_KEY, depositAccountFor, depositAccountHint, godownOfPayment, parseDepositAccounts, withDepositAccount,
   zohoCustomerPaymentBody, zohoDepositAccountOptions, type DepositAccount, type DepositAccounts, type ZohoDepositAccountOption,
 } from "@/lib/deposit-accounts";
+import { ZOHO_COMMERCE_OFF_MESSAGE, ZOHO_COMMERCE_SETTING_KEY, zohoCommerceModeFrom, zohoOAuthScopes } from "@/lib/zoho-commerce-mode";
 
 // ---------------------------------------------------------------- Zoho API call log
 // Every Zoho API call made from this file is noted with what it was for, and saved to
@@ -315,6 +316,48 @@ async function ensureAdmin(supabase: SupabaseClient<Database>, userId: string) {
   const { data, error } = await supabase.rpc("has_role", { _user_id: userId, _role: "admin" });
   if (error || !data) throw new Error("Administrator access is required");
 }
+
+// ---------------------------------------------------------------- Zoho Commerce in use or not
+// Admin > Zoho Commerce switch (see zoho-commerce-mode.ts). Read at most every 30 s per process;
+// the process that changes it forgets its copy at once.
+let commerceModeCache: { inUse: boolean; at: number } | null = null;
+async function zohoCommerceInUse(db?: SupabaseClient<Database>) {
+  if (commerceModeCache && Date.now() - commerceModeCache.at < 30_000) return commerceModeCache.inUse;
+  const client = db ?? await dbAdmin();
+  const { data, error } = await client.from("settings").select("value").eq("key", ZOHO_COMMERCE_SETTING_KEY).maybeSingle();
+  // A failed read keeps the last answer (or "in use", as before the switch existed) and asks again next time.
+  if (error) return commerceModeCache?.inUse ?? true;
+  const { inUse } = zohoCommerceModeFrom(data?.value);
+  commerceModeCache = { inUse, at: Date.now() };
+  return inUse;
+}
+
+/** Admin: is Zoho Commerce still in use? */
+export const getZohoCommerceMode = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    await ensureAdmin(context.supabase, context.userId);
+    const { data, error } = await (await dbAdmin()).from("settings").select("value").eq("key", ZOHO_COMMERCE_SETTING_KEY).maybeSingle();
+    if (error) throw new Error("Could not read whether Zoho Commerce is in use");
+    return zohoCommerceModeFrom(data?.value);
+  });
+
+/** Admin: turn the Zoho Commerce steps on or off (before or after its subscription ends). */
+export const setZohoCommerceMode = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator(z.object({ inUse: z.boolean() }))
+  .handler(async ({ data, context }) => {
+    await ensureAdmin(context.supabase, context.userId);
+    const changedAt = new Date().toISOString();
+    const { error } = await (await dbAdmin()).from("settings").upsert(
+      { key: ZOHO_COMMERCE_SETTING_KEY, value: { inUse: data.inUse, changedAt, changedBy: context.userId } as Json, is_public: false, updated_at: changedAt },
+      { onConflict: "key" },
+    );
+    if (error) throw new Error("Could not save whether Zoho Commerce is in use");
+    commerceModeCache = null;
+    console.info(zohoLogLine("zoho_commerce_mode", { inUse: String(data.inUse) }));
+    return { inUse: data.inUse, changedAt };
+  });
 async function aesKey() {
   const raw = unb64(reqEnv("ZOHO_TOKEN_ENCRYPTION_KEY"));
   if (raw.length !== 32)
@@ -412,8 +455,8 @@ export const startZohoAuthorization = createServerFn({ method: "POST" })
     auth.search = new URLSearchParams({
       response_type: "code",
       client_id: reqEnv("ZOHO_CLIENT_ID"),
-      scope:
-        "ZohoCommerce.items.READ,ZohoCommerce.items.CREATE,ZohoCommerce.items.UPDATE,ZohoCommerce.coupons.READ,ZohoCommerce.coupons.CREATE,ZohoCommerce.coupons.UPDATE,ZohoCommerce.salesorders.READ,ZohoCommerce.salesorders.CREATE,ZohoCommerce.salesorders.UPDATE,ZohoCommerce.settings.READ,ZohoCommerce.settings.UPDATE,ZohoCommerce.sitesIndex.READ,ZohoCommerce.webhooks.READ,ZohoCommerce.webhooks.CREATE,ZohoInventory.contacts.READ,ZohoInventory.contacts.CREATE,ZohoInventory.contacts.UPDATE,ZohoInventory.items.READ,ZohoInventory.items.CREATE,ZohoInventory.items.UPDATE,ZohoInventory.salesorders.READ,ZohoInventory.salesorders.CREATE,ZohoInventory.salesorders.UPDATE,ZohoInventory.inventoryadjustments.READ,ZohoInventory.inventoryadjustments.CREATE,ZohoInventory.settings.READ,ZohoInventory.settings.UPDATE,ZohoBooks.salesorders.CREATE,ZohoBooks.invoices.READ,ZohoBooks.invoices.CREATE,ZohoBooks.customerpayments.READ,ZohoBooks.customerpayments.CREATE,ZohoBooks.customerpayments.DELETE,ZohoInventory.packages.READ,ZohoInventory.packages.CREATE,ZohoInventory.shipmentorders.READ,ZohoInventory.shipmentorders.CREATE,ZohoInventory.shipmentorders.UPDATE,ZohoInventory.purchaseorders.READ,ZohoInventory.purchaseorders.CREATE,ZohoInventory.bills.READ,ZohoBooks.invoices.UPDATE,ZohoBooks.banking.READ",
+      // Without Zoho Commerce its permissions are not asked for: Zoho could refuse them for a plan that has none.
+      scope: zohoOAuthScopes(await zohoCommerceInUse(db)),
       redirect_uri: redirectUri,
       access_type: "offline",
       prompt: "consent",
@@ -762,15 +805,23 @@ async function fetchZohoPages(
   path: string,
   property: string,
   query: Record<string, string> = {},
+  /** "inventory": Zoho Inventory (`path` relative to /inventory/v1), for when Zoho Commerce is off. */
+  api: "commerce" | "inventory" = "commerce",
 ) {
   const output: Record<string, unknown>[] = [];
   for (let page = 1; page <= 25; page += 1) {
-    const url = new URL(`${REGIONS[region][1]}${path}`);
-    url.search = new URLSearchParams({ ...query, page: String(page), per_page: "200" }).toString();
+    const paging = { ...query, page: String(page), per_page: "200" };
+    let url: URL;
+    if (api === "inventory") {
+      url = inventoryApi(region, path.replace(/^\//, ""), organizationId, paging);
+    } else {
+      url = new URL(`${REGIONS[region][1]}${path}`);
+      url.search = new URLSearchParams(paging).toString();
+    }
     const response = await fetch(url, {
       headers: {
         Authorization: `Zoho-oauthtoken ${token}`,
-        "X-com-zoho-store-organizationid": organizationId,
+        ...(api === "commerce" ? { "X-com-zoho-store-organizationid": organizationId } : {}),
       },
     });
     const data = (await response.json()) as {
@@ -959,6 +1010,15 @@ export const syncZohoCommerceReadMirror = createServerFn({ method: "POST" })
       }
     };
 
+    if (!(await zohoCommerceInUse(db))) {
+      // Without Zoho Commerce only the sales orders are read, from Zoho Inventory. Categories, tax rules
+      // and the store's details came from Zoho Commerce, so their last saved copies stay as they were.
+      await run(
+        "sales_orders",
+        () => fetchZohoPages(region, organizationId, token, "/salesorders", "salesorders", {}, "inventory"),
+        (row) => str(row["salesorder_id"]),
+      );
+    } else {
     const [, , , sites] = await Promise.all([
       run(
         "categories",
@@ -1068,6 +1128,7 @@ export const syncZohoCommerceReadMirror = createServerFn({ method: "POST" })
       },
       (row) => str(row["site_id"]),
     );
+    }
 
     const failures = Object.entries(outcomes).filter(([, value]) => value.error);
     const summary = failures.length
@@ -1714,7 +1775,8 @@ async function withCommerceProductValues(
   /** false for read-only diagnostics: do not move the "last seen" marker. */
   record = true,
 ) {
-  if (!api) return item;
+  // Without Zoho Commerce there is no product page: the Inventory item's own values are all there is.
+  if (!api || !(await zohoCommerceInUse(db))) return item;
   const sku = str(item["sku"]).trim();
   let productId = "";
   let mirrorId = "";
@@ -2135,6 +2197,9 @@ async function syncZohoCatalogItem(
       // was raised to cover the price, send that MRP first, then update the item once more.
       const message = cause instanceof Error ? cause.message : "";
       if (!/greater than (the )?MRP/i.test(message) || shared.mrp === null || shared.mrp < shared.rate) throw cause;
+      // The MRP lived on the Zoho Commerce product: with Commerce off the website cannot raise it.
+      if (!(await zohoCommerceInUse(db)))
+        throw new NeedsReviewError(`Zoho refused the new price of ${shared.sku}: it is above the MRP Zoho holds for this item (${message}). Zoho Commerce is off, so the website cannot change that MRP: change it on the item in Zoho, then Retry.`);
       const current = await inventoryRequest<{ item?: Record<string, unknown> }>(
         region, organizationId, token, `items/${encodeURIComponent(itemId)}`, "GET",
       );
@@ -2188,6 +2253,50 @@ const escapeHtml = (text: string) => text
   .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
 /**
+ * Admin, after Zoho Commerce is bought again, turned back on and reauthorized: brings every Zoho
+ * Commerce product page up to date with the website's description and MRP, which changed only on the
+ * website (and the Inventory item) while Commerce was off. Touches nothing else: no stock, price or
+ * image is pushed. Reads Commerce once first, so a plan not renewed or a Reauthorize still owed is
+ * reported before any product.
+ */
+export const refreshZohoCommerceProductPages = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    await ensureAdmin(context.supabase, context.userId);
+    const db = await dbAdmin();
+    if (!(await zohoCommerceInUse(db))) throw new Error(ZOHO_COMMERCE_OFF_MESSAGE);
+    const { region, organizationId, token } = await zohoOrderContext(db);
+    try {
+      await commerceRequest(region, organizationId, token, "products?page=1&per_page=1", "GET");
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "no answer";
+      throw new Error(`Zoho Commerce did not answer (${message}). If its plan has ended, buy it again first; then press Reauthorize Zoho and try this again.`);
+    }
+    const { data: links, error } = await db.from("zoho_item_links").select("product_id,zoho_item_id");
+    if (error) throw new Error("Could not read which products are linked to Zoho");
+    const allowedVendors = await zohoItemSyncVendorIds(db);
+    let sent = 0, skipped = 0, failed = 0;
+    for (const link of links ?? []) {
+      const { data: product } = await db.from("catalog_products")
+        .select("id,vendor_id,category,status,active,payload,created_at,updated_at").eq("id", link.product_id).maybeSingle();
+      const shared = product ? catalogSharedValues(product) : null;
+      if (!product || !shared?.sku || (!shared.description && shared.mrp === null) || !zohoItemSyncAllows(allowedVendors, product.vendor_id)) {
+        skipped += 1;
+        continue;
+      }
+      try {
+        const { item } = await inventoryRequest<{ item?: Record<string, unknown> }>(region, organizationId, token, `items/${encodeURIComponent(link.zoho_item_id)}`, "GET");
+        // Never throws: a refusal is left on the product's Zoho Commerce copy, as on every push.
+        await pushCommerceProductValues(db, { region, organizationId, token }, shared.sku, str(item?.["group_id"]), shared.description, shared.mrp);
+        sent += 1;
+      } catch {
+        failed += 1;
+      }
+    }
+    return { products: (links ?? []).length, sent, skipped, failed };
+  });
+
+/**
  * Grain Bazar -> Zoho Commerce: shoppers read the description on the Commerce product page,
  * which is separate from the Inventory item's description, and the MRP is the variant's
  * label rate. Writes each when it differs, then records them as "last seen" so the inbound
@@ -2203,6 +2312,8 @@ async function pushCommerceProductValues(
   mrp: number | null,
 ) {
   if (!description && mrp === null) return;
+  // Without Zoho Commerce the description goes on the Inventory item only, and the MRP stays on the website.
+  if (!(await zohoCommerceInUse(db))) return;
   try {
     let productId = "";
     let mirrorId = "";
@@ -2374,7 +2485,8 @@ const ZOHO_FINISHED_ORDER_STATES = ["closed", "fulfilled"];
 
 /**
  * A sales order is created with no address, so Zoho gives it the contact's. This writes the website
- * order's own copy onto the sales order only (Commerce "update address"; the contact stays as it is).
+ * order's own copy onto the sales order only ("update address": Zoho Commerce's, or Zoho Books' once
+ * Zoho Commerce is off; the contact stays as it is).
  * Never throws: a sales order with the contact's address is still a sales order, so the push goes on
  * and reports the problem when it has finished. Stops at the first refusal, so a Zoho that hangs
  * delays the push by one call; a retry writes whatever is still missing.
@@ -2390,10 +2502,14 @@ async function writeZohoOrderAddress(
 ) {
   const address = zohoOrderAddress(order.shipping_address);
   const outcome = { written: 0, problem: null as string | null };
-  if (!address) return outcome;
+  if (!address || !types.length) return outcome;
+  // The same call in Zoho Books once Zoho Commerce is off (Zoho Inventory has none for one sales order).
+  const commerce = await zohoCommerceInUse();
   for (const type of types) {
     try {
-      await commerceRequest(region, organizationId, token, `salesorders/${encodeURIComponent(salesOrderId)}/address/${type}`, "PUT", address);
+      const path = `salesorders/${encodeURIComponent(salesOrderId)}/address/${type}`;
+      if (commerce) await commerceRequest(region, organizationId, token, path, "PUT", address);
+      else await booksRequest(region, organizationId, token, path, "PUT", address);
       outcome.written += 1;
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : "unknown error";
@@ -3610,6 +3726,7 @@ export const inspectZohoProductSync = createServerFn({ method: "POST" })
       decision: await zohoItemDecision(product, link as ZohoItemLink, item),
       withCommerce: zohoEditableValues(await withCommerceProductValues(db, { region, organizationId, token }, link as ZohoItemLink, item, false)),
       commerceProduct: await (async () => {
+        if (!(await zohoCommerceInUse(db))) return { found: false, skipped: ZOHO_COMMERCE_OFF_MESSAGE };
         const sku = str(item["sku"]).trim();
         const { data: mirror } = await db.from("catalog_products").select("id,payload")
           .like("id", "zoho-%").eq("payload->>sku", sku).limit(1).maybeSingle();
@@ -3676,6 +3793,8 @@ export const registerZohoOrderWebhook = createServerFn({ method: "POST" })
   .handler(async ({ context }) => {
     await ensureAdmin(context.supabase, context.userId);
     const db = await dbAdmin();
+    // Without Zoho Commerce its webhooks are gone: the admin page then shows the address for a Workflow Rule.
+    if (!(await zohoCommerceInUse(db))) throw new Error(`${ZOHO_COMMERCE_OFF_MESSAGE}. Add the webhook address to a Zoho Inventory Workflow Rule instead.`);
     const { region, organizationId, token } = await zohoOrderContext(db);
     const origin = new URL(reqEnv("ZOHO_REDIRECT_URI")).origin;
     const url = `${origin}/api/zoho/webhook?key=${await zohoWebhookKey()}`;
@@ -3850,8 +3969,12 @@ async function findZohoSalesOrdersForOrder(region: Region, organizationId: strin
     zohoOrderIsFor({ salesorder_number: str(row["salesorder_number"]), reference_number: str(row["reference_number"]) }, orderNo));
 }
 
-/** Inventory and Commerce share one organization; a pushed order must also be listed in Commerce > Orders. */
+/**
+ * Inventory and Commerce share one organization; a pushed order must also be listed in Commerce > Orders.
+ * Once Zoho Commerce is off there is no Commerce > Orders to check: the Inventory sales order is the order.
+ */
 async function assertVisibleInZohoCommerce(region: Region, organizationId: string, token: string, salesOrderId: string, salesOrderNumber: string) {
+  if (!(await zohoCommerceInUse())) return;
   try {
     await commerceRequest(region, organizationId, token, `salesorders/${encodeURIComponent(salesOrderId)}`, "GET");
   } catch (cause) {
@@ -4754,6 +4877,9 @@ export const syncZohoProducts = createServerFn({ method: "POST" })
     if (error || !connection) throw new Error("Connect Zoho Commerce before syncing products");
     const region = connection.region as Region;
     if (!(region in REGIONS)) throw new Error("ZOHO_REGION is not a supported Zoho data center");
+    // Before the try: this is not a broken connection, so it must not mark the connection as failed.
+    if (!(await zohoCommerceInUse(db)))
+      throw new Error(`${ZOHO_COMMERCE_OFF_MESSAGE}. Add products on the website (or bring Zoho Inventory items in from Admin > Products) and make coupons in Admin > Coupons.`);
     try {
       const token = await accessToken(region, await decrypt(connection));
       const products: Record<string, unknown>[] = [];
@@ -5179,7 +5305,11 @@ export const getZohoSalesOrderForEdit = createServerFn({ method: "POST" })
     try {
       const order = await loadZohoSalesOrder(region, organizationId, token, data.salesOrderId);
       await refreshSalesOrderSnapshot(db, organizationId, order);
-      return { order: editableSalesOrder(order, await linkedGrainBazarOrderNo(db, data.salesOrderId)) };
+      return {
+        order: editableSalesOrder(order, await linkedGrainBazarOrderNo(db, data.salesOrderId)),
+        /** "Mark as Cancelled" exists only in Zoho Commerce. */
+        commerceInUse: await zohoCommerceInUse(db),
+      };
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : "Could not load the Zoho sales order";
       throw new Error(`${message}${zohoPermissionHint(message)}`);
@@ -5229,6 +5359,12 @@ export const updateZohoSalesOrder = createServerFn({ method: "POST" })
           order: editableSalesOrder(current, await linkedGrainBazarOrderNo(db, data.salesOrderId)),
         };
       }
+
+      // Without Zoho Commerce: addresses through Zoho Books, Confirm and Void through Zoho Inventory.
+      // Checked before anything is written, so a refused status never leaves half the change saved.
+      const commerce = await zohoCommerceInUse(db);
+      if (!commerce && changes.status === "cancelled")
+        throw new Error(`${ZOHO_COMMERCE_OFF_MESSAGE}: "Mark as Cancelled" belongs to Zoho Commerce. Use "Mark as Void" instead`);
 
       const fieldChange = [
         "date", "shipmentDate", "referenceNumber", "notes", "terms", "discount",
@@ -5288,18 +5424,16 @@ export const updateZohoSalesOrder = createServerFn({ method: "POST" })
       }
       for (const [type, address] of [["billing", changes.billingAddress], ["shipping", changes.shippingAddress]] as const) {
         if (!address) continue;
-        step.name = `saving the ${type} address in Zoho Commerce`;
-        await commerceRequest(
-          region, organizationId, token,
-          `salesorders/${encodeURIComponent(data.salesOrderId)}/address/${type}`, "PUT", address,
-        );
+        step.name = `saving the ${type} address in Zoho`;
+        const path = `salesorders/${encodeURIComponent(data.salesOrderId)}/address/${type}`;
+        if (commerce) await commerceRequest(region, organizationId, token, path, "PUT", address);
+        else await booksRequest(region, organizationId, token, path, "PUT", address);
       }
       if (changes.status) {
-        step.name = `marking the order ${changes.status} in Zoho Commerce`;
-        await commerceRequest(
-          region, organizationId, token,
-          `salesorders/${encodeURIComponent(data.salesOrderId)}/status/${changes.status}`, "POST",
-        );
+        step.name = `marking the order ${changes.status} in Zoho`;
+        const path = `salesorders/${encodeURIComponent(data.salesOrderId)}/status/${changes.status}`;
+        if (commerce) await commerceRequest(region, organizationId, token, path, "POST");
+        else await inventoryRequest(region, organizationId, token, path, "POST");
       }
 
       step.name = "reading the saved order back from Zoho";

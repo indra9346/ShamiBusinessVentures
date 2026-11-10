@@ -46,12 +46,14 @@ export function ZohoSalesOrderEditor({
   const [status, setStatus] = useState<StatusAction>("");
   const [busy, setBusy] = useState<"" | "loading" | "saving">("");
   const [error, setError] = useState("");
+  const [commerceInUse, setCommerceInUse] = useState(true);
 
   const open = async () => {
     setBusy("loading");
     setError("");
     try {
-      const { order } = await getZohoSalesOrderForEdit({ data: { salesOrderId } });
+      const { order, commerceInUse: inUse } = await getZohoSalesOrderForEdit({ data: { salesOrderId } });
+      setCommerceInUse(inUse);
       setOriginal(order);
       setDraft(order);
       setStatus("");
@@ -194,7 +196,8 @@ export function ZohoSalesOrderEditor({
             <option value="">Keep current status</option>
             <option value="confirmed">Mark as Confirmed</option>
             <option value="void">Mark as Void (declined)</option>
-            <option value="cancelled">Mark as Cancelled</option>
+            {/* Cancelled is a Zoho Commerce status: gone once Zoho Commerce is turned off. */}
+            {commerceInUse && <option value="cancelled">Mark as Cancelled</option>}
           </select></div>
       </div>
 
