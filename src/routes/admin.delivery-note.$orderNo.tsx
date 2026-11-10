@@ -3,11 +3,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { ArrowLeft, Printer } from "lucide-react";
 import { toast } from "sonner";
+import { renderSVG } from "uqr";
 import { Button } from "@/components/ui/button";
 import {
   addressLines, companyHeading, copyLabel, deliveryMethodLabel, gateWords, isPickup, isReprint, istDateTime, paperWarnings, slipPages,
   type DeliveryGate, type DeliveryNote, type DeliveryNoteView, type SlipPage,
 } from "@/lib/delivery-notes";
+import { handedOverWarning, paperLink, qrCaption, type PaperHandover } from "@/lib/delivery-papers";
 import { getDeliveryNote, recordDeliveryPrint } from "@/lib/delivery-notes.functions";
 
 export const Route = createFileRoute("/admin/delivery-note/$orderNo")({
@@ -22,7 +24,11 @@ export const Route = createFileRoute("/admin/delivery-note/$orderNo")({
 
 /** What the next press prints: the note, every slip, or both. */
 type Selection = { note: boolean; slips: number[] };
-type Paper = { printedAt: string | null; noteCopy: number | null; slipCopies: Record<string, number>; selection: Selection };
+/** What the last press printed. The QR codes exist only here, in this tab: the database keeps their hashes. */
+type Paper = {
+  printedAt: string | null; noteCopy: number | null; slipCopies: Record<string, number>; selection: Selection;
+  noteCode: string | null; slipCodes: Record<string, string>;
+};
 
 /*
  * On screen the sheets are as wide as the phone or window allows. On paper each is one A4 page (a long
@@ -60,7 +66,7 @@ function DeliveryNotePrintPage() {
   const [view, setView] = useState<DeliveryNoteView | null>(null);
   const [failed, setFailed] = useState("");
   const [busy, setBusy] = useState(false);
-  const [paper, setPaper] = useState<Paper>({ printedAt: null, noteCopy: null, slipCopies: {}, selection: { note: true, slips: [] } });
+  const [paper, setPaper] = useState<Paper>({ printedAt: null, noteCopy: null, slipCopies: {}, selection: { note: true, slips: [] }, noteCode: null, slipCodes: {} });
   const [armed, setArmed] = useState(false);
   const disarmTimer = useRef<number | undefined>(undefined);
 
@@ -86,7 +92,7 @@ function DeliveryNotePrintPage() {
       const { record, view: next } = await recordDeliveryPrint({ data: { orderNo, note: selection.note, slipLines: selection.slips } });
       flushSync(() => {
         setView(next);
-        setPaper({ selection, printedAt: record.printedAt, noteCopy: record.noteCopy, slipCopies: record.slipCopies });
+        setPaper({ selection, printedAt: record.printedAt, noteCopy: record.noteCopy, slipCopies: record.slipCopies, noteCode: record.noteCode, slipCodes: record.slipCodes });
         setArmed(true);
       });
       window.clearTimeout(disarmTimer.current);
@@ -104,6 +110,13 @@ function DeliveryNotePrintPage() {
   const allSlips = slips.map((slip) => slip.slip);
   const state = view?.state;
   const warnings = state && note ? paperWarnings(state) : [];
+  const handovers: Record<string, PaperHandover> = Object.fromEntries((view?.handovers ?? []).map((row) => [String(row.slip_line), {
+    at: row.handed_over_at, by: row.actor_name, role: row.actor_role === "admin" ? "admin" : "staff", godown: row.branch_name,
+  } satisfies PaperHandover]));
+  const handedLines = Object.keys(handovers).map(Number).sort((a, b) => a - b);
+  const noteWarnings = handedLines.length === 0 ? warnings : [...warnings, handedLines.length === slips.length
+    ? "ALL ITEMS ALREADY HANDED OVER. FOR RECORDS ONLY. DO NOT DELIVER AGAIN."
+    : `ITEM${handedLines.length === 1 ? "" : "S"} ${handedLines.join(", ")} ALREADY HANDED OVER. DELIVER ONLY THE REST.`];
 
   return (
     <div className="dn-root min-h-screen bg-stone-200 px-3 py-4 text-black sm:px-6" data-armed={armed ? "yes" : "no"}>
@@ -122,6 +135,11 @@ function DeliveryNotePrintPage() {
         )}
         {note && (
           <>
+            {view?.qrReady === false && (
+              <p className="rounded-md border-2 border-red-300 bg-red-50 p-3 text-sm font-bold text-red-900">
+                Printing is paused: the database doesn't have the delivery-slip QR update yet, so the papers would have no QR code. Ask your developer to apply it.
+              </p>
+            )}
             {warnings.length > 0 && (
               <div className="rounded-md border-2 border-red-300 bg-red-50 p-3 text-sm font-bold text-red-900">
                 {warnings.map((warning) => <p key={warning}>{warning}</p>)}
@@ -146,14 +164,27 @@ function DeliveryNotePrintPage() {
             <p className="text-xs text-slate">
               Each press of Print checks the payment with Zoho again, puts the exact time on the paper and counts as a copy, even if you then cancel the print screen. On a phone the print screen opens next: choose your printer or Save as PDF. If nothing opens, this browser cannot print from a page (some in-app browsers cannot): open the page in Chrome or Safari.
             </p>
+            <p className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-950">
+              <span className="font-bold">QR codes:</span> every paper gets a new QR code on each press. Printing a paper again cancels the QR on its earlier copies, so only the newest copy can be used at the godown, and each item can be handed over only once. Give the godown the papers from your latest press.
+            </p>
+            {handedLines.length > 0 && (
+              <ul className="space-y-0.5 text-xs text-emerald-900">
+                {handedLines.map((line) => (
+                  <li key={line}>Slip {line} handed over {istDateTime(handovers[String(line)]!.at)} by {handovers[String(line)]!.by}{handovers[String(line)]!.godown ? `, ${handovers[String(line)]!.godown}` : ""}</li>
+                ))}
+              </ul>
+            )}
           </>
         )}
       </div>
 
       {note && state && (
         <div className="dn-docs" data-no-translate>
-          <NoteSheet note={note} state={state} warnings={warnings} paper={paper} slipCount={slips.length} />
-          {slips.map((slip) => <SlipSheet key={slip.slip} slip={slip} note={note} warnings={warnings} paper={paper} />)}
+          <NoteSheet note={note} state={state} warnings={noteWarnings} paper={paper} slipCount={slips.length} />
+          {slips.map((slip) => (
+            <SlipSheet key={slip.slip} slip={slip} note={note} paper={paper}
+              warnings={handovers[String(slip.slip)] ? [...warnings, handedOverWarning(handovers[String(slip.slip)])] : warnings} />
+          ))}
         </div>
       )}
     </div>
@@ -206,6 +237,30 @@ function CompanyHead({ note, title, side }: { note: DeliveryNote; title: string;
   );
 }
 
+/**
+ * The paper's QR: a link to the scan page with this copy's code after "#". Before a press there is no code, so the
+ * sheet shows where it will be.
+ */
+function PaperQr({ code, copy, size }: { code: string | null | undefined; copy: number | null | undefined; size: "note" | "slip" }) {
+  // About 0.8 mm (note) and 1 mm (slip) per square: easy for a phone held at arm's length.
+  const box = size === "slip" ? "h-[40mm] w-[40mm]" : "h-[34mm] w-[34mm]";
+  return (
+    <figure className={`dn-keep ${size === "slip" ? "w-[40mm]" : "w-[34mm]"} shrink-0 text-center`}>
+      {code ? (
+        <div className={`${box} mx-auto [&>svg]:h-full [&>svg]:w-full`} role="img" aria-label="QR code to check this paper"
+          // uqr returns a self-contained <svg> of the QR code (no scripts). A white border of 4 squares, as the QR
+          // standard asks, so every reader finds the code's edges.
+          dangerouslySetInnerHTML={{ __html: renderSVG(paperLink(window.location.origin, code), { ecc: "M", border: 4 }) }} />
+      ) : (
+        <div className={`${box} mx-auto grid place-items-center border-2 border-dashed border-neutral-400 p-2 text-[11px] text-neutral-600`}>
+          The QR code appears when you press Print
+        </div>
+      )}
+      <figcaption className="mt-1 text-[10px] leading-tight text-neutral-700">{code ? qrCaption(copy) : ""}</figcaption>
+    </figure>
+  );
+}
+
 function Signature({ label }: { label: string }) {
   return (
     <div className="min-w-0">
@@ -228,15 +283,18 @@ function NoteSheet({ note, state, warnings, paper, slipCount }: { note: Delivery
     <section className={SHEET} data-print={paper.selection.note ? "yes" : "no"}>
       <CompanyHead note={note} title="Delivery note" side={note.note_no} />
       <Warnings warnings={warnings} />
-      <dl className="mt-3 grid gap-x-6 gap-y-1 sm:grid-cols-2 print:grid-cols-2">
-        <Row label="Order no." value={note.order_no} strong />
-        <Row label="Invoice no." value={note.invoice_number} strong />
-        <Row label="Order date" value={istDateTime(snapshot.order_placed_at)} />
-        <Row label="Generated" value={`${istDateTime(note.generated_at)} by ${note.generated_by_name}`} />
-        <PrintedLine printedAt={paper.printedAt} copy={paper.noteCopy} />
-        <Row label="Delivery" value={deliveryMethodLabel(snapshot.shipping_method)} />
-        <Row label="Payment" value={state.code === "paid" ? "Paid in full" : "See the warning above"} strong />
-      </dl>
+      <div className="mt-3 flex flex-wrap items-start gap-4">
+        <dl className="grid min-w-0 flex-1 basis-[60%] gap-x-6 gap-y-1 sm:grid-cols-2 print:grid-cols-2">
+          <Row label="Order no." value={note.order_no} strong />
+          <Row label="Invoice no." value={note.invoice_number} strong />
+          <Row label="Order date" value={istDateTime(snapshot.order_placed_at)} />
+          <Row label="Generated" value={`${istDateTime(note.generated_at)} by ${note.generated_by_name}`} />
+          <PrintedLine printedAt={paper.printedAt} copy={paper.noteCopy} />
+          <Row label="Delivery" value={deliveryMethodLabel(snapshot.shipping_method)} />
+          <Row label="Payment" value={state.code === "paid" ? "Paid in full" : "See the warning above"} strong />
+        </dl>
+        <PaperQr code={paper.noteCode} copy={paper.noteCopy} size="note" />
+      </div>
 
       <div className="mt-4 grid gap-3 sm:grid-cols-2 print:grid-cols-2">
         <div className="dn-keep min-w-0 border border-neutral-400 p-3">
@@ -323,21 +381,24 @@ function SlipSheet({ slip, note, warnings, paper }: { slip: SlipPage; note: Deli
     <section className={SHEET} data-print={paper.selection.slips.includes(slip.slip) ? "yes" : "no"}>
       <CompanyHead note={note} title="Delivery slip" side={`Slip ${slip.slip} of ${slip.of}`} />
       <Warnings warnings={warnings} />
-      <div className="dn-keep my-5 border-2 border-black p-4">
-        <p className="text-[11px] font-bold uppercase tracking-wider text-neutral-600">Item</p>
-        <p className="text-2xl font-extrabold break-words">{slip.name}</p>
-        {slip.sku && <p className="text-sm">SKU {slip.sku}</p>}
-        <div className="mt-4 grid grid-cols-2 gap-3">
-          <div>
-            <p className="text-[11px] font-bold uppercase tracking-wider text-neutral-600">Quantity</p>
-            <p className="text-4xl font-extrabold">{slip.qty}</p>
+      <div className="dn-keep my-5 flex flex-wrap items-start gap-4">
+        <div className="min-w-0 flex-1 basis-[60%] border-2 border-black p-4">
+          <p className="text-[11px] font-bold uppercase tracking-wider text-neutral-600">Item</p>
+          <p className="text-2xl font-extrabold break-words">{slip.name}</p>
+          {slip.sku && <p className="text-sm">SKU {slip.sku}</p>}
+          <div className="mt-4 grid grid-cols-2 gap-3">
+            <div>
+              <p className="text-[11px] font-bold uppercase tracking-wider text-neutral-600">Quantity</p>
+              <p className="text-4xl font-extrabold">{slip.qty}</p>
+            </div>
+            <div className="min-w-0">
+              <p className="text-[11px] font-bold uppercase tracking-wider text-neutral-600">Pack size</p>
+              <p className="text-2xl font-extrabold break-words">{slip.pack_size || "—"}</p>
+            </div>
           </div>
-          <div className="min-w-0">
-            <p className="text-[11px] font-bold uppercase tracking-wider text-neutral-600">Pack size</p>
-            <p className="text-2xl font-extrabold break-words">{slip.pack_size || "—"}</p>
-          </div>
+          {slip.stock_no && <p className="mt-3 text-sm font-semibold">Stock no. {slip.stock_no}</p>}
         </div>
-        {slip.stock_no && <p className="mt-3 text-sm font-semibold">Stock no. {slip.stock_no}</p>}
+        <PaperQr code={paper.slipCodes[String(slip.slip)]} copy={copy} size="slip" />
       </div>
       <dl className="grid gap-x-6 gap-y-1 sm:grid-cols-2 print:grid-cols-2">
         <Row label="Note no." value={note.note_no} strong />

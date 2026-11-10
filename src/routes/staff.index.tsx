@@ -1,7 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { AlertTriangle, Camera, CalendarDays, CheckCircle2, Clock, LogIn, LogOut, MapPin, RefreshCw, Send, Smartphone } from "lucide-react";
+import { AlertTriangle, Camera, CalendarDays, CheckCircle2, Clock, LogIn, LogOut, MapPin, RefreshCw, ScanLine, Send, Smartphone } from "lucide-react";
 import { LogoMark } from "@/components/brand/Logo";
 import { LanguageSwitcher } from "@/components/site/LanguageSwitcher";
 import { AttendanceStatusBadge, DecisionChips, RuleList } from "@/components/attendance/AttendanceBits";
@@ -186,6 +186,14 @@ function StaffHome() {
             )}
           </>
         )}
+
+        <Link to="/slip" className="flex items-center gap-3 rounded-2xl border-2 border-navy bg-card p-4 shadow-sm hover:border-gold">
+          <ScanLine className="h-8 w-8 shrink-0 text-navy" />
+          <span className="min-w-0">
+            <span className="block text-sm font-extrabold text-navy">Hand over goods: scan the slip</span>
+            <span className="block text-xs text-slate">Scan the QR on a delivery slip or note. Give the goods only when the screen turns green.</span>
+          </span>
+        </Link>
 
         <LeaveCard leaves={leaves} today={today} rules={rulesToday} versions={versions} holidays={holidays} onChange={() => load(me)} />
 

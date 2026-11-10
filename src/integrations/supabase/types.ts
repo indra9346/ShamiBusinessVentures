@@ -721,6 +721,18 @@ export type Database = {
         Update: Record<string, never>
         Relationships: []
       }
+      delivery_handovers: {
+        Row: { id: number; note_id: string; slip_line: number; code_id: number; actor_id: string; actor_name: string; actor_role: string; branch_id: string | null; branch_name: string; gate_code: string; gate_source: string; handed_over_at: string }
+        Insert: Record<string, never>
+        Update: Record<string, never>
+        Relationships: []
+      }
+      delivery_scans: {
+        Row: { id: number; code_id: number | null; note_id: string | null; code_hint: string; action: string; result: string; doc: string | null; slip_line: number | null; copy_no: number | null; lines: number[]; gate_code: string | null; gate_source: string | null; actor_id: string; actor_name: string; actor_role: string; branch_id: string | null; branch_name: string; occurred_at: string }
+        Insert: Record<string, never>
+        Update: Record<string, never>
+        Relationships: []
+      }
       order_items: {
         Row: {
           batch_code: string | null
@@ -1383,6 +1395,8 @@ export type Database = {
       issue_delivery_note: { Args: { _order_no: string; _zoho: Json; _actor: string; _actor_name: string }; Returns: Json }
       record_delivery_print: { Args: { _note_id: string; _note: boolean; _slip_lines: number[]; _zoho: Json; _actor: string; _actor_name: string }; Returns: Json }
       delivery_note_register: { Args: { _limit?: number }; Returns: Json }
+      delivery_paper_order_no: { Args: { _code: string }; Returns: string | null }
+      delivery_paper_scan: { Args: { _code: string; _handover: boolean; _zoho: Json | null; _actor: string }; Returns: Json }
       set_delivery_stop: { Args: { _order_no: string; _stopped: boolean; _reason: string; _actor: string; _actor_name: string }; Returns: boolean }
       review_upi_utr: { Args: { _order_no: string; _decision: string; _note?: string | null; _expected_utr?: string | null }; Returns: { id: string; order_id: string; order_no: string; user_id: string | null; customer_name: string; amount: number; utr: string; status: string; note: string | null; submitted_at: string; reviewed_at: string | null; reviewed_by: string | null } }
       record_stock_count: {

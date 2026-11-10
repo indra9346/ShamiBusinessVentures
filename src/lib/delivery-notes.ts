@@ -6,6 +6,7 @@
  * (supabase/migrations/20261103090000_delivery_notes.sql). Nothing here can allow a note: these
  * functions only put the database's answer into words.
  */
+import type { DeliveryHandoverRow, DeliveryScanRow, PaperHandover } from "./delivery-papers.ts";
 
 export type DeliveryGateCode =
   | "paid" | "unpaid" | "partly_paid" | "payment_mismatch" | "website_behind" | "zoho_has_payment" | "zoho_behind"
@@ -104,12 +105,22 @@ export type DeliveryNoteView = {
   state: DeliveryGate;
   note: DeliveryNote | null;
   events: DeliveryNoteEvent[];
+  /** Item lines handed over at the godown on a QR scan, and the scans of this note's papers, newest first. */
+  handovers: DeliveryHandoverRow[];
+  scans: DeliveryScanRow[];
+  /** False while the database lacks the QR migration: the note shows, but printing is refused. */
+  qrReady: boolean;
 };
 
 export type DeliveryPrintRecord = {
   printedAt: string;
   noteCopy: number | null;
   slipCopies: Record<string, number>;
+  /** This press's QR codes, given once: only their hashes are kept. */
+  noteCode: string | null;
+  slipCodes: Record<string, string>;
+  /** Lines already handed over, by line number. */
+  handovers: Record<string, PaperHandover>;
 };
 
 export type DeliveryRegisterRow = {
@@ -124,6 +135,10 @@ export type DeliveryRegisterRow = {
   generated_by: string;
   prints: number;
   last_printed_at: string | null;
+  /** Item lines handed over on a QR scan, and scans that were refused. */
+  handed_over: number;
+  last_handed_over_at: string | null;
+  refused_scans: number;
   state: DeliveryGate;
 };
 

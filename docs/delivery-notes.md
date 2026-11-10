@@ -90,6 +90,36 @@ Only `paid` allows a note. It needs all of these:
 - Copy 1 is the original. Each later copy of the note, and of each slip, is marked `Reprint, copy n`. A press counts as a copy even if the print screen is then cancelled.
 - Who and when is in `delivery_note_events`.
 
+## QR codes and the godown check
+
+The client's words (10 Nov 2026): "Delivery slips with unique qr so scanned which is in system recognized then green signal duplicate delivery copies will be avoided if we use this system for delivery notes."
+
+`supabase/migrations/20261110120000_delivery_paper_qr.sql` decides; `src/lib/delivery-papers.ts` puts its answers into words; the scan page is `/slip`.
+
+- **Every printed paper has its own code.** Each press of Print gives the note and each slip it prints a new random code: 22 characters from `gen_random_uuid` (122 random bits). The QR is a link, `https://grainbazar.com/slip#<code>`. The code goes after `#`, so it never reaches a server log or analytics. The database keeps only the code's SHA-256 hash (`delivery_paper_codes`). Nothing in the database can be turned back into a working QR, and no order or note number can be.
+- **Only the newest copy works.** Printing a paper again cancels the code on every earlier copy of that paper. Those scan red as "old copy, cancelled", naming the copy that replaced them. The paper says so too: "Copy 3: copies 1 to 2 are cancelled." So a reprint never makes a second paper that scans green. A paper that was never really printed (a cancelled print screen, a jammed printer) needs no special step: print it again.
+- **Each item is handed over once.** `delivery_handovers` holds at most one row per note line (a unique key). The scan locks the note's row from the check to the insert, so two people scanning at the same moment can't both record it: the second is told it was already handed over, by whom and when. The note's QR covers all its lines; a slip's QR covers its own line.
+- **Green only after recording.** A first scan says "Genuine · not handed over yet" (white) and shows the item and quantity. Green appears only after **Hand over now: record it** is pressed and the database has recorded it. So "no green, no goods" is a rule the godown can follow, and green can't be shown to two people.
+- **Every scan re-checks the order.** The delivery-note payment check runs again (`private.delivery_note_state`). A cancelled, refunded or stopped order, or one void in Zoho, scans red. Payment records that need checking, or items or an invoice changed after the note, scan amber. A handover reads Zoho Books first (read-only). If Zoho can't be read, the website's last reading is used, and the handover and the green screen say so.
+- **Who may scan.** Administrators, and active godown staff (`staff_employees`). Staff can hand over only their own godown's goods; another godown's paper is amber. Anyone else gets "Sign in to check this paper" and learns nothing about it.
+- **Every scan is kept** in `delivery_scans`: who, when, which godown, which paper and copy, and the answer, including codes that are not in the system (only the start of their hash). Admin > Delivery Notes lists the latest scans and flags unknown codes; the order page lists each item's handover and its scans. None of this can be changed or deleted.
+- **Scan with the page's own scanner.** The staff app has **Hand over goods: scan the slip**, which opens `/slip` with a camera scanner (the browser's own QR reader; Chrome on Android has one). It refuses a QR that leads to another website: a forged paper can lead the phone's camera app to a fake page that shows green. The real page always shows the scanner's own name and godown at the top, from the server's answer. Where the browser has no QR reader (iPhone Safari), the phone's camera app opens the link, and the code can also be pasted.
+- **Reprints after a handover** still print, for records, with "ALREADY HANDED OVER … FOR RECORDS ONLY. DO NOT DELIVER AGAIN." on the slip, and "ITEM 1 ALREADY HANDED OVER. DELIVER ONLY THE REST." on the note. They scan red.
+
+Answers (`public.delivery_paper_scan`), first match wins:
+
+| Answer | Screen | When |
+|---|---|---|
+| `unknown` | Red: not a genuine paper | The code isn't one the system made |
+| `already_handed_over` | Red: already handed over, do not give again | Every line the paper covers is handed over |
+| `replaced` | Red: old copy, cancelled | A newer copy of this paper was printed |
+| `order_problem` | Red or amber: do not hand over | The payment check isn't clean, or the order is void in Zoho |
+| `other_godown` | Amber: another godown's paper | A staff member of a different godown |
+| `ready` | White: genuine, not handed over yet | May be handed over (nothing recorded yet) |
+| `handed_over` | **Green: hand over the goods** | Recorded just now |
+
+There is no way to undo a handover, and a handed-over line never scans green again.
+
 ## Zoho packages and shipments
 
 Separate and untouched. Website `Packed` still makes a Zoho package, and `Dispatched` a shipment (`pushZohoFulfilment`). A delivery note changes no order status and makes no Zoho call except the two reads above. It isn't a Zoho document and has its own number.
@@ -99,3 +129,5 @@ Separate and untouched. Website `Packed` still makes a Zoho package, and `Dispat
 `tests/delivery-notes.test.ts` is in `npm run test:zoho`: the words, the paper's warnings, IST formatting, slip numbering, reading Zoho's figures, and a check that every database answer has its own words.
 
 The gate itself needs a database. The run for the PR used PGlite with all migrations and Supabase-like default privileges, and the same setup backs the local preview. That harness isn't in the repo because PGlite isn't a dependency here.
+
+The QR codes: `tests/delivery-papers.test.ts` (in `test:zoho`) holds the words and the reading of scanned QR codes to the migration. `tests/db/delivery-paper-qr.db-test.mjs` runs the scan, print and handover functions on PGlite (`PGLITE_PATH=… node tests/db/delivery-paper-qr.db-test.mjs`). `tests/db/delivery-paper-race.pg-test.mjs` needs a real, throwaway PostgreSQL server, because PGlite has only one connection. It has 20 connections hand over one slip at the same instant (exactly one succeeds), makes a second handover wait for an open one, and races a reprint against the old copy (`PG_URL=postgres://postgres@localhost:<port>/postgres PG_MODULES=<node_modules with pg> node tests/db/delivery-paper-race.pg-test.mjs`).

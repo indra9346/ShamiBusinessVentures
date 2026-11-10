@@ -8,6 +8,7 @@ import { inrPrecise } from "@/lib/data";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { copyLabel, gateWords, istDateTime, paperWarnings, type DeliveryNoteEvent, type DeliveryNoteView } from "@/lib/delivery-notes";
 import { generateDeliveryNote, getDeliveryNote, setDeliveryStop } from "@/lib/delivery-notes.functions";
+import { scanIsRefusal, scannedPaperLabel, scanResultLabel } from "@/lib/delivery-papers";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
@@ -28,6 +29,43 @@ function eventText(event: DeliveryNoteEvent) {
   if (event.kind === "invoice_changed") return `Zoho invoice changed: ${event.detail}`;
   if (event.kind === "order_changed") return `Order changed: ${event.detail}`;
   return event.detail;
+}
+
+/** Which item lines were handed over at the godown on a QR scan, and every scan of this note's papers. */
+function HandoverList({ view }: { view: DeliveryNoteView }) {
+  const lines = view.note ? view.note.snapshot.items.length : 0;
+  const done = new Map(view.handovers.map((row) => [row.slip_line, row]));
+  return (
+    <div className="space-y-2">
+      <p className="text-xs font-bold uppercase tracking-wider text-slate">Handed over at the godown ({done.size} of {lines})</p>
+      <ul className="space-y-1 text-xs text-charcoal">
+        {(view.note?.snapshot.items ?? []).map((item) => {
+          const row = done.get(item.line);
+          return (
+            <li key={item.line} className="flex items-start gap-1.5 break-words">
+              {row ? <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-700" /> : <Clock className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate" />}
+              <span>
+                <span className="font-semibold">Slip {item.line}</span> {item.name}:{" "}
+                {row ? `${istDateTime(row.handed_over_at)} by ${row.actor_name}${row.branch_name ? `, ${row.branch_name}` : " (office)"}${row.gate_source === "last_reading" ? ". Zoho could not be read then; checked on the last reading" : ""}` : "not handed over yet"}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+      {view.scans.length > 0 && (
+        <details className="text-xs">
+          <summary className="cursor-pointer font-semibold text-navy">QR scans ({view.scans.length}{view.scans.some((scan) => scanIsRefusal(scan.result)) ? `, ${view.scans.filter((scan) => scanIsRefusal(scan.result)).length} refused` : ""})</summary>
+          <ul className="mt-1 space-y-1 text-charcoal">
+            {view.scans.slice(0, 50).map((scan) => (
+              <li key={scan.id} className={cn("break-words", scanIsRefusal(scan.result) && "text-red-800")}>
+                <span className="text-slate">{istDateTime(scan.occurred_at)}</span> · {scannedPaperLabel(scan)} · {scanResultLabel(scan.result)} · {scan.actor_name}{scan.branch_name ? `, ${scan.branch_name}` : " (office)"}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </div>
+  );
 }
 
 /**
@@ -190,6 +228,7 @@ export function DeliveryNotePanel({ orderNo, className = "", readOnly = false }:
           )}
           {recheck}
           {stopControl}
+          <HandoverList view={view!} />
           {view!.events.length > 0 && (
             <div>
               <p className="text-xs font-bold uppercase tracking-wider text-slate">History</p>
