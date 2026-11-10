@@ -43,6 +43,37 @@ receipts create the Zoho batch, packages and adjustments name Zoho batches (Zoho
 the 15-minute sync links Zoho batches to website batches and imports batches made in Zoho (e.g. a
 Zoho purchase receive). `zoho_item_links.track_batches` remembers which items these are.
 
+## Unloading godown and sending batches between godowns (10 Nov 2026)
+
+Client: "When we receive batches, at that time we should enter to which warehouse it is unloaded & same should be
+updated to Zoho inventory." Owner's choices: a Zoho transfer order (the bill stays untouched); one unloading godown per
+bill; and "make batches from super batch and those batches can be sent for multiple any intended godowns".
+
+- **Receive purchase** asks **Unloaded at godown** first and lists recent bills from every Zoho location, each saying
+  where Zoho has it. A bill already at that godown changes nothing in Zoho (as before). A bill at another Zoho location
+  (another godown, or Head Office) is moved to the unloading godown with a Zoho transfer order, and only then are its
+  batches made, numbered at the unloading godown.
+- **Send to other godowns** (on a batch with units left): one row per godown and quantity. Each godown gets a Zoho
+  transfer order and a batch of its own named after the super batch (`CLK-031126-08` → `CLK-031126-08-HBL1`) with the
+  same cost, bill, supplier and dates. The super batch keeps the rest.
+- **Safe with Zoho:** every transfer has a fixed number, `GB-TR-000001`, which is also its Zoho transfer order number.
+  The website records it and sets the units aside first; then asks Zoho; then finishes. A lost Zoho reply leaves it
+  "Waiting for Zoho" under **Transfers waiting for Zoho** with **Retry**, which looks the number up in Zoho first and
+  never creates a second one. Zoho saying no cancels it and the units go back. **Cancel** works only when Zoho doesn't
+  have it (or Zoho's is void). Numbers are never reused (the counter only goes up).
+- **Stock:** Zoho moves it; the two godowns' website stock moves at the same moment, so the 15-minute stock sync finds
+  nothing to change. Zoho batch-tracked items are moved in Zoho itself (refused here, as their receipts are).
+- **Report:** a sent batch shows **Received from another godown** (not Purchased, so a purchase counts once); the super
+  batch shows **Sent to other godowns**; the stock bar and the ledger include both; Excel has both columns. A batch in a
+  transfer can't be deleted.
+- **Zoho permission:** the website now asks for `ZohoInventory.transferorders.READ/CREATE/UPDATE`. After this goes
+  live, the owner presses **Reauthorize Zoho** in Admin › Zoho once; until then Zoho refuses transfers and nothing moves.
+
+Migration `supabase/migrations/20261110180000_batch_receive_and_split.sql`; rules for Zoho in `src/lib/batch-transfers.ts`;
+server in `src/lib/zoho-commerce.functions.ts` (`runBatchTransfer`, `sendBatchToGodowns`, `retryBatchTransfer`,
+`cancelBatchTransfer`, `createBatchesFromBill`). Tests: `tests/batch-transfers.test.ts` (in `test:zoho`) and
+`tests/db/batch-transfers.db-test.mjs` (PGlite).
+
 ## Database
 
 Migration `supabase/migrations/20261031190000_batch_tracking.sql` (applied 31 Oct 2026): batch

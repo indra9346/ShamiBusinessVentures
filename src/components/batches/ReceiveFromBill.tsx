@@ -7,17 +7,19 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { inrPrecise } from "@/lib/data";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { billPlan, billSummary, costOf, lineBlocker, type BillLine, type CostBasis } from "@/lib/bill-batches";
+import { announceTransfer } from "@/components/batches/BatchTransfers";
 import { cn } from "@/lib/utils";
 
 /*
- * Admin > Batches > Receive purchase: a batch per line of a Zoho bill. The admin picks the godown and a recent bill;
- * every line loads with its price breakup and both unit costs; the admin chooses which cost this bill's batches use,
- * may add manufacture / expiry dates and notes, and presses one button. Nothing is sent to Zoho and no stock changes:
- * the bill already brought the stock in.
+ * Admin > Batches > Receive purchase: a batch per line of a Zoho bill. The admin picks the godown where the goods were
+ * unloaded and a recent bill; every line loads with its price breakup and both unit costs; the admin chooses which cost
+ * this bill's batches use, may add manufacture / expiry dates and notes, and presses one button. A bill already at that
+ * godown in Zoho changes nothing in Zoho (the bill brought the stock in). A bill at another Zoho location (another
+ * godown, Head Office) is moved to the unloading godown with a Zoho transfer order first (client, 10 Nov 2026).
  */
 
 type Godown = { id: string; name: string; zohoLinked: boolean };
-type BillRow = { billId: string; billNumber: string; vendorName: string; date: string; total: number; status: string; batchedLines: number };
+type BillRow = { billId: string; billNumber: string; vendorName: string; date: string; total: number; status: string; batchedLines: number; locationName: string; otherLocation: boolean };
 type Line = BillLine & { productId: string; productName: string; batchId: string; batchCode: string; blocker: string };
 type Bill = Omit<ReturnType<typeof billPlan>, "lines"> & { lines: Line[] };
 type Extra = { mfgDate: string; expiryDate: string; notes: string };
@@ -79,7 +81,8 @@ export function ReceiveFromBillDialog({ open, onOpenChange, godowns, defaultGodo
   };
 
   const open_ = bill?.lines.filter((line) => !line.blocker) ?? [];
-  const blockedBill = !bill || bill.status === "void" || otherGodown;
+  const blockedBill = !bill || bill.status === "void";
+  const godownName = godowns.find((g) => g.id === branchId)?.name ?? "this godown";
   const extra = (lineId: string): Extra => extras[lineId] ?? { mfgDate: "", expiryDate: "", notes: "" };
   const setExtra = (lineId: string, key: keyof Extra, value: string) => setExtras((all) => ({ ...all, [lineId]: { ...extra(lineId), [key]: value } }));
 
@@ -95,9 +98,15 @@ export function ReceiveFromBillDialog({ open, onOpenChange, godowns, defaultGodo
         branchId, billId: bill.billId, costBasis: basis,
         lines: open_.map((line) => ({ lineId: line.lineId, mfgDate: extra(line.lineId).mfgDate || null, expiryDate: extra(line.lineId).expiryDate || null, notes: extra(line.lineId).notes })),
       } });
-      toast.success(`${result.made.length} batch${result.made.length === 1 ? "" : "es"} made from bill ${result.billNumber}`, {
-        description: `${result.made.map((m) => m.batch_code).join(", ")}. Stock is unchanged: it came in with the bill.`,
-      });
+      if (result.transfer) {
+        // Moved from the bill's Zoho location first: done, waiting for Zoho, or refused (nothing moved).
+        announceTransfer(result.transfer);
+        if (result.transfer.status === "cancelled") return;
+      } else {
+        toast.success(`${result.made.length} batch${result.made.length === 1 ? "" : "es"} made from bill ${result.billNumber}`, {
+          description: `${result.made.map((m) => m.batch_code).join(", ")}. Stock is unchanged: it came in with the bill.`,
+        });
+      }
       onOpenChange(false);
       setBill(null);
       await onSaved(result.made[0]?.batch_id ?? "");
@@ -113,11 +122,11 @@ export function ReceiveFromBillDialog({ open, onOpenChange, godowns, defaultGodo
       <DialogContent className="max-h-[92vh] w-[calc(100vw-1rem)] max-w-3xl overflow-y-auto overflow-x-hidden p-4 sm:p-6">
         <DialogHeader>
           <DialogTitle>Receive purchase from a Zoho bill</DialogTitle>
-          <DialogDescription>Pick the bill: each line becomes one batch with its own stock number. The bill already added the stock in Zoho, so stock does not change here.</DialogDescription>
+          <DialogDescription>Choose where the goods were unloaded, then the bill: each line becomes one batch with its own stock number at that godown. If Zoho has the bill at another place, the stock is moved here in Zoho with a transfer order.</DialogDescription>
         </DialogHeader>
 
         <div className="flex flex-wrap items-end gap-2">
-          <label className="grid min-w-0 flex-1 gap-1 text-xs font-semibold text-slate">Godown
+          <label className="grid min-w-0 flex-1 gap-1 text-xs font-semibold text-slate">Unloaded at godown
             <select value={branchId} onChange={(e) => setBranchId(e.target.value)} className="h-10 w-full rounded-md border border-input bg-white px-2 text-sm">
               {godowns.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
             </select>
@@ -140,7 +149,11 @@ export function ReceiveFromBillDialog({ open, onOpenChange, godowns, defaultGodo
                 <span className="text-right text-xs text-slate">{day(b.date)}</span>
                 <span className={cn("col-span-2 text-xs", b.batchedLines ? "text-emerald-700" : "text-slate")}>
                   {b.batchedLines ? `${b.batchedLines} line${b.batchedLines === 1 ? "" : "s"} already batched` : "No batches yet"}
+                  {b.locationName ? ` · In Zoho at ${b.locationName}` : ""}
                 </span>
+                {b.otherLocation && !b.batchedLines && (
+                  <span className="col-span-2 text-xs font-semibold text-amber-800">{`Receiving here moves it from ${b.locationName || "its Zoho location"} to ${godownName} in Zoho`}</span>
+                )}
               </button>
             ))}
           </div>
@@ -166,7 +179,12 @@ export function ReceiveFromBillDialog({ open, onOpenChange, godowns, defaultGodo
               <Button size="sm" variant="ghost" onClick={() => setBill(null)}>Other bill</Button>
             </div>
 
-            {otherGodown && <Warning text="This bill is for another godown in Zoho. Choose that godown to make its batches." />}
+            {otherGodown && (
+              <p className="flex gap-2 rounded-md border border-sky-300 bg-sky-50 p-2 text-xs text-sky-950">
+                <AlertTriangle className="h-4 w-4 shrink-0" />
+                {`Zoho has this bill's stock at ${bill.locationName || "another location"}. Receiving it at ${godownName} first moves the units there in Zoho with a transfer order (numbered GB-TR-…), then makes the batches here. The bill itself is not changed.`}
+              </p>
+            )}
             {bill.warnings.map((w) => <Warning key={w} text={w} />)}
 
             <fieldset className="grid gap-2 rounded-lg border border-border p-3">
@@ -228,7 +246,7 @@ export function ReceiveFromBillDialog({ open, onOpenChange, godowns, defaultGodo
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
           {bill && (
             <Button className="bg-navy text-white" disabled={busy || blockedBill || !basis || open_.length === 0} onClick={() => void create()}>
-              {busy ? "Saving…" : open_.length === 0 ? "All lines done" : `Create ${open_.length} batch${open_.length === 1 ? "" : "es"}`}
+              {busy ? (otherGodown ? "Moving in Zoho…" : "Saving…") : open_.length === 0 ? "All lines done" : otherGodown ? `Move to ${godownName} and create ${open_.length} batch${open_.length === 1 ? "" : "es"}` : `Create ${open_.length} batch${open_.length === 1 ? "" : "es"}`}
             </Button>
           )}
         </DialogFooter>
@@ -272,7 +290,7 @@ const DEMO = [
     ] },
 ];
 function demoBills(): BillRow[] {
-  return DEMO.map((b) => ({ ...billSummary(b), batchedLines: b.bill_id === "B2" ? 1 : 0 }));
+  return DEMO.map((b) => ({ ...billSummary(b), batchedLines: b.bill_id === "B2" ? 1 : 0, otherLocation: false }));
 }
 function demoBill(billId: string): Bill {
   const raw = DEMO.find((b) => b.bill_id === billId) ?? DEMO[0]!;

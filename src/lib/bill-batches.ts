@@ -61,6 +61,8 @@ export type BillPlan = {
   vendorName: string;
   date: string;
   locationId: string;
+  /** The Zoho location's name, when Zoho gives it. */
+  locationName: string;
   status: string;
   modifiedAt: string;
   subTotal: number;
@@ -144,6 +146,7 @@ export function billPlan(raw: Record<string, unknown>): BillPlan {
     vendorName: text(raw["vendor_name"]),
     date: text(raw["date"]).slice(0, 10),
     locationId: text(raw["location_id"] ?? raw["branch_id"]),
+    locationName: text(raw["location_name"] ?? raw["branch_name"]),
     status,
     modifiedAt: text(raw["last_modified_time"]),
     subTotal: paise(num(raw["sub_total"])),
@@ -165,12 +168,13 @@ export function lineBlocker(line: BillLine, info: { productId: string; zohoTrack
 }
 
 /** A bill in the recent-bills list (GET /bills): only what the list shows. */
-export type BillSummary = { billId: string; billNumber: string; vendorName: string; date: string; total: number; status: string; locationId: string; modifiedAt: string };
+export type BillSummary = { billId: string; billNumber: string; vendorName: string; date: string; total: number; status: string; locationId: string; locationName: string; modifiedAt: string };
 export function billSummary(raw: Record<string, unknown>): BillSummary {
   return {
     billId: text(raw["bill_id"]), billNumber: text(raw["bill_number"]), vendorName: text(raw["vendor_name"]),
     date: text(raw["date"]).slice(0, 10), total: paise(num(raw["total"])), status: text(raw["status"]).toLowerCase(),
-    locationId: text(raw["location_id"] ?? raw["branch_id"]), modifiedAt: text(raw["last_modified_time"]),
+    locationId: text(raw["location_id"] ?? raw["branch_id"]), locationName: text(raw["location_name"] ?? raw["branch_name"]),
+    modifiedAt: text(raw["last_modified_time"]),
   };
 }
 
@@ -188,7 +192,9 @@ export function billChange(stored: { modifiedAt: string; total: number }, now: {
 
 /** Why a batch cannot be deleted, or "" when it can. Mirrors admin_delete_batch in the database. */
 export function batchDeleteBlocker<A extends { reserved_quantity: number; released_quantity: number }>(batch: { quantity: number; remaining_quantity: number }, allocations: A[], adjustments: number,
-  orderOf?: (allocation: A) => { order_status: string; payment_status: string } | undefined) {
+  orderOf?: (allocation: A) => { order_status: string; payment_status: string } | undefined, inTransfer = false) {
+  // Its units are at a godown in Zoho because of a transfer: deleting it would lose them here (10 Nov 2026).
+  if (inTransfer) return "This batch is part of a transfer between godowns, so it is kept for the record.";
   const held = allocations.reduce((sum, a) => sum + Math.max(0, a.reserved_quantity - a.released_quantity), 0);
   if (held > 0) return "Orders have taken stock from this batch, so it can't be deleted.";
   // Allowed when every order that used it was cancelled or expired with nothing paid (the database checks money too).

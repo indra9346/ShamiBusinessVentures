@@ -33,6 +33,7 @@ import {
 } from "@/lib/zoho-call-log";
 import { ZOHO_TOKEN_LIMIT_MESSAGE, createZohoTokenCache, isZohoTokenLimit, type ZohoTokenCache, type ZohoTokenReply } from "@/lib/zoho-token-cache";
 import { billChange, billPlan, billSummary, lineBlocker } from "@/lib/bill-batches";
+import { findTransferByNumber, isTransferred, readCreateAnswer, readZohoTransfer, transferOrderBody, type BatchTransfer } from "@/lib/batch-transfers";
 import {
   DEPOSIT_ACCOUNTS_KEY, depositAccountFor, depositAccountHint, godownOfPayment, parseDepositAccounts, withDepositAccount,
   zohoCustomerPaymentBody, zohoDepositAccountOptions, type DepositAccount, type DepositAccounts, type ZohoDepositAccountOption,
@@ -6407,7 +6408,18 @@ async function billWithLines(db: Awaited<ReturnType<typeof dbAdmin>>, billId: st
 export type BatchBillLine = Awaited<ReturnType<typeof billWithLines>>["plan"]["lines"][number];
 export type BatchBill = Awaited<ReturnType<typeof billWithLines>>["plan"];
 
-/** Recent Zoho bills at a godown, newest first, with how many of their lines already have a batch. One Zoho call. */
+/** A Zoho location's name: Zoho's own, else the godown linked to it, else a plain word. */
+async function locationNames(db: Awaited<ReturnType<typeof dbAdmin>>) {
+  const { data } = await db.from("branches").select("name,zoho_location_id").is("vendor_id", null).neq("zoho_location_id", "");
+  const byLocation = new Map(((data ?? []) as { name: string; zoho_location_id: string }[]).map((b) => [b.zoho_location_id, b.name]));
+  return (locationId: string, zohoName: string) => zohoName || byLocation.get(locationId) || (locationId ? "another Zoho location" : "");
+}
+
+/**
+ * Recent Zoho bills, newest first, wherever Zoho has them, with how many of their lines already have a batch. The
+ * admin picks the godown where the goods were unloaded; a bill at another Zoho location is moved there on receipt
+ * (client, 10 Nov 2026). One Zoho call.
+ */
 export const listBatchBills = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator(z.object({ branchId: z.string().trim().min(1).max(40) }))
@@ -6425,19 +6437,23 @@ export const listBatchBills = createServerFn({ method: "POST" })
       const message = cause instanceof Error ? cause.message : String(cause);
       throw new Error(`Could not read bills from Zoho (${message}).${billsPermissionHint(message)}`);
     }
-    // A bill names its location when the organisation uses locations; one without a location could be anywhere.
-    const bills = list.map(billSummary).filter((bill) => bill.status !== "void" && (!bill.locationId || !branch.zoho_location_id || bill.locationId === branch.zoho_location_id));
+    const nameOf = await locationNames(db);
+    const bills = list.map(billSummary).filter((bill) => bill.status !== "void");
     const ids = bills.map((bill) => bill.billId);
     const { data: batched } = ids.length ? await db.from("batches").select("zoho_bill_id").in("zoho_bill_id", ids) : { data: [] };
     const count = new Map<string, number>();
     for (const row of (batched ?? []) as { zoho_bill_id: string }[]) count.set(row.zoho_bill_id, (count.get(row.zoho_bill_id) ?? 0) + 1);
     return {
       godown: { id: branch.id, name: branch.name, zohoLinked: Boolean(branch.zoho_location_id) },
-      bills: bills.map((bill) => ({ ...bill, batchedLines: count.get(bill.billId) ?? 0, otherLocation: false })),
+      bills: bills.map((bill) => ({
+        ...bill, locationName: nameOf(bill.locationId, bill.locationName), batchedLines: count.get(bill.billId) ?? 0,
+        // A bill whose Zoho location is another place: receiving it here moves its units here in Zoho.
+        otherLocation: Boolean(bill.locationId && branch.zoho_location_id && bill.locationId !== branch.zoho_location_id),
+      })),
     };
   }));
 
-/** One bill with every line's price breakup, product and whether it has a batch. One Zoho call. */
+/** One bill with every line's price breakup, product and whether it has a batch, and where Zoho has it. One Zoho call. */
 export const getBatchBill = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator(z.object({ branchId: z.string().trim().min(1).max(40), billId: z.string().trim().min(1).max(40) }))
@@ -6446,13 +6462,17 @@ export const getBatchBill = createServerFn({ method: "POST" })
     const db = await dbAdmin();
     const branch = await batchGodown(db, data.branchId);
     const { plan } = await billWithLines(db, data.billId);
+    const nameOf = await locationNames(db);
     const otherGodown = Boolean(plan.locationId && branch.zoho_location_id && plan.locationId !== branch.zoho_location_id);
-    return { bill: plan, otherGodown };
+    return { bill: { ...plan, locationName: nameOf(plan.locationId, plan.locationName) }, otherGodown };
   }));
 
 /**
- * One batch per chosen bill line, all or none. The bill is read from Zoho again here, so the costs are Zoho's, not
- * the browser's. Nothing is sent to Zoho and no stock changes.
+ * One batch per chosen bill line, all or none, at the godown where the goods were unloaded (branchId). The bill is
+ * read from Zoho again here, so the costs and the bill's location are Zoho's, not the browser's.
+ *   Bill already at that godown in Zoho (or Zoho names no location): as before, nothing is sent to Zoho.
+ *   Bill at another Zoho location (another godown, Head Office): its units are moved to the godown in Zoho with a
+ *   transfer order first, and the batches are made only once Zoho has moved them (see runBatchTransfer).
  */
 export const createBatchesFromBill = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -6473,8 +6493,7 @@ export const createBatchesFromBill = createServerFn({ method: "POST" })
     const branch = await batchGodown(db, data.branchId);
     const { plan } = await billWithLines(db, data.billId);
     if (plan.status === "void") throw new Error("This bill is void in Zoho. Batches cannot be made from it.");
-    if (plan.locationId && branch.zoho_location_id && plan.locationId !== branch.zoho_location_id)
-      throw new Error(`Bill ${plan.billNumber} is for another godown in Zoho, not ${branch.name}.`);
+    const moveFrom = plan.locationId && branch.zoho_location_id && plan.locationId !== branch.zoho_location_id ? plan.locationId : "";
     const byId = new Map(plan.lines.map((line) => [line.lineId, line]));
     const rows = data.lines.map((pick) => {
       const line = byId.get(pick.lineId);
@@ -6485,16 +6504,169 @@ export const createBatchesFromBill = createServerFn({ method: "POST" })
         line_id: line.lineId, product_id: line.productId, zoho_item_id: line.itemId, qty: line.qty,
         unit_ex_gst: line.unitExGst, unit_inc_gst: line.unitIncGst,
         mfg_date: pick.mfgDate, expiry_date: pick.expiryDate, notes: pick.notes,
+        // For the Zoho transfer order when the bill is elsewhere.
+        name: line.name, unit: line.unit,
       };
     });
     const { data: profile } = await db.from("profiles").select("full_name").eq("id", context.userId).maybeSingle();
+    const bill = { bill_id: plan.billId, bill_number: plan.billNumber, vendor_name: plan.vendorName, date: plan.date, modified: plan.modifiedAt, total: plan.total };
+    if (moveFrom) {
+      const nameOf = await locationNames(db);
+      const { data: begun, error: beginError } = await db.rpc("begin_bill_receive", {
+        _branch_id: branch.id, _from_location_id: moveFrom, _from_location_name: nameOf(moveFrom, plan.locationName),
+        _bill: bill, _lines: rows, _cost_basis: data.costBasis, _by: context.userId, _by_name: str(profile?.full_name),
+      });
+      if (beginError || !begun) throw new Error(beginError?.message ?? "Could not start moving the bill");
+      const transfer = await runBatchTransfer(db, begun as unknown as BatchTransfer);
+      return {
+        made: transfer.status === "done" ? (transfer.result ?? []).map((m) => ({ line_id: m.line_id ?? "", batch_id: m.batch_id, batch_code: m.batch_code })) : [],
+        billNumber: plan.billNumber, transfer,
+      };
+    }
     const { data: made, error } = await db.rpc("create_batches_from_bill", {
-      _branch_id: branch.id,
-      _bill: { bill_id: plan.billId, bill_number: plan.billNumber, vendor_name: plan.vendorName, date: plan.date, modified: plan.modifiedAt, total: plan.total },
+      _branch_id: branch.id, _bill: bill,
       _lines: rows, _cost_basis: data.costBasis, _by: context.userId, _by_name: str(profile?.full_name),
     });
     if (error) throw new Error(error.message);
-    return { made: (made ?? []) as { line_id: string; batch_id: string; batch_code: string }[], billNumber: plan.billNumber };
+    return { made: (made ?? []) as { line_id: string; batch_id: string; batch_code: string }[], billNumber: plan.billNumber, transfer: null as BatchTransfer | null };
+  }));
+
+// ------------------------------------------------------------------ moving stock between godowns (client, 10 Nov 2026)
+
+/**
+ * Takes one website transfer through Zoho and finishes it here. The database already set the units aside under a
+ * fixed number (GB-TR-…), which is also the transfer order's number in Zoho:
+ *   1. First try: create the transfer order. Any later try: look the number up first (a lost reply may have made it),
+ *      and never create blindly.
+ *   2. Zoho made it but hasn't marked it received: mark it received.
+ *   3. Received in Zoho: finish here (new batches, godown stock moves).
+ * Zoho said no (nothing made): the transfer is cancelled and the units go back. No clear answer: it stays pending,
+ * noted, for Retry. Zoho's stock is never changed any other way.
+ */
+async function runBatchTransfer(db: Awaited<ReturnType<typeof dbAdmin>>, start: BatchTransfer): Promise<BatchTransfer> {
+  if (start.status !== "pending") return start;
+  const note = async (message: string, zohoId = "", zohoStatus = "") => {
+    const { data } = await db.rpc("note_batch_transfer_attempt", { _transfer_id: start.id, _error: message.slice(0, 480), _zoho_transfer_order_id: zohoId, _zoho_status: zohoStatus });
+    return (data ?? { ...start, last_error: message }) as unknown as BatchTransfer;
+  };
+  const cancel = async (message: string) => {
+    const { data, error } = await db.rpc("cancel_batch_transfer", { _transfer_id: start.id, _reason: message.slice(0, 480), _by: null as unknown as string });
+    if (error) throw new Error(error.message);
+    return data as unknown as BatchTransfer;
+  };
+  return withZohoPurpose(`Batch transfer ${start.transfer_no}`, async () => {
+    let found: { id: string; status: string } | null = null;
+    try {
+      const zoho = await openZohoInventory();
+      const today = todayInIndia();
+      if (start.zoho_transfer_order_id) {
+        const got = await zoho.send(`transferorders/${encodeURIComponent(start.zoho_transfer_order_id)}`, "GET");
+        found = readZohoTransfer(got.body?.["transfer_order"]);
+        if (!found) return await note(`Could not read transfer ${start.transfer_no} from Zoho (${got.status}): ${str(got.body?.["message"])}`);
+      } else if (start.attempts > 0) {
+        const list = await zoho.send("transferorders", "GET", undefined, { transfer_order_number: start.transfer_no });
+        if (list.status < 200 || list.status >= 300) return await note(`Could not look up ${start.transfer_no} in Zoho (${list.status}): ${str(list.body?.["message"])}`);
+        found = findTransferByNumber(list.body, start.transfer_no);
+      }
+      if (!found) {
+        const created = await zoho.send("transferorders", "POST", transferOrderBody(start, today), { ignore_auto_number_generation: "true" });
+        const answer = readCreateAnswer(created.status, created.body);
+        if (answer.kind === "refused") return await cancel(`Zoho refused transfer ${start.transfer_no}: ${answer.message}.${zohoPermissionHint(answer.message)}`);
+        if (answer.kind === "unknown") return await note(`${answer.message}. Press Retry: it looks ${start.transfer_no} up in Zoho first.`);
+        if (answer.kind === "exists") {
+          const list = await zoho.send("transferorders", "GET", undefined, { transfer_order_number: start.transfer_no });
+          found = findTransferByNumber(list.body, start.transfer_no);
+          if (!found) return await note(`Zoho says ${start.transfer_no} exists but could not find it. Press Retry.`);
+        } else found = { id: answer.id, status: answer.status };
+      }
+      if (found.status === "void") return await cancel(`Transfer ${start.transfer_no} is void in Zoho, so nothing moved.`);
+      if (!isTransferred(found.status)) {
+        await zoho.send(`transferorders/${encodeURIComponent(found.id)}/markastransferred`, "POST", undefined, { date: today });
+        const again = await zoho.send(`transferorders/${encodeURIComponent(found.id)}`, "GET");
+        found = readZohoTransfer(again.body?.["transfer_order"]) ?? found;
+      }
+    } catch (cause) {
+      // No answer at all (network, timeout): it may or may not be in Zoho. Retry looks it up.
+      return await note(`Zoho did not answer: ${cause instanceof Error ? cause.message : String(cause)}. Press Retry: it looks ${start.transfer_no} up in Zoho first.`, found?.id ?? "", found?.status ?? "");
+    }
+    const { data, error } = await db.rpc("finish_batch_transfer", { _transfer_id: start.id, _zoho_transfer_order_id: found.id, _zoho_status: found.status });
+    if (error) return await note(`Zoho moved it (${start.transfer_no}), but the website could not finish: ${error.message}. Press Retry.`, found.id, found.status);
+    return data as unknown as BatchTransfer;
+  });
+}
+
+async function adminName(db: Awaited<ReturnType<typeof dbAdmin>>, userId: string) {
+  const { data } = await db.from("profiles").select("full_name,email").eq("id", userId).maybeSingle();
+  return str(data?.full_name).trim() || str(data?.email).trim() || `Admin ${userId.slice(0, 8)}`;
+}
+
+/** Sends part of a batch (the super batch) to one or more other godowns: a Zoho transfer order and a new batch for each. */
+export const sendBatchToGodowns = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator(z.object({
+    batchId: z.string().uuid(),
+    targets: z.array(z.object({ branchId: z.string().trim().min(1).max(40), qty: z.number().positive().max(1_000_000) })).min(1).max(10),
+  }))
+  .handler(async ({ data, context }) => {
+    await ensureAdmin(context.supabase, context.userId);
+    const db = await dbAdmin();
+    const { data: begun, error } = await db.rpc("begin_batch_split", {
+      _batch_id: data.batchId, _targets: data.targets.map((t) => ({ branch_id: t.branchId, qty: Math.round(t.qty * 100) / 100 })),
+      _by: context.userId, _by_name: await adminName(db, context.userId),
+    });
+    if (error || !begun) throw new Error(error?.message ?? "Could not start the transfer");
+    const results: BatchTransfer[] = [];
+    // One at a time: each is its own Zoho transfer order.
+    for (const transfer of begun as unknown as BatchTransfer[]) results.push(await runBatchTransfer(db, transfer));
+    return results;
+  });
+
+/** Tries a pending transfer again: looks it up in Zoho by its number first, then finishes it. */
+export const retryBatchTransfer = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator(z.object({ transferId: z.number().int().positive() }))
+  .handler(async ({ data, context }) => {
+    await ensureAdmin(context.supabase, context.userId);
+    const db = await dbAdmin();
+    const { data: row, error } = await db.from("batch_transfers").select("id").eq("id", data.transferId).maybeSingle();
+    if (error || !row) throw new Error("Transfer not found");
+    // Noting the press also counts as a try, so runBatchTransfer looks the number up in Zoho before anything else.
+    const { data: current, error: readError } = await db.rpc("note_batch_transfer_attempt", { _transfer_id: data.transferId, _error: "Retry pressed", _zoho_transfer_order_id: "", _zoho_status: "" });
+    if (readError || !current) throw new Error("This transfer is not waiting any more. Refresh the page.");
+    return runBatchTransfer(db, current as unknown as BatchTransfer);
+  });
+
+/**
+ * Cancels a pending transfer, only once Zoho is seen not to have it (no transfer order with its number, or Zoho's is
+ * void). The units go back to the super batch, or the bill can be received again.
+ */
+export const cancelBatchTransfer = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator(z.object({ transferId: z.number().int().positive() }))
+  .handler(async ({ data, context }) => withZohoPurpose("Batch transfer: cancel", async () => {
+    await ensureAdmin(context.supabase, context.userId);
+    const db = await dbAdmin();
+    const { data: row, error } = await db.from("batch_transfers").select("id,transfer_no,status,zoho_transfer_order_id").eq("id", data.transferId).maybeSingle();
+    if (error || !row) throw new Error("Transfer not found");
+    if (row.status !== "pending") throw new Error(`Transfer ${row.transfer_no} is not waiting any more. Refresh the page.`);
+    const zoho = await openZohoInventory();
+    let inZoho: { id: string; status: string } | null = null;
+    if (row.zoho_transfer_order_id) {
+      const got = await zoho.send(`transferorders/${encodeURIComponent(row.zoho_transfer_order_id)}`, "GET");
+      if (got.status < 200 || got.status >= 300) throw new Error(`Could not check ${row.transfer_no} in Zoho, so it can't be cancelled yet. Try again.`);
+      inZoho = readZohoTransfer(got.body?.["transfer_order"]);
+    } else {
+      const list = await zoho.send("transferorders", "GET", undefined, { transfer_order_number: row.transfer_no });
+      if (list.status < 200 || list.status >= 300) throw new Error(`Could not check ${row.transfer_no} in Zoho, so it can't be cancelled yet. Try again.`);
+      inZoho = findTransferByNumber(list.body, row.transfer_no);
+    }
+    if (inZoho && inZoho.status !== "void")
+      throw new Error(`Zoho has transfer ${row.transfer_no} (${inZoho.status}). Press Retry to finish it, or void it in Zoho first and then cancel.`);
+    const { data: done, error: cancelError } = await db.rpc("cancel_batch_transfer", {
+      _transfer_id: data.transferId, _reason: `Cancelled by ${await adminName(db, context.userId)}: not in Zoho`, _by: context.userId,
+    });
+    if (cancelError) throw new Error(cancelError.message);
+    return done as unknown as BatchTransfer;
   }));
 
 /**
