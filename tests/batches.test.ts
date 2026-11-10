@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  addressLine, batchAdjustmentSheet, batchLineText, batchReportSheets, buildBatchReport, daysBetween, formatBatchCode, godownCodeOf, isBatchCode,
+  addressLine, batchAdjustmentSheet, batchLineText, batchReportSheets, buildBatchReport, costBasesOf, costBeforeGst, costCopyBeforeGst, costWithGst, daysBetween, formatBatchCode, godownCodeOf, isBatchCode,
   normalizeBatchCode, packageLinesWithBatches, planBatchGain, planBatchLoss, planZohoBatchIn, planZohoBatchOut, searchBatchReport, sumTotals,
   zohoBatchesAtLocation, zohoTracksBatches, type BatchOrder, type BatchRecord,
 } from "../src/lib/batches.ts";
@@ -194,6 +194,73 @@ test("batch report: sold, delivered, held, cancelled, lost, sales, profit, days 
   assert.deepEqual(losses.rows[1]!.slice(1, 8), ["CLK-201026-01", "Groundnut Oil 5L Can", "Challakere", -2, "Damaged / spoiled", "leak", -1600]);
   const file = buildXlsx([...sheets, losses]);
   assert.equal(String.fromCharCode(file[0]!, file[1]!), "PK");
+});
+
+test("GST is not a loss: a batch costed with GST from a bill compares its cost without GST with sales without GST", () => {
+  // Live on 10 Nov 2026: Ekadantha OIL 850ML, bill VS903, ₹130 with GST (₹123.81 without), 12 bought, 1 sold at ₹130
+  // with GST. The page said Sales ₹123.81, Cost of sold (with GST) ₹130, Loss ₹-6.19.
+  const ekadantha = batch({
+    id: "e1", batch_code: "CLK-031126-08", product_id: "ZI-3579709000003476321", product_name: "Ekadantha OIL 850ML", quantity: 12, remaining_quantity: 11,
+    unit_cost: 130, unit_cost_ex_gst: 123.81, unit_cost_inc_gst: 130, cost_basis: "inc_gst", status: "Active", depleted_at: null,
+    purchase_date: "2026-11-03", supplier: "SHAKTHIDHARA ENTERPRISES", purchase_ref: "VS903", zoho_bill_number: "VS903",
+  });
+  const sale = (over: Partial<BatchOrder> = {}) => order("o1", "Payment Confirmed", { subtotal: 123.81, gst_amount: 6.19, prices_include_gst: true, discount: 0, ...over });
+  const report = (adjustments: Parameters<typeof buildBatchReport>[0]["adjustments"] = [], extra: BatchRecord[] = []) => buildBatchReport({
+    batches: [ekadantha, ...extra],
+    allocations: [{ id: "a1", order_item_id: "i1", batch_id: "e1", reserved_quantity: 1, released_quantity: 0, unit_cost: 130, created_at: "" }],
+    items: [{ id: "i1", order_id: "o1", product_id: ekadantha.product_id, product_name: ekadantha.product_name, qty: 1, unit_price: 130, gst_rate: 5 }],
+    orders: [sale()],
+    adjustments,
+    godowns: [{ id: "BR-CLK", name: "Grain Bazar Challakere Godown" }],
+    today: "2026-11-10",
+  });
+  const row = report().rows[0]!;
+  assert.equal(row.sales, 123.81);
+  assert.equal(row.costOfSold, 123.81, "the cost of the sold unit is its cost without GST");
+  assert.equal(row.profit, 0, "no loss");
+  assert.equal(row.purchaseValue, 1485.72);
+  assert.equal(row.stockValue, 1361.91);
+  assert.equal(report().sales[0]!.cost, 123.81);
+  assert.equal(report().sales[0]!.profit, 0);
+
+  // A unit lost at a stock count copied the cost with GST too: it is valued without GST.
+  const lost = report([{ id: "x1", batch_id: "e1", qty: -1, reason: "damaged", note: "", unit_cost: 130, created_at: "2026-11-08T10:00:00Z", created_by_name: "Manju" }]).rows[0]!;
+  assert.equal(lost.lossValue, 123.81);
+  assert.equal(lost.profit, -123.81);
+
+  // Copies of either cost, or a cost edited by hand (taken as with GST), all end up before GST.
+  assert.equal(costCopyBeforeGst(ekadantha, 130), 123.81);
+  assert.equal(costCopyBeforeGst(ekadantha, 123.81), 123.81);
+  assert.equal(Math.round(costCopyBeforeGst(ekadantha, 136.5) * 100) / 100, 130);
+  assert.equal(costBeforeGst(ekadantha), 123.81);
+  assert.equal(costWithGst(ekadantha), 130);
+  // A bill batch stored without GST, and a cost typed in by hand, are used as they are.
+  const exBatch = batch({ unit_cost: 123.81, unit_cost_ex_gst: 123.81, unit_cost_inc_gst: 130, cost_basis: "ex_gst" });
+  assert.equal(costCopyBeforeGst(exBatch, 123.81), 123.81);
+  assert.equal(costBeforeGst(batch({ unit_cost: 800 })), 800);
+  assert.equal(costWithGst(batch({ unit_cost: 800 })), null);
+  // A bill batch missing one of its costs can't be corrected and is used as stored.
+  assert.equal(costCopyBeforeGst(batch({ unit_cost: 130, unit_cost_inc_gst: 130, unit_cost_ex_gst: null, cost_basis: "inc_gst" }), 130), 130);
+
+  // Only a cost typed in by hand needs a warning now.
+  assert.deepEqual(costBasesOf([{ batch: ekadantha }, { batch: exBatch }]), ["bill"]);
+  assert.deepEqual(costBasesOf([{ batch: ekadantha }, { batch: batch({}) }]), ["bill", "typed"]);
+
+  // Excel: both costs per unit, every money column before GST, and the loss sheet without GST.
+  const sheets = batchReportSheets(report(), { generatedAt: "2026-11-10T10:00:00Z", scope: "All godowns" });
+  const head = sheets[1]!.rows[0]!;
+  const cell = (label: string) => sheets[1]!.rows[1]![head.indexOf(label)];
+  assert.equal(cell("Cost per unit excl. GST (₹)"), 123.81);
+  assert.equal(cell("Cost per unit incl. GST (₹)"), 130);
+  assert.equal(cell("Cost of sold excl. GST (₹)"), 123.81);
+  assert.equal(cell("Profit (₹)"), 0);
+  assert.match(String(sheets[0]!.rows[2]![0]), /all before GST/);
+  const losses = batchAdjustmentSheet(
+    [{ id: "x1", batch_id: "e1", qty: -1, reason: "damaged", note: "", unit_cost: 130, created_at: "2026-11-08T10:00:00Z", created_by_name: "Manju" }],
+    new Map([["e1", { code: "CLK-031126-08", product: "Ekadantha OIL 850ML", godown: "Challakere", batch: ekadantha }]]),
+  );
+  assert.equal(losses.rows[0]![7], "Value at cost excl. GST (₹)");
+  assert.equal(losses.rows[1]![7], -123.81);
 });
 
 test("address line from a saved address", () => {

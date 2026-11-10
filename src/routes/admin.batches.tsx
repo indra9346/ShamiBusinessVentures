@@ -14,7 +14,7 @@ import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { downloadXlsx } from "@/lib/xlsx";
 import { supabase } from "@/integrations/supabase/client";
 import {
-  adjustmentReasonLabel, batchAdjustmentSheet, batchReportSheets, buildBatchReport, costBasesOf, costBasisName, formatBatchCode, istDate,
+  adjustmentReasonLabel, batchAdjustmentSheet, batchReportSheets, buildBatchReport, costBasesOf, costBasisName, costBeforeGst, costWithGst, formatBatchCode, istDate,
   searchBatchReport, sumTotals, type BatchAdjustment, type BatchReport, type BatchReportRow, type BatchSale,
 } from "@/lib/batches";
 import type { BatchData } from "@/lib/batches.functions";
@@ -125,7 +125,7 @@ function AdminBatches() {
       ...report, rows: scope, all: sumTotals(scope), sales: report.sales.filter((s) => ids.has(s.batchId)),
       godowns: report.godowns.filter((g) => !search.godown || g.godownId === search.godown),
     };
-    const codes = new Map(report.rows.map((r) => [r.batch.id, { code: r.batch.batch_code, product: r.batch.product_name, godown: r.godown }]));
+    const codes = new Map(report.rows.map((r) => [r.batch.id, { code: r.batch.batch_code, product: r.batch.product_name, godown: r.godown, batch: r.batch }]));
     const label = search.godown ? godownName(search.godown) : "All godowns";
     downloadXlsx(`batch-report-${label.replace(/[^A-Za-z0-9]+/g, "-").toLowerCase()}-${todayIst()}.xlsx`, [
       ...batchReportSheets(scoped, { generatedAt: data.generatedAt, scope: label }),
@@ -232,17 +232,18 @@ function BatchList({ report, data, search, go, status, setStatus, productFilter,
         <StatCard onClick={() => openList("stock")} compact label="Batches in stock" value={`${totals.active} / ${totals.batches}`} icon={Layers} description="with units left / all" />
         <StatCard onClick={() => openList("stock")} compact label="Units available" value={units(totals.available)} icon={PackageCheck} description={`of ${units(totals.purchased)} purchased`} />
         <StatCard onClick={() => openList("all")} compact label="Sales (excl. GST)" value={money(totals.sales)} icon={ShoppingCart} description={`${units(totals.sold)} units sold`} />
-        <StatCard onClick={() => openList("all")} compact label={totals.profit < 0 ? "Loss" : "Profit"} value={money(totals.profit)} icon={totals.profit < 0 ? TrendingDown : TrendingUp} highlight description="after cost and stock lost" />
+        <StatCard onClick={() => openList("all")} compact label={totals.profit < 0 ? "Loss" : "Profit"} value={money(totals.profit)} icon={totals.profit < 0 ? TrendingDown : TrendingUp} highlight description="sales less cost and stock lost, all before GST" />
         <StatCard onClick={() => openList("lost")} compact label="Stock lost" value={money(totals.lossValue)} icon={TrendingDown} description={`${units(totals.lost)} units (counts, damage)`} />
         <StatCard onClick={() => openList("soldout")} compact label="Avg. days to sell out" value={totals.averageDaysToSellOut === null ? "—" : String(totals.averageDaysToSellOut)} icon={Clock3} description="sold-out batches" />
       </div>
 
       {(() => {
+        // Bill batches are costed without GST for profit, like sales. A cost typed in by hand can't be told apart.
         const bases = costBasesOf(search.godown ? report.rows.filter((r) => r.batch.branch_id === search.godown) : report.rows);
-        return bases.length > 1 ? (
+        return bases.includes("typed") ? (
           <p className="flex gap-2 rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900">
             <AlertTriangle className="h-4 w-4 shrink-0" />
-            {`These totals add up batches costed differently (${bases.map((basis) => costBasisName({ cost_basis: basis === "typed" ? null : basis }).toLowerCase()).join(", ")}). Each batch shows which cost it uses.`}
+            Some batches have a cost typed in by hand. Their profit uses that cost as it was typed: if it included GST, their profit is understated by the GST. Batches made from a Zoho bill always use their cost without GST.
           </p>
         ) : null;
       })()}
@@ -456,9 +457,10 @@ function BatchDetail({ row, report, data, adjustments, orderId, go, onEdit, onDe
             {b.purchase_ref && <span>{`Bill / PO ${b.purchase_ref}`}</span>}
           </p>
           <p className="flex flex-wrap gap-x-2 text-xs text-slate [&>span+span]:before:mr-2 [&>span+span]:before:content-['·']">
-            <span>{`${costBasisName(b)}: ${money(b.unit_cost)} per unit`}</span>
-            {b.cost_basis && b.unit_cost_ex_gst !== null && b.unit_cost_ex_gst !== undefined && b.unit_cost_inc_gst !== null && b.unit_cost_inc_gst !== undefined
-              && <span>{b.cost_basis === "inc_gst" ? `Without GST ${money(Number(b.unit_cost_ex_gst))}` : `With GST ${money(Number(b.unit_cost_inc_gst))}`}</span>}
+            {b.cost_basis
+              ? <span>{`Cost without GST: ${money(costBeforeGst(b))} per unit`}</span>
+              : <span>{`Cost typed in: ${money(b.unit_cost)} per unit`}</span>}
+            {costWithGst(b) !== null && <span>{`With GST ${money(costWithGst(b)!)}`}</span>}
             {b.received_by_name && <span>{`Received by ${b.received_by_name}`}</span>}
             {b.source === "zoho" && <span>Made in Zoho</span>}
             {b.expiry_date && <span>{`Expiry ${day(b.expiry_date)}`}</span>}
@@ -540,10 +542,10 @@ function BatchDetail({ row, report, data, adjustments, orderId, go, onEdit, onDe
             </div>
           )}
           <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-5">
-            <Figure label="Purchase value" value={money(row.purchaseValue)} />
+            <Figure label="Purchase value (excl. GST)" value={money(row.purchaseValue)} />
             <Figure label="Sales (excl. GST)" value={money(row.sales)} />
-            <Figure label={b.cost_basis === "inc_gst" ? "Cost of sold (with GST)" : b.cost_basis === "ex_gst" ? "Cost of sold (without GST)" : "Cost of sold"} value={money(row.costOfSold)} />
-            <Figure label="Stock lost" value={money(row.lossValue)} tone={row.lossValue > 0 ? "bad" : undefined} />
+            <Figure label="Cost of sold (excl. GST)" value={money(row.costOfSold)} />
+            <Figure label="Stock lost (excl. GST)" value={money(row.lossValue)} tone={row.lossValue > 0 ? "bad" : undefined} />
             <Figure label={row.profit < 0 ? "Loss" : "Profit"} value={money(row.profit)} tone={row.profit < 0 ? "bad" : "good"} />
           </div>
           <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
@@ -794,7 +796,7 @@ function EditDialog({ row, onClose, onSaved }: { row: BatchReportRow; onClose: (
             : "Quantities change only through orders and stock counts. A new cost also updates the profit of sales already made."}</DialogDescription>
         </DialogHeader>
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Purchase cost per unit (₹)"><Input type="number" min="0" step="0.01" value={form.unitCost} onChange={set("unitCost")} disabled={fromBill} /></Field>
+          <Field label={fromBill ? "Purchase cost per unit (₹)" : "Purchase cost per unit, without GST (₹)"}><Input type="number" min="0" step="0.01" value={form.unitCost} onChange={set("unitCost")} disabled={fromBill} /></Field>
           <Field label="Supplier"><Input value={form.supplier} onChange={set("supplier")} disabled={fromBill} /></Field>
           <Field label="Bill / PO no."><Input value={form.purchaseRef} onChange={set("purchaseRef")} disabled={fromBill} /></Field>
           <Field label="Manufactured on"><Input type="date" value={form.mfgDate} onChange={set("mfgDate")} /></Field>

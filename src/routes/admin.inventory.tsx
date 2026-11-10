@@ -144,16 +144,16 @@ function AdminInventory() {
       return acc + val.totalValue;
     }, 0);
 
-    // Average gross margin across catalog (Selling Price vs FIFO Cost)
-    const marginSum = products.reduce((acc, p) => {
+    // Average gross margin (selling price vs FIFO cost, both before GST), over the products that have a purchase
+    // cost. A product with no batch has no known cost: counting it as free made every such product a 100% margin.
+    const costed = products.flatMap((p) => {
       const fifoCost = getFIFOCost(p.id);
       const avgPrice = getAverageSellingPrice(p);
-      const margin = avgPrice > 0 ? ((avgPrice - fifoCost) / avgPrice) * 100 : 0;
-      return acc + margin;
-    }, 0);
-    const avgMargin = products.length > 0 ? Math.round(marginSum / products.length) : 0;
+      return fifoCost > 0 && avgPrice > 0 ? [((avgPrice - fifoCost) / avgPrice) * 100] : [];
+    });
+    const avgMargin = costed.length > 0 ? Math.round(costed.reduce((sum, margin) => sum + margin, 0) / costed.length) : null;
 
-    return { total: products.length, inStock, low, out, fifoTotalValuation, avgMargin };
+    return { total: products.length, inStock, low, out, fifoTotalValuation, avgMargin, costedProducts: costed.length };
   }, [products, getFIFOCost, getInventoryValuation, getAverageSellingPrice]);
 
   const filtered = useMemo(() => {
@@ -253,9 +253,9 @@ function AdminInventory() {
         "Vendor",
         "Stock Units",
         "Stock Status",
-        "FIFO Unit Cost (INR)",
-        "Avg Selling Price (INR)",
-        "FIFO Valuation (INR)",
+        "FIFO Unit Cost excl. GST (INR)",
+        "Avg Selling Price excl. GST (INR)",
+        "FIFO Valuation excl. GST (INR)",
       ],
       filtered.map((p) => {
         const fifoCost = getFIFOCost(p.id);
@@ -294,8 +294,10 @@ function AdminInventory() {
           value={inr(stats.fifoTotalValuation)}
           icon={IndianRupee}
           highlight
+          description="at cost before GST"
         />
-        <StatCard onClick={() => openList("All")} label="Avg. Gross Margin" value={`${stats.avgMargin}%`} icon={Percent} />
+        <StatCard onClick={() => openList("All")} label="Avg. Gross Margin" value={stats.avgMargin === null ? "—" : `${stats.avgMargin}%`} icon={Percent}
+          description={stats.costedProducts ? `before GST, ${stats.costedProducts} product${stats.costedProducts === 1 ? "" : "s"} with a purchase cost` : "no product has a purchase cost yet"} />
       </div>
 
       <Panel
@@ -368,9 +370,9 @@ function AdminInventory() {
             "15 Day Need",
             "20 Day Need",
             "Suggested Purchase",
-            "FIFO Unit Cost",
-            "Avg. Selling Price",
-            "FIFO Inventory Value",
+            "FIFO Unit Cost (excl. GST)",
+            "Avg. Selling Price (excl. GST)",
+            "FIFO Inventory Value (excl. GST)",
             "Status",
             "Actions",
           ]}
@@ -500,7 +502,7 @@ function AdminInventory() {
                   <strong className="text-navy">{batchViewProduct.stock}</strong>
                 </div>
                 <div>
-                  <span className="text-slate">Next FIFO Unit Cost:</span>{" "}
+                  <span className="text-slate">Next FIFO Unit Cost (excl. GST):</span>{" "}
                   <strong className="text-navy">{inr(getFIFOCost(batchViewProduct.id))}</strong>
                 </div>
                 <div>
@@ -519,7 +521,7 @@ function AdminInventory() {
                       <th className="p-2">Purchase Date</th>
                       <th className="p-2">Initial Qty</th>
                       <th className="p-2">Remaining Qty</th>
-                      <th className="p-2">Unit Purchase Cost</th>
+                      <th className="p-2">Unit Cost (excl. GST)</th>
                       <th className="p-2">Layer Value</th>
                       <th className="p-2">Status</th>
                     </tr>
@@ -540,9 +542,9 @@ function AdminInventory() {
                           <td className="p-2 text-slate">{b.purchaseDate}</td>
                           <td className="p-2 text-charcoal">{b.quantity}</td>
                           <td className="p-2 font-bold text-navy">{b.remainingQty}</td>
-                          <td className="p-2 text-charcoal">{inr(b.unitCost)}</td>
+                          <td className="p-2 text-charcoal">{inr(b.costBeforeGst ?? b.unitCost)}</td>
                           <td className="p-2 font-semibold text-gold">
-                            {inr(b.remainingQty * b.unitCost)}
+                            {inr(b.remainingQty * (b.costBeforeGst ?? b.unitCost))}
                           </td>
                           <td className="p-2">
                             <span
@@ -607,7 +609,7 @@ function AdminInventory() {
                 />
               </div>
               <div className="grid gap-1.5">
-                <Label>Purchase Cost/Unit (₹)</Label>
+                <Label>Purchase Cost/Unit, without GST (₹)</Label>
                 <Input
                   type="number"
                   min={1}

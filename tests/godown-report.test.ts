@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildGodownReport, godownReportSheets, istHour, istRange, istStamp, istToday, NO_GODOWN, profitOrLoss, type ReportOrder } from "../src/lib/godown-report.ts";
+import { buildGodownReport, godownReportSheets, istHour, istRange, istStamp, istToday, NO_GODOWN, profitOrLoss, SALES_HEADER, saleRow, type ReportOrder } from "../src/lib/godown-report.ts";
 
 const order = (id: string, extra: Partial<ReportOrder> = {}): ReportOrder => ({
   id, order_no: `CLK-577522-271026-10000${id}`, branch_id: "BR-CLK", created_at: "2026-10-27T05:00:00Z", // 10:30 IST
@@ -127,4 +127,34 @@ test("refunds, delivered orders, vendor pickup points and the Excel sheets", () 
   assert.deepEqual(one.map((s) => s.name), ["Summary", "Challakere"]);
   assert.ok(one[1]!.rows.every((row) => row[1] !== "Vendor point Hosur"));
   assert.equal(istStamp("2026-10-27T05:40:04Z"), "27-10-2026 11:10");
+});
+
+test("every money column before GST: the rate shown is the line's rate before GST, so each row adds up", () => {
+  // From 7 Nov 2026 prices include GST: Ekadantha oil at ₹130 is ₹123.81 + ₹6.19 GST. Its Zoho purchase rate is
+  // ₹123.81 (entered without GST, like sales), so the sale makes no loss.
+  const report = buildGodownReport({
+    godowns: [{ id: "BR-CLK", name: "Challakere" }],
+    orders: [order("9", { subtotal: 123.81, gst_amount: 6.19, total: 130, paid_amount: 130 })],
+    items: [{ id: "i9", order_id: "9", product_id: "OIL", product_name: "Ekadantha OIL 850ML", qty: 1, unit_price: 130, line_total: 123.81 }],
+    costs: { OIL: 123.81 },
+    commissions: {},
+  });
+  const line = report.lines[0]!;
+  assert.equal(line.unitPrice, 130, "the price the customer saw is kept");
+  assert.equal(line.rateExGst, 123.81);
+  assert.equal(line.margin, 0);
+  assert.equal(report.godowns[0]!.lossBelowCost, 0);
+  assert.equal(SALES_HEADER[6], "Rate excl. GST (₹)");
+  assert.equal(SALES_HEADER[8], "Purchase rate excl. GST (₹)");
+  const row = saleRow(line);
+  assert.deepEqual(row.slice(5, 11), [1, 123.81, 123.81, 123.81, 123.81, 0], "qty × rate = sale; sale − cost = profit");
+  // Two units: the rate is the line total over the quantity, to the paisa.
+  const two = buildGodownReport({
+    godowns: [{ id: "BR-CLK", name: "Challakere" }],
+    orders: [order("8", { subtotal: 247.62, gst_amount: 12.38, total: 260 })],
+    items: [{ id: "i8", order_id: "8", product_id: "OIL", product_name: "Ekadantha OIL 850ML", qty: 2, unit_price: 130, line_total: 247.62 }],
+    costs: { OIL: 123.81 },
+    commissions: {},
+  });
+  assert.equal(two.lines[0]!.rateExGst, 123.81);
 });

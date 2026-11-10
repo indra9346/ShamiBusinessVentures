@@ -42,6 +42,13 @@ export function lineFigures(price: number, qty: number, gstPercent: number) {
 export const addGst = (beforeGst: number, gstPercent: number) => toPaise((beforeGst * (100 + gstPercent)) / 100);
 
 /**
+ * A price before GST, for comparing with a cost before GST: a price that includes GST has it taken out
+ * (₹130 at 5% → ₹123.81, unrounded); one that doesn't is already before GST.
+ */
+export const priceBeforeGst = (price: number, gstPercent: number, includesGst: boolean) =>
+  (includesGst ? (Number(price) * 100) / (100 + (Number(gstPercent) || 0)) : Number(price));
+
+/**
  * The coupon discount place_marketplace_order_with_coupon stores: a percentage of the goods
  * total the customer sees (GST included), capped at the coupon's maximum (no cap when it has
  * none), or a fixed amount up to that total.

@@ -5,7 +5,7 @@ import dalImg from "@/assets/p-dal.jpg";
 import premiumRiceCategoryImg from "@/assets/category-rice-premium.jpg";
 import premiumSugarCategoryImg from "@/assets/category-sugar-premium.jpg";
 import premiumOilCategoryImg from "@/assets/category-oil-premium.jpg";
-import { rateForPackPrice } from "@/lib/pricing";
+import { priceBeforeGst, rateForPackPrice } from "@/lib/pricing";
 import { shownOnStorefront } from "@/lib/storefront-visibility";
 
 export const inr = (n: number) =>
@@ -241,10 +241,15 @@ export type PurchaseBatch = {
   purchaseDate: string; // ISO date format YYYY-MM-DD
   quantity: number;     // initial batch quantity
   remainingQty: number; // remaining available units
-  unitCost: number;     // purchase cost per unit
+  unitCost: number;     // purchase cost per unit, as stored (a bill batch may store it with GST)
+  /** The cost per unit before GST (batches.ts costBeforeGst): what valuation and margins use, like sales. */
+  costBeforeGst?: number;
   warehouse: string;
   status: "Active" | "Depleted";
 };
+
+/** A batch's cost per unit before GST: the stored cost when the batch didn't say otherwise. */
+const batchCost = (b: Pick<PurchaseBatch, "unitCost" | "costBeforeGst">) => b.costBeforeGst ?? b.unitCost;
 
 export const categories = [
   { name: "Sugar", icon: "Candy", subs: ["S1 Sugar", "S2 Sugar", "M30 Sugar"], count: 42 },
@@ -659,14 +664,14 @@ export function getCurrentFIFOCost(productId: string, batchList: PurchaseBatch[]
     .sort((a, b) => new Date(a.purchaseDate).getTime() - new Date(b.purchaseDate).getTime());
 
   if (activeBatches.length > 0) {
-    return activeBatches[0]!.unitCost;
+    return batchCost(activeBatches[0]!);
   }
   const allBatches = batchList
     .filter((b) => b.productId === productId)
     .sort((a, b) => new Date(b.purchaseDate).getTime() - new Date(a.purchaseDate).getTime());
 
   if (allBatches.length > 0) {
-    return allBatches[0]!.unitCost;
+    return batchCost(allBatches[0]!);
   }
   return Math.round(fallbackPrice * 0.78);
 }
@@ -685,7 +690,7 @@ export function calculateInventoryValuation(
 } {
   const productBatches = batchList.filter((b) => b.productId === productId && b.remainingQty > 0);
   const totalUnits = productBatches.reduce((s, b) => s + b.remainingQty, 0);
-  const totalValue = productBatches.reduce((s, b) => s + b.remainingQty * b.unitCost, 0);
+  const totalValue = productBatches.reduce((s, b) => s + b.remainingQty * batchCost(b), 0);
   const avgCost = totalUnits > 0 ? Math.round((totalValue / totalUnits) * 100) / 100 : 0;
   const fifoUnitCost = getCurrentFIFOCost(productId, batchList);
 
@@ -693,7 +698,8 @@ export function calculateInventoryValuation(
 }
 
 /**
- * Calculates the average selling price for an item based on actual order history.
+ * The average selling price of an item before GST, from its order history (each order says whether its prices
+ * included GST), else its catalogue price, which includes GST. Compared with the batch cost before GST.
  */
 export function getProductAverageSellingPrice(
   product: Product,
@@ -705,7 +711,7 @@ export function getProductAverageSellingPrice(
   for (const ord of ordersList) {
     for (const it of ord.items) {
       if (it.product.id === product.id) {
-        totalRevenue += it.product.price * it.qty;
+        totalRevenue += priceBeforeGst(it.unitPrice ?? it.product.price, it.gstRate ?? it.product.gst, Boolean(ord.pricesIncludeGst)) * it.qty;
         totalQty += it.qty;
       }
     }
@@ -714,7 +720,7 @@ export function getProductAverageSellingPrice(
   if (totalQty > 0) {
     return Math.round((totalRevenue / totalQty) * 100) / 100;
   }
-  return product.price;
+  return Math.round(priceBeforeGst(product.price, product.gst, true) * 100) / 100;
 }
 
 export type OrderStatus =

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { priceLotTotals, rateForPackPrice, type PriceLotInput } from "../src/lib/pricing.ts";
+import { priceBeforeGst, priceLotTotals, rateForPackPrice, type PriceLotInput } from "../src/lib/pricing.ts";
 
 const lot = (over: Partial<PriceLotInput>): PriceLotInput => ({
   price: 0, commission: 0, gstRate: 5, transport: 0, amaliTransport: 0, amaliShami: 0,
@@ -80,4 +80,11 @@ test("typing the selling price works the per-QTL rate back out (admin product fo
   // 25 kg bag = 0.25 QTL; 1 L of a 15 L tin per litre = 15
   assert.equal(rateForPackPrice(1499, 0.25), 5996);
   assert.equal(rateForPackPrice(2250, 15), 150);
+});
+
+test("a price before GST, for comparing with a cost before GST", () => {
+  assert.equal(Math.round(priceBeforeGst(130, 5, true) * 100) / 100, 123.81);
+  assert.equal(priceBeforeGst(123.81, 5, false), 123.81, "orders before 7 Nov added GST on top: already before GST");
+  assert.equal(priceBeforeGst(100, 0, true), 100);
+  assert.equal(Math.round(priceBeforeGst(198.44, 5, true) * 100) / 100, 188.99);
 });

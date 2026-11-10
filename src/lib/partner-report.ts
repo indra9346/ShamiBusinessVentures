@@ -198,13 +198,14 @@ export const ADMIN_PARTNER_COLUMNS: Column[] = [
   ...PARTNER_COLUMNS.slice(7),
 ];
 
-const LINE_HEADER_PARTNER = ["Date & time (IST)", "Godown", "Order", "Customer", "Product", "Qty", "Rate (₹)", "Sale excl. GST (₹)",
+// Money columns before GST, so qty × rate = sale (unit_price includes GST on orders from 7 Nov 2026).
+export const LINE_HEADER_PARTNER = ["Date & time (IST)", "Godown", "Order", "Customer", "Product", "Qty", "Rate excl. GST (₹)", "Sale excl. GST (₹)",
   "Commission rate", "Commission (₹)", "Commission status", "Order status", "Payment"];
-const LINE_HEADER_ADMIN = [...LINE_HEADER_PARTNER.slice(0, 8), "Purchase rate (₹)", "Cost (₹)", "Profit / loss (₹)", ...LINE_HEADER_PARTNER.slice(8), "Zoho invoice"];
-const lineRow = (line: PartnerLine, admin: boolean) => admin
-  ? [istStamp(line.time), line.godown, line.orderNo, line.customer, line.product, line.qty, line.unitPrice, line.lineTotal,
+export const LINE_HEADER_ADMIN = [...LINE_HEADER_PARTNER.slice(0, 8), "Purchase rate excl. GST (₹)", "Cost excl. GST (₹)", "Profit / loss (₹)", ...LINE_HEADER_PARTNER.slice(8), "Zoho invoice"];
+export const lineRow = (line: PartnerLine, admin: boolean) => admin
+  ? [istStamp(line.time), line.godown, line.orderNo, line.customer, line.product, line.qty, line.rateExGst, line.lineTotal,
     line.unitCost, line.cost, line.margin, line.rate, line.commission, line.commissionStatus, line.orderStatus, line.paymentStatus, line.invoice]
-  : [istStamp(line.time), line.godown, line.orderNo, line.customer, line.product, line.qty, line.unitPrice, line.lineTotal,
+  : [istStamp(line.time), line.godown, line.orderNo, line.customer, line.product, line.qty, line.rateExGst, line.lineTotal,
     line.rate, line.commission, line.commissionStatus, line.orderStatus, line.paymentStatus];
 
 /**

@@ -12,11 +12,14 @@ import { cn } from "@/lib/utils";
 
 /*
  * Admin > Batches > Receive purchase: a batch per line of a Zoho bill. The admin picks the godown where the goods were
- * unloaded and a recent bill; every line loads with its price breakup and both unit costs; the admin chooses which cost
- * this bill's batches use, may add manufacture / expiry dates and notes, and presses one button. A bill already at that
- * godown in Zoho changes nothing in Zoho (the bill brought the stock in). A bill at another Zoho location (another
- * godown, Head Office) is moved to the unloading godown with a Zoho transfer order first (client, 10 Nov 2026).
+ * unloaded and a recent bill; every line loads with its price breakup and both unit costs; the admin may add
+ * manufacture / expiry dates and notes, and presses one button. A bill already at that godown in Zoho changes nothing
+ * in Zoho (the bill brought the stock in). A bill at another Zoho location (another godown, Head Office) is moved to the
+ * unloading godown with a Zoho transfer order first (client, 10 Nov 2026).
+ * Batches use the cost without GST (10 Nov 2026). The business claims back the GST it pays, and sales are counted
+ * without GST, so a cost with GST showed the GST as a loss. Both costs are still saved on each batch.
  */
+const BASIS: CostBasis = "ex_gst";
 
 type Godown = { id: string; name: string; zohoLinked: boolean };
 type BillRow = { billId: string; billNumber: string; vendorName: string; date: string; total: number; status: string; batchedLines: number; locationName: string; otherLocation: boolean };
@@ -39,7 +42,7 @@ export function ReceiveFromBillDialog({ open, onOpenChange, godowns, defaultGodo
   const [bill, setBill] = useState<Bill | null>(null);
   const [otherGodown, setOtherGodown] = useState(false);
   const [billError, setBillError] = useState("");
-  const [basis, setBasis] = useState<CostBasis | "">("");
+  const basis = BASIS;
   const [extras, setExtras] = useState<Record<string, Extra>>({});
   const [busy, setBusy] = useState(false);
 
@@ -66,7 +69,7 @@ export function ReceiveFromBillDialog({ open, onOpenChange, godowns, defaultGodo
   useEffect(() => { if (open && branchId) void loadBills(branchId); }, [open, branchId, loadBills]);
 
   const pick = async (billId: string) => {
-    setLoading(true); setBillError(""); setBill(null); setBasis(""); setExtras({});
+    setLoading(true); setBillError(""); setBill(null); setExtras({});
     try {
       if (STATIC_DATA_MODE) { setBill(demoBill(billId)); setOtherGodown(false); return; }
       const { getBatchBill } = await import("@/lib/zoho-commerce.functions");
@@ -88,7 +91,6 @@ export function ReceiveFromBillDialog({ open, onOpenChange, godowns, defaultGodo
 
   const create = async (): Promise<void> => {
     if (!bill || blockedBill) return;
-    if (!basis) return void toast.error("Choose cost without GST or cost with GST for this bill");
     if (!open_.length) return void toast.error("Every line of this bill already has a batch or can't have one");
     setBusy(true);
     try {
@@ -187,19 +189,9 @@ export function ReceiveFromBillDialog({ open, onOpenChange, godowns, defaultGodo
             )}
             {bill.warnings.map((w) => <Warning key={w} text={w} />)}
 
-            <fieldset className="grid gap-2 rounded-lg border border-border p-3">
-              <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-slate">Cost these batches use</legend>
-              <div className="grid gap-2 sm:grid-cols-2">
-                {(["ex_gst", "inc_gst"] as const).map((value) => (
-                  <label key={value} className={cn("flex cursor-pointer items-start gap-2 rounded-md border p-2 text-sm", basis === value ? "border-navy bg-navy/5" : "border-border")}>
-                    <input type="radio" name="cost-basis" className="mt-1" checked={basis === value} onChange={() => setBasis(value)} />
-                    <span><span className="block font-semibold">{value === "ex_gst" ? "Cost without GST" : "Cost with GST"}</span>
-                      <span className="block text-xs text-slate">{value === "ex_gst" ? "Taxable amount per unit. Use when GST paid is claimed back." : "Taxable amount plus GST per unit. Use when GST paid is a cost."}</span></span>
-                  </label>
-                ))}
-              </div>
-              <p className="text-xs text-slate">Both costs are saved on each batch. Profit uses the one chosen here and says which.</p>
-            </fieldset>
+            <p className="rounded-lg border border-border p-3 text-xs text-slate">
+              These batches use the <span className="font-semibold text-navy">cost without GST</span>, because the GST paid on purchases is claimed back and sales are counted without GST too. Both costs are saved on each batch.
+            </p>
 
             <div className="grid gap-2">
               {bill.lines.map((line) => (
@@ -236,8 +228,8 @@ export function ReceiveFromBillDialog({ open, onOpenChange, godowns, defaultGodo
               ))}
             </div>
 
-            {basis && open_.length > 0 && (
-              <p className="text-sm font-semibold">{`${open_.length} batch${open_.length === 1 ? "" : "es"} · purchase value ${money(open_.reduce((sum, line) => sum + costOf(line, basis) * line.qty, 0))} (${basis === "inc_gst" ? "cost with GST" : "cost without GST"})`}</p>
+            {open_.length > 0 && (
+              <p className="text-sm font-semibold">{`${open_.length} batch${open_.length === 1 ? "" : "es"} · purchase value ${money(open_.reduce((sum, line) => sum + costOf(line, basis) * line.qty, 0))} without GST`}</p>
             )}
           </div>
         )}
@@ -245,7 +237,7 @@ export function ReceiveFromBillDialog({ open, onOpenChange, godowns, defaultGodo
         <DialogFooter className="gap-2">
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
           {bill && (
-            <Button className="bg-navy text-white" disabled={busy || blockedBill || !basis || open_.length === 0} onClick={() => void create()}>
+            <Button className="bg-navy text-white" disabled={busy || blockedBill || open_.length === 0} onClick={() => void create()}>
               {busy ? (otherGodown ? "Moving in Zoho…" : "Saving…") : open_.length === 0 ? "All lines done" : otherGodown ? `Move to ${godownName} and create ${open_.length} batch${open_.length === 1 ? "" : "es"}` : `Create ${open_.length} batch${open_.length === 1 ? "" : "es"}`}
             </Button>
           )}
