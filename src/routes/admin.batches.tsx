@@ -567,7 +567,7 @@ function BatchDetail({ row, report, data, adjustments, orderId, go, onEdit, onDe
           <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
             <Figure label={row.daysToSellOut === null ? "Days in stock" : "Days to sell out"} value={String(row.daysToSellOut ?? row.ageDays ?? "—")} />
             <Figure label="First sale" value={row.firstSale ? day(istDate(row.firstSale)) : "—"} />
-            <Figure label="Sold out on" value={b.depleted_at ? day(istDate(b.depleted_at)) : "—"} />
+            <Figure label={b.depleted_at && row.daysToSellOut === null ? "Emptied on" : "Sold out on"} value={b.depleted_at ? day(istDate(b.depleted_at)) : "—"} />
             <Figure label="Customers" value={String(row.customers)} />
           </div>
           {(row.ledgerGap !== 0 || (row.zohoGap !== null && row.zohoGap !== 0)) && (

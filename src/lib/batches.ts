@@ -411,9 +411,10 @@ export function buildBatchReport(input: {
     }
     t.profit = paise(t.sales - t.costOfSold - t.lossValue);
     const purchaseDate = batch.purchase_date ?? istDate(batch.created_at);
-    const soldOut = batch.depleted_at ? istDate(batch.depleted_at) : null;
     const ledger = qty(t.purchased + t.received - t.sent - t.sold - t.held - t.lost + t.gained);
     const handled = t.purchased + t.received - t.sent;
+    // Sold out means the units it kept were sold: a batch emptied by sending everything to other godowns is not.
+    const soldOut = batch.depleted_at && handled > 0.0005 ? istDate(batch.depleted_at) : null;
     rows.push({
       ...t,
       batch,
@@ -564,7 +565,7 @@ export const BATCH_COLUMNS: [string, (row: BatchReportRow) => string | number | 
   ["Customers", (r) => r.customers],
   ["First sale", (r) => dmy(r.firstSale ? istDate(r.firstSale) : null)],
   ["Last sale", (r) => dmy(r.lastSale ? istDate(r.lastSale) : null)],
-  ["Sold out on", (r) => dmy(r.batch.depleted_at ? istDate(r.batch.depleted_at) : null)],
+  ["Sold out on", (r) => dmy(r.batch.depleted_at && r.daysToSellOut !== null ? istDate(r.batch.depleted_at) : null)],
   ["Days to sell out", (r) => r.daysToSellOut],
   ["Age (days)", (r) => r.ageDays],
   ["Status", (r) => (r.available > 0 ? "In stock" : "Sold out")],

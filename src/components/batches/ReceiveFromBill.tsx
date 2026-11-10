@@ -91,6 +91,8 @@ export function ReceiveFromBillDialog({ open, onOpenChange, godowns, defaultGodo
   // Being moved to another godown: that transfer is retried or cancelled first (the server refuses too). Being moved
   // here: pressing again tries that same transfer again.
   const movingElsewhere = Boolean(movingTo && movingTo.godownId !== branchId);
+  // Being moved here already: a press only tries that move again, with the lines, dates and notes it was started with.
+  const resuming = Boolean(movingTo && movingTo.godownId === branchId);
   const blockedBill = !bill || bill.status === "void" || movingElsewhere;
   const godownName = godowns.find((g) => g.id === branchId)?.name ?? "this godown";
   const extra = (lineId: string): Extra => extras[lineId] ?? { mfgDate: "", expiryDate: "", notes: "" };
@@ -199,7 +201,7 @@ export function ReceiveFromBillDialog({ open, onOpenChange, godowns, defaultGodo
             )}
             {movingTo && (
               <Warning text={movingTo.godownId === branchId
-                ? `This bill is already being moved here in Zoho (${movingTo.transferNo}) and waits for Zoho. Pressing below tries that same transfer again: it looks it up in Zoho first and never makes a second one.`
+                ? `This bill is already being moved here in Zoho (${movingTo.transferNo}) and waits for Zoho. Pressing below tries that same transfer again, with the lines, dates and notes it was started with: it looks it up in Zoho first and never makes a second one.`
                 : `This bill is being moved to ${movingTo.godownName} in Zoho (${movingTo.transferNo}). Press Retry or Cancel on it under Transfers waiting for Zoho before receiving it anywhere else.`} />
             )}
             {bill.warnings.map((w) => <Warning key={w} text={w} />)}
@@ -232,7 +234,7 @@ export function ReceiveFromBillDialog({ open, onOpenChange, godowns, defaultGodo
                     <Item label="Cost per unit without GST" value={money(line.unitExGst)} strong={basis === "ex_gst"} />
                     <Item label="Cost per unit with GST" value={money(line.unitIncGst)} strong={basis === "inc_gst"} />
                   </dl>
-                  {!line.blocker && (
+                  {!line.blocker && !resuming && (
                     <div className="grid gap-2 sm:grid-cols-3">
                       <label className="grid gap-1 text-xs font-semibold text-slate">Manufactured on<Input type="date" value={extra(line.lineId).mfgDate} onChange={(e) => setExtra(line.lineId, "mfgDate", e.target.value)} /></label>
                       <label className="grid gap-1 text-xs font-semibold text-slate">Expiry date<Input type="date" value={extra(line.lineId).expiryDate} onChange={(e) => setExtra(line.lineId, "expiryDate", e.target.value)} /></label>
@@ -253,7 +255,7 @@ export function ReceiveFromBillDialog({ open, onOpenChange, godowns, defaultGodo
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
           {bill && (
             <Button className="bg-navy text-white" disabled={busy || blockedBill || open_.length === 0} onClick={() => void create()}>
-              {busy ? (otherGodown ? "Moving in Zoho…" : "Saving…") : open_.length === 0 ? "All lines done" : otherGodown ? `Move to ${godownName} and create ${open_.length} batch${open_.length === 1 ? "" : "es"}` : `Create ${open_.length} batch${open_.length === 1 ? "" : "es"}`}
+              {busy ? (otherGodown ? "Moving in Zoho…" : "Saving…") : resuming && movingTo ? `Try ${movingTo.transferNo} again` : open_.length === 0 ? "All lines done" : otherGodown ? `Move to ${godownName} and create ${open_.length} batch${open_.length === 1 ? "" : "es"}` : `Create ${open_.length} batch${open_.length === 1 ? "" : "es"}`}
             </Button>
           )}
         </DialogFooter>

@@ -65,7 +65,7 @@ export const getBatchData = createServerFn({ method: "GET" })
       allRows((from, to) => db.from("batch_code_reservations").select("code").order("code").range(from, to), "batch numbers"),
       // Moves between godowns (10 Nov 2026): received bills at another place, batches sent to other godowns.
       allRows((from, to) => db.from("batch_transfers")
-        .select("id,transfer_no,kind,status,from_branch_id,from_location_id,from_location_name,to_branch_id,to_location_id,parent_batch_id,quantity,bill,lines,zoho_transfer_order_id,zoho_status,attempts,last_error,result,created_at,created_by_name,sent_at,received_at,received_by_name,received_by_role")
+        .select("id,transfer_no,kind,status,from_branch_id,from_location_id,from_location_name,to_branch_id,to_location_id,parent_batch_id,quantity,bill,lines,zoho_transfer_order_id,zoho_status,attempts,last_error,result,created_at,created_by_name,sent_at,received_at,received_by_name,received_by_role,create_sent_at,zoho_number_taken")
         .order("id", { ascending: false }).range(from, to), "transfers between godowns"),
     ]);
     if (branchesResult.error || masterResult.error) throw new Error("Could not read godowns and settings");

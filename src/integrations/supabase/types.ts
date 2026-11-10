@@ -223,7 +223,8 @@ export type Database = {
           quantity: number | null; bill: Json | null; cost_basis: string | null; lines: Json; zoho_transfer_order_id: string; zoho_status: string;
           attempts: number; last_error: string; result: Json | null; created_by: string | null; created_by_name: string; created_at: string; finished_at: string | null
           sent_at: string | null; received_at: string | null; received_by: string | null; received_by_name: string; received_by_role: string | null
-          claim_id: string | null; claimed_until: string | null; create_sent_at: string | null
+          claim_id: string | null; claimed_until: string | null; create_sent_at: string | null; zoho_number_taken: boolean
+          request_id: string | null; reserved: number
         }
         Insert: Record<string, never>
         Update: Record<string, never>
@@ -1421,10 +1422,10 @@ export type Database = {
       create_batches_from_bill: { Args: { _branch_id: string; _bill: Json; _lines: Json; _cost_basis: string; _by: string | null; _by_name: string }; Returns: Json }
       admin_delete_batch: { Args: { _batch_id: string }; Returns: Json }
       flag_batch_bill_changes: { Args: { _rows: Json }; Returns: number }
-      begin_batch_split: { Args: { _batch_id: string; _targets: Json; _by: string; _by_name: string }; Returns: Json }
+      begin_batch_split: { Args: { _batch_id: string; _targets: Json; _by: string; _by_name: string; _request: string | null }; Returns: Json }
       begin_bill_receive: { Args: { _branch_id: string; _from_location_id: string; _from_location_name: string; _bill: Json; _lines: Json; _cost_basis: string; _by: string; _by_name: string }; Returns: Json }
       finish_batch_transfer: { Args: { _transfer_id: number; _zoho_transfer_order_id: string; _zoho_status: string; _actor: string | null; _stock: Json | null; _claim: string | null }; Returns: Json }
-      note_batch_transfer_attempt: { Args: { _transfer_id: number; _error: string; _zoho_transfer_order_id: string; _zoho_status: string; _claim: string | null }; Returns: Json }
+      note_batch_transfer_attempt: { Args: { _transfer_id: number; _error: string; _zoho_transfer_order_id: string; _zoho_status: string; _claim: string | null; _number_taken: boolean }; Returns: Json }
       cancel_batch_transfer: { Args: { _transfer_id: number; _reason: string; _by: string | null; _stock: Json | null; _claim: string | null }; Returns: Json }
       claim_batch_transfer: { Args: { _transfer_id: number; _claim: string; _seconds: number }; Returns: Json }
       release_batch_transfer: { Args: { _transfer_id: number; _claim: string }; Returns: undefined }

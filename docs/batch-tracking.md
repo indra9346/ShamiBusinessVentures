@@ -80,15 +80,23 @@ bill; and "make batches from super batch and those batches can be sent for multi
     batch and at the sending godown.
 - **A bill being moved** (waiting for Zoho) can't be received anywhere else until that transfer is retried or
   cancelled (`receive_bill_here`); the bill list shows "Being moved to … (GB-TR-…)".
-- **Stock:** Zoho moves it. Right after, the server reads Zoho's stock for the item at the two godowns and the website
-  takes Zoho's numbers (less website orders Zoho doesn't hold yet), so a stock sync that already pulled the move can't
-  count it twice. A godown with a website stock edit still waiting for Zoho moves by the quantity instead, as the next
-  sync sends that count to Zoho. When Zoho is not the stock master, the website moves the godowns by the quantity.
-  Zoho batch-tracked items are moved in Zoho itself (refused here, as their receipts are).
-- **The 15-minute stock sync checks batches on their way** first: one marked received in Zoho itself is finished
-  (its batch made, "Marked received in Zoho"); one voided or deleted in Zoho is cancelled and its units go back. A
-  transfer it can't settle keeps that godown's stock for the item out of that run, so an arrival never shows without
-  its batch.
+- **Stock:** units sent to another godown leave the sender's website stock as soon as the send starts, so they can't be
+  sold while Zoho is asked (a cancel gives back exactly what left, `reserved`). Once Zoho moves them, the server reads
+  Zoho's stock for the item at the two godowns and the website takes Zoho's numbers, less website orders Zoho doesn't
+  hold yet (worked out in the database under the product's lock, so an order placed meanwhile counts). A stock sync
+  that already pulled the move can't count it twice. A godown with a website stock edit still waiting for Zoho moves by
+  the quantity instead, as the next sync sends that count to Zoho. When Zoho is not the stock master, a sent batch moves
+  the godowns by the quantity, and a bill moved to its unloading godown moves no website stock (as a bill received at
+  its own godown). Zoho batch-tracked items are moved in Zoho itself (refused here, as their receipts are).
+- **The 15-minute stock sync checks every unsettled transfer** first: one on its way that was marked received in Zoho
+  itself is finished (its batch made, "Marked received in Zoho"); one voided or deleted in Zoho is cancelled and its
+  units go back; one still waiting for Zoho whose create may have reached Zoho is finished or cancelled as Retry would,
+  but never created from there. For a transfer it can't settle, the sync leaves both godowns' stock of those items
+  alone (no pull, no push of a waiting edit) until it is settled, so units never appear without their batch and a
+  waiting edit never undoes a move in Zoho.
+- **Send again after an error** carries on the same send (each Send dialog has its own request key); it never sends the
+  units twice. A bill line is checked as fully as at the end (quantity, cost, date, website product) before Zoho moves
+  anything. A batch emptied by sending everything on is not counted as "sold out".
 - **Staff and partner apps** get only what moves, how many, where from and to, and who received it: no bill, costs,
   supplier or Zoho details. Everything on its way is listed, however old.
 - **Report:** a sent batch shows **Received from another godown** (not Purchased, so a purchase counts once); the super

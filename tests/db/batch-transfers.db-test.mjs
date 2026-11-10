@@ -90,7 +90,8 @@ const SUPER = made[0].batch_id;
 const batch = async (id) => (await q("SELECT * FROM public.batches WHERE id = $1", [id]))[0];
 const stock = async (branch, product) => Number((await q("SELECT stock FROM public.branch_stock WHERE branch_id = $1 AND product_id = $2", [branch, product]))[0]?.stock ?? 0);
 const total = async (product) => Number((await q("SELECT payload->>'stock' AS s FROM public.catalog_products WHERE id = $1", [product]))[0].s);
-const split = (targets, by = ADMIN, batchId = SUPER) => one("SELECT public.begin_batch_split($1, $2, $3, 'Office Admin') AS r", [batchId, JSON.stringify(targets), by]);
+const split = (targets, by = ADMIN, batchId = SUPER, request = null) =>
+  one("SELECT public.begin_batch_split($1, $2, $3, 'Office Admin', $4) AS r", [batchId, JSON.stringify(targets), by, request]);
 const json = (value) => (value === null ? null : JSON.stringify(value));
 // readings: Zoho's numbers at the godowns after the move (the server reads them); null when Zoho is not the stock master.
 const finish = (id, zohoId, status, actor = null, readings = null, claim = null) =>
@@ -127,14 +128,16 @@ assert.match(t.to_name, /Hubli/);
 assert.equal(t.parent_batch_code, (await batch(SUPER)).batch_code);
 assert.deepEqual(t.lines, [{ product_id: "P1", zoho_item_id: "Z1", name: "TEST Oil 850 ML", qty: 5, unit: "pack" }].map((l) => ({ ...l, unit: (t.lines[0] ?? {}).unit })));
 assert.equal(Number((await batch(SUPER)).remaining_quantity), 7, "kept aside: no order can take them");
-assert.equal(await stock("BR-CLK", "P1"), 12, "website stock moves only when Zoho has moved");
+assert.equal(await stock("BR-CLK", "P1"), 7, "and off the sending godown's website stock at once, so no order can sell them");
+assert.equal(Number(t.reserved), 5, "what left the godown's stock, to give back on a cancel");
+assert.equal(await total("P1"), 7);
 
 // A Zoho status that is neither: still pending, Zoho's word kept.
 t = await finish(t.id, "ZT-1", "draft");
 assert.equal(t.status, "pending");
 assert.equal(t.zoho_transfer_order_id, "ZT-1");
 assert.match(t.last_error, /draft/);
-assert.equal(await stock("BR-CLK", "P1"), 12);
+assert.equal(await stock("BR-CLK", "P1"), 7);
 
 // Zoho has it in transit: it left Challakere, and waits for Hubli to mark it received.
 t = await finish(t.id, "ZT-1", "in_transit");
@@ -142,7 +145,7 @@ assert.equal(t.status, "in_transit");
 assert.ok(t.sent_at, "when it left");
 assert.equal(t.received_at, null);
 assert.match(t.from_name, /Challakere/);
-assert.equal(await stock("BR-CLK", "P1"), 7, "it left the sending godown");
+assert.equal(await stock("BR-CLK", "P1"), 7, "it left the sending godown when the send began; nothing more comes off");
 assert.equal(await stock("BR-HBL", "P1"), 0, "not at Hubli until received");
 assert.equal((await q("SELECT count(*)::int AS c FROM public.batches WHERE parent_batch_id = $1", [SUPER]))[0].c, 0, "no batch at Hubli yet");
 assert.equal((await finish(t.id, "ZT-1", "in_transit")).status, "in_transit", "told twice: nothing more moves");
@@ -210,10 +213,12 @@ await q("INSERT INTO public.branches (id, code, name, active, zoho_location_id) 
 started = await split([{ branch_id: "BR-HBL", qty: 2 }, { branch_id: "BR-DVG", qty: 3 }]);
 assert.deepEqual(started.map((s) => s.transfer_no), ["GB-TR-000002", "GB-TR-000003"]);
 assert.equal(Number((await batch(SUPER)).remaining_quantity), 2);
+assert.equal(await stock("BR-CLK", "P1"), 2, "both left the godown's stock");
 await refuses(() => split([{ branch_id: "BR-HBL", qty: 3 }]), /has 2(\.00)? left/, "units kept aside can't be sent twice");
 const toDvg = await cancel(started[1].id, "Zoho refused: not enough stock");
 assert.equal(toDvg.status, "cancelled");
 assert.equal(Number((await batch(SUPER)).remaining_quantity), 5, "cancelled units are back");
+assert.equal(await stock("BR-CLK", "P1"), 5, "and back in the godown's stock");
 assert.equal((await cancel(started[1].id, "again")).status, "cancelled", "cancelling twice is harmless");
 await refuses(() => finish(started[1].id, "ZT-3", "transferred"), /was cancelled/, "finishing a cancelled transfer");
 // Zoho shows it received straight away (marked in Zoho): it leaves and arrives in one go; the Hubli partner pressed.
@@ -287,21 +292,34 @@ assert.equal(r.result.length, 2);
 const received = await q("SELECT batch_code, branch_id, quantity, unit_cost, cost_basis, transfer_id FROM public.batches WHERE zoho_bill_id = 'BILL-2' ORDER BY batch_code");
 assert.ok(received.every((row) => row.branch_id === "BR-HBL" && Number(row.transfer_id) === Number(r.id) && row.cost_basis === "inc_gst"));
 assert.ok(received.every((row) => row.batch_code.startsWith("HBL-031126-")), "numbered at the unloading godown");
-assert.equal(await stock("BR-HBL", "P2"), 6);
-assert.equal(await stock("BR-HBL", "P1"), 13);
+// Zoho not the stock master (no readings): a bill's units never reach website stock, as for a bill received at its own
+// godown, so no godown's stock moves.
+assert.equal(await stock("BR-HBL", "P2"), 0);
+assert.equal(await stock("BR-HBL", "P1"), 9);
 assert.equal(await stock("BR-CLK", "P1"), 3, "Head Office is no godown: Challakere is untouched");
-assert.equal(await total("P2"), 6);
 // The bill can't be received again.
 await refuses(() => receive("BR-HBL", L_HO, "Head Office", bill2, lines2), /already batch/, "a received bill");
 
-// A bill at Challakere unloaded at Hubli: Challakere gives the units up.
+// A bill at Challakere unloaded at Hubli, Zoho the stock master: the sync had pulled the bill into Challakere (6); both
+// godowns take Zoho's numbers after the move, less website orders Zoho doesn't hold yet (the 2 ordered at Hubli above).
 const bill3 = bill("BILL-3", "VS910");
 await q("UPDATE public.branch_stock SET stock = stock + 3 WHERE branch_id = 'BR-CLK' AND product_id = 'P1'");
 r = await receive("BR-HBL", L_CLK, "CLK Shami Business Ventures", bill3, [line("L31", "P1", 3, 123.81, 130, "TEST Oil 850 ML", "Z1")]);
 assert.equal(r.from_branch_id, "BR-CLK");
-r = await finish(r.id, "ZT-10", "transferred");
+r = await finish(r.id, "ZT-10", "transferred", null, [{ branch_id: "BR-CLK", product_id: "P1", stock: 3 }, { branch_id: "BR-HBL", product_id: "P1", stock: 14 }]);
 assert.equal(await stock("BR-CLK", "P1"), 3);
-assert.equal(await stock("BR-HBL", "P1"), 16);
+assert.equal(await stock("BR-HBL", "P1"), 12, "Zoho's 14 less the 2 ordered on the website");
+// Without Zoho's number for a godown it moves by the quantity: Challakere gives 1 up, Hubli gains 1.
+r = await receive("BR-HBL", L_CLK, "CLK Shami Business Ventures", bill("BILL-5", "VS912"), [line("L51", "P1", 1, 123.81, 130, "TEST Oil 850 ML", "Z1")]);
+r = await finish(r.id, "ZT-13", "transferred", null, [{ branch_id: "BR-HBL", product_id: "P1", stock: 15 }]);
+assert.equal(await stock("BR-CLK", "P1"), 2);
+assert.equal(await stock("BR-HBL", "P1"), 13);
+await q("UPDATE public.branch_stock SET stock = 3 WHERE branch_id = 'BR-CLK' AND product_id = 'P1'");
+// Lines create_batches_from_bill would refuse at finish are refused before Zoho moves anything.
+await refuses(() => receive("BR-HBL", L_HO, "Head Office", bill("BILL-8", "VS940"), [line("L81", "P2", 0.004, 9.52, 10, "TEST Sambar 17 GM", "Z2")]), /without a Zoho item or quantity/, "a quantity that rounds to 0");
+await refuses(() => receive("BR-HBL", L_HO, "Head Office", bill("BILL-8", "VS940"), [line("L81", "P2", 1, 10, 9, "TEST Sambar 17 GM", "Z2")]), /wrong cost/, "a cost with GST below the cost without");
+await refuses(() => receive("BR-HBL", L_HO, "Head Office", { ...bill("BILL-8", "VS940"), date: "" }, [line("L81", "P2", 1, 9.52, 10, "TEST Sambar 17 GM", "Z2")]), /no date/, "a bill without a date");
+await refuses(() => receive("BR-HBL", L_HO, "Head Office", bill("BILL-8", "VS940"), [{ ...line("L81", "P2", 1, 9.52, 10, "TEST Sambar 17 GM", "Z2"), product_id: "NOPE" }]), /not a website product/, "a line that is no website product");
 // Cancelling a pending receive frees the bill.
 const bill4 = bill("BILL-4", "VS911");
 r = await receive("BR-HBL", L_HO, "Head Office", bill4, [line("L41", "P2", 2, 9.52, 10, "TEST Sambar 17 GM", "Z2")]);
@@ -310,14 +328,18 @@ r = await receive("BR-CLK", L_HO, "Head Office", bill4, [line("L41", "P2", 2, 9.
 assert.equal(r.to_branch_id, "BR-CLK", "after a cancel the bill can go elsewhere");
 
 // ---- a pending try noted; a create sent to Zoho is written down first
-const noted = await one("SELECT public.note_batch_transfer_attempt($1, 'Zoho gave no answer', '', '', NULL) AS r", [r.id]);
+const noted = await one("SELECT public.note_batch_transfer_attempt($1, 'Zoho gave no answer', '', '', NULL, false) AS r", [r.id]);
 assert.equal(noted.attempts, 1);
 assert.equal(noted.last_error, "Zoho gave no answer");
 assert.equal(noted.create_sent_at, null);
 assert.equal((await claimIt(r.id, C1)).claimed, true);
-await refuses(() => one("SELECT public.note_batch_transfer_attempt($1, 'x', '', '', $2) AS r", [r.id, C2]), /being worked on/, "noting under another call's claim");
+await refuses(() => one("SELECT public.note_batch_transfer_attempt($1, 'x', '', '', $2, false) AS r", [r.id, C2]), /being worked on/, "noting under another call's claim");
 await refuses(() => one("SELECT public.note_batch_transfer_create($1, $2) AS r", [r.id, C2]), /being worked on/, "a create under another call's claim");
 assert.ok((await one("SELECT public.note_batch_transfer_create($1, $2) AS r", [r.id, C1])).create_sent_at, "when the create went to Zoho");
+// Zoho says the number is taken but a look-up can't find it: remembered (Cancel waits on it); a new create clears it.
+assert.equal((await one("SELECT public.note_batch_transfer_attempt($1, 'exists', '', '', $2, true) AS r", [r.id, C1])).zoho_number_taken, true);
+assert.equal((await one("SELECT public.note_batch_transfer_attempt($1, 'no answer', '', '', $2, false) AS r", [r.id, C1])).zoho_number_taken, true, "kept until a new create");
+assert.equal((await one("SELECT public.note_batch_transfer_create($1, $2) AS r", [r.id, C1])).zoho_number_taken, false);
 await release(r.id, C1);
 
 // ---- the same bill received at its own godown while it is being moved: refused (Zoho may have moved it already)
@@ -332,25 +354,29 @@ assert.equal((await here("BR-HBL", bill4, [line("L41", "P2", 2, 9.52, 10, "TEST 
 
 // ---- Zoho's own numbers (Zoho is the stock master): a stock sync that already pulled the move can't count it twice
 assert.equal(Number((await batch(SUPER)).remaining_quantity), 3);
+assert.equal(await stock("BR-CLK", "P1"), 3);
 const synced = (await split([{ branch_id: "BR-HBL", qty: 2 }]))[0];
-// The sync pulled Zoho after Zoho moved the units, before the website finished: Challakere already shows 1.
-await q("UPDATE public.branch_stock SET stock = 1 WHERE branch_id = 'BR-CLK' AND product_id = 'P1'");
-await finish(synced.id, "ZT-11", "in_transit", null, [{ branch_id: "BR-CLK", product_id: "P1", stock: 1 }, { branch_id: "BR-HBL", product_id: "P1", stock: 16 }]);
+assert.equal(await stock("BR-CLK", "P1"), 1, "off the sender when the send began");
+// A sync pulled Zoho after Zoho moved the units, before the website finished: Challakere shows Zoho's 1 already.
+await finish(synced.id, "ZT-11", "in_transit", null, [{ branch_id: "BR-CLK", product_id: "P1", stock: 1 }, { branch_id: "BR-HBL", product_id: "P1", stock: 13 }]);
 assert.equal(await stock("BR-CLK", "P1"), 1, "Zoho's number, not 1 - 2");
-assert.equal(await stock("BR-HBL", "P1"), 16, "Hubli doesn't change while it travels");
-// The sync again, after the transfer was marked received in Zoho: Hubli already shows 18.
-await q("UPDATE public.branch_stock SET stock = 18 WHERE branch_id = 'BR-HBL' AND product_id = 'P1'");
-await finish(synced.id, "ZT-11", "transferred", HBL_STAFF, [{ branch_id: "BR-CLK", product_id: "P1", stock: 1 }, { branch_id: "BR-HBL", product_id: "P1", stock: 18 }]);
-assert.equal(await stock("BR-HBL", "P1"), 18, "not 20");
-assert.equal(await total("P1"), 19);
+assert.equal(await stock("BR-HBL", "P1"), 13, "Hubli doesn't change while it travels");
+// The sync again, after the transfer was marked received in Zoho: Hubli already shows 15 (Zoho's 17 less 2 ordered).
+await q("UPDATE public.branch_stock SET stock = 15 WHERE branch_id = 'BR-HBL' AND product_id = 'P1'");
+await finish(synced.id, "ZT-11", "transferred", HBL_STAFF, [{ branch_id: "BR-CLK", product_id: "P1", stock: 1 }, { branch_id: "BR-HBL", product_id: "P1", stock: 17 }]);
+assert.equal(await stock("BR-HBL", "P1"), 15, "not 17");
+assert.equal(await total("P1"), 16);
 // A website stock edit still waiting for Zoho keeps the website's count and moves with the transfer; a godown Zoho gave
-// no number for moves by the quantity.
-const waiting = (await split([{ branch_id: "BR-HBL", qty: 1 }]))[0];
+// no number for moves by the quantity; website orders Zoho doesn't hold yet come off Zoho's number.
 await q("UPDATE public.branch_stock SET stock = 10, zoho_pending = true WHERE branch_id = 'BR-CLK' AND product_id = 'P1'");
+const waiting = (await split([{ branch_id: "BR-HBL", qty: 1 }]))[0];
+assert.equal(await stock("BR-CLK", "P1"), 9, "the waiting edit moves by 1 when the send begins");
 await finish(waiting.id, "ZT-12", "in_transit", null, [{ branch_id: "BR-CLK", product_id: "P1", stock: 0 }]);
-assert.equal(await stock("BR-CLK", "P1"), 9, "the waiting edit moves by 1; Zoho's 0 is not taken");
-await finish(waiting.id, "ZT-12", "transferred", ADMIN, [{ branch_id: "BR-CLK", product_id: "P1", stock: 0 }]);
-assert.equal(await stock("BR-HBL", "P1"), 19);
+assert.equal(await stock("BR-CLK", "P1"), 9, "Zoho's 0 is not taken over a waiting edit");
+await q(`INSERT INTO public.settings (key, value, is_public) VALUES ('zoho_stock_master', '{"enabled": true, "since": "2026-01-01T00:00:00Z"}'::jsonb, false)
+  ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`);
+await finish(waiting.id, "ZT-12", "transferred", ADMIN, [{ branch_id: "BR-CLK", product_id: "P1", stock: 0 }, { branch_id: "BR-HBL", product_id: "P1", stock: 16 }]);
+assert.equal(await stock("BR-HBL", "P1"), 14, "Zoho's 16 less the 2 ordered at Hubli on the website that Zoho doesn't hold yet");
 const superNow = await batch(SUPER);
 assert.equal(Number(superNow.remaining_quantity), 0);
 assert.equal(Number(superNow.sent_quantity), 12, "everything was sent on");
@@ -362,13 +388,23 @@ await refuses(() => as(ADMIN, "authenticated", () => q("SELECT public.admin_dele
 const lone = (await one("SELECT public.create_batches_from_bill('BR-CLK', $1, $2, 'ex_gst', $3, 'Office Admin') AS r",
   [JSON.stringify(bill("BILL-7", "VS931")), JSON.stringify([line("L71", "P2", 4, 9.52, 10, "TEST Sambar 17 GM", "Z2")]), ADMIN]))[0].batch_id;
 const loneTransfer = (await split([{ branch_id: "BR-HBL", qty: 1 }], ADMIN, lone))[0];
+assert.equal(Number(loneTransfer.reserved), 0, "Challakere had no website stock of it: nothing was taken");
 await cancel(loneTransfer.id, "Zoho refused");
+assert.equal(await stock("BR-CLK", "P2"), 0, "so nothing comes back that never left");
 assert.equal(Number((await batch(lone)).remaining_quantity), 4);
 assert.equal(Number((await batch(lone)).sent_quantity), 0);
 await refuses(() => as(ADMIN, "authenticated", () => q("SELECT public.admin_delete_batch($1)", [lone])), /part of a transfer/, "deleting a super batch whose transfer was cancelled");
 
+// ---- the same send request twice (its answer was lost, Send pressed again): the transfers it began, nothing new
+const REQ = "33333333-3333-4333-8333-333333333333";
+const firstTry = await split([{ branch_id: "BR-HBL", qty: 1 }], ADMIN, lone, REQ);
+const secondTry = await split([{ branch_id: "BR-HBL", qty: 1 }], ADMIN, lone, REQ);
+assert.deepEqual(secondTry.map((x) => x.id), firstTry.map((x) => x.id));
+assert.equal(Number((await batch(lone)).remaining_quantity), 3, "one unit sent, not two");
+await cancel(firstTry[0].id, "test over");
+
 // ---- who may call and read what
-await refuses(() => as(ADMIN, "authenticated", () => q("SELECT public.begin_batch_split($1,$2,$3,'x')", [SUPER, JSON.stringify([{ branch_id: "BR-HBL", qty: 1 }]), ADMIN])), /permission denied/, "a browser starting a split");
+await refuses(() => as(ADMIN, "authenticated", () => q("SELECT public.begin_batch_split($1,$2,$3,'x',NULL)", [SUPER, JSON.stringify([{ branch_id: "BR-HBL", qty: 1 }]), ADMIN])), /permission denied/, "a browser starting a split");
 await refuses(() => as(ADMIN, "authenticated", () => q("SELECT public.finish_batch_transfer(1,'x','transferred',NULL,NULL,NULL)")), /permission denied/, "a browser finishing a transfer");
 await refuses(() => as(ADMIN, "authenticated", () => q(`SELECT public.claim_batch_transfer(1,'${C1}',60)`)), /permission denied/, "a browser claiming a transfer");
 await refuses(() => as(ADMIN, "authenticated", () => q("SELECT public.receive_bill_here('BR-CLK','{}','[]','ex_gst',NULL,'x')")), /permission denied/, "a browser receiving a bill");

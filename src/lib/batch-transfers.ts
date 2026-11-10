@@ -43,6 +43,10 @@ export type BatchTransfer = {
   received_by_role?: "admin" | "staff" | "partner" | "zoho" | null;
   /** When a create last went to Zoho; its answer may have been lost (see createHoldUntil). */
   create_sent_at?: string | null;
+  /** Zoho answered "number already exists" but its list did not show it: not cancelled on a guess. */
+  zoho_number_taken?: boolean;
+  /** A batch sent on: how much left the sending godown's website stock when the send began. */
+  reserved?: number | null;
   resumed?: boolean;
   /** Only in claim_batch_transfer's answer: whether this call holds the transfer now. */
   claimed?: boolean;

@@ -189,3 +189,21 @@ test("the database keeps the transfer safety rules", () => {
   assert.match(MIGRATION, /WHERE parent_batch_id = batch_row\.id\) THEN/, "a cancelled transfer still keeps its super batch");
   assert.doesNotMatch(MIGRATION, /on its way in Zoho: mark it received at the godown, or void it in Zoho first/, "a transfer on its way can be cancelled once Zoho voided it");
 });
+
+test("a batch emptied by sending its units to other godowns is not 'sold out'", () => {
+  const emptied = batch({ remaining_quantity: 0, sent_quantity: 12, depleted_at: "2026-11-08T10:00:00Z" });
+  const report = buildBatchReport({ batches: [emptied], allocations: [], items: [], orders: [], adjustments: [], godowns: [{ id: "BR-CLK", name: "Challakere" }], today: "2026-11-10" });
+  assert.equal(report.rows[0]!.daysToSellOut, null);
+  assert.equal(report.godowns[0]?.averageDaysToSellOut ?? null, null);
+  // A batch that kept its units and emptied still sold out as before.
+  const sold = buildBatchReport({ batches: [batch({ remaining_quantity: 0, depleted_at: "2026-11-08T10:00:00Z" })], allocations: [], items: [], orders: [], adjustments: [], godowns: [], today: "2026-11-10" });
+  assert.equal(sold.rows[0]!.daysToSellOut, 5);
+});
+
+test("the second review's rules stay in the migration", () => {
+  assert.match(MIGRATION, /FUNCTION private\.batch_transfer_orders_waiting/, "website orders come off Zoho's number under the lock");
+  assert.match(MIGRATION, /_request uuid\)/, "a repeated send request begins nothing new");
+  assert.match(MIGRATION, /reserved numeric\(14,2\)/, "a cancel gives back only what left the godown");
+  assert.match(MIGRATION, /zoho_number_taken boolean/);
+  assert.match(MIGRATION, /The bill has no date/, "bill lines are checked before Zoho moves anything");
+});

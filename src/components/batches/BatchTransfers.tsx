@@ -19,7 +19,7 @@ type Row = { branchId: string; qty: string };
 const when = (iso: string) => new Date(iso).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
 
 /** What a finished request says, one toast per transfer. */
-export function announceTransfer(t: BatchTransfer) {
+export function announceTransfer(t: Pick<BatchTransfer, "status" | "transfer_no" | "to_name" | "result" | "last_error">) {
   if (t.status === "in_transit") {
     toast.success(`${t.transfer_no} sent: on the way to ${t.to_name ?? "the godown"}`, {
       description: `It left in Zoho. It reaches ${t.to_name ?? "the godown"}'s stock when they mark it received.`, duration: 10000,
@@ -43,6 +43,9 @@ export function SendToGodownsDialog({ open, onOpenChange, batch, godowns, availa
   const choices = godowns.filter((g) => g.active && g.zohoLinked && g.id !== batch.branch_id);
   const [rows, setRows] = useState<Row[]>([{ branchId: choices[0]?.id ?? "", qty: "" }]);
   const [busy, setBusy] = useState(false);
+  // One key per send: pressing Send again after an error carries on the same send on the server, never a second one.
+  const [requestId, setRequestId] = useState(() => crypto.randomUUID());
+  const [failed, setFailed] = useState(false);
   const plan = rows.map((row) => ({ branchId: row.branchId, qty: Number(row.qty) }));
   const problem = splitPlanProblem(available, batch.branch_id ?? "", plan);
   const total = Math.round(plan.reduce((sum, row) => sum + (Number.isFinite(row.qty) ? row.qty : 0), 0) * 100) / 100;
@@ -54,13 +57,22 @@ export function SendToGodownsDialog({ open, onOpenChange, batch, godowns, availa
     try {
       if (STATIC_DATA_MODE) { toast.success("Preview: nothing is sent"); return; }
       const { sendBatchToGodowns } = await import("@/lib/zoho-commerce.functions");
-      const results = await sendBatchToGodowns({ data: { batchId: batch.id, targets: plan } });
+      const results = await sendBatchToGodowns({ data: { batchId: batch.id, targets: plan, requestId } });
       results.forEach(announceTransfer);
       onOpenChange(false);
       setRows([{ branchId: choices[0]?.id ?? "", qty: "" }]);
+      setRequestId(crypto.randomUUID());
+      setFailed(false);
       await onDone();
     } catch (cause) {
-      toast.error("Could not send the stock", { description: cause instanceof Error ? cause.message : String(cause) });
+      // It may have partly happened (the answer can be lost after the send began): the form stays as it was and Send
+      // carries on the same send. The page is read again so the batch and Transfers show what did happen.
+      setFailed(true);
+      toast.error("Could not finish sending the stock", {
+        description: `${cause instanceof Error ? cause.message : String(cause)} It may have partly happened: check Transfers. Pressing Send again carries on this same send; it never sends twice.`,
+        duration: 15000,
+      });
+      await onDone();
     } finally {
       setBusy(false);
     }
@@ -82,21 +94,26 @@ export function SendToGodownsDialog({ open, onOpenChange, batch, godowns, availa
             {rows.map((row, index) => (
               <div key={index} className="flex items-end gap-2">
                 <label className="grid min-w-0 flex-1 gap-1 text-xs font-semibold text-slate">To godown
-                  <select value={row.branchId} onChange={(e) => setRow(index, { branchId: e.target.value })} className="h-10 w-full min-w-0 rounded-md border border-input bg-white px-2 text-sm">
+                  <select value={row.branchId} disabled={failed} onChange={(e) => setRow(index, { branchId: e.target.value })} className="h-10 w-full min-w-0 rounded-md border border-input bg-white px-2 text-sm">
                     <option value="">Choose…</option>
                     {choices.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
                   </select>
                 </label>
                 <label className="grid w-24 shrink-0 gap-1 text-xs font-semibold text-slate">{`Quantity${batch.unit ? ` (${batch.unit})` : ""}`}
-                  <Input inputMode="decimal" value={row.qty} onChange={(e) => setRow(index, { qty: e.target.value.replace(/[^0-9.]/g, "") })} className="h-10" />
+                  <Input inputMode="decimal" value={row.qty} disabled={failed} onChange={(e) => setRow(index, { qty: e.target.value.replace(/[^0-9.]/g, "") })} className="h-10" />
                 </label>
-                {rows.length > 1 && (
+                {rows.length > 1 && !failed && (
                   <Button size="icon" variant="ghost" className="h-10 w-10 shrink-0" aria-label="Remove this godown" onClick={() => setRows((all) => all.filter((_, i) => i !== index))}><X className="h-4 w-4" /></Button>
                 )}
               </div>
             ))}
-            {rows.length < choices.length && (
+            {rows.length < choices.length && !failed && (
               <Button size="sm" variant="outline" className="justify-self-start" onClick={() => setRows((all) => [...all, { branchId: "", qty: "" }])}><Plus className="mr-1.5 h-3.5 w-3.5" />Another godown</Button>
+            )}
+            {failed && (
+              <p className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900">
+                The last try may have partly happened. Send carries on that same send (it never sends twice); to send something else, close this and open it again.
+              </p>
             )}
             <p className={cn("text-sm", problem && rows.some((row) => row.qty) ? "text-red-700" : "text-slate")}>
               {problem && rows.some((row) => row.qty) ? problem : `Sending ${total} of ${available}; ${Math.round((available - total) * 100) / 100} stay${available - total === 1 ? "s" : ""} in ${batch.batch_code}.`}
@@ -104,9 +121,12 @@ export function SendToGodownsDialog({ open, onOpenChange, batch, godowns, availa
           </div>
         )}
         <DialogFooter className="gap-2">
-          <Button variant="outline" onClick={() => onOpenChange(false)}>Back</Button>
+          <Button variant="outline" onClick={() => {
+            if (failed) { setFailed(false); setRequestId(crypto.randomUUID()); setRows([{ branchId: choices[0]?.id ?? "", qty: "" }]); }
+            onOpenChange(false);
+          }}>Back</Button>
           <Button className="bg-navy text-white hover:bg-navy/90" disabled={busy || Boolean(problem) || choices.length === 0} onClick={() => void send()}>
-            <ArrowRightLeft className="mr-1.5 h-4 w-4" />{busy ? "Sending…" : "Send"}
+            <ArrowRightLeft className="mr-1.5 h-4 w-4" />{busy ? "Sending…" : failed ? "Send again (same send)" : "Send"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -138,6 +158,8 @@ export function TransferList({ transfers, onChanged, compact }: { transfers: Bat
     } catch (cause) {
       toast.error(action === "retry" ? "Could not finish the transfer" : action === "receive" ? "Not marked received" : "Could not cancel the transfer",
         { description: cause instanceof Error ? cause.message : String(cause), duration: 12000 });
+      // Another admin or the stock check may have moved it on meanwhile: show it as it is now.
+      await onChanged();
     } finally {
       setBusy(0);
     }
@@ -185,7 +207,7 @@ export function TransferList({ transfers, onChanged, compact }: { transfers: Bat
               </Button>
               <span className="self-center text-[11px] text-slate">
                 {createHoldUntil(t)
-                  ? `Zoho may still be making it (its answer was lost). Retry and Cancel look it up from ${new Date(createHoldUntil(t)).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" })}.`
+                  ? `Zoho may still be making it (its answer was lost). Retry looks it up in Zoho now; Cancel works from ${new Date(createHoldUntil(t)).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" })}.`
                   : "Retry looks it up in Zoho first. Cancel works only if Zoho doesn't have it."}
               </span>
             </div>
