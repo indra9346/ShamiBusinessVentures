@@ -6,6 +6,7 @@ import { PanelLayout } from "@/components/panel/PanelLayout";
 import { FilterNote, Panel, scrollToSection, StatCard } from "@/components/panel/widgets";
 import { CommissionLinesTable, PartnerLeaderboard, commissionTotals, usePartnerData } from "@/components/partners/PartnerWidgets";
 import { PartnerHistoryPanel } from "@/components/partners/PartnerHistory";
+import { PartnerSignatureField } from "@/components/panel/GodownSignatureField";
 import { adminNav } from "@/lib/panel-nav";
 import { useApp } from "@/lib/store";
 import { useBranches } from "@/lib/branches";
@@ -117,6 +118,13 @@ function GodownPartnerCard({ godownId, godownName, partner, pastPartners, rules,
                 <span key={p.id} className="mr-2 inline-flex items-center gap-1">{p.name}
                   {!partner && <button type="button" className="font-semibold text-gold hover:underline" onClick={() => void setStatus(p.id, "active", onChange)}>reactivate</button>}
                 </span>
+              ))}
+              {/* A former partner's signature stays on the invoices of the orders placed in their time. */}
+              {pastPartners.map((p) => (
+                <details key={p.id} className="mt-2">
+                  <summary className="cursor-pointer font-semibold text-navy">{p.name}: signature on their invoices{p.signature_path ? "" : " (none)"}</summary>
+                  <div className="mt-1"><PartnerSignatureField partner={p} onSaved={() => void onChange()} /></div>
+                </details>
               ))}
             </div>
           )}
@@ -263,6 +271,7 @@ function PartnerAccount({ partner, onChange }: { partner: Partner; onChange: () 
         <Button size="sm" variant="outline" className="text-danger" onClick={() => void setStatus(partner.id, "suspended", onChange)}>Suspend</Button>
       </div>
       {shown && <CredentialsBox email={partner.email} password={shown} godownName="new password" />}
+      <PartnerSignatureField partner={partner} onSaved={() => void onChange()} />
     </div>
   );
 }

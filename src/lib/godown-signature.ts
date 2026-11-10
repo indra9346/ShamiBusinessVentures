@@ -1,9 +1,16 @@
 /*
- * A godown's signature, printed in the "Authorized Signatory" space of its invoices. Whatever picture is chosen is drawn
- * onto a canvas and stored as a small PNG: that proves it really is a picture, keeps transparency, and is the one kind
- * of file the PDF and the private bucket both accept.
+ * Invoice signatures, printed in the "Authorized Signatory" space: each channel partner's own (on the invoices of the
+ * orders placed while they ran the godown), else the godown's spare one. Whatever picture is chosen is drawn onto a
+ * canvas and stored as a small PNG: that proves it really is a picture, keeps transparency, and is the one kind of
+ * file the PDF and the private bucket both accept. Both kinds live in the one private bucket.
  */
 export const GODOWN_SIGNATURE_BUCKET = "godown-signatures";
+
+const SAFE = /[^A-Za-z0-9_-]/g;
+/** Where a new godown signature is stored (a fresh name each time, so an old link never shows the new picture). */
+export const godownSignatureObject = (branchId: string) => `${branchId.replace(SAFE, "")}/${crypto.randomUUID()}.png`;
+/** Where a new channel partner signature is stored. */
+export const partnerSignatureObject = (partnerId: string) => `partners/${partnerId.replace(SAFE, "")}/${crypto.randomUUID()}.png`;
 export const SIGNATURE_MAX_BYTES = 2 * 1024 * 1024;
 export const SIGNATURE_TYPES = ["image/png", "image/jpeg", "image/webp"];
 const MAX_WIDTH = 900;
