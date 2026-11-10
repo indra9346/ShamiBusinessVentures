@@ -66,3 +66,10 @@ test("Fast2SMS refusals: the customer sees why, and Supabase passes the message 
   // Any other HTTP status shows as "Unexpected status code returned from hook" in the app.
   assert.deepEqual(hookErrorBody(429, SMS_TOO_MANY_MESSAGE), { status: 200, body: { error: { http_code: 429, message: SMS_TOO_MANY_MESSAGE } } });
 });
+
+test("the Supabase Edge Function copy of the SMS rules is the same file", async () => {
+  const { readFileSync } = await import("node:fs");
+  const lib = readFileSync(new URL("../src/lib/sms-hook.ts", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+  const copy = readFileSync(new URL("../supabase/functions/send-sms/sms-hook.ts", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+  assert.equal(copy, lib, "copy src/lib/sms-hook.ts to supabase/functions/send-sms/sms-hook.ts after changing it");
+});
