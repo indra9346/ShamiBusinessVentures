@@ -225,7 +225,15 @@ export type BatchRecord = {
   zoho_bill_number?: string;
   bill_flag?: string;
   bill_flag_at?: string | null;
+  /** A batch made by sending units from another batch (the super batch) to this godown, and that transfer. */
+  parent_batch_id?: string | null;
+  transfer_id?: number | null;
+  /** Units this batch sent to other godowns (on the way or arrived), kept on the batch row itself. */
+  sent_quantity?: number | null;
 };
+
+/** A transfer between godowns, as far as the report needs it (public.batch_transfers). */
+export type BatchTransferRow = { kind: string; status: string; parent_batch_id: string | null; quantity: number | null };
 export type BatchAllocation = { id: string; order_item_id: string; batch_id: string; reserved_quantity: number; released_quantity: number; unit_cost: number; created_at: string };
 export type BatchOrderItem = { id: string; order_id: string; product_id: string | null; product_name: string; qty: number; unit_price: number; gst_rate: number };
 /** JSON as stored (orders.shipping_address). */
@@ -258,7 +266,8 @@ export type BatchSale = {
 };
 
 export type BatchTotals = {
-  purchased: number; sold: number; delivered: number; held: number; lost: number; gained: number; available: number;
+  /** received: units that came from another godown's batch (not a purchase); sent: units sent from this batch to other godowns. */
+  purchased: number; received: number; sent: number; sold: number; delivered: number; held: number; lost: number; gained: number; available: number;
   purchaseValue: number; sales: number; costOfSold: number; lossValue: number; profit: number; stockValue: number;
 };
 
@@ -284,7 +293,7 @@ export type BatchCustomer = {
 };
 
 const emptyTotals = (): BatchTotals => ({
-  purchased: 0, sold: 0, delivered: 0, held: 0, lost: 0, gained: 0, available: 0,
+  purchased: 0, received: 0, sent: 0, sold: 0, delivered: 0, held: 0, lost: 0, gained: 0, available: 0,
   purchaseValue: 0, sales: 0, costOfSold: 0, lossValue: 0, profit: 0, stockValue: 0,
 });
 
@@ -316,6 +325,8 @@ export function buildBatchReport(input: {
   adjustments: BatchAdjustment[];
   godowns: BatchGodown[];
   today: string;
+  /** Transfers between godowns (10 Nov 2026); without them every batch is a purchase. */
+  transfers?: BatchTransferRow[];
 }) {
   const godownName = new Map(input.godowns.map((g) => [g.id, g.name]));
   const itemById = new Map(input.items.map((item) => [item.id, item]));
@@ -324,10 +335,22 @@ export function buildBatchReport(input: {
   const rows: BatchReportRow[] = [];
   const unpackedByBatch = new Map<string, number>();
 
+  // Units each super batch sent to other godowns: done, or kept aside while Zoho is asked. A cancelled one came back.
+  const sentFrom = new Map<string, number>();
+  for (const transfer of input.transfers ?? [])
+    if (transfer.kind === "split" && transfer.parent_batch_id && transfer.status !== "cancelled")
+      sentFrom.set(transfer.parent_batch_id, qty((sentFrom.get(transfer.parent_batch_id) ?? 0) + num(transfer.quantity)));
+
   for (const batch of input.batches) {
     const t = emptyTotals();
+    // A batch sent from another godown's batch received its units: the purchase is counted once, on the super batch.
     // Order lines and stock counts copied the batch's stored cost; costCopyBeforeGst takes any GST back out of it.
-    t.purchased = num(batch.quantity);
+    const fromTransfer = Boolean(batch.parent_batch_id);
+    t.purchased = fromTransfer ? 0 : num(batch.quantity);
+    t.received = fromTransfer ? num(batch.quantity) : 0;
+    // From the batch row when it has it: the same row as remaining_quantity, so a transfer made or cancelled while the
+    // page loads can't show as a gap. Summed from the transfers otherwise.
+    t.sent = batch.sent_quantity !== undefined && batch.sent_quantity !== null ? qty(num(batch.sent_quantity)) : sentFrom.get(batch.id) ?? 0;
     t.available = num(batch.remaining_quantity);
     t.purchaseValue = paise(t.purchased * costBeforeGst(batch));
     t.stockValue = paise(t.available * costBeforeGst(batch));
@@ -388,8 +411,10 @@ export function buildBatchReport(input: {
     }
     t.profit = paise(t.sales - t.costOfSold - t.lossValue);
     const purchaseDate = batch.purchase_date ?? istDate(batch.created_at);
-    const soldOut = batch.depleted_at ? istDate(batch.depleted_at) : null;
-    const ledger = qty(t.purchased - t.sold - t.held - t.lost + t.gained);
+    const ledger = qty(t.purchased + t.received - t.sent - t.sold - t.held - t.lost + t.gained);
+    const handled = t.purchased + t.received - t.sent;
+    // Sold out means the units it kept were sold: a batch emptied by sending everything to other godowns is not.
+    const soldOut = batch.depleted_at && handled > 0.0005 ? istDate(batch.depleted_at) : null;
     rows.push({
       ...t,
       batch,
@@ -400,7 +425,7 @@ export function buildBatchReport(input: {
       lastSale,
       ageDays: Math.max(0, daysBetween(purchaseDate, soldOut ?? input.today)),
       daysToSellOut: soldOut ? Math.max(0, daysBetween(purchaseDate, soldOut)) : null,
-      sellThrough: t.purchased > 0 ? Math.round((t.sold / t.purchased) * 1000) / 10 : 0,
+      sellThrough: handled > 0 ? Math.round((t.sold / handled) * 1000) / 10 : 0,
       ledgerGap: qty(t.available - ledger),
       zohoGap: batch.zoho_batch_id && batch.zoho_balance !== null && batch.zoho_balance !== undefined
         ? qty(num(batch.zoho_balance) - (t.available + (unpackedByBatch.get(batch.id) ?? 0)))
@@ -521,6 +546,8 @@ export const BATCH_COLUMNS: [string, (row: BatchReportRow) => string | number | 
   ["Cost per unit incl. GST (₹)", (r) => costWithGst(r.batch)],
   ["Cost shown on the batch", (r) => costBasisName(r.batch)],
   ["Purchased", (r) => r.purchased],
+  ["Received from another godown", (r) => r.received],
+  ["Sent to other godowns", (r) => r.sent],
   ["Sold", (r) => r.sold],
   ["Delivered", (r) => r.delivered],
   ["Awaiting payment", (r) => r.held],
@@ -538,7 +565,7 @@ export const BATCH_COLUMNS: [string, (row: BatchReportRow) => string | number | 
   ["Customers", (r) => r.customers],
   ["First sale", (r) => dmy(r.firstSale ? istDate(r.firstSale) : null)],
   ["Last sale", (r) => dmy(r.lastSale ? istDate(r.lastSale) : null)],
-  ["Sold out on", (r) => dmy(r.batch.depleted_at ? istDate(r.batch.depleted_at) : null)],
+  ["Sold out on", (r) => dmy(r.batch.depleted_at && r.daysToSellOut !== null ? istDate(r.batch.depleted_at) : null)],
   ["Days to sell out", (r) => r.daysToSellOut],
   ["Age (days)", (r) => r.ageDays],
   ["Status", (r) => (r.available > 0 ? "In stock" : "Sold out")],

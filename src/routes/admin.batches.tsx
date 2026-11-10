@@ -2,7 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import {
-  AlertTriangle, ArrowLeft, ChevronRight, Clock3, FileSpreadsheet, IndianRupee, Layers, Mail, MapPin, PackageCheck, PackagePlus, Pencil,
+  AlertTriangle, ArrowLeft, ArrowRightLeft, ChevronRight, Clock3, FileSpreadsheet, IndianRupee, Layers, Mail, MapPin, PackageCheck, PackagePlus, Pencil,
   Phone, RefreshCw, Search, ShoppingCart, Trash2, TrendingDown, TrendingUp, UserRound, Warehouse,
 } from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
@@ -23,6 +23,8 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ReceiveFromBillDialog } from "@/components/batches/ReceiveFromBill";
+import { SendToGodownsDialog, TransferList } from "@/components/batches/BatchTransfers";
+import { transferProgress } from "@/lib/batch-transfers";
 import { batchDeleteBlocker } from "@/lib/bill-batches";
 import { cn } from "@/lib/utils";
 
@@ -172,15 +174,32 @@ function AdminBatches() {
 
       {error && <p className="mb-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</p>}
       {!report && !error && <p className="py-10 text-center text-sm text-slate">Loading batches…</p>}
+      {data && data.transfers.some((t) => t.status === "pending") && (
+        <Panel title="Transfers waiting for Zoho" className="mb-4 border-amber-300">
+          <TransferList transfers={data.transfers.filter((t) => t.status === "pending")} onChanged={load} />
+        </Panel>
+      )}
+      {data && data.transfers.some((t) => t.status === "in_transit") && (
+        <Panel title="On the way between godowns" className="mb-4 border-sky-300">
+          <TransferList transfers={data.transfers.filter((t) => t.status === "in_transit")} onChanged={load} />
+        </Panel>
+      )}
 
       {report && data && (
         search.tab === "trace"
           ? <TraceView report={report} search={search} go={go} />
           : selected
             ? <BatchDetail row={selected} report={report} data={data} adjustments={data.adjustments} orderId={search.order} go={go} onEdit={() => setEditRow(selected)}
-                onDeleted={async () => { go({ batch: undefined, order: undefined }); await load(); }} />
-            : <BatchList report={report} data={data} search={search} go={go} status={status} setStatus={setStatus}
-                productFilter={productFilter} setProductFilter={setProductFilter} />
+                onDeleted={async () => { go({ batch: undefined, order: undefined }); await load(); }} onChanged={load} />
+            : <>
+                <BatchList report={report} data={data} search={search} go={go} status={status} setStatus={setStatus}
+                  productFilter={productFilter} setProductFilter={setProductFilter} />
+                {data.transfers.length > 0 && (
+                  <Panel title={`Transfers between godowns (${data.transfers.length})`} className="mt-4">
+                    <TransferList transfers={data.transfers} onChanged={load} compact />
+                  </Panel>
+                )}
+              </>
       )}
 
       {data && <ReceiveFromBillDialog open={receiveOpen} onOpenChange={setReceiveOpen} godowns={data.godowns.filter((g) => g.active)} defaultGodown={search.godown}
@@ -352,7 +371,7 @@ function Figure({ label, value, tone }: { label: string; value: string; tone?: "
 
 /** Where the batch's units went: sold, awaiting payment, lost, still available. */
 function FlowBar({ row, large }: { row: BatchReportRow; large?: boolean }) {
-  const total = Math.max(row.purchased + row.gained, row.sold + row.held + row.lost + row.available, 1);
+  const total = Math.max(row.purchased + row.received + row.gained, row.sold + row.held + row.lost + row.sent + row.available, 1);
   const part = (n: number) => `${Math.max(0, (n / total) * 100)}%`;
   return (
     <div>
@@ -360,9 +379,10 @@ function FlowBar({ row, large }: { row: BatchReportRow; large?: boolean }) {
         <span className="bg-emerald-500" style={{ width: part(row.sold) }} title={`Sold ${units(row.sold)}`} />
         <span className="bg-amber-400" style={{ width: part(row.held) }} title={`Awaiting payment ${units(row.held)}`} />
         <span className="bg-red-500" style={{ width: part(row.lost) }} title={`Lost ${units(row.lost)}`} />
+        <span className="bg-violet-400" style={{ width: part(row.sent) }} title={`Sent to other godowns ${units(row.sent)}`} />
         <span className="bg-sky-300" style={{ width: part(row.available) }} title={`Available ${units(row.available)}`} />
       </div>
-      <p className="mt-1 text-xs text-slate">{`${units(row.sold)} sold · ${units(row.available)} left · ${row.sellThrough}%`}</p>
+      <p className="mt-1 text-xs text-slate">{`${units(row.sold)} sold${row.sent ? ` · ${units(row.sent)} sent to other godowns` : ""} · ${units(row.available)} left · ${row.sellThrough}%`}</p>
     </div>
   );
 }
@@ -381,11 +401,23 @@ function ZohoBadge({ row }: { row: BatchReportRow }) {
 
 // ------------------------------------------------------------------ step 3 + 4: batch, order, customer
 
-function BatchDetail({ row, report, data, adjustments, orderId, go, onEdit, onDeleted }: {
+function BatchDetail({ row, report, data, adjustments, orderId, go, onEdit, onDeleted, onChanged }: {
   row: BatchReportRow; report: BatchReport; data: BatchData; adjustments: BatchAdjustment[]; orderId?: string | undefined;
-  go: (next: Partial<Search>) => void; onEdit: () => void; onDeleted: () => Promise<void>;
+  go: (next: Partial<Search>) => void; onEdit: () => void; onDeleted: () => Promise<void>; onChanged: () => Promise<void>;
 }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [sendOpen, setSendOpen] = useState(false);
+  // Transfers this batch is part of: the one that made it, and the ones it sent.
+  const myTransfers = data.transfers.filter((t) => t.parent_batch_id === row.batch.id || t.id === row.batch.transfer_id);
+  const parent = row.batch.parent_batch_id ? data.batches.find((b) => b.id === row.batch.parent_batch_id) : undefined;
+  const children = data.batches.filter((b) => b.parent_batch_id === row.batch.id);
+  // The transfer that brought this batch here, and those still on their way from it.
+  const arrival = data.transfers.find((t) => t.id === row.batch.transfer_id && t.kind === "split");
+  const onTheWay = myTransfers.filter((t) => t.parent_batch_id === row.batch.id && t.status === "in_transit");
+  const product = data.products.find((p) => p.id === row.batch.product_id);
+  const canSend = row.available > 0 && Boolean(product?.zohoLinked) && !product?.zohoTracksBatches
+    && data.godowns.some((g) => g.active && g.zohoLinked && g.id !== row.batch.branch_id)
+    && Boolean(data.godowns.find((g) => g.id === row.batch.branch_id)?.zohoLinked);
   const [deleting, setDeleting] = useState(false);
   // The same rule as admin_delete_batch in the database, which has the last word.
   const batchAllocations = data.allocations.filter((a) => a.batch_id === row.batch.id);
@@ -394,7 +426,9 @@ function BatchDetail({ row, report, data, adjustments, orderId, go, onEdit, onDe
     return item ? data.orders.find((order) => order.id === item.order_id) : undefined;
   };
   const deleteBlocker = batchDeleteBlocker(row.batch, batchAllocations,
-    adjustments.filter((a) => a.batch_id === row.batch.id).length, orderOf);
+    adjustments.filter((a) => a.batch_id === row.batch.id).length, orderOf,
+    // Any transfer that names it as the super batch keeps it, even a cancelled one (as admin_delete_batch).
+    Boolean(row.batch.transfer_id || row.batch.parent_batch_id || myTransfers.some((t) => t.parent_batch_id === row.batch.id)));
   const remove = async (): Promise<void> => {
     setDeleting(true);
     const { data: gone, error } = await supabase.rpc("admin_delete_batch", { _batch_id: row.batch.id });
@@ -441,9 +475,34 @@ function BatchDetail({ row, report, data, adjustments, orderId, go, onEdit, onDe
             {b.source === "zoho" && <span>Made in Zoho</span>}
             {b.expiry_date && <span>{`Expiry ${day(b.expiry_date)}`}</span>}
           </p>
+          {parent && (
+            <p className="mt-1 text-xs text-slate">Sent here from batch{" "}
+              <button type="button" className="font-mono font-semibold text-navy hover:underline" onClick={() => go({ batch: parent.id, order: undefined })}>{parent.batch_code}</button>
+              {` (${data.godowns.find((g) => g.id === parent.branch_id)?.name ?? "another godown"}). `}
+              {arrival ? transferProgress(arrival) : ""}
+            </p>
+          )}
+          {onTheWay.map((t) => (
+            <p key={t.id} className="mt-1 text-xs font-semibold text-sky-900">
+              {`On the way to ${t.to_name ?? "another godown"}: ${t.quantity ?? ""} (${t.transfer_no}). ${transferProgress(t)}`}
+            </p>
+          ))}
+          {children.length > 0 && (
+            <p className="mt-1 flex flex-wrap gap-x-2 text-xs text-slate">
+              <span>Sent to other godowns as</span>
+              {children.map((c) => (
+                <button key={c.id} type="button" className="font-mono font-semibold text-navy hover:underline" onClick={() => go({ batch: c.id, order: undefined })}>
+                  {`${c.batch_code} (${data.godowns.find((g) => g.id === c.branch_id)?.name ?? c.branch_id}, ${units(c.quantity)})`}
+                </button>
+              ))}
+            </p>
+          )}
         </div>
         <div className="flex flex-col items-end gap-2">
           <ZohoBadge row={row} />
+          {canSend && (
+            <Button size="sm" className="bg-navy text-white hover:bg-navy/90" onClick={() => setSendOpen(true)}><ArrowRightLeft className="mr-1.5 h-3.5 w-3.5" />Send to other godowns</Button>
+          )}
           <Button size="sm" variant="outline" onClick={onEdit}><Pencil className="mr-1.5 h-3.5 w-3.5" />Edit details</Button>
           {deleteBlocker
             ? <p className="max-w-[220px] text-right text-[11px] text-slate">{deleteBlocker}</p>
@@ -484,13 +543,20 @@ function BatchDetail({ row, report, data, adjustments, orderId, go, onEdit, onDe
         <div className="grid gap-4 p-4">
           <FlowBar row={row} large />
           <div className="grid grid-cols-3 gap-2 text-sm sm:grid-cols-6">
-            <Figure label="Purchased" value={units(row.purchased)} />
+            {row.received > 0
+              ? <Figure label="Received from another godown" value={units(row.received)} />
+              : <Figure label="Purchased" value={units(row.purchased)} />}
             <Figure label="Sold" value={units(row.sold)} tone="good" />
             <Figure label="Delivered" value={units(row.delivered)} />
             <Figure label="Awaiting payment" value={units(row.held)} />
             <Figure label="Lost" value={units(row.lost)} tone={row.lost > 0 ? "bad" : undefined} />
             <Figure label="Available" value={units(row.available)} />
           </div>
+          {row.sent > 0 && (
+            <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-6">
+              <Figure label="Sent to other godowns" value={units(row.sent)} />
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-5">
             <Figure label="Purchase value (excl. GST)" value={money(row.purchaseValue)} />
             <Figure label="Sales (excl. GST)" value={money(row.sales)} />
@@ -501,7 +567,7 @@ function BatchDetail({ row, report, data, adjustments, orderId, go, onEdit, onDe
           <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
             <Figure label={row.daysToSellOut === null ? "Days in stock" : "Days to sell out"} value={String(row.daysToSellOut ?? row.ageDays ?? "—")} />
             <Figure label="First sale" value={row.firstSale ? day(istDate(row.firstSale)) : "—"} />
-            <Figure label="Sold out on" value={b.depleted_at ? day(istDate(b.depleted_at)) : "—"} />
+            <Figure label={b.depleted_at && row.daysToSellOut === null ? "Emptied on" : "Sold out on"} value={b.depleted_at ? day(istDate(b.depleted_at)) : "—"} />
             <Figure label="Customers" value={String(row.customers)} />
           </div>
           {(row.ledgerGap !== 0 || (row.zohoGap !== null && row.zohoGap !== 0)) && (
@@ -561,6 +627,15 @@ function BatchDetail({ row, report, data, adjustments, orderId, go, onEdit, onDe
           <AdjustmentList rows={adjustments.filter((a) => a.batch_id === b.id)} />
         </Panel>
       </div>
+
+      {myTransfers.length > 0 && (
+        <Panel title={`Transfers between godowns (${myTransfers.length})`}>
+          <TransferList transfers={myTransfers} onChanged={onChanged} />
+        </Panel>
+      )}
+      {sendOpen && (
+        <SendToGodownsDialog open={sendOpen} onOpenChange={setSendOpen} batch={b} godowns={data.godowns} available={row.available} onDone={onChanged} />
+      )}
     </div>
   );
 }
@@ -765,7 +840,7 @@ function demoData(): BatchData {
     created_at: `${date}T05:00:00Z`, vendor: null, vendor_id: null, warehouse: null, updated_at: now, received_by: null, zoho_item_id: "",
   });
   return {
-    generatedAt: now, zohoStockMaster: true, godowns,
+    generatedAt: now, zohoStockMaster: true, godowns, transfers: [],
     products: [{ id: "P023", name: "Groundnut Oil 5L Can", sku: "SBV-OI-1022", unit: "", purchasePrice: 820, zohoLinked: true, zohoTracksBatches: true, stock: { "BR-CLK": 30 } }],
     batches: [
       batch("b1", "CLK-201026-01", "BR-CLK", "P023", "Groundnut Oil 5L Can", 50, 0, 800, "2026-10-20", "2026-10-29T08:00:00Z"),

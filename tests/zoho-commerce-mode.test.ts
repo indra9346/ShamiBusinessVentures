@@ -16,8 +16,10 @@ test("no setting, a damaged one or anything but an explicit false means Zoho Com
   assert.equal(zohoCommerceModeFrom({ inUse: false, changedAt: 5 }).changedAt, null);
 });
 
-test("with Zoho Commerce in use the permission line is the old one plus the Books sales order update", () => {
-  assert.equal(zohoOAuthScopes(true), `${BEFORE},ZohoBooks.salesorders.UPDATE`);
+test("with Zoho Commerce in use the permission line is the old one plus the Books sales order update and transfer orders", () => {
+  // Transfer orders (10 Nov 2026): a bill unloaded at another godown, a batch sent to other godowns.
+  assert.equal(zohoOAuthScopes(true),
+    `${BEFORE},ZohoBooks.salesorders.UPDATE,ZohoInventory.transferorders.READ,ZohoInventory.transferorders.CREATE,ZohoInventory.transferorders.UPDATE`);
 });
 
 test("with Zoho Commerce off no Zoho Commerce permission is asked for, and every other one still is", () => {

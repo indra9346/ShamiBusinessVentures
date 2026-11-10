@@ -8,6 +8,7 @@ import { AttendanceStatusBadge, DecisionChips, RuleList } from "@/components/att
 import { SelfieCamera } from "@/components/attendance/SelfieCamera";
 import { StaffStockCount } from "@/components/attendance/StaffStockCount";
 import { StaffFollowUps } from "@/components/attendance/StaffFollowUps";
+import { GodownTransfers } from "@/components/batches/GodownTransfers";
 import { getBestFix } from "@/components/attendance/geolocation";
 import { useGodownDevice, type GodownDevice } from "@/components/attendance/godownDevice";
 import { Input } from "@/components/ui/input";
@@ -186,6 +187,8 @@ function StaffHome() {
             )}
           </>
         )}
+
+        <GodownTransfers />
 
         <LeaveCard leaves={leaves} today={today} rules={rulesToday} versions={versions} holidays={holidays} onChange={() => load(me)} />
 

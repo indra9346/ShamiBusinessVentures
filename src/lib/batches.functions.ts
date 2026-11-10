@@ -3,6 +3,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import type { Database } from "@/integrations/supabase/types";
 import type { BatchAdjustment, BatchAllocation, BatchOrder, BatchOrderItem, BatchRecord } from "@/lib/batches";
+import type { BatchTransfer } from "@/lib/batch-transfers";
 
 /*
  * Admin > Batches: every batch with the orders and customers it went to, its losses and gains,
@@ -51,7 +52,7 @@ export const getBatchData = createServerFn({ method: "GET" })
   .handler(async ({ context }) => {
     await ensureAdmin(context.supabase, context.userId);
     const db = serviceClient();
-    const [batchRows, adjustmentRows, branchesResult, productRows, linkRows, stockRows, masterResult, reservedRows] = await Promise.all([
+    const [batchRows, adjustmentRows, branchesResult, productRows, linkRows, stockRows, masterResult, reservedRows, transferRows] = await Promise.all([
       allRows((from, to) => db.from("batches").select("*").order("created_at").order("id").range(from, to), "batches"),
       allRows((from, to) => db.from("batch_adjustments").select("id,batch_id,qty,reason,note,unit_cost,created_at,created_by_name")
         .order("created_at", { ascending: false }).order("id").range(from, to), "batch losses and gains"),
@@ -62,12 +63,17 @@ export const getBatchData = createServerFn({ method: "GET" })
       db.from("settings").select("value").eq("key", "zoho_stock_master").maybeSingle(),
       // Numbers already handed out (a receipt or Zoho batch that may not be a website batch yet).
       allRows((from, to) => db.from("batch_code_reservations").select("code").order("code").range(from, to), "batch numbers"),
+      // Moves between godowns (10 Nov 2026): received bills at another place, batches sent to other godowns.
+      allRows((from, to) => db.from("batch_transfers")
+        .select("id,transfer_no,kind,status,from_branch_id,from_location_id,from_location_name,to_branch_id,to_location_id,parent_batch_id,quantity,bill,lines,zoho_transfer_order_id,zoho_status,attempts,last_error,result,created_at,created_by_name,sent_at,received_at,received_by_name,received_by_role,create_sent_at,zoho_number_taken")
+        .order("id", { ascending: false }).range(from, to), "transfers between godowns"),
     ]);
     if (branchesResult.error || masterResult.error) throw new Error("Could not read godowns and settings");
     const batches: BatchRecord[] = batchRows.map((b) => ({
       ...b,
       quantity: n(b.quantity), remaining_quantity: n(b.remaining_quantity), unit_cost: n(b.unit_cost),
       zoho_balance: b.zoho_balance === null ? null : n(b.zoho_balance),
+      sent_quantity: b.sent_quantity === undefined || b.sent_quantity === null ? null : n(b.sent_quantity),
     }));
     const batchIds = batches.map((b) => b.id);
 
@@ -114,11 +120,25 @@ export const getBatchData = createServerFn({ method: "GET" })
       })
       .sort((a, b) => a.name.localeCompare(b.name));
     const master = (masterResult.data?.value ?? {}) as Record<string, unknown>;
+    const godownNames = new Map((branchesResult.data ?? []).map((b) => [b.id, b.name]));
+    const batchCodes = new Map(batches.map((b) => [b.id, b.batch_code]));
+    const transfers: BatchTransfer[] = transferRows.map((t) => ({
+      ...t,
+      kind: t.kind as BatchTransfer["kind"], status: t.status as BatchTransfer["status"],
+      quantity: t.quantity === null ? null : n(t.quantity),
+      to_name: godownNames.get(t.to_branch_id) ?? t.to_branch_id,
+      from_name: t.from_branch_id ? godownNames.get(t.from_branch_id) ?? t.from_location_name : t.from_location_name,
+      received_by_role: (t.received_by_role ?? null) as "admin" | "staff" | "partner" | "zoho" | null,
+      parent_batch_code: t.parent_batch_id ? batchCodes.get(t.parent_batch_id) ?? null : null,
+      bill_number: t.bill && typeof t.bill === "object" && !Array.isArray(t.bill) ? String((t.bill as Record<string, unknown>)["bill_number"] ?? "") : null,
+      lines: (Array.isArray(t.lines) ? t.lines : []) as unknown as BatchTransfer["lines"],
+      result: (Array.isArray(t.result) ? t.result : null) as unknown as BatchTransfer["result"],
+    }));
     return {
       generatedAt: new Date().toISOString(),
       zohoStockMaster: master["enabled"] === true,
       godowns: (branchesResult.data ?? []).filter((b) => !b.vendor_id).map((b) => ({ id: b.id, name: b.name, code: b.code, active: b.active, zohoLinked: Boolean(b.zoho_location_id) })),
-      products, batches, allocations, items, orders, adjustments, reservedCodes: reservedRows.map((row) => row.code),
+      products, batches, allocations, items, orders, adjustments, reservedCodes: reservedRows.map((row) => row.code), transfers,
     };
   });
 
