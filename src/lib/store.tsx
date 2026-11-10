@@ -16,6 +16,7 @@ import { loadUpiSettings } from "@/lib/upi-store";
 import { isBankMethod, mergeIntoCart, reorderPlan, type ReorderLine, type ReorderPlan } from "@/lib/payment-rules";
 import { isStorefrontProduct as isOnSale } from "@/lib/data";
 import { lineGstInside, toPaise } from "@/lib/pricing";
+import { costBeforeGst } from "@/lib/batches";
 import type { Database } from "@/integrations/supabase/types";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { branchForPin, branchStockOf, defaultBranchOf, godownPriceOf, useAdminBranch, useBranches, useShopperPin } from "@/lib/branches";
@@ -467,6 +468,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
             quantity: Number(row.quantity),
             remainingQty: Number(row.remaining_quantity),
             unitCost: Number(row.unit_cost),
+            // A bill batch may store its cost with GST; valuation and margins use it before GST, like sales.
+            costBeforeGst: costBeforeGst(row),
             warehouse: row.warehouse || "",
             status: row.status === "Depleted" ? "Depleted" : "Active",
           })));

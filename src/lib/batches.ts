@@ -13,9 +13,14 @@
  *   * Zoho: for items with "Track batches" ticked in Zoho, receipts, packages and adjustments name
  *     the Zoho batch (Zoho refuses them otherwise); batches made in Zoho are imported.
  *
- * Money (₹, paise): Sales = qty × the order line's rate before GST, less the order's discount in
- * proportion. Cost = qty × the batch's purchase cost. Profit = Sales − Cost of the sold units −
- * value of stock lost (count losses less gains, at cost).
+ * Money (₹, paise), every amount before GST so that like is compared with like:
+ *   Sales = qty × the order line's rate before GST, less the order's discount in proportion.
+ *   Cost = qty × the batch's purchase cost before GST (costBeforeGst). Profit = Sales − Cost of the
+ *   sold units − value of stock lost (count losses less gains, at that cost).
+ * A batch made from a Zoho bill can store its cost with GST ("Cost with GST", 5 Nov 2026), and its
+ * order lines and stock counts copy that cost. Until 10 Nov 2026 profit took it as it was, so the
+ * GST showed as a loss: Ekadantha oil bought at ₹130 with GST (₹123.81 without) and sold at ₹130
+ * with GST (₹123.81 without) showed a ₹6.19 loss. The GST paid is claimed back, so it is not a cost.
  */
 import type { XlsxSheet } from "./xlsx.ts";
 
@@ -321,10 +326,11 @@ export function buildBatchReport(input: {
 
   for (const batch of input.batches) {
     const t = emptyTotals();
+    // Order lines and stock counts copied the batch's stored cost; costCopyBeforeGst takes any GST back out of it.
     t.purchased = num(batch.quantity);
     t.available = num(batch.remaining_quantity);
-    t.purchaseValue = paise(t.purchased * num(batch.unit_cost));
-    t.stockValue = paise(t.available * num(batch.unit_cost));
+    t.purchaseValue = paise(t.purchased * costBeforeGst(batch));
+    t.stockValue = paise(t.available * costBeforeGst(batch));
     const orderIds = new Set<string>();
     const customers = new Set<string>();
     let firstSale: string | null = null, lastSale: string | null = null;
@@ -351,7 +357,7 @@ export function buildBatchReport(input: {
       const share = goods > 0 ? Math.max(0, 1 - num(order.discount) / goods) : 1;
       const rateBeforeGst = inclusive ? (num(item.unit_price) * 100) / (100 + num(item.gst_rate)) : num(item.unit_price);
       const value = paise(net * rateBeforeGst * share);
-      const cost = paise(net * num(allocation.unit_cost));
+      const cost = paise(net * costCopyBeforeGst(batch, allocation.unit_cost));
       const key = customerKeyOf(order);
       sales.push({
         batchId: batch.id, batchCode: batch.batch_code, orderItemId: item.id, orderId: order.id, orderNo: order.order_no, orderDate: order.created_at,
@@ -378,7 +384,7 @@ export function buildBatchReport(input: {
       const change = num(adjustment.qty);
       if (change < 0) t.lost = qty(t.lost - change);
       else t.gained = qty(t.gained + change);
-      t.lossValue = paise(t.lossValue - change * num(adjustment.unit_cost));
+      t.lossValue = paise(t.lossValue - change * costCopyBeforeGst(batch, adjustment.unit_cost));
     }
     t.profit = paise(t.sales - t.costOfSold - t.lossValue);
     const purchaseDate = batch.purchase_date ?? istDate(batch.created_at);
@@ -449,12 +455,35 @@ export const batchCostBasis = (batch: Pick<BatchRecord, "cost_basis">): BatchCos
 export const costBasisName = (batch: Pick<BatchRecord, "cost_basis">) =>
   ({ ex_gst: "Cost without GST", inc_gst: "Cost with GST", typed: "Cost typed in" } as const)[batchCostBasis(batch)];
 
+type CostFields = Pick<BatchRecord, "cost_basis" | "unit_cost" | "unit_cost_ex_gst" | "unit_cost_inc_gst">;
+
 /**
- * The cost bases among some batches. More than one means their cost and profit totals add up costs measured
- * differently (with GST and without), which a screen must say rather than add up silently.
+ * A cost an order line or a stock count copied from the batch, before GST. Only a bill batch stored "with GST"
+ * has GST in it: a copy of its cost with GST (or without) is its cost without GST (₹130 or ₹123.81 → ₹123.81),
+ * and any other figure (a cost edited by hand) is taken as with GST and scaled the same way (× 123.81 / 130).
+ * Every other batch's cost is already before GST, or was typed in and is taken as it is.
+ */
+export function costCopyBeforeGst(batch: CostFields, copied: number | string | null | undefined) {
+  const cost = num(copied);
+  if (batchCostBasis(batch) !== "inc_gst") return cost;
+  const ex = num(batch.unit_cost_ex_gst), inc = num(batch.unit_cost_inc_gst);
+  if (!(ex > 0 && inc > 0)) return cost;
+  if (Math.abs(cost - ex) < 0.005 || Math.abs(cost - inc) < 0.005) return ex;
+  return cost * (ex / inc);
+}
+
+/** The batch's purchase cost per unit before GST: what its profit is worked out with. */
+export const costBeforeGst = (batch: CostFields) => costCopyBeforeGst(batch, batch.unit_cost);
+
+/** The batch's purchase cost per unit with GST, when the bill gave it (null for a cost typed in). */
+export const costWithGst = (batch: CostFields) => (num(batch.unit_cost_inc_gst) > 0 ? num(batch.unit_cost_inc_gst) : null);
+
+/**
+ * The cost bases among some batches. Bill batches are all costed before GST for profit whichever cost they
+ * show, so only a cost typed in by hand (before 5 Nov 2026, with or without GST, nobody can tell) needs saying.
  */
 export function costBasesOf(rows: { batch: Pick<BatchRecord, "cost_basis"> }[]) {
-  return [...new Set(rows.map((row) => batchCostBasis(row.batch)))].sort();
+  return [...new Set(rows.map((row) => (batchCostBasis(row.batch) === "typed" ? "typed" : "bill")))].sort();
 }
 
 /** Batches, orders and customers matching a search: batch number, product, order number, customer name / phone / email. */
@@ -488,8 +517,9 @@ export const BATCH_COLUMNS: [string, (row: BatchReportRow) => string | number | 
   ["Purchased on", (r) => dmy(r.batch.purchase_date)],
   ["Supplier", (r) => r.batch.supplier],
   ["Bill / PO no.", (r) => r.batch.purchase_ref],
-  ["Cost per unit (₹)", (r) => r.batch.unit_cost],
-  ["Cost basis", (r) => costBasisName(r.batch)],
+  ["Cost per unit excl. GST (₹)", (r) => costBeforeGst(r.batch)],
+  ["Cost per unit incl. GST (₹)", (r) => costWithGst(r.batch)],
+  ["Cost shown on the batch", (r) => costBasisName(r.batch)],
   ["Purchased", (r) => r.purchased],
   ["Sold", (r) => r.sold],
   ["Delivered", (r) => r.delivered],
@@ -498,12 +528,12 @@ export const BATCH_COLUMNS: [string, (row: BatchReportRow) => string | number | 
   ["Found (count gains)", (r) => r.gained],
   ["Available", (r) => r.available],
   ["Sell-through %", (r) => r.sellThrough],
-  ["Purchase value (₹)", (r) => r.purchaseValue],
+  ["Purchase value excl. GST (₹)", (r) => r.purchaseValue],
   ["Sales excl. GST (₹)", (r) => r.sales],
-  ["Cost of sold (₹)", (r) => r.costOfSold],
-  ["Loss value (₹)", (r) => r.lossValue],
+  ["Cost of sold excl. GST (₹)", (r) => r.costOfSold],
+  ["Loss value excl. GST (₹)", (r) => r.lossValue],
   ["Profit (₹)", (r) => r.profit],
-  ["Stock value (₹)", (r) => r.stockValue],
+  ["Stock value excl. GST (₹)", (r) => r.stockValue],
   ["Orders", (r) => r.orders],
   ["Customers", (r) => r.customers],
   ["First sale", (r) => dmy(r.firstSale ? istDate(r.firstSale) : null)],
@@ -517,21 +547,21 @@ export const BATCH_COLUMNS: [string, (row: BatchReportRow) => string | number | 
   ["Zoho balance", (r) => r.batch.zoho_balance],
 ];
 
-const SALE_HEADER = ["Batch no.", "Product", "Order no.", "Order date (IST)", "Order status", "Customer", "Phone", "Email", "Address", "Qty", "Rate excl. GST (₹)", "Sales (₹)", "Cost (₹)", "Profit (₹)"];
+const SALE_HEADER = ["Batch no.", "Product", "Order no.", "Order date (IST)", "Order status", "Customer", "Phone", "Email", "Address", "Qty", "Rate excl. GST (₹)", "Sales excl. GST (₹)", "Cost excl. GST (₹)", "Profit (₹)"];
 
 export function batchReportSheets(report: BatchReport, meta: { generatedAt: string; scope: string }): XlsxSheet[] {
   const intro = (title: string) => [
     [title],
     [`${meta.scope}`, null, null, `Generated: ${istStamp(meta.generatedAt)} IST`],
-    ["Amounts in ₹. Sales before GST, less discounts. Profit = sales − cost of the sold units − value of stock lost (at the batch's cost)."],
+    ["Amounts in ₹, all before GST. Sales less discounts. Profit = sales − cost of the sold units − value of stock lost, at the batch's cost without GST (GST paid on purchases is claimed back)."],
     [],
   ];
   const dashHead = intro("Batch report · dashboard");
   const dashCols: [string, (r: BatchTotals & { batches?: number; active?: number; averageDaysToSellOut?: number | null }) => string | number | null][] = [
     ["Batches", (r) => r.batches ?? null], ["In stock", (r) => r.active ?? null], ["Purchased", (r) => r.purchased], ["Sold", (r) => r.sold],
     ["Delivered", (r) => r.delivered], ["Awaiting payment", (r) => r.held], ["Lost", (r) => r.lost], ["Available", (r) => r.available],
-    ["Purchase value (₹)", (r) => r.purchaseValue], ["Sales (₹)", (r) => r.sales], ["Cost of sold (₹)", (r) => r.costOfSold],
-    ["Loss value (₹)", (r) => r.lossValue], ["Profit (₹)", (r) => r.profit], ["Stock value (₹)", (r) => r.stockValue],
+    ["Purchase value excl. GST (₹)", (r) => r.purchaseValue], ["Sales excl. GST (₹)", (r) => r.sales], ["Cost of sold excl. GST (₹)", (r) => r.costOfSold],
+    ["Loss value excl. GST (₹)", (r) => r.lossValue], ["Profit (₹)", (r) => r.profit], ["Stock value excl. GST (₹)", (r) => r.stockValue],
     ["Avg. days to sell out", (r) => r.averageDaysToSellOut ?? null],
   ];
   const dashboard: XlsxSheet = {
@@ -582,14 +612,15 @@ export function batchReportSheets(report: BatchReport, meta: { generatedAt: stri
 }
 
 /** Losses / gains sheet (the server adds it: it needs the adjustment rows). */
-export function batchAdjustmentSheet(adjustments: BatchAdjustment[], codes: Map<string, { code: string; product: string; godown: string }>): XlsxSheet {
+export function batchAdjustmentSheet(adjustments: BatchAdjustment[], codes: Map<string, { code: string; product: string; godown: string; batch?: CostFields }>): XlsxSheet {
   return {
     name: "Losses and gains",
-    rows: [["Date (IST)", "Batch no.", "Product", "Godown", "Change", "Reason", "Note", "Value at cost (₹)", "By"],
+    rows: [["Date (IST)", "Batch no.", "Product", "Godown", "Change", "Reason", "Note", "Value at cost excl. GST (₹)", "By"],
       ...[...adjustments].sort((a, b) => b.created_at.localeCompare(a.created_at)).map((a) => {
         const b = codes.get(a.batch_id);
+        // The stock count copied the batch's stored cost; costCopyBeforeGst takes any GST out of it.
         return [istStamp(a.created_at), b?.code ?? "", b?.product ?? "", b?.godown ?? "", num(a.qty), adjustmentReasonLabel(a.reason), a.note,
-          paise(num(a.qty) * num(a.unit_cost)), a.created_by_name];
+          paise(num(a.qty) * (b?.batch ? costCopyBeforeGst(b.batch, a.unit_cost) : num(a.unit_cost))), a.created_by_name];
       })],
     boldRows: [0],
     widths: [17, 16, 36, 18, 8, 18, 30, 14, 18],

@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { ReportOrder } from "../src/lib/godown-report.ts";
 import {
-  attributeOrders, buildPartnerReport, partnerReportSheets, partnerSafeReport, targetForPeriod, type ReportPartner,
+  attributeOrders, buildPartnerReport, LINE_HEADER_ADMIN, LINE_HEADER_PARTNER, lineRow, partnerReportSheets, partnerSafeReport, targetForPeriod, type PartnerLine, type ReportPartner,
 } from "../src/lib/partner-report.ts";
 
 const partner = (id: string, branchId: string, createdAt: string, name = id): ReportPartner => ({
@@ -95,4 +95,15 @@ test("partner figures: sales, cost, profit, commission by status, target and ran
   assert.ok(!text.includes("Cost of goods") && !text.includes("Gross profit") && !text.includes("Purchase rate"));
   assert.ok(!text.includes("Sandesh")); // never another partner's data
   assert.equal(partnerSafeReport(report).lines.every((line) => line.cost === null && line.margin === null), true);
+});
+
+test("partner line sheets show the rate before GST next to the sale before GST", () => {
+  assert.equal(LINE_HEADER_PARTNER[6], "Rate excl. GST (₹)");
+  assert.equal(LINE_HEADER_PARTNER[7], "Sale excl. GST (₹)");
+  assert.deepEqual(LINE_HEADER_ADMIN.slice(8, 11), ["Purchase rate excl. GST (₹)", "Cost excl. GST (₹)", "Profit / loss (₹)"]);
+  const line = { time: "2026-11-07T11:14:55Z", godown: "Challakere", orderNo: "CLK-1", customer: "Chandana", product: "Ekadantha OIL 850ML", qty: 1,
+    unitPrice: 130, rateExGst: 123.81, lineTotal: 123.81, unitCost: 123.81, cost: 123.81, margin: 0, rate: "₹2 per unit", commission: 2,
+    commissionStatus: "pending", orderStatus: "Payment Confirmed", paymentStatus: "Paid", invoice: "" } as unknown as PartnerLine;
+  assert.deepEqual(lineRow(line, true).slice(5, 11), [1, 123.81, 123.81, 123.81, 123.81, 0]);
+  assert.deepEqual(lineRow(line, false).slice(5, 9), [1, 123.81, 123.81, "₹2 per unit"]);
 });

@@ -7,7 +7,8 @@
  *   Sales            line totals before GST, cancelled orders excluded
  *   Discount         coupon / order discounts
  *   Net sales        Sales − Discount
- *   Cost of goods    qty × the product's purchase rate (Zoho item purchase rate)
+ *   Cost of goods    qty × the product's purchase rate (Zoho item purchase rate, which is entered
+ *                    without GST, like sales: checked on live 10 Nov 2026)
  *   Gross profit     Net sales − Cost of goods, over lines whose purchase rate is known (a line
  *                    without one is flagged, never counted as pure profit); the discount is
  *                    shared in proportion
@@ -95,7 +96,10 @@ export type SaleLine = {
   customer: string;
   product: string;
   qty: number;
+  /** The price the customer saw: with GST on orders from 7 Nov 2026 (prices include GST), without before. */
   unitPrice: number;
+  /** The rate before GST (line total / qty), the one the sale, cost and profit columns are worked out with. */
+  rateExGst: number;
   lineTotal: number;
   unitCost: number | null;
   cost: number | null;
@@ -218,6 +222,7 @@ export function buildGodownReport(input: {
         product: item.product_name,
         qty: item.qty,
         unitPrice: Number(item.unit_price),
+        rateExGst: item.qty > 0 ? rupees(Number(item.line_total) / item.qty) : 0,
         lineTotal: Number(item.line_total),
         unitCost: known ? unitCost : null,
         cost,
@@ -305,9 +310,10 @@ export const SUMMARY_COLUMNS: [string, (row: GodownTotals) => number | string][]
   ["Due (₹)", (r) => r.due],
 ];
 
-const SALES_HEADER = ["Date & time (IST)", "Godown", "Order", "Customer", "Product", "Qty", "Rate (₹)", "Sale excl. GST (₹)",
-  "Purchase rate (₹)", "Cost (₹)", "Profit / loss (₹)", "Partner commission (₹)", "Order status", "Payment", "In Zoho", "Zoho invoice"];
-const saleRow = (line: SaleLine) => [istStamp(line.time), line.godown, line.orderNo, line.customer, line.product, line.qty, line.unitPrice,
+// Every money column before GST, so a row adds up: qty × rate = sale; sale − cost = profit / loss.
+export const SALES_HEADER = ["Date & time (IST)", "Godown", "Order", "Customer", "Product", "Qty", "Rate excl. GST (₹)", "Sale excl. GST (₹)",
+  "Purchase rate excl. GST (₹)", "Cost excl. GST (₹)", "Profit / loss (₹)", "Partner commission (₹)", "Order status", "Payment", "In Zoho", "Zoho invoice"];
+export const saleRow = (line: SaleLine) => [istStamp(line.time), line.godown, line.orderNo, line.customer, line.product, line.qty, line.rateExGst,
   line.lineTotal, line.unitCost, line.cost, line.margin, line.commission, line.orderStatus, line.paymentStatus, line.inZoho ? "Yes" : "No", line.invoice];
 const SALES_WIDTHS = [18, 26, 28, 18, 40, 6, 11, 14, 12, 12, 13, 12, 16, 12, 8, 26];
 

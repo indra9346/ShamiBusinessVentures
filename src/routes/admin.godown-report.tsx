@@ -159,10 +159,10 @@ function GodownReport() {
   const exportSalesCsv = () => {
     if (!report) return;
     downloadCSV(`godown-report-sales-${fileStem}.csv`, [
-      "Date & time (IST)", "Godown", "Order", "Customer", "Product", "Qty", "Rate (₹)", "Sale excl. GST (₹)", "Purchase rate (₹)", "Cost (₹)",
+      "Date & time (IST)", "Godown", "Order", "Customer", "Product", "Qty", "Rate excl. GST (₹)", "Sale excl. GST (₹)", "Purchase rate excl. GST (₹)", "Cost excl. GST (₹)",
       "Profit / loss (₹)", "Partner commission (₹)", "Order status", "Payment", "In Zoho", "Zoho invoice",
     ], report.lines.map((line) => [
-      istStamp(line.time), line.godown, line.orderNo, line.customer, line.product, line.qty, line.unitPrice, line.lineTotal,
+      istStamp(line.time), line.godown, line.orderNo, line.customer, line.product, line.qty, line.rateExGst, line.lineTotal,
       line.unitCost ?? "", line.cost ?? "", line.margin ?? "", line.commission, line.orderStatus, line.paymentStatus,
       line.inZoho ? "Yes" : "No", line.invoice,
     ]));
