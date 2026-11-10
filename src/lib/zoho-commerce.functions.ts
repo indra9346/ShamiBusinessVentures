@@ -34,6 +34,10 @@ import {
 import { ZOHO_TOKEN_LIMIT_MESSAGE, createZohoTokenCache, isZohoTokenLimit, type ZohoTokenCache, type ZohoTokenReply } from "@/lib/zoho-token-cache";
 import { billChange, billPlan, billSummary, lineBlocker } from "@/lib/bill-batches";
 import {
+  CREATE_HOLD_MINUTES, createHoldUntil, findTransferByNumber, godownTransferLines, godownTransferResult, isTransferred, readCreateAnswer,
+  readZohoTransfer, transferOrderBody, zohoSaysMissing, type BatchTransfer, type GodownTransfer,
+} from "@/lib/batch-transfers";
+import {
   DEPOSIT_ACCOUNTS_KEY, depositAccountFor, depositAccountHint, godownOfPayment, parseDepositAccounts, withDepositAccount,
   zohoCustomerPaymentBody, zohoDepositAccountOptions, type DepositAccount, type DepositAccounts, type ZohoDepositAccountOption,
 } from "@/lib/deposit-accounts";
@@ -5953,10 +5957,19 @@ async function syncZohoGodownStock(db: Awaited<ReturnType<typeof dbAdmin>>, regi
   const summary = {
     enabled: false, items: 0, pulled: 0, sentToZoho: 0, failed: 0, errors: [] as string[],
     batches: { items: 0, linked: 0, added: 0, skipped: 0, failed: 0, errors: [] as string[] },
+    transfers: { checked: 0, received: 0, cancelled: 0, failed: 0, heldBack: 0, errors: [] as string[] },
   };
+  // Read time first: anything a transfer changes from here on (including what the check below settles) is newer than
+  // it, so this run neither pulls over it nor pushes an older count over it.
+  const readAt = new Date().toISOString();
+  // Transfers between godowns first: one Zoho already moved, received or voided is settled here before stock is pulled,
+  // so units arrive with their batch; the godowns of one that can't be settled yet are left alone this run.
+  const onTheWay = await reconcileTransfersOnTheWay(db);
+  summary.transfers = onTheWay.summary;
   if (!(await isZohoStockMaster(db))) return summary;
   summary.enabled = true;
-  const readAt = new Date().toISOString();
+  // The transfers could not be read: which godowns they touch is unknown, so no godown stock moves this run.
+  if (onTheWay.holdAll) return summary;
   const [{ data: branches }, { data: links }, { data: products }, { data: stockRows }] = await Promise.all([
     db.from("branches").select("id,zoho_location_id").eq("active", true).is("vendor_id", null).neq("zoho_location_id", ""),
     db.from("zoho_item_links").select("product_id,zoho_item_id,track_batches"),
@@ -5993,9 +6006,25 @@ async function syncZohoGodownStock(db: Awaited<ReturnType<typeof dbAdmin>>, regi
         await db.from("zoho_item_links").update({ track_batches: tracked }).eq("product_id", link.product_id);
       if (tracked) trackedItems.push({ productId: link.product_id, zohoItemId: link.zoho_item_id, purchaseRate: Math.max(0, Number(item["purchase_rate"]) || 0) });
       for (const branch of branches) {
+        // A transfer between godowns that Zoho may already count but the website has not settled: next run.
+        if (onTheWay.holdBack.has(`${branch.id}|${link.product_id}`)) continue;
         const ordersWaiting = pending.get(branch.id)?.get(link.product_id) ?? 0;
         const zohoStock = godownStockFromZohoItem(item, branch.zoho_location_id, ordersWaiting);
-        const row = siteStock.get(`${branch.id}|${link.product_id}`);
+        let row = siteStock.get(`${branch.id}|${link.product_id}`);
+        if (row?.zoho_pending) {
+          // Read again: a transfer or an order since the start of this run changed it, and Zoho (read just now) may
+          // already have that change; sending the older count would undo it in Zoho. The next run sends it.
+          const { data: now } = await db.from("branch_stock").select("branch_id,product_id,stock,zoho_pending,updated_at")
+            .eq("branch_id", branch.id).eq("product_id", link.product_id).maybeSingle();
+          if (!now || Date.parse(now.updated_at) > Date.parse(readAt)) continue;
+          // A transfer touching this godown and item that is not settled (waiting, or on its way): Zoho's count may move
+          // under it at any moment, so the edit is sent once it is settled.
+          const { data: open, error: openError } = await db.from("batch_transfers").select("product_id,lines")
+            .in("status", ["pending", "in_transit"]).or(`from_branch_id.eq.${branch.id},to_branch_id.eq.${branch.id}`);
+          if (openError) continue;
+          if ((open ?? []).some((t) => t.product_id === link.product_id || godownTransferLines(t.lines).some((line) => line.product_id === link.product_id))) continue;
+          row = now;
+        }
         let target = zohoStock;
         if (row?.zoho_pending) {
           // Website edit wins: bring the Zoho location to the website count (plus orders Zoho
@@ -6048,19 +6077,23 @@ async function syncZohoGodownStock(db: Awaited<ReturnType<typeof dbAdmin>>, regi
   return summary;
 }
 
-/** Website orders Zoho does not hold yet for one product at one godown (same rule as the stock sync). */
-async function pendingWebsiteOrderQty(db: Awaited<ReturnType<typeof dbAdmin>>, branchId: string, productId: string) {
+/** Website orders Zoho does not hold yet, per godown and product (same rule as the stock sync). */
+async function pendingWebsiteOrders(db: Awaited<ReturnType<typeof dbAdmin>>) {
   const { since } = await zohoStockMasterSetting(db);
   const [{ data: recentOrders }, { data: defaultBranch }] = await Promise.all([
     db.from("orders").select("id,branch_id,order_status,zoho_salesorder_id,zoho_order_status,created_at,order_items(product_id,qty)").gte("created_at", since),
     db.from("branches").select("id").eq("is_default", true).maybeSingle(),
   ]);
-  const pending = pendingOrderQty((recentOrders ?? []).map((order) => ({
+  return pendingOrderQty((recentOrders ?? []).map((order) => ({
     branch_id: order.branch_id, order_status: order.order_status, zoho_salesorder_id: order.zoho_salesorder_id,
     zoho_order_status: order.zoho_order_status, created_at: order.created_at,
     items: ((order as { order_items?: { product_id: string | null; qty: number }[] }).order_items ?? []),
   })), since, defaultBranch?.id ?? "");
-  return pending.get(branchId)?.get(productId) ?? 0;
+}
+
+/** Website orders Zoho does not hold yet for one product at one godown. */
+async function pendingWebsiteOrderQty(db: Awaited<ReturnType<typeof dbAdmin>>, branchId: string, productId: string) {
+  return (await pendingWebsiteOrders(db)).get(branchId)?.get(productId) ?? 0;
 }
 
 /**
@@ -6407,7 +6440,36 @@ async function billWithLines(db: Awaited<ReturnType<typeof dbAdmin>>, billId: st
 export type BatchBillLine = Awaited<ReturnType<typeof billWithLines>>["plan"]["lines"][number];
 export type BatchBill = Awaited<ReturnType<typeof billWithLines>>["plan"];
 
-/** Recent Zoho bills at a godown, newest first, with how many of their lines already have a batch. One Zoho call. */
+/**
+ * Bills being moved to a godown right now (a receive transfer waiting for Zoho), by Zoho bill id. Such a bill can't be
+ * received anywhere else until that transfer is retried or cancelled (receive_bill_here, begin_bill_receive).
+ */
+async function billsBeingMoved(db: Awaited<ReturnType<typeof dbAdmin>>) {
+  const [{ data: rows }, { data: branches }] = await Promise.all([
+    db.from("batch_transfers").select("transfer_no,to_branch_id,bill").eq("kind", "receive").eq("status", "pending"),
+    db.from("branches").select("id,name"),
+  ]);
+  const nameOf = new Map((branches ?? []).map((b) => [b.id, b.name]));
+  const moving = new Map<string, { transferNo: string; godownId: string; godownName: string }>();
+  for (const row of rows ?? []) {
+    const billId = str(plainObject(row.bill)["bill_id"]);
+    if (billId) moving.set(billId, { transferNo: row.transfer_no, godownId: row.to_branch_id, godownName: nameOf.get(row.to_branch_id) ?? row.to_branch_id });
+  }
+  return moving;
+}
+
+/** A Zoho location's name: Zoho's own, else the godown linked to it, else a plain word. */
+async function locationNames(db: Awaited<ReturnType<typeof dbAdmin>>) {
+  const { data } = await db.from("branches").select("name,zoho_location_id").is("vendor_id", null).neq("zoho_location_id", "");
+  const byLocation = new Map(((data ?? []) as { name: string; zoho_location_id: string }[]).map((b) => [b.zoho_location_id, b.name]));
+  return (locationId: string, zohoName: string) => zohoName || byLocation.get(locationId) || (locationId ? "another Zoho location" : "");
+}
+
+/**
+ * Recent Zoho bills, newest first, wherever Zoho has them, with how many of their lines already have a batch. The
+ * admin picks the godown where the goods were unloaded; a bill at another Zoho location is moved there on receipt
+ * (client, 10 Nov 2026). One Zoho call.
+ */
 export const listBatchBills = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator(z.object({ branchId: z.string().trim().min(1).max(40) }))
@@ -6425,19 +6487,26 @@ export const listBatchBills = createServerFn({ method: "POST" })
       const message = cause instanceof Error ? cause.message : String(cause);
       throw new Error(`Could not read bills from Zoho (${message}).${billsPermissionHint(message)}`);
     }
-    // A bill names its location when the organisation uses locations; one without a location could be anywhere.
-    const bills = list.map(billSummary).filter((bill) => bill.status !== "void" && (!bill.locationId || !branch.zoho_location_id || bill.locationId === branch.zoho_location_id));
+    const [nameOf, moving] = await Promise.all([locationNames(db), billsBeingMoved(db)]);
+    const bills = list.map(billSummary).filter((bill) => bill.status !== "void");
     const ids = bills.map((bill) => bill.billId);
-    const { data: batched } = ids.length ? await db.from("batches").select("zoho_bill_id").in("zoho_bill_id", ids) : { data: [] };
+    // Bill lines with a batch: a batch sent on to another godown carries the bill too, but no bill line of its own.
+    const { data: batched } = ids.length ? await db.from("batches").select("zoho_bill_id").in("zoho_bill_id", ids).neq("zoho_bill_line_id", "") : { data: [] };
     const count = new Map<string, number>();
     for (const row of (batched ?? []) as { zoho_bill_id: string }[]) count.set(row.zoho_bill_id, (count.get(row.zoho_bill_id) ?? 0) + 1);
     return {
       godown: { id: branch.id, name: branch.name, zohoLinked: Boolean(branch.zoho_location_id) },
-      bills: bills.map((bill) => ({ ...bill, batchedLines: count.get(bill.billId) ?? 0, otherLocation: false })),
+      bills: bills.map((bill) => ({
+        ...bill, locationName: nameOf(bill.locationId, bill.locationName), batchedLines: count.get(bill.billId) ?? 0,
+        // Being moved to a godown right now: Retry or Cancel that transfer before receiving it anywhere.
+        movingTo: moving.get(bill.billId) ?? null,
+        // A bill whose Zoho location is another place: receiving it here moves its units here in Zoho.
+        otherLocation: Boolean(bill.locationId && branch.zoho_location_id && bill.locationId !== branch.zoho_location_id),
+      })),
     };
   }));
 
-/** One bill with every line's price breakup, product and whether it has a batch. One Zoho call. */
+/** One bill with every line's price breakup, product and whether it has a batch, and where Zoho has it. One Zoho call. */
 export const getBatchBill = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator(z.object({ branchId: z.string().trim().min(1).max(40), billId: z.string().trim().min(1).max(40) }))
@@ -6446,13 +6515,17 @@ export const getBatchBill = createServerFn({ method: "POST" })
     const db = await dbAdmin();
     const branch = await batchGodown(db, data.branchId);
     const { plan } = await billWithLines(db, data.billId);
+    const [nameOf, moving] = await Promise.all([locationNames(db), billsBeingMoved(db)]);
     const otherGodown = Boolean(plan.locationId && branch.zoho_location_id && plan.locationId !== branch.zoho_location_id);
-    return { bill: plan, otherGodown };
+    return { bill: { ...plan, locationName: nameOf(plan.locationId, plan.locationName) }, otherGodown, movingTo: moving.get(plan.billId) ?? null };
   }));
 
 /**
- * One batch per chosen bill line, all or none. The bill is read from Zoho again here, so the costs are Zoho's, not
- * the browser's. Nothing is sent to Zoho and no stock changes.
+ * One batch per chosen bill line, all or none, at the godown where the goods were unloaded (branchId). The bill is
+ * read from Zoho again here, so the costs and the bill's location are Zoho's, not the browser's.
+ *   Bill already at that godown in Zoho (or Zoho names no location): as before, nothing is sent to Zoho.
+ *   Bill at another Zoho location (another godown, Head Office): its units are moved to the godown in Zoho with a
+ *   transfer order first, and the batches are made only once Zoho has moved them (see runBatchTransfer).
  */
 export const createBatchesFromBill = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -6473,8 +6546,7 @@ export const createBatchesFromBill = createServerFn({ method: "POST" })
     const branch = await batchGodown(db, data.branchId);
     const { plan } = await billWithLines(db, data.billId);
     if (plan.status === "void") throw new Error("This bill is void in Zoho. Batches cannot be made from it.");
-    if (plan.locationId && branch.zoho_location_id && plan.locationId !== branch.zoho_location_id)
-      throw new Error(`Bill ${plan.billNumber} is for another godown in Zoho, not ${branch.name}.`);
+    const moveFrom = plan.locationId && branch.zoho_location_id && plan.locationId !== branch.zoho_location_id ? plan.locationId : "";
     const byId = new Map(plan.lines.map((line) => [line.lineId, line]));
     const rows = data.lines.map((pick) => {
       const line = byId.get(pick.lineId);
@@ -6482,20 +6554,545 @@ export const createBatchesFromBill = createServerFn({ method: "POST" })
       if (line.blocker) throw new Error(`${line.name}: ${line.blocker}`);
       if (pick.mfgDate && pick.expiryDate && pick.expiryDate < pick.mfgDate) throw new Error(`${line.name}: the expiry date is before the manufacture date`);
       return {
-        line_id: line.lineId, product_id: line.productId, zoho_item_id: line.itemId, qty: line.qty,
+        // Two decimals, as the batch keeps it: the units Zoho moves are the units the batch holds.
+        line_id: line.lineId, product_id: line.productId, zoho_item_id: line.itemId, qty: Math.round(line.qty * 100) / 100,
         unit_ex_gst: line.unitExGst, unit_inc_gst: line.unitIncGst,
         mfg_date: pick.mfgDate, expiry_date: pick.expiryDate, notes: pick.notes,
+        // For the Zoho transfer order when the bill is elsewhere.
+        name: line.name, unit: line.unit,
       };
     });
     const { data: profile } = await db.from("profiles").select("full_name").eq("id", context.userId).maybeSingle();
-    const { data: made, error } = await db.rpc("create_batches_from_bill", {
-      _branch_id: branch.id,
-      _bill: { bill_id: plan.billId, bill_number: plan.billNumber, vendor_name: plan.vendorName, date: plan.date, modified: plan.modifiedAt, total: plan.total },
+    const bill = { bill_id: plan.billId, bill_number: plan.billNumber, vendor_name: plan.vendorName, date: plan.date, modified: plan.modifiedAt, total: plan.total };
+    if (moveFrom) {
+      const nameOf = await locationNames(db);
+      const { data: begun, error: beginError } = await db.rpc("begin_bill_receive", {
+        _branch_id: branch.id, _from_location_id: moveFrom, _from_location_name: nameOf(moveFrom, plan.locationName),
+        _bill: bill, _lines: rows, _cost_basis: data.costBasis, _by: context.userId, _by_name: str(profile?.full_name),
+      });
+      if (beginError || !begun) throw new Error(beginError?.message ?? "Could not start moving the bill");
+      const transfer = await runBatchTransfer(db, begun as unknown as BatchTransfer);
+      return {
+        made: transfer.status === "done" ? (transfer.result ?? []).map((m) => ({ line_id: m.line_id ?? "", batch_id: m.batch_id, batch_code: m.batch_code })) : [],
+        billNumber: plan.billNumber, transfer,
+      };
+    }
+    // Refused while the same bill is being moved to another godown (Zoho may have its units there already).
+    const { data: made, error } = await db.rpc("receive_bill_here", {
+      _branch_id: branch.id, _bill: bill,
       _lines: rows, _cost_basis: data.costBasis, _by: context.userId, _by_name: str(profile?.full_name),
     });
     if (error) throw new Error(error.message);
-    return { made: (made ?? []) as { line_id: string; batch_id: string; batch_code: string }[], billNumber: plan.billNumber };
+    return { made: (made ?? []) as { line_id: string; batch_id: string; batch_code: string }[], billNumber: plan.billNumber, transfer: null as BatchTransfer | null };
   }));
+
+// ------------------------------------------------------------------ moving stock between godowns (client, 10 Nov 2026)
+
+/** How long one server call may hold a transfer (claim_batch_transfer): enough for every Zoho call it makes. */
+const TRANSFER_CLAIM_SECONDS = 300;
+
+type ZohoInventoryClient = Awaited<ReturnType<typeof openZohoInventory>>;
+type ZohoTransferLook =
+  | { state: "found"; found: { id: string; number: string; status: string } }
+  | { state: "absent" }
+  | { state: "error"; message: string };
+
+const errorText = (cause: unknown) => (cause instanceof Error ? cause.message : String(cause));
+const clockInIndia = (ms: number) => new Date(ms).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" });
+
+/**
+ * Runs work on a transfer while this call holds it (claim_batch_transfer), so no other call creates, cancels or
+ * finishes it meanwhile: a double press, two admins, or a press during the stock sync. onBusy when another call holds
+ * it. work gets the transfer as it is now. The claim is let go at the end, and runs out by itself if the server stops.
+ */
+async function withTransferClaim<T>(
+  db: Awaited<ReturnType<typeof dbAdmin>>, transferId: number,
+  work: (t: BatchTransfer, claim: string) => Promise<T>, onBusy: (t: BatchTransfer) => T | Promise<T>,
+): Promise<T> {
+  const claim = crypto.randomUUID();
+  const { data, error } = await db.rpc("claim_batch_transfer", { _transfer_id: transferId, _claim: claim, _seconds: TRANSFER_CLAIM_SECONDS });
+  if (error || !data) throw new Error(error?.message ?? "Transfer not found");
+  const t = data as unknown as BatchTransfer;
+  if (!t.claimed) return onBusy(t);
+  try {
+    return await work(t, claim);
+  } finally {
+    await db.rpc("release_batch_transfer", { _transfer_id: transferId, _claim: claim });
+  }
+}
+
+/** Pages of Zoho's transfer-order list read when looking a number up; past that, absence can't be confirmed. */
+const TRANSFER_LOOKUP_PAGES = 5;
+
+/**
+ * Zoho's transfer order for a website transfer: by its saved id, else by its number. A saved id Zoho says no longer
+ * exists (deleted there) is checked by number too, so "absent" means Zoho has no transfer order for it at all. The
+ * number search reads every page Zoho has (up to TRANSFER_LOOKUP_PAGES of 200): if Zoho ignores the number filter, a
+ * transfer further down the list is still found, and when there are more pages than that the answer is an error, never
+ * "absent".
+ */
+async function findZohoTransfer(zoho: ZohoInventoryClient, t: Pick<BatchTransfer, "transfer_no" | "zoho_transfer_order_id">): Promise<ZohoTransferLook> {
+  const said = (answer: { status: number; body: Record<string, unknown> | null }) =>
+    `Zoho answered ${answer.status}${str(answer.body?.["message"]) ? `: ${str(answer.body?.["message"])}` : ""}`;
+  if (t.zoho_transfer_order_id) {
+    const got = await zoho.send(`transferorders/${encodeURIComponent(t.zoho_transfer_order_id)}`, "GET");
+    const found = got.status >= 200 && got.status < 300 ? readZohoTransfer(got.body?.["transfer_order"]) : null;
+    if (found) return { state: "found", found };
+    if (!zohoSaysMissing(got.status, got.body)) return { state: "error", message: said(got) };
+  }
+  for (let page = 1; page <= TRANSFER_LOOKUP_PAGES; page += 1) {
+    const list = await zoho.send("transferorders", "GET", undefined, { transfer_order_number: t.transfer_no, page: String(page), per_page: "200" });
+    if (list.status < 200 || list.status >= 300) return { state: "error", message: said(list) };
+    const found = findTransferByNumber(list.body, t.transfer_no);
+    if (found) return { state: "found", found };
+    if (plainObject(list.body?.["page_context"])["has_more_page"] !== true) return { state: "absent" };
+  }
+  return { state: "error", message: `Zoho lists more than ${TRANSFER_LOOKUP_PAGES * 200} transfer orders, so ${t.transfer_no} could not be ruled out` };
+}
+
+/**
+ * Zoho's own stock now at the godowns a transfer touches: what finish_batch_transfer and cancel_batch_transfer set the
+ * moving godowns to, so a stock sync that already pulled the move can't count it twice. Website orders Zoho doesn't hold
+ * yet are taken off in the database, under the product's lock, so an order placed while Zoho is read still counts.
+ * null when Zoho is not the stock master (the website keeps godown stock itself and moves it by the quantity). Throws
+ * when Zoho can't be read: the caller leaves the transfer as it is.
+ */
+async function transferStockReadings(db: Awaited<ReturnType<typeof dbAdmin>>, t: Pick<BatchTransfer, "from_branch_id" | "to_branch_id" | "lines">): Promise<Json | null> {
+  if (!(await isZohoStockMaster(db))) return null;
+  const godownIds = [t.from_branch_id, t.to_branch_id].filter((id): id is string => Boolean(id));
+  const items = new Map<string, string>();
+  for (const line of t.lines ?? []) if (line.product_id && line.zoho_item_id) items.set(line.product_id, line.zoho_item_id);
+  if (!godownIds.length || !items.size) return [];
+  const [{ data: godowns, error }, { region, organizationId, token }] = await Promise.all([
+    db.from("branches").select("id,zoho_location_id").in("id", godownIds),
+    zohoOrderContext(db),
+  ]);
+  if (error) throw new Error("Could not read the godowns");
+  const readings: { branch_id: string; product_id: string; stock: number }[] = [];
+  for (const [productId, itemId] of items) {
+    const item = (await inventoryRequest<{ item?: Record<string, unknown> }>(region, organizationId, token, `items/${encodeURIComponent(itemId)}`, "GET")).item;
+    if (!item) throw new Error(`Zoho did not return item ${itemId}`);
+    for (const godown of godowns ?? []) {
+      if (!godown.zoho_location_id) continue;
+      const stock = godownStockFromZohoItem(item, godown.zoho_location_id, 0);
+      if (stock !== null) readings.push({ branch_id: godown.id, product_id: productId, stock });
+    }
+  }
+  return readings as unknown as Json;
+}
+
+/**
+ * Takes one website transfer through Zoho and finishes it here, holding it so no other call works on it meanwhile. The
+ * database already set the units aside under a fixed number (GB-TR-…), which is also the transfer order's number in Zoho:
+ *   1. Anything sent before (a create whose answer may have been lost, or a known transfer order): look it up in Zoho
+ *      first. Create only when Zoho has nothing, and never within CREATE_HOLD_MINUTES of a create whose answer was lost.
+ *   2. A bill received elsewhere: mark it received in Zoho (it is already at the unloading godown).
+ *   3. Zoho moved it: read Zoho's stock at the two godowns, then finish here (new batches, godown stock).
+ * Zoho refused and has nothing under the number: cancelled, the units go back. No clear answer: it stays pending,
+ * noted, for Retry. Zoho's stock is never changed any other way.
+ * settleOnly (the stock sync): finish or cancel what Zoho already has, but never create, and leave no note when Zoho
+ * has nothing yet.
+ */
+async function runBatchTransfer(db: Awaited<ReturnType<typeof dbAdmin>>, start: Pick<BatchTransfer, "id" | "transfer_no" | "status">,
+  options: { settleOnly?: boolean } = {}): Promise<BatchTransfer> {
+  return withZohoPurpose(`Batch transfer ${start.transfer_no}`, () => withTransferClaim(db, start.id, async (t, claim) => {
+    if (t.status !== "pending") return t;
+    const note = async (message: string, zohoId = "", zohoStatus = "", numberTaken = false) => {
+      const { data } = await db.rpc("note_batch_transfer_attempt", {
+        _transfer_id: t.id, _error: message.slice(0, 480), _zoho_transfer_order_id: zohoId, _zoho_status: zohoStatus, _claim: claim,
+        _number_taken: numberTaken,
+      });
+      return (data ?? { ...t, last_error: message }) as unknown as BatchTransfer;
+    };
+    // A pending transfer never moved stock here, so a cancel only gives the units back to the super batch (or frees the bill).
+    const cancel = async (message: string) => {
+      const { data, error } = await db.rpc("cancel_batch_transfer", { _transfer_id: t.id, _reason: message.slice(0, 480), _by: null, _stock: null, _claim: claim });
+      if (error) throw new Error(error.message);
+      return data as unknown as BatchTransfer;
+    };
+    const waitNote = (until: number) => `Zoho may still be making ${t.transfer_no}: its answer was lost. Retry looks the number up in Zoho first and never makes a second one; if Zoho doesn't show it yet, Retry again after ${clockInIndia(until)}.`;
+    let found: { id: string; status: string } | null = null;
+    try {
+      const zoho = await openZohoInventory();
+      const today = todayInIndia();
+      if (t.zoho_transfer_order_id || t.create_sent_at) {
+        const look = await findZohoTransfer(zoho, t);
+        if (look.state === "error") return await note(`Could not look ${t.transfer_no} up in Zoho (${look.message}). Press Retry.`);
+        if (look.state === "found") found = look.found;
+      }
+      if (!found && options.settleOnly) return t;
+      if (!found) {
+        const hold = createHoldUntil({ create_sent_at: t.create_sent_at ?? null, zoho_transfer_order_id: "" });
+        if (hold) return await note(waitNote(hold));
+        // Written down before the create goes out: if its answer is lost, the next try looks it up instead.
+        const { error: sentError } = await db.rpc("note_batch_transfer_create", { _transfer_id: t.id, _claim: claim });
+        if (sentError) return await note(`Could not start ${t.transfer_no}: ${sentError.message}. Press Retry.`);
+        const created = await zoho.send("transferorders", "POST", transferOrderBody(t, today), { ignore_auto_number_generation: "true" });
+        const answer = readCreateAnswer(created.status, created.body);
+        if (answer.kind === "created") found = { id: answer.id, status: answer.status };
+        else if (answer.kind === "unknown") return await note(`${answer.message}. ${waitNote(Date.now() + CREATE_HOLD_MINUTES * 60_000)}`);
+        else {
+          // Zoho said no, or that the number is taken: look the number up before deciding (the wording is not proof).
+          const look = await findZohoTransfer(zoho, { transfer_no: t.transfer_no, zoho_transfer_order_id: "" });
+          const said = answer.kind === "refused" ? answer.message : "the number is taken";
+          if (look.state === "error") return await note(`Zoho answered "${said}", and looking ${t.transfer_no} up failed (${look.message}). Press Retry.`);
+          if (look.state === "found") found = look.found;
+          else if (answer.kind === "refused") return await cancel(`Zoho refused transfer ${t.transfer_no}: ${answer.message}.${zohoPermissionHint(answer.message)}`);
+          // Zoho says it has the number but can't show it: remembered, so Cancel won't give the units back on a guess.
+          else return await note(`Zoho says ${t.transfer_no} already exists but its list does not show it. Find it in Zoho (Inventory > Transfer Orders): void it there and press Cancel, or press Retry.`, "", "", true);
+        }
+      }
+      if (found.status === "void") return await cancel(`Transfer ${t.transfer_no} is void in Zoho, so nothing moved.`);
+      // A bill received at its unloading godown is already there: received at once. A batch sent to another godown stays
+      // in transit until that godown marks it received (markTransferReceived).
+      if (t.kind === "receive" && !isTransferred(found.status)) {
+        await zoho.send(`transferorders/${encodeURIComponent(found.id)}/markastransferred`, "POST", undefined, { date: today });
+        const again = await zoho.send(`transferorders/${encodeURIComponent(found.id)}`, "GET");
+        found = readZohoTransfer(again.body?.["transfer_order"]) ?? found;
+      }
+    } catch (cause) {
+      // No answer at all (network, timeout): it may or may not be in Zoho. Retry looks it up.
+      return await note(`Zoho did not answer: ${errorText(cause)}. Press Retry in a few minutes: it looks ${t.transfer_no} up in Zoho first.`, found?.id ?? "", found?.status ?? "");
+    }
+    let stock: Json | null = null;
+    if (isTransferred(found.status) || (t.kind === "split" && found.status === "in_transit")) {
+      try {
+        stock = await transferStockReadings(db, t);
+      } catch (cause) {
+        return await note(`Zoho moved it (${t.transfer_no}), but Zoho's stock could not be read (${errorText(cause)}). Press Retry to finish here.`, found.id, found.status);
+      }
+    }
+    const { data, error } = await db.rpc("finish_batch_transfer", {
+      _transfer_id: t.id, _zoho_transfer_order_id: found.id, _zoho_status: found.status, _actor: null, _stock: stock, _claim: claim,
+    });
+    if (error) return await note(`Zoho moved it (${t.transfer_no}), but the website could not finish: ${error.message}. Press Retry.`, found.id, found.status);
+    return data as unknown as BatchTransfer;
+  }, (busy) => ({ ...busy, last_error: `${busy.transfer_no} is being sent to Zoho by another request right now. Refresh in a minute.` })));
+}
+
+async function adminName(db: Awaited<ReturnType<typeof dbAdmin>>, userId: string) {
+  const { data } = await db.from("profiles").select("full_name,email").eq("id", userId).maybeSingle();
+  return str(data?.full_name).trim() || str(data?.email).trim() || `Admin ${userId.slice(0, 8)}`;
+}
+
+/**
+ * Sends part of a batch (the super batch) to one or more other godowns: a Zoho transfer order and a new batch for each.
+ * requestId is the Send dialog's own key: pressing Send again after a lost answer gets the transfers the first press
+ * began (and carries them on), never a second set.
+ */
+export const sendBatchToGodowns = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator(z.object({
+    batchId: z.string().uuid(),
+    targets: z.array(z.object({ branchId: z.string().trim().min(1).max(40), qty: z.number().positive().max(1_000_000) })).min(1).max(10),
+    requestId: z.string().uuid(),
+  }))
+  .handler(async ({ data, context }) => {
+    await ensureAdmin(context.supabase, context.userId);
+    const db = await dbAdmin();
+    const { data: begun, error } = await db.rpc("begin_batch_split", {
+      _batch_id: data.batchId, _targets: data.targets.map((t) => ({ branch_id: t.branchId, qty: Math.round(t.qty * 100) / 100 })),
+      _by: context.userId, _by_name: await adminName(db, context.userId), _request: data.requestId,
+    });
+    if (error || !begun) throw new Error(error?.message ?? "Could not start the transfer");
+    const results: BatchTransfer[] = [];
+    // One at a time: each is its own Zoho transfer order.
+    for (const transfer of begun as unknown as BatchTransfer[]) results.push(await runBatchTransfer(db, transfer));
+    return results;
+  });
+
+/**
+ * Who may mark a transfer received at a godown: an administrator, or that godown's active staff or channel partner.
+ * Checked before anything is written to Zoho; the database checks it again when it finishes.
+ */
+async function godownReceiver(db: Awaited<ReturnType<typeof dbAdmin>>, userId: string, branchId: string) {
+  const [{ data: admin }, { data: staff }, { data: partner }] = await Promise.all([
+    db.from("user_roles").select("role").eq("user_id", userId).eq("role", "admin").maybeSingle(),
+    db.from("staff_employees").select("name").eq("user_id", userId).eq("status", "active").eq("branch_id", branchId).maybeSingle(),
+    db.from("channel_partners").select("name").eq("user_id", userId).eq("status", "active").eq("branch_id", branchId).maybeSingle(),
+  ]);
+  return Boolean(admin || staff || partner);
+}
+
+/** The godown of a signed-in godown staff member or channel partner, or null for anyone else. */
+async function godownOfUser(db: Awaited<ReturnType<typeof dbAdmin>>, userId: string) {
+  const [{ data: staff }, { data: partner }] = await Promise.all([
+    db.from("staff_employees").select("branch_id").eq("user_id", userId).eq("status", "active").maybeSingle(),
+    db.from("channel_partners").select("branch_id").eq("user_id", userId).eq("status", "active").maybeSingle(),
+  ]);
+  return staff?.branch_id ?? partner?.branch_id ?? null;
+}
+
+/** What the staff and partner apps may see of a transfer (GodownTransfer): no bill, costs, Zoho ids or errors. */
+function godownTransferView(t: BatchTransfer): GodownTransfer & { last_error: string } {
+  return {
+    id: t.id, transfer_no: t.transfer_no, kind: t.kind, status: t.status,
+    from_branch_id: t.from_branch_id, from_location_name: t.from_location_name, from_name: t.from_name ?? null,
+    to_branch_id: t.to_branch_id, to_name: t.to_name, parent_batch_code: t.parent_batch_code,
+    quantity: t.quantity === null ? null : Number(t.quantity),
+    lines: godownTransferLines(t.lines), result: godownTransferResult(t.result),
+    created_at: t.created_at, created_by_name: t.created_by_name, sent_at: t.sent_at ?? null, received_at: t.received_at ?? null,
+    received_by_name: t.received_by_name ?? "", received_by_role: t.received_by_role ?? null,
+    // Only a cancel says why (voided or deleted in Zoho: nothing arrived, units back at the sending godown).
+    last_error: t.status === "cancelled" ? t.last_error : "",
+  };
+}
+
+/**
+ * The receiving godown marks a batch sent to it as received (owner, 10 Nov 2026): Zoho's transfer order is marked
+ * received, then the new batch is made at that godown and its stock is set from Zoho. Pressing twice, or after Zoho
+ * already shows it received, finishes it once. One voided or deleted in Zoho meanwhile is cancelled instead: nothing
+ * arrived, and the units are back at the sending godown (the answer says so, status "cancelled").
+ */
+export const markTransferReceived = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator(z.object({ transferId: z.number().int().positive() }))
+  .handler(async ({ data, context }) => withZohoPurpose("Batch transfer: received at the godown", async () => {
+    const db = await dbAdmin();
+    const { data: row, error } = await db.from("batch_transfers").select("id,to_branch_id").eq("id", data.transferId).maybeSingle();
+    if (error || !row) throw new Error("Transfer not found");
+    if (!(await godownReceiver(db, context.userId, row.to_branch_id)))
+      throw new Error("Only the receiving godown's staff, its channel partner or the office can mark this received");
+    return withTransferClaim(db, row.id, async (t, claim) => {
+      if (t.status === "done") throw new Error(`Transfer ${t.transfer_no} is already received`);
+      if (t.status === "cancelled") throw new Error(`Transfer ${t.transfer_no} was cancelled: nothing arrived. Tell the office if goods did arrive.`);
+      if (t.status !== "in_transit") throw new Error(`Transfer ${t.transfer_no} is not on its way yet. Refresh the page.`);
+      const zoho = await openZohoInventory();
+      const look = await findZohoTransfer(zoho, t);
+      if (look.state === "error") throw new Error(`Could not read transfer ${t.transfer_no} from Zoho (${look.message}). Nothing changed; try again.`);
+      if (look.state === "absent" || look.found.status === "void") {
+        // Zoho no longer has it on the way: the units are back at the sending godown in Zoho.
+        const why = look.state === "absent" ? "deleted in Zoho" : "voided in Zoho";
+        let stock: Json | null;
+        try {
+          stock = await transferStockReadings(db, t);
+        } catch (cause) {
+          throw new Error(`Transfer ${t.transfer_no} was ${why}, but Zoho's stock could not be read (${errorText(cause)}). Nothing changed; try again.`);
+        }
+        const { data: cancelled, error: cancelError } = await db.rpc("cancel_batch_transfer", {
+          _transfer_id: t.id, _reason: `Transfer ${t.transfer_no} was ${why}: nothing arrived, and the units are back at ${t.from_name || "the sending godown"}.`,
+          _by: null, _stock: stock, _claim: claim,
+        });
+        if (cancelError) throw new Error(cancelError.message);
+        return godownTransferView(cancelled as unknown as BatchTransfer);
+      }
+      let found = look.found;
+      if (!isTransferred(found.status)) {
+        let marked: { status: number; body: Record<string, unknown> | null } | null = null;
+        try {
+          marked = await zoho.send(`transferorders/${encodeURIComponent(found.id)}/markastransferred`, "POST", undefined, { date: todayInIndia() });
+        } catch {
+          marked = null;
+        }
+        const again = await findZohoTransfer(zoho, { transfer_no: t.transfer_no, zoho_transfer_order_id: found.id }).catch(() => null);
+        if (again?.state === "found") found = again.found;
+        if (!isTransferred(found.status)) {
+          // Without a clear answer Zoho may have marked it received anyway: pressing again reads it and finishes here.
+          if (!marked || marked.status >= 500 || again?.state !== "found")
+            throw new Error(`Zoho gave no clear answer for ${t.transfer_no}. It may be marked received there already: press Mark received again to finish here.`);
+          const message = str(marked.body?.["message"]);
+          throw new Error(`Zoho did not mark ${t.transfer_no} received${message ? `: ${message}` : ""}.${zohoPermissionHint(message)} Nothing changed; try again.`);
+        }
+      }
+      let stock: Json | null;
+      try {
+        stock = await transferStockReadings(db, t);
+      } catch (cause) {
+        throw new Error(`Zoho shows ${t.transfer_no} received, but Zoho's stock could not be read (${errorText(cause)}). Press Mark received again to finish here.`);
+      }
+      const { data: done, error: finishError } = await db.rpc("finish_batch_transfer", {
+        _transfer_id: t.id, _zoho_transfer_order_id: found.id, _zoho_status: found.status, _actor: context.userId, _stock: stock, _claim: claim,
+      });
+      if (finishError) throw new Error(finishError.message);
+      return godownTransferView(done as unknown as BatchTransfer);
+    }, (busy) => {
+      throw new Error(`${busy.transfer_no} is being worked on right now (by the office, or the stock check). Refresh in a minute.`);
+    });
+  }));
+
+/**
+ * For the staff and partner apps: batches sent between the signed-in person's godown and others. Everything on its way
+ * (to them, to mark received; from them, to see it is travelling), then the latest arrivals, with where from and where
+ * to. Only what moves, how many, where and who: no bill, costs, supplier, Zoho ids or errors, which are the office's.
+ */
+export const listGodownTransfers = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const db = await dbAdmin();
+    const branchId = await godownOfUser(db, context.userId);
+    if (!branchId) return { godownId: null as string | null, transfers: [] as GodownTransfer[] };
+    const fields = "id,transfer_no,kind,status,from_branch_id,from_location_name,to_branch_id,parent_batch_id,quantity,lines,result,created_at,created_by_name,sent_at,received_at,received_by_name,received_by_role";
+    const mine = `to_branch_id.eq.${branchId},from_branch_id.eq.${branchId}`;
+    const [onTheWay, arrived] = await Promise.all([
+      db.from("batch_transfers").select(fields).eq("kind", "split").eq("status", "in_transit").or(mine).order("id", { ascending: false }),
+      db.from("batch_transfers").select(fields).eq("kind", "split").eq("status", "done").or(mine).order("id", { ascending: false }).limit(10),
+    ]);
+    if (onTheWay.error || arrived.error) throw new Error("Could not read the transfers");
+    const rows = [...(onTheWay.data ?? []), ...(arrived.data ?? [])];
+    const parentIds = [...new Set(rows.map((r) => r.parent_batch_id).filter((id): id is string => Boolean(id)))];
+    const [{ data: branches }, { data: parents }] = await Promise.all([
+      db.from("branches").select("id,name"),
+      parentIds.length ? db.from("batches").select("id,batch_code").in("id", parentIds) : Promise.resolve({ data: [] as { id: string; batch_code: string }[] }),
+    ]);
+    const nameOf = new Map((branches ?? []).map((b) => [b.id, b.name]));
+    const codeOf = new Map((parents ?? []).map((b) => [b.id, b.batch_code]));
+    return {
+      godownId: branchId,
+      transfers: rows.map((t): GodownTransfer => ({
+        id: t.id, transfer_no: t.transfer_no, kind: t.kind as GodownTransfer["kind"], status: t.status as GodownTransfer["status"],
+        from_branch_id: t.from_branch_id, from_location_name: t.from_location_name,
+        from_name: t.from_branch_id ? nameOf.get(t.from_branch_id) ?? t.from_location_name : t.from_location_name,
+        to_branch_id: t.to_branch_id, to_name: nameOf.get(t.to_branch_id) ?? t.to_branch_id,
+        parent_batch_code: t.parent_batch_id ? codeOf.get(t.parent_batch_id) ?? null : null,
+        quantity: t.quantity === null ? null : Number(t.quantity),
+        lines: godownTransferLines(t.lines), result: godownTransferResult(t.result),
+        created_at: t.created_at, created_by_name: t.created_by_name, sent_at: t.sent_at, received_at: t.received_at,
+        received_by_name: t.received_by_name, received_by_role: (t.received_by_role ?? null) as "admin" | "staff" | "partner" | "zoho" | null,
+      })),
+    };
+  });
+
+/** Tries a pending transfer again: looks it up in Zoho by its number first, then finishes it. */
+export const retryBatchTransfer = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator(z.object({ transferId: z.number().int().positive() }))
+  .handler(async ({ data, context }) => {
+    await ensureAdmin(context.supabase, context.userId);
+    const db = await dbAdmin();
+    const { data: row, error } = await db.from("batch_transfers").select("id,transfer_no,status").eq("id", data.transferId).maybeSingle();
+    if (error || !row) throw new Error("Transfer not found");
+    if (row.status !== "pending") throw new Error(`Transfer ${row.transfer_no} is not waiting any more. Refresh the page.`);
+    return runBatchTransfer(db, { id: row.id, transfer_no: row.transfer_no, status: "pending" });
+  });
+
+/**
+ * Cancels a transfer once Zoho is seen not to have it (no transfer order under its id or number, or Zoho's is void).
+ * Waiting for Zoho: the units go back to the super batch, or the bill can be received again; not within
+ * CREATE_HOLD_MINUTES of a create whose answer was lost, as Zoho may still be making it. On its way (voided or deleted in
+ * Zoho): the units are back at the sending godown in Zoho, so they go back on the super batch and its godown's stock.
+ */
+export const cancelBatchTransfer = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  // anyway: the admin checked Zoho by hand after Zoho said "number already exists" without listing it.
+  .validator(z.object({ transferId: z.number().int().positive(), anyway: z.boolean().default(false) }))
+  .handler(async ({ data, context }) => withZohoPurpose("Batch transfer: cancel", async () => {
+    await ensureAdmin(context.supabase, context.userId);
+    const db = await dbAdmin();
+    const who = await adminName(db, context.userId);
+    return withTransferClaim(db, data.transferId, async (t, claim) => {
+      if (t.status === "cancelled") return t;
+      if (t.status === "done") throw new Error(`Transfer ${t.transfer_no} is done: its units are at ${t.to_name ?? "the other godown"}.`);
+      const zoho = await openZohoInventory();
+      const look = await findZohoTransfer(zoho, t);
+      if (look.state === "error") throw new Error(`Could not check ${t.transfer_no} in Zoho (${look.message}), so it can't be cancelled yet. Try again.`);
+      if (t.status === "pending" && look.state === "absent") {
+        // A create whose answer was lost may still land (even when an older, deleted transfer order's id is saved here).
+        const hold = createHoldUntil({ create_sent_at: t.create_sent_at ?? null, zoho_transfer_order_id: "" });
+        if (hold) throw new Error(`Zoho may still be making ${t.transfer_no} (its answer was lost). Cancel works from ${clockInIndia(hold)}, once Zoho has had time; or press Retry, which looks it up first.`);
+        if (t.zoho_number_taken && !data.anyway) throw new Error(`Zoho said ${t.transfer_no} already exists but does not list it. Look in Zoho (Inventory > Transfer Orders): if it is there, void it; then press "Cancel anyway".`);
+      }
+      if (look.state === "found" && look.found.status !== "void")
+        throw new Error(t.status === "in_transit"
+          ? `Zoho has ${t.transfer_no} on its way (${look.found.status}). Mark it received when it arrives, or void or delete it in Zoho first and then cancel.`
+          : `Zoho has transfer ${t.transfer_no} (${look.found.status}). Press Retry to finish it, or void it in Zoho first and then cancel.`);
+      let stock: Json | null = null;
+      if (t.status === "in_transit") {
+        try {
+          stock = await transferStockReadings(db, t);
+        } catch (cause) {
+          throw new Error(`Could not read Zoho's stock for ${t.transfer_no} (${errorText(cause)}). Nothing changed; try again.`);
+        }
+      }
+      const { data: done, error } = await db.rpc("cancel_batch_transfer", {
+        _transfer_id: t.id, _reason: `Cancelled by ${who}: ${look.state === "absent" ? (data.anyway ? "not in Zoho (checked by hand)" : "not in Zoho") : "void in Zoho"}`, _by: context.userId, _stock: stock, _claim: claim,
+      });
+      if (error) throw new Error(error.message);
+      return done as unknown as BatchTransfer;
+    }, (busy) => {
+      throw new Error(`${busy.transfer_no} is being worked on right now. Try again in a minute.`);
+    });
+  }));
+
+/**
+ * Transfers between godowns not yet settled, checked against Zoho at each stock sync, before godown stock is pulled:
+ *   on its way and marked received in Zoho itself: finished here (its batch made, the receiving godown's stock from
+ *   Zoho), as if the godown had pressed Mark received;
+ *   on its way and voided or deleted in Zoho: cancelled, the units back on the super batch and at the sending godown;
+ *   waiting for Zoho, once anything was sent (a create whose answer was lost, or a known transfer order): finished or
+ *   cancelled if Zoho already has it, as Retry would, but never created from here.
+ * holdBack: godown and product pairs of every transfer this could not settle (still waiting for Zoho, an error, another
+ * call holding it), at both godowns. The stock sync neither pulls nor pushes those pairs until the transfer is settled:
+ * Zoho may already count units the website has not recorded yet, and a waiting website stock edit sent over them would
+ * create or lose them in Zoho. A transfer simply on its way (Zoho agrees) holds nothing back.
+ */
+async function reconcileTransfersOnTheWay(db: Awaited<ReturnType<typeof dbAdmin>>) {
+  const summary = { checked: 0, received: 0, cancelled: 0, failed: 0, heldBack: 0, errors: [] as string[] };
+  const holdBack = new Set<string>();
+  const { data: rows, error } = await db.from("batch_transfers")
+    .select("id,transfer_no,kind,status,from_branch_id,to_branch_id,product_id,lines,zoho_transfer_order_id,create_sent_at")
+    .in("status", ["pending", "in_transit"]).order("id");
+  if (error) {
+    summary.failed += 1;
+    summary.errors.push(`Transfers between godowns could not be read, so godown stock was left alone this run: ${error.message}`.slice(0, 300));
+    return { summary, holdBack, holdAll: true };
+  }
+  const hold = (row: { from_branch_id: string | null; to_branch_id: string; product_id: string | null; lines: Json }) => {
+    const products = new Set<string>(row.product_id ? [row.product_id] : []);
+    for (const line of godownTransferLines(row.lines)) if (line.product_id) products.add(line.product_id);
+    for (const godown of [row.from_branch_id, row.to_branch_id]) if (godown) for (const product of products) holdBack.add(`${godown}|${product}`);
+  };
+  let zoho: ZohoInventoryClient | null = null;
+  for (const row of rows ?? []) {
+    try {
+      if (row.status === "pending") {
+        // Never sent to Zoho: nothing there to settle, but the send already took the units off the sending godown.
+        if (!row.zoho_transfer_order_id && !row.create_sent_at) {
+          hold(row);
+          continue;
+        }
+        const after = await runBatchTransfer(db, { id: row.id, transfer_no: row.transfer_no, status: "pending" }, { settleOnly: true });
+        summary.checked += 1;
+        if (after.status === "done") summary.received += 1;
+        if (after.status === "cancelled") summary.cancelled += 1;
+        if (after.status === "pending") hold(row);
+        continue;
+      }
+      const client = zoho ?? (zoho = await openZohoInventory());
+      const outcome = await withTransferClaim(db, row.id, async (t, claim) => {
+        if (t.status !== "in_transit") return "settled" as const;
+        const look = await findZohoTransfer(client, t);
+        if (look.state === "error") throw new Error(look.message);
+        if (look.state === "found" && look.found.status !== "void" && !isTransferred(look.found.status)) return "on_the_way" as const;
+        const stock = await transferStockReadings(db, t);
+        if (look.state === "found" && isTransferred(look.found.status)) {
+          const { error: finishError } = await db.rpc("finish_batch_transfer", {
+            _transfer_id: t.id, _zoho_transfer_order_id: look.found.id, _zoho_status: look.found.status, _actor: null, _stock: stock, _claim: claim,
+          });
+          if (finishError) throw new Error(finishError.message);
+          return "received" as const;
+        }
+        const why = look.state === "absent" ? "deleted in Zoho" : "voided in Zoho";
+        const { error: cancelError } = await db.rpc("cancel_batch_transfer", {
+          _transfer_id: t.id, _reason: `Transfer ${t.transfer_no} was ${why}: nothing arrived, and the units are back at ${t.from_name || "the sending godown"}.`,
+          _by: null, _stock: stock, _claim: claim,
+        });
+        if (cancelError) throw new Error(cancelError.message);
+        return "cancelled" as const;
+      }, () => "busy" as const);
+      summary.checked += 1;
+      if (outcome === "received") summary.received += 1;
+      else if (outcome === "cancelled") summary.cancelled += 1;
+      else if (outcome === "busy") hold(row);
+    } catch (cause) {
+      summary.failed += 1;
+      hold(row);
+      summary.errors.push(`${row.transfer_no}: ${errorText(cause)}`.slice(0, 300));
+    }
+  }
+  summary.heldBack = holdBack.size;
+  summary.errors = summary.errors.slice(0, 10);
+  return { summary, holdBack, holdAll: false };
+}
 
 /**
  * Flags batches whose bill was edited, voided or deleted in Zoho since the batches were made. Runs when the Batches

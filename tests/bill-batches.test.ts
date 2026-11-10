@@ -101,7 +101,7 @@ test("a void bill and lines that can't become batches say why", () => {
 test("the recent-bills list keeps only what it shows", () => {
   assert.deepEqual(billSummary({ ...SS4463, line_items: undefined }), {
     billId: "B1", billNumber: "SS4463", vendorName: "NIRANJANA ENTERPRISES", date: "2026-11-03", total: 2217, status: "paid",
-    locationId: "LOC-CLK", modifiedAt: "2026-11-05T18:10:00+0530",
+    locationId: "LOC-CLK", locationName: "", modifiedAt: "2026-11-05T18:10:00+0530",
   });
 });
 

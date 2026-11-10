@@ -44,6 +44,8 @@ export const ZOHO_CORE_SCOPES = [
   // A sales order's own address, written through Zoho Books once Zoho Commerce is off
   // (Zoho Inventory has no address call for one sales order).
   "ZohoBooks.salesorders.UPDATE",
+  // Moving stock between godowns: a bill unloaded at another godown, a batch sent to other godowns (10 Nov 2026).
+  "ZohoInventory.transferorders.READ", "ZohoInventory.transferorders.CREATE", "ZohoInventory.transferorders.UPDATE",
 ] as const;
 
 /** The permission list for "Connect / Reauthorize Zoho". */

@@ -109,10 +109,15 @@ function AdminBranches() {
       const { syncZohoGodownsNow } = await import("@/lib/zoho-commerce.functions");
       const result = await syncZohoGodownsNow();
       await reloadBranches();
-      const problems = [...result.prices.errors, ...result.stock.errors];
-      if (problems.length) toast.error("Synced with some problems", { description: problems.slice(0, 3).join(" · ") });
+      // Transfers between godowns are checked first; one that can't be settled keeps its godowns' stock for those items
+      // out of the sync until it is, which the admin should see.
+      const problems = [...result.prices.errors, ...result.stock.errors, ...result.stock.transfers.errors];
+      const held = result.stock.transfers.heldBack
+        ? ` · stock of ${result.stock.transfers.heldBack} godown item(s) left alone until their transfers between godowns are settled (Admin > Batches)`
+        : "";
+      if (problems.length) toast.error("Synced with some problems", { description: `${problems.slice(0, 3).join(" · ")}${held}` });
       else toast.success("Godowns synced with Zoho", {
-        description: `${result.prices.godowns} price list(s), ${result.prices.prices} prices${result.stock.enabled ? `, stock for ${result.stock.items} item(s)` : ""}${result.prices.sentToZoho + result.stock.sentToZoho ? ` · ${result.prices.sentToZoho + result.stock.sentToZoho} website change(s) sent to Zoho` : ""}`,
+        description: `${result.prices.godowns} price list(s), ${result.prices.prices} prices${result.stock.enabled ? `, stock for ${result.stock.items} item(s)` : ""}${result.prices.sentToZoho + result.stock.sentToZoho ? ` · ${result.prices.sentToZoho + result.stock.sentToZoho} website change(s) sent to Zoho` : ""}${held}`,
       });
     } catch (cause) {
       toast.error("Could not sync with Zoho", { description: cause instanceof Error ? cause.message : undefined });

@@ -7,6 +7,7 @@ import { CommissionLinesTable, PartnerLeaderboard, TargetBar, commissionTotals, 
 import { MyPartnerReport } from "@/components/partners/MyPartnerReport";
 import { PartnerPayouts } from "@/components/partners/PartnerPayouts";
 import { PartnerInvoices } from "@/components/partners/PartnerInvoices";
+import { GodownTransfers } from "@/components/batches/GodownTransfers";
 import { supabase } from "@/integrations/supabase/client";
 import { inrPrecise } from "@/lib/data";
 import { describeRate, monthLabel, monthStart, targetProgress, type CommissionKind } from "@/lib/partners";
@@ -103,6 +104,7 @@ function PartnerDashboard() {
 
       <main className="mx-auto max-w-6xl space-y-6 px-4 py-6">
         {error && <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+        <GodownTransfers />
         <p className="text-xs text-slate">{monthLabel(month)} · updates live every 30 seconds</p>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <StatCard onClick={() => openLines("earned")} label="Commission earned" value={inrPrecise(totals.earned)} icon={IndianRupee} description="Delivered and fully paid orders" />
