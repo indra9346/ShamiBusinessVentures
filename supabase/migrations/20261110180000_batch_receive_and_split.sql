@@ -21,8 +21,8 @@
 --     and here. Both sides see where it came from and where it went, when and by whom.
 --   * A bill received at the godown where it was unloaded is already there, so its transfer is received at once.
 --   * The godowns' website stock takes Zoho's own numbers, read by the server right after Zoho moved the units, so a
---     stock sync that already pulled the move can't count it twice (private.batch_transfer_godown). Units sent to another
---     godown leave the sender's website stock as soon as the send starts, so they can't be sold meanwhile.
+--     stock sync that already pulled the move can't count it twice (private.batch_transfer_godown). A send waiting for
+--     Zoho changes no stock: Zoho still has those units at the sender until it has moved them.
 --   * One server call at a time works on a transfer (a claim that runs out after a few minutes), and a create whose
 --     answer was lost is looked up, never sent again, until Zoho has had 10 minutes to finish it (the server's rule).
 --   * A transfer on its way that is voided or deleted in Zoho is cancelled: its units go back to the super batch.
@@ -100,8 +100,9 @@ CREATE TABLE IF NOT EXISTS public.batch_transfers (
   zoho_number_taken boolean NOT NULL DEFAULT false,
   -- The send request that made it (the Send dialog's key): pressing Send again after a lost answer repeats nothing.
   request_id uuid,
-  -- A batch sent on: how much its sending godown's website stock actually went down when the send began (never below 0,
-  -- so it can be less than quantity). A cancel without Zoho's number gives back exactly this.
+  -- A batch sent on: how much its sending godown's website stock went down when Zoho had it on the way, moved by the
+  -- quantity (no Zoho number: Zoho not the stock master, or a waiting website edit). Never below 0, so it can be less
+  -- than quantity. Without Zoho's numbers, a cancel gives back exactly this and the receiving godown gains exactly this.
   reserved numeric(14,2) NOT NULL DEFAULT 0,
   CHECK (kind <> 'split' OR (parent_batch_id IS NOT NULL AND product_id IS NOT NULL AND quantity > 0)),
   CHECK (kind <> 'receive' OR (bill IS NOT NULL AND cost_basis IS NOT NULL)),
@@ -177,7 +178,7 @@ REVOKE ALL ON FUNCTION private.batch_transfer_orders_waiting(text, text) FROM PU
  * an order placed meanwhile still counts; a stock sync that already pulled the move can't count it twice.
  * Moved by _delta instead (never below 0) when there is no reading (Zoho is not the stock master, or gave no number for
  * the godown), or when the godown has a website stock edit still waiting for Zoho (zoho_pending): the next sync sends
- * that count to Zoho, so it has to move with the transfer. _reading_only: no _delta move (it moved earlier).
+ * that count to Zoho, so it has to move with the transfer. _reading_only: never move by _delta (only take a reading).
  * updated_at is now, so a sync that read Zoho before the move doesn't put the old number back. Returns how much the
  * godown's stock changed.
  */
@@ -363,17 +364,15 @@ BEGIN
   FOR target IN SELECT value FROM jsonb_array_elements(_targets) LOOP
     SELECT * INTO dst FROM public.branches WHERE id = target->>'branch_id';
     qty := (target->>'qty')::numeric;
-    -- They leave the sending godown's website stock now too, so they can't be sold while Zoho is asked; finish takes
-    -- Zoho's own number once Zoho has them on the way, and a cancel gives back what was taken here (reserved).
+    -- The godown's stock is not touched yet: Zoho still has the units there until it has them on the way (finish).
     INSERT INTO public.batch_transfers (transfer_no, kind, from_branch_id, from_location_id, from_location_name, to_branch_id, to_location_id,
-        parent_batch_id, product_id, quantity, lines, created_by, created_by_name, request_id, reserved)
+        parent_batch_id, product_id, quantity, lines, created_by, created_by_name, request_id)
       VALUES (private.next_batch_transfer_no(), 'split', src.id, src.zoho_location_id, src.name, dst.id, dst.zoho_location_id,
         b.id, b.product_id, qty, jsonb_build_array(jsonb_build_object('product_id', b.product_id, 'zoho_item_id', item, 'name', b.product_name, 'qty', qty, 'unit', b.unit)),
-        _by, who, _request, -private.batch_transfer_godown(src.id, b.product_id, -qty, NULL, false))
+        _by, who, _request)
       RETURNING * INTO t;
     made := made || private.batch_transfer_json(t);
   END LOOP;
-  PERFORM private.batch_transfer_total(b.product_id);
   RETURN made;
 END $function$;
 REVOKE ALL ON FUNCTION public.begin_batch_split(uuid, jsonb, uuid, text, uuid) FROM PUBLIC, anon, authenticated;
@@ -524,6 +523,7 @@ DECLARE
   n integer;
   line jsonb;
   receiver jsonb;
+  moved numeric;
   status_now text := lower(btrim(COALESCE(_zoho_status, '')));
 BEGIN
   SELECT * INTO t FROM public.batch_transfers WHERE id = _transfer_id FOR UPDATE;
@@ -542,11 +542,11 @@ BEGIN
     ORDER BY id FOR UPDATE;
 
   IF t.kind = 'split' AND status_now IN ('in_transit', 'transferred') AND t.status = 'pending' THEN
-    -- It left the sending godown: that godown's website stock went down when the send began; now it takes Zoho's number.
-    PERFORM private.batch_transfer_godown(t.from_branch_id, t.product_id, 0, _stock, true);
+    -- It left the sending godown: Zoho's number there, or down by the quantity (what actually went down is kept).
+    moved := private.batch_transfer_godown(t.from_branch_id, t.product_id, -t.quantity, _stock, false);
     PERFORM private.batch_transfer_total(t.product_id);
     UPDATE public.batch_transfers SET status = 'in_transit', sent_at = now(), zoho_transfer_order_id = _zoho_transfer_order_id,
-        zoho_status = status_now, last_error = ''
+        zoho_status = status_now, last_error = '', reserved = GREATEST(0, -moved)
       WHERE id = t.id RETURNING * INTO t;
   END IF;
   IF status_now <> 'transferred' THEN
@@ -577,8 +577,10 @@ BEGIN
       b.zoho_item_id, b.zoho_bill_id, b.zoho_bill_number, b.zoho_bill_modified, b.zoho_bill_total, 'Active', b.id, t.id)
     RETURNING id INTO child_id;
     made := jsonb_build_array(jsonb_build_object('batch_id', child_id, 'batch_code', child_code, 'qty', t.quantity));
-    -- It arrived: the receiving godown gains it (the sender's stock went down when it left).
-    PERFORM private.batch_transfer_godown(t.to_branch_id, t.product_id, t.quantity, _stock, false);
+    -- It arrived: the receiving godown gains it (the sender's stock went down when it left). Zoho's number there; else,
+    -- with Zoho the stock master, the quantity Zoho moved; without (no readings at all), what left the sender's website
+    -- stock, so a move between godowns never makes website stock.
+    PERFORM private.batch_transfer_godown(t.to_branch_id, t.product_id, CASE WHEN _stock IS NULL THEN t.reserved ELSE t.quantity END, _stock, false);
     PERFORM private.batch_transfer_total(t.product_id);
   ELSE
     receiver := jsonb_build_object('role', 'admin', 'name', t.created_by_name);
@@ -647,10 +649,12 @@ BEGIN
     UPDATE public.batches SET remaining_quantity = remaining_quantity + t.quantity,
         sent_quantity = GREATEST(0, sent_quantity - t.quantity)
       WHERE id = t.parent_batch_id;
-    -- And to the sending godown, whose website stock they left when the send began: Zoho's number when given, else what
-    -- was taken then (reserved), so nothing comes back that never left.
-    PERFORM private.batch_transfer_godown(t.from_branch_id, t.product_id, t.reserved, _stock, false);
-    PERFORM private.batch_transfer_total(t.product_id);
+    -- One on its way had left the sending godown's stock: back there, as Zoho's number when given, else what went down
+    -- then (reserved), so nothing comes back that never left. One waiting for Zoho never moved stock.
+    IF t.status = 'in_transit' THEN
+      PERFORM private.batch_transfer_godown(t.from_branch_id, t.product_id, t.reserved, _stock, false);
+      PERFORM private.batch_transfer_total(t.product_id);
+    END IF;
   END IF;
   UPDATE public.batch_transfers SET status = 'cancelled', last_error = left(COALESCE(_reason, ''), 500), finished_at = now()
     WHERE id = t.id RETURNING * INTO t;

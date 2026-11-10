@@ -47,7 +47,8 @@ export function SendToGodownsDialog({ open, onOpenChange, batch, godowns, availa
   const [requestId, setRequestId] = useState(() => crypto.randomUUID());
   const [failed, setFailed] = useState(false);
   const plan = rows.map((row) => ({ branchId: row.branchId, qty: Number(row.qty) }));
-  const problem = splitPlanProblem(available, batch.branch_id ?? "", plan);
+  // After a failed try the units it began may already be off the batch: the same send carries on whatever is left now.
+  const problem = failed ? "" : splitPlanProblem(available, batch.branch_id ?? "", plan);
   const total = Math.round(plan.reduce((sum, row) => sum + (Number.isFinite(row.qty) ? row.qty : 0), 0) * 100) / 100;
   const setRow = (index: number, change: Partial<Row>) => setRows((all) => all.map((row, i) => (i === index ? { ...row, ...change } : row)));
 
@@ -139,6 +140,9 @@ export function TransferList({ transfers, onChanged, compact }: { transfers: Bat
   const [busy, setBusy] = useState(0);
   if (!transfers.length) return <p className="px-4 py-6 text-sm text-slate">No transfers between godowns yet.</p>;
   const act = async (t: BatchTransfer, action: "retry" | "cancel" | "receive"): Promise<void> => {
+    // Zoho said the number exists but does not list it: only the admin, having looked in Zoho, can cancel it.
+    const anyway = action === "cancel" && t.status === "pending" && Boolean(t.zoho_number_taken);
+    if (anyway && !window.confirm(`Zoho said ${t.transfer_no} already exists but does not list it.\n\nCancel only if you looked in Zoho (Inventory > Transfer Orders) and ${t.transfer_no} is not there, or you voided it. The units go back.`)) return;
     setBusy(t.id);
     try {
       const functions = await import("@/lib/zoho-commerce.functions");
@@ -146,7 +150,7 @@ export function TransferList({ transfers, onChanged, compact }: { transfers: Bat
         ? await functions.retryBatchTransfer({ data: { transferId: t.id } })
         : action === "receive"
           ? await functions.markTransferReceived({ data: { transferId: t.id } })
-          : await functions.cancelBatchTransfer({ data: { transferId: t.id } });
+          : await functions.cancelBatchTransfer({ data: { transferId: t.id, anyway } });
       if (action === "cancel") {
         toast.success(`${t.transfer_no} cancelled`, {
           description: t.status === "in_transit"
@@ -203,7 +207,7 @@ export function TransferList({ transfers, onChanged, compact }: { transfers: Bat
                 <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", busy === t.id && "animate-spin")} />Retry
               </Button>
               <Button size="sm" variant="outline" className="border-red-200 text-red-700 hover:bg-red-50" disabled={busy !== 0} onClick={() => void act(t, "cancel")}>
-                <Trash2 className="mr-1.5 h-3.5 w-3.5" />Cancel
+                <Trash2 className="mr-1.5 h-3.5 w-3.5" />{t.zoho_number_taken ? "Cancel anyway…" : "Cancel"}
               </Button>
               <span className="self-center text-[11px] text-slate">
                 {createHoldUntil(t)
