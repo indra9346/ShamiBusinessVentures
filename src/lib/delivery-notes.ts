@@ -6,7 +6,7 @@
  * (supabase/migrations/20261103090000_delivery_notes.sql). Nothing here can allow a note: these
  * functions only put the database's answer into words.
  */
-import type { DeliveryHandoverRow, DeliveryScanRow, PaperHandover } from "./delivery-papers.ts";
+import type { DeliveryHandoverRow, DeliveryPaperRow, DeliveryReopenRow, DeliveryScanRow, PaperHandover, PaperPrint } from "./delivery-papers.ts";
 
 export type DeliveryGateCode =
   | "paid" | "unpaid" | "partly_paid" | "payment_mismatch" | "website_behind" | "zoho_has_payment" | "zoho_behind"
@@ -105,8 +105,13 @@ export type DeliveryNoteView = {
   state: DeliveryGate;
   note: DeliveryNote | null;
   events: DeliveryNoteEvent[];
-  /** Item lines handed over at the godown on a QR scan, and the scans of this note's papers, newest first. */
+  /**
+   * Item lines handed over at the godown on a QR scan (every round), administrators' reopenings, the printed papers
+   * (original, duplicate or replacement, by print) and the scans of this note's papers, newest first.
+   */
   handovers: DeliveryHandoverRow[];
+  reopens: DeliveryReopenRow[];
+  papers: DeliveryPaperRow[];
   scans: DeliveryScanRow[];
   /** False while the database lacks the QR migration: the note shows, but printing is refused. */
   qrReady: boolean;
@@ -119,6 +124,9 @@ export type DeliveryPrintRecord = {
   /** This press's QR codes, given once: only their hashes are kept. */
   noteCode: string | null;
   slipCodes: Record<string, string>;
+  /** What each printed paper is (original, duplicate n, replacement original), for its label. */
+  notePaper: PaperPrint | null;
+  slipPapers: Record<string, PaperPrint>;
   /** Lines already handed over, by line number. */
   handovers: Record<string, PaperHandover>;
 };
@@ -135,9 +143,10 @@ export type DeliveryRegisterRow = {
   generated_by: string;
   prints: number;
   last_printed_at: string | null;
-  /** Item lines handed over on a QR scan, and scans that were refused. */
+  /** Item lines handed over now on a QR scan, items an administrator reopened, and scans that were refused. */
   handed_over: number;
   last_handed_over_at: string | null;
+  reopened: number;
   refused_scans: number;
   state: DeliveryGate;
 };

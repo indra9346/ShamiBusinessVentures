@@ -6,7 +6,7 @@ import { DataTable, Panel } from "@/components/panel/widgets";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { gateWords, istDateTime, paperWarnings, type DeliveryRegisterRow } from "@/lib/delivery-notes";
 import { listDeliveryNotes, listDeliveryScans } from "@/lib/delivery-notes.functions";
-import { scanIsRefusal, scannedPaperLabel, scanResultLabel, type DeliveryScanRow } from "@/lib/delivery-papers";
+import { roleWords, scanIsRefusal, scannedPaperLabel, scanResultLabel, type DeliveryScanRow } from "@/lib/delivery-papers";
 import { adminNav } from "@/lib/panel-nav";
 import { cn } from "@/lib/utils";
 
@@ -68,7 +68,7 @@ function AdminDeliveryNotes() {
         <Link to="/slip" className="inline-flex items-center gap-1.5 rounded-md bg-navy px-3 py-2 text-sm font-semibold text-white hover:bg-navy/90">
           <ScanLine className="h-4 w-4" /> Scan a delivery note or slip
         </Link>
-        <span className="text-xs text-slate">Checks a paper's QR. Godown staff scan from their attendance app.</span>
+        <span className="text-xs text-slate">Checks a paper's QR. Godown staff scan from their attendance app, channel partners from their partner page.</span>
       </div>
       <Panel title={rows ? `All delivery notes (${rows.length})` : "All delivery notes"}>
         <p className="-mt-1 mb-3 text-xs text-slate">
@@ -94,6 +94,7 @@ function AdminDeliveryNotes() {
                 String(row.items),
                 <span key="handed" className={cn(handed >= row.items ? "font-semibold text-emerald-800" : "text-charcoal")}>
                   {handed} of {row.items}{row.last_handed_over_at ? ` · ${istDateTime(row.last_handed_over_at)}` : ""}
+                  {Number(row.reopened ?? 0) > 0 && <span className="block text-[11px] font-semibold text-amber-800">{row.reopened} reopened by the office</span>}
                   {Number(row.refused_scans ?? 0) > 0 && <span className="block text-[11px] font-semibold text-danger">{row.refused_scans} refused scan{Number(row.refused_scans) === 1 ? "" : "s"}</span>}
                 </span>,
                 `${istDateTime(row.generated_at)} by ${row.generated_by}`,
@@ -105,23 +106,24 @@ function AdminDeliveryNotes() {
       </Panel>
       <Panel title={scans ? `QR scans (latest ${scans.length})` : "QR scans"} className="mt-4">
         <p className="-mt-1 mb-3 text-xs text-slate">
-          Every scan of a delivery note's or slip's QR code: who, when, at which godown, and what the system answered. Nothing here can be changed or deleted.
+          Every scan of a delivery note's or slip's QR code: who (staff, channel partner or office), when, at which godown, on the godown's registered phone or their own, and what the system answered. Nothing here can be changed or deleted.
         </p>
         {scans && (
           <DataTable
             tableId="admin-delivery-scans"
-            columns={["When", "Answer", "Paper", "Note", "Scanned by", "Godown"]}
+            columns={["When", "Answer", "Paper", "Note", "Scanned by", "Phone"]}
             empty="No scans yet"
-            minWidth={820}
+            minWidth={880}
             rows={scans.map((scan) => [
               <span key="when" className="whitespace-nowrap">{istDateTime(scan.occurred_at)}</span>,
               <span key="answer" className={cn("font-semibold", scan.result === "handed_over" ? "text-emerald-800" : scanIsRefusal(scan.result) ? "text-danger" : "text-charcoal")}>
                 {scanResultLabel(scan.result)}{scan.lines.length > 0 ? ` (item${scan.lines.length === 1 ? "" : "s"} ${scan.lines.join(", ")})` : ""}
+                {scan.order_delivered && <span className="block text-[11px] text-emerald-800">Order marked Delivered</span>}
               </span>,
               scannedPaperLabel(scan),
               scan.order_no ? <Link key="note" to="/admin/orders/$id" params={{ id: scan.order_no }} className="font-semibold text-gold hover:underline">{scan.note_no} · {scan.order_no}</Link> : "—",
-              `${scan.actor_name} (${scan.actor_role === "admin" ? "admin" : "staff"})`,
-              scan.branch_name || "Office",
+              `${scan.actor_name} (${roleWords(scan.actor_role).en}${scan.branch_name ? `, ${scan.branch_name}` : ""})`,
+              scan.device_registered ? `Godown phone${scan.device_label ? `: ${scan.device_label}` : ""}` : "Own phone",
             ])}
           />
         )}

@@ -6,13 +6,17 @@ import type { Database, Json } from "@/integrations/supabase/types";
 import type {
   DeliveryGate, DeliveryNote, DeliveryNoteEvent, DeliveryNoteView, DeliveryPrintRecord, DeliveryRegisterRow,
 } from "@/lib/delivery-notes";
-import { PAPER_CODE, type DeliveryHandoverRow, type DeliveryScanRow, type PaperHandover, type PaperScan } from "@/lib/delivery-papers";
+import {
+  PAPER_CODE, type DeliveryHandoverRow, type DeliveryPaperRow, type DeliveryReopenRow, type DeliveryScanRow, type PaperHandover, type PaperPrint, type PaperScan,
+} from "@/lib/delivery-papers";
 
 /*
- * Delivery notes, admin only. Generate, Print and Check again read Zoho Books now (read-only) and hand
- * that reading to the database, which decides: see private.delivery_note_gate. Just opening a page uses
- * what the website last read, which adds no Zoho call and cannot generate anything. The database functions
- * accept a Zoho reading, so only this server may call them. Nothing here writes to Zoho or changes an order.
+ * Delivery notes, admin only, and the godown's QR scans of their papers (admins, godown staff and channel
+ * partners). Generate, Print, Check again and a handover read Zoho Books now (read-only) and hand that reading to
+ * the database, which decides: see private.delivery_note_gate and public.delivery_paper_scan. Just opening a page
+ * uses what the website last read, which adds no Zoho call and cannot generate anything. The database functions
+ * accept a Zoho reading, so only this server may call them. The one order change here: a handover of the last item
+ * marks the order Delivered in the database, and this server then sends that to Zoho like an admin's change.
  */
 
 function serviceClient() {
@@ -45,22 +49,30 @@ async function loadView(db: ReturnType<typeof serviceClient>, orderNo: string, z
   if (noteError) throw new Error("Could not read the delivery note");
   let events: DeliveryNoteEvent[] = [];
   let handovers: DeliveryHandoverRow[] = [];
+  let reopens: DeliveryReopenRow[] = [];
+  let papers: DeliveryPaperRow[] = [];
   let scans: DeliveryScanRow[] = [];
   let qrReady = true;
   if (note) {
-    const [eventRead, handoverRead, scanRead] = await Promise.all([
+    const [eventRead, handoverRead, reopenRead, paperRead, scanRead] = await Promise.all([
       db.from("delivery_note_events")
         .select("id,kind,doc,slip_line,copy_no,gate_code,detail,actor_name,occurred_at")
         .eq("note_id", note.id).order("id", { ascending: false }).limit(200),
       db.from("delivery_handovers")
-        .select("id,slip_line,actor_name,actor_role,branch_name,gate_code,gate_source,handed_over_at")
-        .eq("note_id", note.id).order("slip_line"),
+        .select("id,slip_line,round,actor_name,actor_role,branch_name,device_registered,device_label,gate_code,gate_source,handed_over_at")
+        .eq("note_id", note.id).order("slip_line").order("round"),
+      db.from("delivery_handover_reopens")
+        .select("id,handover_id,slip_line,reason,actor_name,reopened_at")
+        .eq("note_id", note.id).order("id"),
+      db.from("delivery_paper_codes")
+        .select("id,print_event_id,doc,slip_line,copy_no,kind,duplicate_no,reason,printed_by,printed_at")
+        .eq("note_id", note.id).order("id"),
       db.from("delivery_scans")
-        .select("id,action,result,doc,slip_line,copy_no,lines,gate_code,gate_source,actor_name,actor_role,branch_name,code_hint,occurred_at")
+        .select("id,action,result,doc,slip_line,copy_no,paper_kind,duplicate_no,asked,lines,gate_code,gate_source,order_delivered,actor_name,actor_role,branch_name,device_registered,device_label,code_hint,occurred_at")
         .eq("note_id", note.id).order("id", { ascending: false }).limit(100),
     ]);
     if (eventRead.error) throw new Error("Could not read the delivery note's history");
-    for (const read of [handoverRead, scanRead]) {
+    for (const read of [handoverRead, reopenRead, paperRead, scanRead]) {
       if (!read.error) continue;
       // Code uploaded before the QR migration: the note still shows, and printing refuses (see recordDeliveryPrint).
       if (missingTable(read.error)) qrReady = false;
@@ -68,6 +80,8 @@ async function loadView(db: ReturnType<typeof serviceClient>, orderNo: string, z
     }
     events = (eventRead.data ?? []) as DeliveryNoteEvent[];
     handovers = (handoverRead.data ?? []) as DeliveryHandoverRow[];
+    reopens = (reopenRead.data ?? []) as DeliveryReopenRow[];
+    papers = (paperRead.data ?? []) as DeliveryPaperRow[];
     scans = (scanRead.data ?? []) as DeliveryScanRow[];
   }
   return {
@@ -77,6 +91,8 @@ async function loadView(db: ReturnType<typeof serviceClient>, orderNo: string, z
     note: note ? { ...note, seq: Number(note.seq), invoice_total: Number(note.invoice_total), order_total: Number(note.order_total), paid_amount: Number(note.paid_amount) } as unknown as DeliveryNote : null,
     events,
     handovers,
+    reopens,
+    papers,
     scans,
     qrReady,
   };
@@ -131,11 +147,13 @@ export const generateDeliveryNote = createServerFn({ method: "POST" })
 const printInput = orderInput.extend({
   note: z.boolean(),
   slipLines: z.array(z.number().int().min(1).max(10_000)).max(500),
+  /** A replacement original for a lost or unprinted one: why. Without it a reprint is a duplicate. */
+  replaceReason: z.string().trim().min(3).max(300).optional(),
 });
 
 /**
- * One press of Print: checks the payment again, records who printed what, and returns the time and copy
- * numbers that go on the paper.
+ * One press of Print: checks the payment again, records who printed what, and returns the time, copy numbers, QR
+ * codes and paper kinds (original, duplicate n, replacement original) that go on the paper.
  */
 export const recordDeliveryPrint = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -151,51 +169,93 @@ export const recordDeliveryPrint = createServerFn({ method: "POST" })
     const zoho = await zohoReading(data.orderNo) as unknown as Json;
     const { data: result, error } = await db.rpc("record_delivery_print", {
       _note_id: note.id, _note: data.note, _slip_lines: data.slipLines, _zoho: zoho, _actor: context.userId, _actor_name: await actorName(db, context.userId),
+      _replace_reason: data.replaceReason ?? null,
     });
     if (error || !result) throw new Error(error?.message ?? "Could not record the print");
     const printed = result as {
       printed_at: string; note_copy: number | null; slip_copies: Record<string, number>;
       note_code: string | null; slip_codes: Record<string, string>; handovers: Record<string, PaperHandover>;
+      note_paper: PaperPrint | null; slip_papers: Record<string, PaperPrint>;
     };
     const record: DeliveryPrintRecord = {
       printedAt: printed.printed_at, noteCopy: printed.note_copy, slipCopies: printed.slip_copies ?? {},
       noteCode: printed.note_code ?? null, slipCodes: printed.slip_codes ?? {}, handovers: printed.handovers ?? {},
+      notePaper: printed.note_paper ?? null, slipPapers: printed.slip_papers ?? {},
     };
-    // Every paper printed must carry its code; a paper without one could not be checked at the godown.
-    const missing = (data.note && !record.noteCode) || data.slipLines.some((line) => !record.slipCodes[String(line)]);
+    // Every paper printed must carry its code and kind; a paper without them could not be checked at the godown.
+    const missing = (data.note && (!record.noteCode || !record.notePaper))
+      || data.slipLines.some((line) => !record.slipCodes[String(line)] || !record.slipPapers[String(line)]);
     if (missing) throw new Error("The print was recorded but its QR codes are missing. Do not print; tell your developer.");
     return { record, view: await loadView(db, data.orderNo, zoho) };
   });
 
-/** An administrator, or an active godown employee: the people who may scan a delivery paper. */
+/** An administrator, an active godown employee or an active channel partner: the people who may scan a delivery paper. */
 async function ensureScanner(db: ReturnType<typeof serviceClient>, userId: string) {
-  const [{ data: role }, { data: employee }] = await Promise.all([
+  const [{ data: role }, { data: employee }, { data: partner }] = await Promise.all([
     db.from("user_roles").select("role").eq("user_id", userId).eq("role", "admin").maybeSingle(),
     db.from("staff_employees").select("status").eq("user_id", userId).maybeSingle(),
+    db.from("channel_partners").select("status").eq("user_id", userId).maybeSingle(),
   ]);
-  if (!role && employee?.status !== "active") throw new Error("Only godown staff and administrators can check delivery papers. Sign in with your staff or admin account.");
+  if (!role && employee?.status !== "active" && partner?.status !== "active") {
+    throw new Error("Only godown staff, channel partners and administrators can check delivery papers. Sign in with your staff, partner or admin account.");
+  }
 }
 
 /**
- * One scan of a delivery note's or slip's QR. handover false only checks; true records the handover if the paper may
- * be used now, and reads Zoho Books first (read-only). The database decides and keeps the scan: see
- * public.delivery_paper_scan. Green comes only from a recorded handover, and only once per item line.
+ * One scan of a delivery note's or slip's QR. handover false only checks; true records the handover, if the paper may
+ * be used now, of the slip's item or of the items ticked on the note (lines), and reads Zoho Books first
+ * (read-only). The database decides and keeps the scan: see public.delivery_paper_scan. Green comes only from a
+ * recorded handover, and only once per item. device is the godown phone's registration token, if this phone has one.
+ * When the handover was the last item, the database marked the order Delivered: that goes to Zoho now, as an admin's
+ * change does (and the sync queue has it anyway).
  */
 export const scanDeliveryPaper = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .validator(z.object({ code: z.string().trim().min(1).max(200), handover: z.boolean() }))
+  .validator(z.object({
+    code: z.string().trim().min(1).max(200),
+    handover: z.boolean(),
+    lines: z.array(z.number().int().min(1).max(10_000)).max(500).optional(),
+    device: z.string().trim().max(100).optional(),
+  }))
   .handler(async ({ data, context }) => {
     const db = serviceClient();
     await ensureScanner(db, context.userId);
     let zoho: Json | null = null;
+    let orderNo: string | null = null;
     if (data.handover && PAPER_CODE.test(data.code)) {
-      const { data: orderNo } = await db.rpc("delivery_paper_order_no", { _code: data.code });
+      ({ data: orderNo } = await db.rpc("delivery_paper_order_no", { _code: data.code }));
       // When Zoho can't be read, the database uses the website's last reading and the handover says so.
       if (orderNo) zoho = await zohoReading(orderNo) as unknown as Json;
     }
-    const { data: result, error } = await db.rpc("delivery_paper_scan", { _code: data.code, _handover: data.handover, _zoho: zoho, _actor: context.userId });
+    const { data: result, error } = await db.rpc("delivery_paper_scan", {
+      _code: data.code, _handover: data.handover, _zoho: zoho, _actor: context.userId, _lines: data.lines ?? null, _device: data.device || null,
+    });
     if (error || !result) throw new Error(error?.message ?? "Could not check the paper");
-    return result as unknown as PaperScan;
+    const scan = result as unknown as PaperScan;
+    if (scan.order_delivered && orderNo) {
+      const { pushOrderToZohoFromServer } = await import("@/lib/zoho-commerce.functions");
+      await pushOrderToZohoFromServer(orderNo, "Website → Zoho: delivered on the godown's QR handover");
+    }
+    return scan;
+  });
+
+/**
+ * An administrator reopens a handed-over item, with a reason: its original can hand it over again. The order's
+ * status is left alone (Zoho has the delivery too); the answer says whether the order is Delivered, so the admin can
+ * correct it if the goods did not go.
+ */
+export const reopenDeliveryHandover = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator(orderInput.extend({ line: z.number().int().min(1).max(10_000), reason: z.string().trim().min(3).max(300) }))
+  .handler(async ({ data, context }) => {
+    await ensureAdmin(context.supabase, context.userId);
+    const db = serviceClient();
+    const { data: result, error } = await db.rpc("reopen_delivery_handover", {
+      _order_no: data.orderNo, _line: data.line, _reason: data.reason, _actor: context.userId, _actor_name: await actorName(db, context.userId),
+    });
+    if (error || !result) throw new Error(error?.message ?? "Could not reopen the item");
+    const reopened = result as { order_status: string; delivered_by_handover: boolean };
+    return { orderStatus: reopened.order_status, deliveredByHandover: reopened.delivered_by_handover, view: await loadView(db, data.orderNo, null) };
   });
 
 /** Admin > Delivery Notes: the latest scans of every paper, including codes the system never made. */
@@ -205,7 +265,7 @@ export const listDeliveryScans = createServerFn({ method: "POST" })
     await ensureAdmin(context.supabase, context.userId);
     const db = serviceClient();
     const { data: rows, error } = await db.from("delivery_scans")
-      .select("id,note_id,action,result,doc,slip_line,copy_no,lines,gate_code,gate_source,actor_name,actor_role,branch_name,code_hint,occurred_at")
+      .select("id,note_id,action,result,doc,slip_line,copy_no,paper_kind,duplicate_no,asked,lines,gate_code,gate_source,order_delivered,actor_name,actor_role,branch_name,device_registered,device_label,code_hint,occurred_at")
       .order("id", { ascending: false }).limit(200);
     if (error) throw new Error("Could not read the scans");
     const noteIds = [...new Set((rows ?? []).map((row) => row.note_id).filter((id): id is string => Boolean(id)))];

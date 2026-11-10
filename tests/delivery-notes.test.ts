@@ -185,14 +185,20 @@ test("a sales order that does not list invoices stays unknown, never 'no invoice
   assert.deepEqual(zohoInvoicesOf({ invoices: [] }), []);
 });
 
-test("the server functions and the Zoho read add no Zoho writes", () => {
+test("the server functions and the Zoho read add no Zoho writes, but one: an order the godown's handover delivered", () => {
   const source = readFileSync(new URL("../src/lib/zoho-commerce.functions.ts", import.meta.url), "utf8").replace(/\r\n/g, "\n");
   const start = source.indexOf("export async function readOrderInvoiceFacts");
   const body = source.slice(start, source.indexOf("/** Pushes products to Zoho now", start));
   assert.ok(start > 0 && body.length > 200);
   assert.doesNotMatch(body, /"(POST|PUT|DELETE)"/);
-  const server = readFileSync(new URL("../src/lib/delivery-notes.functions.ts", import.meta.url), "utf8");
-  assert.doesNotMatch(server, /syncSingleOrderToZoho|pushOrder|inventoryRequest|booksRequest|zoho_sync_outbox/);
+  const server = readFileSync(new URL("../src/lib/delivery-notes.functions.ts", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+  // Client, 10 Nov 2026: when every item is handed over the order is marked Delivered, which Zoho hears of like an
+  // admin's change. That push is the only one, and only after the database said it delivered the order.
+  const pushes = [...server.matchAll(/pushOrderToZohoFromServer\(/g)];
+  assert.equal(pushes.length, 1);
+  const before = server.slice(0, pushes[0]!.index);
+  assert.match(before.slice(before.lastIndexOf("if (")), /^if \(scan\.order_delivered && orderNo\)/);
+  assert.doesNotMatch(server.replace(/pushOrderToZohoFromServer/g, ""), /syncSingleOrderToZoho|pushOrder|inventoryRequest|booksRequest|zoho_sync_outbox/);
 });
 
 test("the migration keeps every table away from anon and customers and every call on the server", () => {

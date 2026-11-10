@@ -76,20 +76,23 @@ try {
   for (const n of [1, 2]) {
     const id = (await q(`INSERT INTO public.orders (order_no, user_id, customer_name, total, subtotal, paid_amount, payment_status, payment_method, order_status, branch_id, shipping_method, shipping_address)
       VALUES ($1,$2,'TEST',1000,1000,1000,'Paid','UPI','Payment Confirmed','BR-CLK','Standard','{}') RETURNING id`, [`TEST-RACE-${n}`, CUSTOMER]))[0].id;
-    await q("INSERT INTO public.order_items (order_id, product_id, product_name, qty, unit_price, line_total, created_at) VALUES ($1,'P1','TEST Rice',2,300,600,'2026-11-10T10:00:00Z'),($1,'P2','TEST Oil',4,100,400,'2026-11-10T10:00:01Z')", [id]);
+    await q(`INSERT INTO public.order_items (order_id, product_id, product_name, qty, unit_price, line_total, created_at) VALUES
+      ($1,'P1','TEST Rice',2,300,600,'2026-11-10T10:00:00Z'),($1,'P2','TEST Oil',2,100,200,'2026-11-10T10:00:01Z'),($1,'P3','TEST Sugar',1,200,200,'2026-11-10T10:00:02Z')`, [id]);
     await q("INSERT INTO public.payments (order_id, user_id, kind, amount, method, status, txn_ref) VALUES ($1,$2,'full',1000,'UPI','Paid',$3)", [id, CUSTOMER, `UTRRACE${n}000000000`]);
     await q("INSERT INTO public.zoho_order_invoices (order_id, order_no, zoho_invoice_id, invoice_number, status, total, balance) VALUES ($1,$2,$3,$4,'paid',1000,0)", [id, `TEST-RACE-${n}`, `INV-${n}`, `CLKINV-${n}`]);
     await q("SET ROLE service_role");
     const issued = (await q("SELECT public.issue_delivery_note($1,$2,$3,'Office') AS r", [`TEST-RACE-${n}`, zoho(n), ADMIN]))[0].r;
     assert.equal(issued.issued, true, JSON.stringify(issued));
-    const printed = (await q("SELECT public.record_delivery_print($1,true,'{1,2}',$2,$3,'Office') AS r", [issued.note_id, zoho(n), ADMIN]))[0].r;
+    const printed = (await q("SELECT public.record_delivery_print($1,true,'{1,2,3}',$2,$3,'Office') AS r", [issued.note_id, zoho(n), ADMIN]))[0].r;
     await q("RESET ROLE");
-    notes[n] = { id: issued.note_id, note: printed.note_code, slips: printed.slip_codes };
+    notes[n] = { id: issued.note_id, order: id, note: printed.note_code, slips: printed.slip_codes };
   }
   for (const table of ["orders", "order_items", "payments"]) await q(`ALTER TABLE public.${table} ENABLE TRIGGER USER`);
 
-  const handover = async (client, code, actor, n = 1) =>
-    (await client.query("SELECT public.delivery_paper_scan($1,true,$2,$3) AS r", [code, zoho(n), actor])).rows[0].r.result;
+  const handover = async (client, code, actor, n = 1, lines = null) =>
+    (await client.query("SELECT public.delivery_paper_scan($1,true,$2,$3,$4) AS r", [code, zoho(n), actor, lines])).rows[0].r.result;
+  const handedOver = async (noteId, line) =>
+    (await q("SELECT count(*)::int AS c FROM public.delivery_handovers h WHERE h.note_id = $1 AND h.slip_line = $2 AND NOT EXISTS (SELECT 1 FROM public.delivery_handover_reopens r WHERE r.handover_id = h.id)", [noteId, line]))[0].c;
 
   // ---- 1. Twenty people scan slip 1 at the same instant: exactly one green.
   const clients = await Promise.all(Array.from({ length: 20 }, connect));
@@ -100,12 +103,26 @@ try {
   assert.equal(results.filter((r) => r === "already_handed_over").length, 19, results.join());
   assert.equal((await q("SELECT count(*)::int AS c FROM public.delivery_handovers WHERE note_id = $1 AND slip_line = 1", [notes[1].id]))[0].c, 1);
 
-  // ---- 2. The note and slip 2 at the same instant, again and again: line 2 is handed over once.
-  const mixed = await Promise.all(clients.map((client, i) => handover(client, i % 2 ? notes[1].note : notes[1].slips["2"], actors[i % 3])));
+  // ---- 2. Half tick items 2 and 3 on the note, half scan slip 3, all at once: one of them wins, the note's ticks are
+  // all or nothing, and item 3 goes once.
+  const mixed = await Promise.all(clients.map((client, i) => (i % 2 ? handover(client, notes[1].note, actors[i % 3], 1, [2, 3]) : handover(client, notes[1].slips["3"], actors[i % 3]))));
   assert.equal(mixed.filter((r) => r === "handed_over").length, 1, mixed.join());
-  assert.equal((await q("SELECT count(*)::int AS c FROM public.delivery_handovers WHERE note_id = $1", [notes[1].id]))[0].c, 2);
+  assert.ok(mixed.every((r) => ["handed_over", "already_handed_over", "partly_handed_over"].includes(r)), mixed.join());
+  assert.equal(await handedOver(notes[1].id, 3), 1);
+  const noteWon = (await handedOver(notes[1].id, 2)) === 1;
+  // If a slip won, every note scan saw item 3 gone and recorded nothing.
+  if (!noteWon) assert.ok(mixed.filter((r, i) => i % 2).every((r) => r === "partly_handed_over"), mixed.join());
 
-  // ---- 3. One handover still open (not committed): a second one waits for it, then is refused.
+  // ---- 3. The last item, twenty at once: the order is marked Delivered once, and queued for Zoho.
+  if (!noteWon) {
+    const last = await Promise.all(clients.map((client, i) => (i % 2 ? handover(client, notes[1].note, actors[i % 3], 1, [2]) : handover(client, notes[1].slips["2"], actors[i % 3]))));
+    assert.equal(last.filter((r) => r === "handed_over").length, 1, last.join());
+  }
+  assert.equal((await q("SELECT order_status FROM public.orders WHERE id = $1", [notes[1].order]))[0].order_status, "Delivered");
+  assert.equal((await q("SELECT count(*)::int AS c FROM public.delivery_scans WHERE note_id = $1 AND order_delivered", [notes[1].id]))[0].c, 1, "marked Delivered once");
+  assert.ok((await q("SELECT count(*)::int AS c FROM public.zoho_sync_outbox WHERE entity_type = 'order' AND entity_id = $1", [notes[1].order]))[0].c >= 1);
+
+  // ---- 4. One handover still open (not committed): a second one waits for it, then is refused.
   const [a, b] = clients;
   await a.query("BEGIN");
   assert.equal(await handover(a, notes[2].slips["1"], CLK1, 2), "handed_over");
@@ -117,15 +134,27 @@ try {
   assert.equal(second.result, "already_handed_over");
   assert.ok(second.waited >= 1400, `the second scan waited ${second.waited} ms for the first`);
 
-  // ---- 4. A reprint and a handover of the old copy at the same moment: the old copy loses.
+  // ---- 5. A duplicate printed while the original is being scanned: the original still works, the duplicate never.
   await a.query("BEGIN");
-  const reprint = (await a.query("SELECT public.record_delivery_print($1,false,'{2}',$2,$3,'Office') AS r", [notes[2].id, zoho(2), ADMIN])).rows[0].r;
+  const duplicate = (await a.query("SELECT public.record_delivery_print($1,false,'{3}',$2,$3,'Office') AS r", [notes[2].id, zoho(2), ADMIN])).rows[0].r;
+  const original3 = handover(b, notes[2].slips["3"], CLK2, 2);
+  await new Promise((resolve) => setTimeout(resolve, 800));
+  await a.query("COMMIT");
+  assert.equal(duplicate.slip_papers["3"].kind, "duplicate");
+  assert.equal(await original3, "handed_over", "the original is not cancelled by a reprint");
+  assert.equal(await handover(b, duplicate.slip_codes["3"], CLK2, 2), "already_handed_over");
+
+  // ---- 6. A replacement original and a handover of the original it replaces, at the same moment: the old one loses.
+  await a.query("BEGIN");
+  const replacement = (await a.query("SELECT public.record_delivery_print($1,false,'{2}',$2,$3,'Office','Lost in the godown') AS r", [notes[2].id, zoho(2), ADMIN])).rows[0].r;
   const old = handover(b, notes[2].slips["2"], CLK2, 2);
   await new Promise((resolve) => setTimeout(resolve, 800));
   await a.query("COMMIT");
-  assert.equal(await old, "replaced", "a handover on the copy being replaced is refused");
-  assert.equal(await handover(b, reprint.slip_codes["2"], CLK2, 2), "handed_over", "the new copy works");
-  assert.equal((await q("SELECT count(*)::int AS c FROM public.delivery_handovers WHERE note_id = $1", [notes[2].id]))[0].c, 2);
+  assert.equal(replacement.slip_papers["2"].kind, "replacement");
+  assert.equal(await old, "replaced", "a handover on the original being replaced is refused");
+  assert.equal(await handover(b, replacement.slip_codes["2"], CLK2, 2), "handed_over", "the replacement works");
+  assert.equal((await q("SELECT count(*)::int AS c FROM public.delivery_handovers WHERE note_id = $1", [notes[2].id]))[0].c, 3);
+  assert.equal((await q("SELECT order_status FROM public.orders WHERE id = $1", [notes[2].order]))[0].order_status, "Delivered");
 
   await Promise.all(clients.map((client) => client.end()));
   console.log("delivery paper race OK");

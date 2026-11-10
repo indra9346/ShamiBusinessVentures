@@ -1,15 +1,18 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { ArrowLeft, Printer } from "lucide-react";
+import { ArrowLeft, Printer, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import { renderSVG } from "uqr";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
-  addressLines, companyHeading, copyLabel, deliveryMethodLabel, gateWords, isPickup, isReprint, istDateTime, paperWarnings, slipPages,
+  addressLines, companyHeading, copyLabel, deliveryMethodLabel, gateWords, isPickup, istDateTime, paperWarnings, slipPages,
   type DeliveryGate, type DeliveryNote, type DeliveryNoteView, type SlipPage,
 } from "@/lib/delivery-notes";
-import { handedOverWarning, paperLink, qrCaption, type PaperHandover } from "@/lib/delivery-papers";
+import {
+  handedOverWarning, paperKindWords, paperLink, paperStamp, personWords, qrCaption, type DeliveryPaperRow, type PaperHandover, type PaperPrint,
+} from "@/lib/delivery-papers";
 import { getDeliveryNote, recordDeliveryPrint } from "@/lib/delivery-notes.functions";
 
 export const Route = createFileRoute("/admin/delivery-note/$orderNo")({
@@ -28,6 +31,7 @@ type Selection = { note: boolean; slips: number[] };
 type Paper = {
   printedAt: string | null; noteCopy: number | null; slipCopies: Record<string, number>; selection: Selection;
   noteCode: string | null; slipCodes: Record<string, string>;
+  notePaper: PaperPrint | null; slipPapers: Record<string, PaperPrint>;
 };
 
 /*
@@ -61,13 +65,40 @@ const PRINT_CSS = `
  */
 const ARMED_MS = 300_000;
 
+const EMPTY_PAPER: Paper = { printedAt: null, noteCopy: null, slipCopies: {}, selection: { note: true, slips: [] }, noteCode: null, slipCodes: {}, notePaper: null, slipPapers: {} };
+
+/** Each paper's prints so far, from the database: "note" and "slip:2". */
+function printsByPaper(papers: DeliveryPaperRow[]) {
+  const map = new Map<string, DeliveryPaperRow[]>();
+  for (const row of papers) {
+    const key = row.doc === "note" ? "note" : `slip:${row.slip_line}`;
+    map.set(key, [...(map.get(key) ?? []), row]);
+  }
+  return map;
+}
+
+/** "Original printed 10 Nov, 2:05 PM · 2 duplicates" for the screen. */
+function printedSoFar(rows: DeliveryPaperRow[] | undefined) {
+  if (!rows?.length) return "not printed yet: the next print is the original";
+  const current = [...rows].reverse().find((row) => row.kind !== "duplicate");
+  const duplicates = rows.filter((row) => row.kind === "duplicate").length;
+  const replaced = rows.filter((row) => row.kind === "replacement").length;
+  return [
+    current ? `${paperKindWords(current.kind).en.toLowerCase()} printed ${istDateTime(current.printed_at)}` : "",
+    replaced ? `${replaced} replacement${replaced === 1 ? "" : "s"}` : "",
+    duplicates ? `${duplicates} duplicate${duplicates === 1 ? "" : "s"}` : "",
+  ].filter(Boolean).join(" · ");
+}
+
 function DeliveryNotePrintPage() {
   const { orderNo } = Route.useParams();
   const [view, setView] = useState<DeliveryNoteView | null>(null);
   const [failed, setFailed] = useState("");
   const [busy, setBusy] = useState(false);
-  const [paper, setPaper] = useState<Paper>({ printedAt: null, noteCopy: null, slipCopies: {}, selection: { note: true, slips: [] }, noteCode: null, slipCodes: {} });
+  const [paper, setPaper] = useState<Paper>(EMPTY_PAPER);
   const [armed, setArmed] = useState(false);
+  const [replacing, setReplacing] = useState(false);
+  const [reason, setReason] = useState("");
   const disarmTimer = useRef<number | undefined>(undefined);
 
   const load = useCallback(async () => {
@@ -86,14 +117,18 @@ function DeliveryNotePrintPage() {
 
   useEffect(() => () => window.clearTimeout(disarmTimer.current), []);
 
-  const press = async (selection: Selection) => {
+  const press = async (selection: Selection, replaceReason?: string) => {
     setBusy(true);
     try {
-      const { record, view: next } = await recordDeliveryPrint({ data: { orderNo, note: selection.note, slipLines: selection.slips } });
+      const { record, view: next } = await recordDeliveryPrint({ data: { orderNo, note: selection.note, slipLines: selection.slips, replaceReason } });
       flushSync(() => {
         setView(next);
-        setPaper({ selection, printedAt: record.printedAt, noteCopy: record.noteCopy, slipCopies: record.slipCopies, noteCode: record.noteCode, slipCodes: record.slipCodes });
+        setPaper({
+          selection, printedAt: record.printedAt, noteCopy: record.noteCopy, slipCopies: record.slipCopies,
+          noteCode: record.noteCode, slipCodes: record.slipCodes, notePaper: record.notePaper, slipPapers: record.slipPapers,
+        });
         setArmed(true);
+        if (replaceReason) { setReplacing(false); setReason(""); }
       });
       window.clearTimeout(disarmTimer.current);
       window.print();
@@ -110,13 +145,20 @@ function DeliveryNotePrintPage() {
   const allSlips = slips.map((slip) => slip.slip);
   const state = view?.state;
   const warnings = state && note ? paperWarnings(state) : [];
-  const handovers: Record<string, PaperHandover> = Object.fromEntries((view?.handovers ?? []).map((row) => [String(row.slip_line), {
-    at: row.handed_over_at, by: row.actor_name, role: row.actor_role === "admin" ? "admin" : "staff", godown: row.branch_name,
+  // The items handed over now: a handover an administrator has reopened no longer counts.
+  const reopened = new Set((view?.reopens ?? []).map((row) => row.handover_id));
+  const handovers: Record<string, PaperHandover> = Object.fromEntries((view?.handovers ?? []).filter((row) => !reopened.has(row.id)).map((row) => [String(row.slip_line), {
+    at: row.handed_over_at, by: row.actor_name, role: row.actor_role === "admin" || row.actor_role === "partner" ? row.actor_role : "staff",
+    godown: row.branch_name, registered_phone: row.device_registered, round: row.round,
   } satisfies PaperHandover]));
   const handedLines = Object.keys(handovers).map(Number).sort((a, b) => a - b);
+  const openSlips = allSlips.filter((line) => !handovers[String(line)]);
   const noteWarnings = handedLines.length === 0 ? warnings : [...warnings, handedLines.length === slips.length
     ? "ALL ITEMS ALREADY HANDED OVER. FOR RECORDS ONLY. DO NOT DELIVER AGAIN."
     : `ITEM${handedLines.length === 1 ? "" : "S"} ${handedLines.join(", ")} ALREADY HANDED OVER. DELIVER ONLY THE REST.`];
+  const prints = printsByPaper(view?.papers ?? []);
+  const hasOriginal = (key: string) => (prints.get(key) ?? []).some((row) => row.kind !== "duplicate");
+  const replaceable = [...(hasOriginal("note") && openSlips.length ? ["note"] : []), ...openSlips.filter((line) => hasOriginal(`slip:${line}`)).map(String)];
 
   return (
     <div className="dn-root min-h-screen bg-stone-200 px-3 py-4 text-black sm:px-6" data-armed={armed ? "yes" : "no"}>
@@ -164,14 +206,45 @@ function DeliveryNotePrintPage() {
             <p className="text-xs text-slate">
               Each press of Print checks the payment with Zoho again, puts the exact time on the paper and counts as a copy, even if you then cancel the print screen. On a phone the print screen opens next: choose your printer or Save as PDF. If nothing opens, this browser cannot print from a page (some in-app browsers cannot): open the page in Chrome or Safari.
             </p>
-            <p className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-950">
-              <span className="font-bold">QR codes:</span> every paper gets a new QR code on each press. Printing a paper again cancels the QR on its earlier copies, so only the newest copy can be used at the godown, and each item can be handed over only once. Give the godown the papers from your latest press.
-            </p>
+            <div className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-950">
+              <p>
+                <span className="font-bold">QR codes:</span> the first print of each paper is its <span className="font-bold">original</span>, the only paper that hands goods over (once per item). Every later print is a <span className="font-bold">duplicate copy</span> 1, 2, … for records: it is stamped DUPLICATE and its QR scans red.
+              </p>
+              <ul className="mt-1 space-y-0.5">
+                <li>Note: {printedSoFar(prints.get("note"))}</li>
+                {slips.map((slip) => <li key={slip.slip}>Slip {slip.slip}: {printedSoFar(prints.get(`slip:${slip.slip}`))}</li>)}
+              </ul>
+            </div>
+            {replaceable.length > 0 && (
+              replacing ? (
+                <div className="space-y-2 rounded-md border-2 border-navy p-3 text-xs">
+                  <p className="font-bold text-navy">Replacement original</p>
+                  <p>For an original that was lost or never came out of the printer. The new paper says REPLACEMENT ORIGINAL; the old original's QR stops working. Only for goods still to go.</p>
+                  <Input aria-label="Why the original is being replaced" value={reason} maxLength={300} onChange={(event) => setReason(event.target.value)}
+                    placeholder="Reason, for example: print screen was cancelled" className="h-8 text-xs" />
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-slate">Replace:</span>
+                    {replaceable.map((key) => (
+                      <Button key={key} size="sm" className="h-8 bg-navy px-2.5 text-white hover:bg-navy/90" disabled={busy || reason.trim().length < 3}
+                        onClick={() => void press(key === "note" ? { note: true, slips: [] } : { note: false, slips: [Number(key)] }, reason.trim())}>
+                        {key === "note" ? "Note" : `Slip ${key}`}
+                      </Button>
+                    ))}
+                    <Button size="sm" variant="outline" className="h-8" disabled={busy} onClick={() => setReplacing(false)}>Back</Button>
+                  </div>
+                </div>
+              ) : (
+                <button type="button" className="flex items-center gap-1 text-xs font-semibold text-navy hover:underline" onClick={() => setReplacing(true)}>
+                  <RotateCcw className="h-3.5 w-3.5" /> Original lost or didn't print? Replacement original…
+                </button>
+              )
+            )}
             {handedLines.length > 0 && (
               <ul className="space-y-0.5 text-xs text-emerald-900">
-                {handedLines.map((line) => (
-                  <li key={line}>Slip {line} handed over {istDateTime(handovers[String(line)]!.at)} by {handovers[String(line)]!.by}{handovers[String(line)]!.godown ? `, ${handovers[String(line)]!.godown}` : ""}</li>
-                ))}
+                {handedLines.map((line) => {
+                  const handover = handovers[String(line)]!;
+                  return <li key={line}>Slip {line} handed over {istDateTime(handover.at)} by {personWords(handover.by, handover.role, handover.godown, handover.registered_phone).en}</li>;
+                })}
               </ul>
             )}
           </>
@@ -202,11 +275,29 @@ function Warnings({ warnings }: { warnings: string[] }) {
   );
 }
 
-function PrintedLine({ printedAt, copy }: { printedAt: string | null; copy: number | null | undefined }) {
+/** The big stamp on a duplicate (and the replacement note on a replacement original), in both languages. */
+function Stamp({ print }: { print: PaperPrint | null | undefined }) {
+  const stamp = paperStamp(print);
+  if (!stamp) return null;
+  const duplicate = print?.kind === "duplicate";
+  return (
+    <div className={`dn-keep my-3 border-[4px] border-black p-3 text-center ${duplicate ? "bg-neutral-100" : ""}`}>
+      <p className={`${duplicate ? "text-3xl" : "text-2xl"} font-black uppercase tracking-widest`}>{stamp.title.en}</p>
+      <p className={`${duplicate ? "text-2xl" : "text-xl"} font-black`}>{stamp.title.kn}</p>
+      <p className="mt-1 text-xs font-bold uppercase">{stamp.detail.en}</p>
+      <p className="text-xs font-bold">{stamp.detail.kn}</p>
+    </div>
+  );
+}
+
+/** The copy line: what this paper is. Before a press, or for a paper the last press didn't print, there is nothing yet. */
+function PrintedLine({ printedAt, copy, print, inPrint }: { printedAt: string | null; copy: number | null | undefined; print: PaperPrint | null | undefined; inPrint: boolean }) {
+  const label = print ? paperKindWords(print.kind, print.duplicate_no).en : copyLabel(copy);
+  const printed = Boolean(printedAt && inPrint);
   return (
     <>
-      <Row label="Printed" value={printedAt ? istDateTime(printedAt) : "Not printed yet: the time appears when you press Print"} strong />
-      <Row label="Copy" value={printedAt ? copyLabel(copy) : "—"} strong={isReprint(copy)} />
+      <Row label="Printed" value={printed ? istDateTime(printedAt!) : printedAt ? "Not in the last print" : "Not printed yet: the time appears when you press Print"} strong />
+      <Row label="Copy" value={printed ? label : "—"} strong={Boolean(printed && print && print.kind !== "original")} />
     </>
   );
 }
@@ -239,11 +330,12 @@ function CompanyHead({ note, title, side }: { note: DeliveryNote; title: string;
 
 /**
  * The paper's QR: a link to the scan page with this copy's code after "#". Before a press there is no code, so the
- * sheet shows where it will be.
+ * sheet shows where it will be. The caption says what the paper is, in both languages.
  */
-function PaperQr({ code, copy, size }: { code: string | null | undefined; copy: number | null | undefined; size: "note" | "slip" }) {
+function PaperQr({ code, print, size }: { code: string | null | undefined; print: PaperPrint | null | undefined; size: "note" | "slip" }) {
   // About 0.8 mm (note) and 1 mm (slip) per square: easy for a phone held at arm's length.
   const box = size === "slip" ? "h-[40mm] w-[40mm]" : "h-[34mm] w-[34mm]";
+  const caption = qrCaption(print?.kind, print?.duplicate_no);
   return (
     <figure className={`dn-keep ${size === "slip" ? "w-[40mm]" : "w-[34mm]"} shrink-0 text-center`}>
       {code ? (
@@ -256,7 +348,13 @@ function PaperQr({ code, copy, size }: { code: string | null | undefined; copy: 
           The QR code appears when you press Print
         </div>
       )}
-      <figcaption className="mt-1 text-[10px] leading-tight text-neutral-700">{code ? qrCaption(copy) : ""}</figcaption>
+      {code && (
+        <figcaption className="mt-1 text-[10px] leading-tight text-neutral-700">
+          <span className="block font-bold uppercase">{paperKindWords(print?.kind, print?.duplicate_no).en} · {paperKindWords(print?.kind, print?.duplicate_no).kn}</span>
+          <span className="block">{caption.en}</span>
+          <span className="block">{caption.kn}</span>
+        </figcaption>
+      )}
     </figure>
   );
 }
@@ -282,6 +380,7 @@ function NoteSheet({ note, state, warnings, paper, slipCount }: { note: Delivery
   return (
     <section className={SHEET} data-print={paper.selection.note ? "yes" : "no"}>
       <CompanyHead note={note} title="Delivery note" side={note.note_no} />
+      <Stamp print={paper.noteCode ? paper.notePaper : null} />
       <Warnings warnings={warnings} />
       <div className="mt-3 flex flex-wrap items-start gap-4">
         <dl className="grid min-w-0 flex-1 basis-[60%] gap-x-6 gap-y-1 sm:grid-cols-2 print:grid-cols-2">
@@ -289,11 +388,11 @@ function NoteSheet({ note, state, warnings, paper, slipCount }: { note: Delivery
           <Row label="Invoice no." value={note.invoice_number} strong />
           <Row label="Order date" value={istDateTime(snapshot.order_placed_at)} />
           <Row label="Generated" value={`${istDateTime(note.generated_at)} by ${note.generated_by_name}`} />
-          <PrintedLine printedAt={paper.printedAt} copy={paper.noteCopy} />
+          <PrintedLine printedAt={paper.printedAt} copy={paper.noteCopy} print={paper.notePaper} inPrint={paper.selection.note} />
           <Row label="Delivery" value={deliveryMethodLabel(snapshot.shipping_method)} />
           <Row label="Payment" value={state.code === "paid" ? "Paid in full" : "See the warning above"} strong />
         </dl>
-        <PaperQr code={paper.noteCode} copy={paper.noteCopy} size="note" />
+        <PaperQr code={paper.noteCode} print={paper.notePaper} size="note" />
       </div>
 
       <div className="mt-4 grid gap-3 sm:grid-cols-2 print:grid-cols-2">
@@ -331,7 +430,9 @@ function NoteSheet({ note, state, warnings, paper, slipCount }: { note: Delivery
         <thead>
           {/* Repeats on every page of a long note, so a loose page still says whose it is. */}
           <tr className="text-[11px] font-semibold">
-            <th colSpan={hasStockNo ? 5 : 4} className="pb-1 font-semibold">{note.note_no} · Order {note.order_no}</th>
+            <th colSpan={hasStockNo ? 5 : 4} className="pb-1 font-semibold">
+              {note.note_no} · Order {note.order_no}{paper.notePaper && paper.notePaper.kind !== "original" ? ` · ${paperKindWords(paper.notePaper.kind, paper.notePaper.duplicate_no).en.toUpperCase()}` : ""}
+            </th>
           </tr>
           <tr className="border-y-2 border-black text-[11px] uppercase tracking-wider">
             <th className="py-1.5 pr-2 font-bold">#</th>
@@ -377,9 +478,12 @@ function NoteSheet({ note, state, warnings, paper, slipCount }: { note: Delivery
 function SlipSheet({ slip, note, warnings, paper }: { slip: SlipPage; note: DeliveryNote; warnings: string[]; paper: Paper }) {
   const { snapshot } = note;
   const copy = paper.slipCopies[String(slip.slip)];
+  const code = paper.slipCodes[String(slip.slip)];
+  const print = paper.slipPapers[String(slip.slip)];
   return (
     <section className={SHEET} data-print={paper.selection.slips.includes(slip.slip) ? "yes" : "no"}>
       <CompanyHead note={note} title="Delivery slip" side={`Slip ${slip.slip} of ${slip.of}`} />
+      <Stamp print={code ? print : null} />
       <Warnings warnings={warnings} />
       <div className="dn-keep my-5 flex flex-wrap items-start gap-4">
         <div className="min-w-0 flex-1 basis-[60%] border-2 border-black p-4">
@@ -398,7 +502,7 @@ function SlipSheet({ slip, note, warnings, paper }: { slip: SlipPage; note: Deli
           </div>
           {slip.stock_no && <p className="mt-3 text-sm font-semibold">Stock no. {slip.stock_no}</p>}
         </div>
-        <PaperQr code={paper.slipCodes[String(slip.slip)]} copy={copy} size="slip" />
+        <PaperQr code={code} print={print} size="slip" />
       </div>
       <dl className="grid gap-x-6 gap-y-1 sm:grid-cols-2 print:grid-cols-2">
         <Row label="Note no." value={note.note_no} strong />
@@ -408,7 +512,7 @@ function SlipSheet({ slip, note, warnings, paper }: { slip: SlipPage; note: Deli
         <Row label="Godown" value={snapshot.godown.name ?? ""} />
         <Row label="Delivery" value={deliveryMethodLabel(snapshot.shipping_method)} />
         <Row label="Generated" value={istDateTime(note.generated_at)} />
-        <PrintedLine printedAt={paper.printedAt} copy={copy} />
+        <PrintedLine printedAt={paper.printedAt} copy={copy} print={print} inPrint={paper.selection.slips.includes(slip.slip)} />
       </dl>
       <div className="dn-keep mt-8 grid grid-cols-2 gap-4">
         <Signature label="Goods issued by (godown)" />
