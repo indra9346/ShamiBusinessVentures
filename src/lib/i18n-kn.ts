@@ -5436,6 +5436,18 @@ export const kn: Record<string, string> = {
   "Could not remove the payment": "ಪಾವತಿ ತೆಗೆದುಹಾಕಲಾಗಲಿಲ್ಲ",
   "Could not save the partner's details": "ಪಾಲುದಾರರ ವಿವರ ಉಳಿಸಲಾಗಲಿಲ್ಲ",
   "Saved. Tell the partner their new login email.": "ಉಳಿಸಲಾಗಿದೆ. ಪಾಲುದಾರರಿಗೆ ಹೊಸ ಲಾಗಿನ್ ಇಮೇಲ್ ತಿಳಿಸಿ.",
+  "Customer invoices": "ಗ್ರಾಹಕರ ಇನ್‌ವಾಯ್ಸ್‌ಗಳು",
+  "Your signature on these invoices": "ಈ ಇನ್‌ವಾಯ್ಸ್‌ಗಳಲ್ಲಿ ನಿಮ್ಮ ಸಹಿ",
+  "Not added yet: the invoices print the godown's signature or a blank signature line.": "ಇನ್ನೂ ಸೇರಿಸಿಲ್ಲ: ಇನ್‌ವಾಯ್ಸ್‌ಗಳಲ್ಲಿ ಗೋದಾಮಿನ ಸಹಿ ಅಥವಾ ಖಾಲಿ ಸಹಿ ಸಾಲು ಮುದ್ರಿತವಾಗುತ್ತದೆ.",
+  "Only the Grain Bazar office adds or changes it. Ask them if it is missing or wrong.": "ಗ್ರೇನ್ ಬಜಾರ್ ಕಚೇರಿ ಮಾತ್ರ ಇದನ್ನು ಸೇರಿಸುತ್ತದೆ ಅಥವಾ ಬದಲಾಯಿಸುತ್ತದೆ. ಇಲ್ಲದಿದ್ದರೆ ಅಥವಾ ತಪ್ಪಾಗಿದ್ದರೆ ಅವರನ್ನು ಕೇಳಿ.",
+  "Orders of your godown placed while you run it. The customer gets the same copy.": "ನೀವು ನಡೆಸುತ್ತಿರುವ ಅವಧಿಯಲ್ಲಿ ನಿಮ್ಮ ಗೋದಾಮಿನಲ್ಲಿ ಬಂದ ಆರ್ಡರ್‌ಗಳು. ಗ್ರಾಹಕರಿಗೂ ಇದೇ ಪ್ರತಿ ಸಿಗುತ್ತದೆ.",
+  "No orders in this period.": "ಈ ಅವಧಿಯಲ್ಲಿ ಆರ್ಡರ್‌ಗಳಿಲ್ಲ.",
+  "Opening…": "ತೆರೆಯಲಾಗುತ್ತಿದೆ…",
+  "Could not load your invoices": "ನಿಮ್ಮ ಇನ್‌ವಾಯ್ಸ್‌ಗಳನ್ನು ಲೋಡ್ ಮಾಡಲಾಗಲಿಲ್ಲ",
+  "Could not open the invoice": "ಇನ್‌ವಾಯ್ಸ್ ತೆರೆಯಲಾಗಲಿಲ್ಲ",
+  "Godown signature (spare)": "ಗೋದಾಮಿನ ಸಹಿ (ಬದಲಿ)",
+  "Each channel partner's own signature is set in Admin > Channel Partners and comes first.": "ಪ್ರತಿ ಚಾನೆಲ್ ಪಾಲುದಾರರ ಸ್ವಂತ ಸಹಿಯನ್ನು ಅಡ್ಮಿನ್ > ಚಾನೆಲ್ ಪಾಲುದಾರರು ಇಲ್ಲಿ ಹೊಂದಿಸಲಾಗುತ್ತದೆ ಮತ್ತು ಅದೇ ಮೊದಲು ಬರುತ್ತದೆ.",
+  "It stays on this partner's invoices after a change of partner. Only admins can change it.": "ಪಾಲುದಾರ ಬದಲಾದ ನಂತರವೂ ಇದು ಈ ಪಾಲುದಾರರ ಇನ್‌ವಾಯ್ಸ್‌ಗಳಲ್ಲಿ ಉಳಿಯುತ್ತದೆ. ಅಡ್ಮಿನ್ ಮಾತ್ರ ಬದಲಾಯಿಸಬಹುದು.",
 };
 
 /** Word-level fallbacks for text that isn't in the dictionary (product names, specs from the database). */

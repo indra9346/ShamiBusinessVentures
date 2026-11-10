@@ -6,6 +6,7 @@ import { FilterNote, Panel, scrollToSection, StatCard } from "@/components/panel
 import { CommissionLinesTable, PartnerLeaderboard, TargetBar, commissionTotals, usePartnerData } from "@/components/partners/PartnerWidgets";
 import { MyPartnerReport } from "@/components/partners/MyPartnerReport";
 import { PartnerPayouts } from "@/components/partners/PartnerPayouts";
+import { PartnerInvoices } from "@/components/partners/PartnerInvoices";
 import { GodownTransfers } from "@/components/batches/GodownTransfers";
 import { supabase } from "@/integrations/supabase/client";
 import { inrPrecise } from "@/lib/data";
@@ -17,7 +18,7 @@ export const Route = createFileRoute("/partner/")({
   component: PartnerDashboard,
 });
 
-type Me = { id: string; name: string; branchId: string; godown: string };
+type Me = { id: string; name: string; branchId: string; godown: string; signaturePath: string | null };
 type Rate = { productName: string; kind: CommissionKind; value: number };
 
 /** The godown channel partner's live dashboard: commissions, target, rates and the leaderboard. */
@@ -43,8 +44,12 @@ function PartnerDashboard() {
       if (!userId) { navigate({ to: "/partner/login", replace: true }); return; }
       const { data: partner } = await supabase.from("channel_partners").select("id,name,branch_id,status").eq("user_id", userId).maybeSingle();
       if (!partner || partner.status !== "active") { await supabase.auth.signOut({ scope: "local" }); navigate({ to: "/partner/login", replace: true }); return; }
-      const { data: branch } = await supabase.from("branches").select("name").eq("id", partner.branch_id).maybeSingle();
-      setMe({ id: partner.id, name: partner.name, branchId: partner.branch_id, godown: branch?.name ?? partner.branch_id });
+      // Read on its own: a database without the column yet must not sign the partner out.
+      const [{ data: branch }, { data: signed }] = await Promise.all([
+        supabase.from("branches").select("name").eq("id", partner.branch_id).maybeSingle(),
+        supabase.from("channel_partners").select("signature_path").eq("id", partner.id).maybeSingle(),
+      ]);
+      setMe({ id: partner.id, name: partner.name, branchId: partner.branch_id, godown: branch?.name ?? partner.branch_id, signaturePath: signed?.signature_path ?? null });
       const { data: rules } = await supabase.from("partner_commission_rules").select("product_id,kind,value").eq("branch_id", partner.branch_id);
       const ids = (rules ?? []).map((rule) => rule.product_id).filter((id): id is string => Boolean(id));
       const { data: products } = ids.length ? await supabase.from("catalog_products").select("id,payload").in("id", ids) : { data: [] };
@@ -124,6 +129,8 @@ function PartnerDashboard() {
         </Panel>
 
         <MyPartnerReport partnerName={me.name} />
+
+        <PartnerInvoices signaturePath={me.signaturePath} />
 
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
           <div id="leaderboard" className="min-w-0 scroll-mt-36">

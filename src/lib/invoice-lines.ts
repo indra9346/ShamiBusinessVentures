@@ -109,6 +109,11 @@ export function issuedZohoNumber(row: ZohoInvoiceCopy | null | undefined): strin
 
 export type InvoicePaymentRow = { amount: number; method: string | null; status: string | null; txn_ref: string | null; created_at: string };
 export type InvoicePayment = { date: string; mode: string; reference: string; amount: number };
+/**
+ * The latest facts when the invoice is pulled: Zoho's own invoice number and date, every payment with its mode and UTR,
+ * and what is paid. `paid` null = not known (the order's own figure is used).
+ */
+export type InvoiceFacts = { zoho: ZohoInvoiceCopy | null; payments: InvoicePayment[]; paid: number | null };
 
 const IST_MS = 330 * 60_000;
 const dayOf = (iso: string) => {

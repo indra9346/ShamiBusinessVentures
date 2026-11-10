@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import type { Order } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import type { InvoiceCopy } from "@/lib/invoice";
+import type { InvoiceFacts } from "@/lib/invoice-lines";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
@@ -29,11 +30,13 @@ export function InvoicePreviewButton({ order, copy = "customer", label = "View I
   );
 }
 
-export function InvoicePreviewDialog({ order, copy = "customer", open, onOpenChange }: {
+/** `facts`: Zoho's number and the payments, when the caller read them already (a channel partner cannot read them itself). */
+export function InvoicePreviewDialog({ order, copy = "customer", open, onOpenChange, facts }: {
   order: Order;
   copy?: InvoiceCopy;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  facts?: InvoiceFacts;
 }) {
   const { products } = useApp();
   const [state, setState] = useState<{ url: string; fileName: string; invoiceNo: string } | null>(null);
@@ -45,7 +48,7 @@ export function InvoicePreviewDialog({ order, copy = "customer", open, onOpenCha
     let active = true;
     setFailed(false);
     void import("@/lib/invoice")
-      .then(({ buildInvoicePdf }) => buildInvoicePdf(order, { copy, catalog: products }))
+      .then(({ buildInvoicePdf }) => buildInvoicePdf(order, { copy, catalog: products, ...(facts ? { facts } : {}) }))
       .then(({ pdf, fileName, invoiceNo }) => {
         url = URL.createObjectURL(pdf.output("blob"));
         if (active) setState({ url, fileName, invoiceNo });

@@ -12,7 +12,7 @@ import {
 } from "@/lib/pickup-points";
 import { DEMO_BRANCH, branchFromRow, defaultBranchOf, type Branch } from "@/lib/branches";
 import { sellerAddressLines } from "@/lib/invoice-seller";
-import { invoiceBalance, invoiceLines, invoicePayments, issuedZohoNumber, type InvoicePayment, type InvoicePaymentRow, type Line, type ZohoInvoiceCopy } from "@/lib/invoice-lines";
+import { invoiceBalance, invoiceLines, invoicePayments, issuedZohoNumber, type InvoiceFacts, type InvoicePaymentRow, type Line, type ZohoInvoiceCopy } from "@/lib/invoice-lines";
 import { GODOWN_SIGNATURE_BUCKET } from "@/lib/godown-signature";
 
 export { invoiceLines, type Line };
@@ -137,11 +137,9 @@ async function loadLogo(): Promise<string | null> {
 }
 
 /**
- * The latest facts when the invoice is pulled: Zoho's own invoice number and date, every payment with its mode and UTR, and
- * what is paid and due. Never from the page's memory, so a payment recorded or removed a moment ago shows at once.
+ * The latest facts when the invoice is pulled (Zoho's number and date, the payments, what is paid). Never from the page's
+ * memory, so a payment recorded or removed a moment ago shows at once.
  */
-type InvoiceFacts = { zoho: ZohoInvoiceCopy | null; payments: InvoicePayment[]; paid: number | null };
-
 async function loadInvoiceFacts(orderNo: string): Promise<InvoiceFacts> {
   const none: InvoiceFacts = { zoho: null, payments: [], paid: null };
   if (STATIC_DATA_MODE) return none;
@@ -159,7 +157,7 @@ async function loadInvoiceFacts(orderNo: string): Promise<InvoiceFacts> {
   }
 }
 
-/** The godown's signature as an image for the PDF, or null (the blank signature line is printed). */
+/** A stored signature as an image for the PDF, or null. */
 async function loadSignature(path: string | null | undefined): Promise<string | null> {
   if (!path || STATIC_DATA_MODE) return null;
   try {
@@ -176,15 +174,33 @@ async function loadSignature(path: string | null | undefined): Promise<string | 
   }
 }
 
-export type InvoiceOptions = { copy?: InvoiceCopy; catalog?: Product[] };
+/**
+ * The signature on an order's invoice: its channel partner's, i.e. the partner who ran the godown when the order was
+ * placed (so an old invoice keeps the old partner's after a change); else the godown's own (Admin > Branches); else
+ * null, and the blank signature line is printed. The database tells only those who may open the invoice.
+ */
+async function loadOrderSignature(orderNo: string, godownPath: string | null | undefined): Promise<string | null> {
+  if (STATIC_DATA_MODE) return null;
+  let partnerPath: string | null = null;
+  try {
+    const { data, error } = await supabase.rpc("invoice_partner_signature", { _order_no: orderNo });
+    if (!error && typeof data === "string" && data) partnerPath = data;
+  } catch {
+    partnerPath = null;
+  }
+  return (partnerPath ? await loadSignature(partnerPath) : null) ?? await loadSignature(godownPath);
+}
+
+/** `facts`: already read by whoever may (the channel partner's copy); otherwise read here as the signed-in account. */
+export type InvoiceOptions = { copy?: InvoiceCopy; catalog?: Product[]; facts?: InvoiceFacts };
 
 /** Builds the invoice PDF. Returns the document and its file name. */
 export async function buildInvoicePdf(order: Order, options: InvoiceOptions = {}) {
   const copy = options.copy ?? "customer";
-  const [{ GState, jsPDF }, context, logo, facts] = await Promise.all([import("jspdf"), loadInvoiceContext(), loadLogo(), loadInvoiceFacts(order.id)]);
+  const [{ GState, jsPDF }, context, logo, facts] = await Promise.all([import("jspdf"), loadInvoiceContext(), loadLogo(), options.facts ?? loadInvoiceFacts(order.id)]);
   const { company } = context;
   const pdf: JsPdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
-  const signature = await loadSignature((context.branches.find((branch) => branch.id === order.branchId) ?? defaultBranchOf(context.branches))?.signaturePath);
+  const signature = await loadOrderSignature(order.id, (context.branches.find((branch) => branch.id === order.branchId) ?? defaultBranchOf(context.branches))?.signaturePath);
   const W = pdf.internal.pageSize.getWidth();
   const H = pdf.internal.pageSize.getHeight();
   const M = 14;

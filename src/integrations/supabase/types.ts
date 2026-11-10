@@ -599,9 +599,9 @@ export type Database = {
         Relationships: []
       }
       channel_partners: {
-        Row: { id: string; user_id: string; branch_id: string; name: string; email: string; phone: string; status: string; created_by: string | null; created_at: string; updated_at: string; status_changed_by: string | null; status_changed_at: string | null }
-        Insert: { user_id: string; branch_id: string; name: string; email: string; id?: string; phone?: string; status?: string; created_by?: string | null; created_at?: string; updated_at?: string; status_changed_by?: string | null; status_changed_at?: string | null }
-        Update: { id?: string; user_id?: string; branch_id?: string; name?: string; email?: string; phone?: string; status?: string; created_by?: string | null; created_at?: string; updated_at?: string; status_changed_by?: string | null; status_changed_at?: string | null }
+        Row: { id: string; user_id: string; branch_id: string; name: string; email: string; phone: string; status: string; created_by: string | null; created_at: string; updated_at: string; status_changed_by: string | null; status_changed_at: string | null; signature_path: string | null }
+        Insert: { user_id: string; branch_id: string; name: string; email: string; id?: string; phone?: string; status?: string; created_by?: string | null; created_at?: string; updated_at?: string; status_changed_by?: string | null; status_changed_at?: string | null; signature_path?: string | null }
+        Update: { id?: string; user_id?: string; branch_id?: string; name?: string; email?: string; phone?: string; status?: string; created_by?: string | null; created_at?: string; updated_at?: string; status_changed_by?: string | null; status_changed_at?: string | null; signature_path?: string | null }
         Relationships: []
       }
       channel_partner_events: {
@@ -1450,6 +1450,12 @@ export type Database = {
         Args: { _month: string }
         Returns: { order_item_id: string; order_no: string; placed_at: string; order_status: string; payment_status: string; customer_name: string; pin: string; product_name: string; qty: number; line_total: number; kind: string; rate: number; amount: number; status: string; partner_id: string ; paid_amount: number; due_amount: number }[]
       }
+      invoice_partner_signature: { Args: { _order_no: string }; Returns: string | null }
+      partner_invoice_orders: {
+        Args: { _from: string; _to: string }
+        Returns: { order_no: string; placed_at: string; order_status: string; payment_status: string; customer_name: string; total: number; gst_amount: number; invoice_number: string | null }[]
+      }
+      partner_invoice_order: { Args: { _order_no: string }; Returns: Json }
       admin_update_payout: { Args: { _id: string; _status: string; _reference?: string | null }; Returns: boolean }
       admin_export_customer_data: { Args: { _customer_id: string }; Returns: Json }
       admin_customer_deletion_preview: { Args: { _customer_id: string }; Returns: Json }
