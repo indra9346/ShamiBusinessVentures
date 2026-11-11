@@ -1,11 +1,18 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { CheckCircle2, Circle, Download } from "lucide-react";
+import { CheckCircle2, Circle, QrCode, RefreshCw } from "lucide-react";
+import { renderSVG } from "uqr";
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { Panel, StatusBadge } from "@/components/panel/widgets";
 import { accountNav } from "@/lib/account-nav";
-import { canCancelOrder, inr, inrPrecise, orderStages } from "@/lib/data";
+import { canCancelOrder, inr, inrPrecise, orderStages, type Order } from "@/lib/data";
+import { supabase } from "@/integrations/supabase/client";
+import { STATIC_DATA_MODE } from "@/lib/demo-mode";
+import { invoiceDelivery, issuedZohoNumber, type InvoiceDelivery, type ZohoInvoiceCopy } from "@/lib/invoice-lines";
+import { customerInvoiceVisible, invoiceStage, invoiceStageTone } from "@/lib/invoice-visibility";
+import { orderToneClass, TONE_CLASSES } from "@/lib/order-status-tone";
+import { deliveryQrLink, deliveryQrOrigin } from "@/lib/pdf-qr";
 import { useApp } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import {
@@ -139,8 +146,7 @@ function AccountOrderDetail() {
           ← Back to Orders
         </Link>
         <div className="flex flex-wrap items-center gap-2">
-          {/* A tax invoice is issued once the order is fully paid. */}
-          {order.payment === "Paid" && <InvoicePreviewButton order={order} label="View / Download Invoice" />}
+          {/* The invoice now lives in the "Invoice and delivery QR" panel below, with its QR. */}
           <AlertDialog>
             <AlertDialogTrigger asChild>
               <Button
@@ -179,7 +185,8 @@ function AccountOrderDetail() {
         </div>
       </div>
 
-      <Panel title="Order Timeline">
+      {/* Tinted by status in every portal (owner, 11 Nov 2026): pending yellow, confirmed green, cancelled red. */}
+      <Panel title="Order Timeline" className={orderToneClass(order.status, "tile")}>
         {isCancelled ? (
           <div className="flex items-center gap-2 text-danger">
             <StatusBadge status="Cancelled" />
@@ -194,26 +201,29 @@ function AccountOrderDetail() {
                 <div
                   className={cn(
                     "flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold",
+                    // Stages already done are green, like a confirmed order; the rest wait on white.
                     i <= currentIdx
-                      ? "border-gold bg-gold/10 text-navy"
-                      : "border-border text-slate",
+                      ? "border-emerald-600/45 bg-emerald-400/25 text-emerald-950"
+                      : "border-border bg-white/70 text-slate",
                   )}
                 >
                   {i <= currentIdx ? (
-                    <CheckCircle2 className="h-3.5 w-3.5 text-gold" />
+                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-700" />
                   ) : (
                     <Circle className="h-3.5 w-3.5" />
                   )}
                   {stage}
                 </div>
                 {i < orderStages.length - 1 && (
-                  <div className={cn("h-0.5 w-4", i < currentIdx ? "bg-gold" : "bg-border")} />
+                  <div className={cn("h-0.5 w-4", i < currentIdx ? "bg-emerald-600/60" : "bg-border")} />
                 )}
               </div>
             ))}
           </div>
         )}
       </Panel>
+
+      <InvoiceDeliveryPanel order={order} />
 
       {order.vendorStatuses && order.vendorStatuses.length > 1 && (
         <Panel title="Shipments" className="mt-5">
@@ -369,5 +379,117 @@ function AccountOrderDetail() {
       </div>
       <Dialog open={returnOpen} onOpenChange={setReturnOpen}><DialogContent><DialogHeader><DialogTitle>Request a return for {order.id}</DialogTitle></DialogHeader><div className="grid gap-3"><label htmlFor="return-line">Order item</label><select id="return-line" className="h-10 rounded-md border border-border bg-background px-3" value={returnItemIndex} onChange={(e)=>{setReturnItemIndex(e.target.value);setReturnQuantity("1");}}>{order.items.map((item,index)=><option key={index} value={index} disabled={!item.dbItemId}>{item.product.name} (qty {item.qty})</option>)}</select><label htmlFor="return-qty">Quantity</label><Input id="return-qty" type="number" min="1" max={order.items[Number(returnItemIndex)]?.qty ?? 1} value={returnQuantity} onChange={(e)=>setReturnQuantity(e.target.value)}/><label htmlFor="return-reason">Reason</label><Textarea id="return-reason" value={returnReason} onChange={(e)=>setReturnReason(e.target.value)} placeholder="Describe the issue"/></div><DialogFooter><Button variant="outline" onClick={()=>setReturnOpen(false)}>Cancel</Button><Button disabled={returnBusy} className="bg-navy text-white" onClick={async()=>{const item=order.items[Number(returnItemIndex)];if(!item?.dbItemId){toast.error("This order line cannot be returned online");return;}setReturnBusy(true);const ok=await requestReturn(item.dbItemId,Number(returnQuantity),returnReason);setReturnBusy(false);if(ok){toast.success("Return request submitted");setReturnOpen(false);setReturnReason("");}}}>Submit request</Button></DialogFooter></DialogContent></Dialog>
     </PanelLayout>
+  );
+}
+
+const releasedLabel = (iso: string) => new Date(iso).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+
+type InvoiceDeliveryFacts = { zohoNumber: string | null; delivery: InvoiceDelivery | null; failed: boolean };
+
+/**
+ * The order's invoice and delivery QR (owner, 11 Nov 2026): it shows here on its own once the order is paid in full and
+ * the office has confirmed it, the same rule as the Invoices page and the channel partner's list. The QR is the one
+ * printed on the invoice: the godown in-charge scans it to release and hand over the goods. It is asked of the database
+ * each time this page opens or comes back into view, never kept in the browser, so a QR the office replaced never shows.
+ */
+function InvoiceDeliveryPanel({ order }: { order: Order }) {
+  const visible = customerInvoiceVisible({ orderStatus: order.status, payment: order.payment });
+  const stage = invoiceStage({ orderStatus: order.status, payment: order.payment });
+  const tone = invoiceStageTone(stage);
+  const [facts, setFacts] = useState<InvoiceDeliveryFacts | null>(null);
+  const [reads, setReads] = useState(0);
+
+  useEffect(() => {
+    if (!visible) return;
+    if (STATIC_DATA_MODE) {
+      setFacts({ zohoNumber: null, delivery: null, failed: false });
+      return;
+    }
+    let active = true;
+    void Promise.all([
+      supabase.from("zoho_order_invoices").select("invoice_number,status").eq("order_no", order.id).maybeSingle(),
+      supabase.rpc("invoice_delivery_code", { _order_no: order.id }),
+    ]).then(([zoho, code]) => {
+      if (!active) return;
+      setFacts({ zohoNumber: issuedZohoNumber(zoho.data as ZohoInvoiceCopy | null), delivery: code.error ? null : invoiceDelivery(code.data), failed: Boolean(code.error) });
+    }).catch(() => {
+      if (active) setFacts({ zohoNumber: null, delivery: null, failed: true });
+    });
+    return () => { active = false; };
+  }, [visible, order.id, order.status, reads]);
+
+  // Back from the godown counter: the note's release and the handover show without a reload.
+  useEffect(() => {
+    if (!visible) return;
+    const onFocus = () => setReads((count) => count + 1);
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [visible]);
+
+  const code = facts?.delivery?.code ?? null;
+  const qrSvg = useMemo(() => {
+    if (!code || typeof window === "undefined") return "";
+    return renderSVG(deliveryQrLink(deliveryQrOrigin(window.location.hostname, window.location.origin), code), { ecc: "M", border: 4 });
+  }, [code]);
+
+  return (
+    <Panel title="Invoice and delivery QR" className={cn("mt-5", TONE_CLASSES[tone].tile)}>
+      {stage === "cancelled" ? (
+        <p className={cn("text-sm font-semibold", TONE_CLASSES.closed.text)}>This order was cancelled, so it has no invoice or delivery QR.</p>
+      ) : stage === "refunded" ? (
+        <p className={cn("text-sm font-semibold", TONE_CLASSES.closed.text)}>This order's payment was refunded, so it has no delivery QR.</p>
+      ) : !visible ? (
+        <div className={cn("space-y-1 text-sm", TONE_CLASSES.pending.text)}>
+          <p className="font-semibold">Your invoice and delivery QR appear here once your payment is confirmed.</p>
+          {stage === "awaiting_confirmation" && <p className="text-xs">We have your payment. Our team is confirming your order.</p>}
+        </div>
+      ) : (
+        <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_220px]">
+          <div className="min-w-0 space-y-3">
+            <div>
+              <p className="text-base font-bold text-navy">{facts?.zohoNumber ? `Invoice ${facts.zohoNumber}` : "Tax invoice"}</p>
+              {facts && !facts.zohoNumber && <p className="text-xs text-slate">Your tax invoice is being issued by Zoho Books. It appears here shortly.</p>}
+            </div>
+            {/* Only the tax invoice: until Zoho issues it, a download would be a proforma without the delivery QR. */}
+            {facts?.zohoNumber && <InvoicePreviewButton order={order} label="View / Download Invoice" />}
+            {facts?.failed ? (
+              <div className="flex flex-wrap items-center gap-2 text-sm text-danger">
+                <span>Could not load your delivery QR.</span>
+                <Button variant="outline" size="sm" onClick={() => setReads((count) => count + 1)}>
+                  <RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Try again
+                </Button>
+              </div>
+            ) : code ? (
+              <div className={cn("space-y-1 text-sm", TONE_CLASSES.confirmed.text)}>
+                {order.status === "Delivered" ? <p className="font-semibold">All your goods were handed over.</p>
+                  : facts?.delivery?.releasedAt ? (
+                    <p className="font-semibold">
+                      {facts.delivery.noteNo
+                        ? `Delivery note ${facts.delivery.noteNo} released on ${releasedLabel(facts.delivery.releasedAt)}.`
+                        : `Delivery note released on ${releasedLabel(facts.delivery.releasedAt)}.`}
+                    </p>
+                  )
+                  : <p className="font-semibold">Delivery note not released yet. The godown in-charge releases it when they scan your QR.</p>}
+                <p className="text-xs text-charcoal">The same QR is printed on your invoice. Keep it private: show it only at the godown counter.</p>
+              </div>
+            ) : facts ? (
+              <p className="text-sm text-charcoal">Your delivery QR appears here once Zoho Books shows your paid invoice. Please check again in a little while.</p>
+            ) : null}
+          </div>
+          <div className="mx-auto w-full max-w-[220px]">
+            {qrSvg ? (
+              <div className="rounded-lg border border-emerald-600/35 bg-white p-2" role="img" aria-label={`Delivery QR for order ${order.id}`}
+                // uqr returns a self-contained <svg> of the QR code (no scripts).
+                dangerouslySetInnerHTML={{ __html: qrSvg }} />
+            ) : (
+              <div className="grid aspect-square place-items-center rounded-lg border border-dashed border-emerald-600/35 bg-white/70 p-3 text-center text-xs text-slate">
+                <span className="grid justify-items-center gap-1.5"><QrCode className="h-8 w-8" />{facts === null ? "Loading your delivery QR…" : "No QR yet"}</span>
+              </div>
+            )}
+            <p className="mt-2 text-center text-xs font-semibold text-navy">Show this QR at the godown counter. The godown in-charge scans it and hands over your goods.</p>
+          </div>
+        </div>
+      )}
+    </Panel>
   );
 }

@@ -10,6 +10,7 @@ import { PartnerPayouts } from "@/components/partners/PartnerPayouts";
 import { PartnerInvoices } from "@/components/partners/PartnerInvoices";
 import { MonthlyIncome } from "@/components/partners/MonthlyIncome";
 import { GodownTransfers } from "@/components/batches/GodownTransfers";
+import { ReleasedDeliveryNotes } from "@/components/panel/DeliveryNotePanel";
 import { supabase } from "@/integrations/supabase/client";
 import { inrPrecise } from "@/lib/data";
 import { describeRate, monthLabel, monthStart, targetProgress, type CommissionKind } from "@/lib/partners";
@@ -111,13 +112,17 @@ function PartnerDashboard() {
       <main className="mx-auto max-w-6xl space-y-6 px-4 py-6">
         {error && <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
         <GodownTransfers />
-        <Link to="/slip" className="flex items-center gap-3 rounded-2xl border-2 border-navy bg-card p-4 shadow-sm hover:border-gold sm:max-w-md">
-          <ScanLine className="h-8 w-8 shrink-0 text-navy" />
-          <span className="min-w-0">
-            <span className="block text-sm font-extrabold text-navy">Hand over goods: scan the slip</span>
-            <span className="block text-xs text-slate">Scan the QR on a delivery slip or note of {me.godown}. Give the goods only when the screen turns green.</span>
-          </span>
-        </Link>
+        <div className="grid gap-4 lg:grid-cols-2">
+          <Link to="/slip" className="flex items-center gap-3 self-start rounded-2xl border-2 border-navy bg-card p-4 shadow-sm hover:border-gold">
+            <ScanLine className="h-8 w-8 shrink-0 text-navy" />
+            <span className="min-w-0">
+              <span className="block text-sm font-extrabold text-navy">Scan the QR on the customer's invoice</span>
+              <span className="block text-xs text-slate">{`See the released delivery note of an order at ${me.godown}. Printing and handing over follow the head office's rules; the godown in-charge does both.`}</span>
+            </span>
+          </Link>
+          {/* 12 Nov 2026: the notes released at this godown, with the items still to go. */}
+          <ReleasedDeliveryNotes />
+        </div>
         <p className="text-xs text-slate">{monthLabel(month)} · updates live every 30 seconds</p>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {statement ? (

@@ -50,6 +50,7 @@ import { InvoicePreviewButton } from "@/components/site/InvoicePreviewDialog";
 import { ResizableTable } from "@/hooks/use-column-resize";
 import { ItemBatchCodes, useOrderItemBatches } from "@/components/batches/OrderItemBatches";
 import { isVoidInZoho, zohoVoidNotice } from "@/lib/zoho-void";
+import { orderTone, orderToneClass, TONE_CLASSES } from "@/lib/order-status-tone";
 
 export const Route = createFileRoute("/admin/orders/$id")({
   head: ({ params }) => ({
@@ -131,6 +132,8 @@ function AdminOrderDetail() {
     (order.paidAmount ?? 0) === 0 && (order.discount ?? 0) === 0 && !order.coupon
   ));
   const currentIdx = orderStages.indexOf(order.status);
+  // The order colours (11 Nov 2026): waiting for payment or the office yellow, confirmed green, cancelled or expired red.
+  const tone = orderTone(order.status);
 
   // Only this order's or this customer's own GSTIN: a shared name or a blank email is not the same person.
   const matchedCustomer = customers.find((c) => c.id === order.customerId);
@@ -258,11 +261,17 @@ function AdminOrderDetail() {
 
       {/* WHAT'S NEXT Action Banner (matching Zoho Commerce) */}
       {!isCancelled && !voidInZoho && order.status !== "Delivered" && (
-        <div className="mb-5 flex flex-col gap-3 rounded-xl border border-emerald-200 bg-emerald-50/70 p-4 sm:flex-row sm:items-center sm:justify-between">
+        // Tinted by the order's status, like its row in the list: yellow while it waits, green once confirmed.
+        <div
+          className={cn(
+            "mb-5 flex flex-col gap-3 rounded-xl border p-4 sm:flex-row sm:items-center sm:justify-between",
+            orderToneClass(order.status, "tile") || "border-emerald-200 bg-emerald-50/70",
+          )}
+        >
           <div className="flex items-center gap-2.5">
-            <Sparkles className="h-5 w-5 text-emerald-700 shrink-0" />
+            <Sparkles className={cn("h-5 w-5 shrink-0", tone === "pending" ? "text-yellow-700" : tone === "closed" ? "text-red-700" : "text-emerald-700")} />
             <div>
-              <p className="text-xs font-bold uppercase tracking-wider text-emerald-900">What's Next?</p>
+              <p className={cn("text-xs font-bold uppercase tracking-wider", tone ? TONE_CLASSES[tone].text : "text-emerald-900")}>What's Next?</p>
               <p className="text-sm font-medium text-navy">
                 {order.status === "Placed"
                   ? "You can either confirm or cancel this order."
@@ -364,7 +373,7 @@ function AdminOrderDetail() {
                 ? `Order is synchronized with Zoho under Sales Order ${zohoSalesOrderId}, in ${zohoLocationLabel(orderBranch)}.`
                 : "Active write sync will automatically mirror this sales order into Zoho Inventory & Commerce."}
             </p>
-            {zohoSalesOrderId && <ZohoInvoiceStatus key={`${order.status}-${order.payment}`} orderNo={order.id} audience="admin" className="mt-3" readOnly={voidInZoho} />}
+            {zohoSalesOrderId && <ZohoInvoiceStatus key={`zoho-invoice-${order.status}-${order.payment}`} orderNo={order.id} audience="admin" className="mt-3" readOnly={voidInZoho} />}
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -389,7 +398,9 @@ function AdminOrderDetail() {
         </div>
       </div>
 
-      <DeliveryNotePanel key={`${order.status}-${order.payment}`} orderNo={order.id} className="mb-5" readOnly={voidInZoho} />
+      {/* Each panel that re-reads after a cancel or refund needs its own key: two siblings sharing one made React
+          draw the delivery note panel again and again (11 Nov 2026). */}
+      <DeliveryNotePanel key={`delivery-note-${order.status}-${order.payment}`} orderNo={order.id} className="mb-5" readOnly={voidInZoho} />
 
       {/* Zoho ERP Style 4-Stage Horizontal Progression Tracker */}
       <Panel title="Order Stage Progression" className="mb-5">
@@ -399,13 +410,13 @@ function AdminOrderDetail() {
               label: "Received",
               desc: `Order placed on ${order.date}`,
               active: true,
-              done: order.status !== "Placed",
-              current: order.status === "Placed",
+              done: tone !== "pending",
+              current: tone === "pending",
               icon: FileText,
             },
             {
               label: "Confirmed",
-              desc: order.status === "Placed" ? "Yet to be confirmed" : "Confirmed by admin",
+              desc: tone === "pending" ? "Yet to be confirmed" : "Confirmed by admin",
               active: ["Payment Confirmed", "Accepted", "Packed", "Dispatched", "Out for Delivery", "Delivered"].includes(order.status),
               done: ["Packed", "Dispatched", "Out for Delivery", "Delivered"].includes(order.status),
               current: ["Payment Confirmed", "Accepted"].includes(order.status),
@@ -429,15 +440,23 @@ function AdminOrderDetail() {
             },
           ].map((step, idx) => {
             const Icon = step.icon;
+            // The order colours: a done stage green; the stage it is at yellow while it waits for payment or the
+            // office, green once confirmed; on a cancelled or expired order the stages it never reached red.
+            const stopped = !step.done && !step.current && tone === "closed";
+            const waiting = step.current && tone === "pending";
             return (
               <div
                 key={step.label}
                 className={cn(
                   "relative flex flex-col justify-between rounded-xl border p-4 transition-all",
                   step.done
-                    ? "border-emerald-300 bg-emerald-50/40 text-emerald-950"
+                    ? cn(TONE_CLASSES.confirmed.tile, "text-emerald-950")
+                    : waiting
+                    ? cn(TONE_CLASSES.pending.tile, "text-navy shadow-sm ring-2 ring-yellow-300/50")
                     : step.current
-                    ? "border-emerald-700 bg-emerald-50/60 text-navy shadow-sm ring-2 ring-emerald-300/40"
+                    ? cn(TONE_CLASSES.confirmed.tile, "border-emerald-700 text-navy shadow-sm ring-2 ring-emerald-300/40")
+                    : stopped
+                    ? cn(TONE_CLASSES.closed.tile, "text-red-950")
                     : "border-border bg-stone-50/50 text-slate"
                 )}
               >
@@ -447,8 +466,12 @@ function AdminOrderDetail() {
                       "flex h-8 w-8 items-center justify-center rounded-lg",
                       step.done
                         ? "bg-emerald-600 text-white"
+                        : waiting
+                        ? "bg-yellow-400 text-yellow-950"
                         : step.current
                         ? "bg-emerald-700 text-white"
+                        : stopped
+                        ? "bg-red-100 text-red-700"
                         : "bg-stone-200 text-stone-500"
                     )}
                   >
@@ -458,7 +481,9 @@ function AdminOrderDetail() {
                 </div>
                 <div>
                   <p className="font-semibold text-sm">{step.label}</p>
-                  <p className="text-xs text-slate/80 mt-0.5">{step.desc}</p>
+                  <p className="text-xs text-slate/80 mt-0.5">
+                    {stopped ? (order.status === "Cancelled" ? "Order cancelled" : order.status) : step.desc}
+                  </p>
                 </div>
               </div>
             );
@@ -642,7 +667,7 @@ function AdminOrderDetail() {
         </Panel>
       </div>
 
-      <OrderPaymentsPanel key={`${order.status}-${order.payment}`} orderNo={order.id} total={order.amount} cancelled={isCancelled} />
+      <OrderPaymentsPanel key={`order-payments-${order.status}-${order.payment}`} orderNo={order.id} total={order.amount} cancelled={isCancelled} />
 
       {/* Items Table with FIFO Cost and Pricing Breakdown */}
       <div className="mt-6">

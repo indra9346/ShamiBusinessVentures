@@ -10,6 +10,7 @@ import { useServerNow } from "@/lib/server-clock";
 import { useApp } from "@/lib/store";
 import { endPaymentHold, useUpiPayments } from "@/lib/upi-store";
 import { cn } from "@/lib/utils";
+import { orderToneClass } from "@/lib/order-status-tone";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -41,7 +42,7 @@ export function CustomersPayingNow({ compact = false }: { compact?: boolean }) {
   if (compact && paying.length === 0) return null;
 
   return (
-    <div className={cn("rounded-lg border bg-card", compact ? "mb-4 border-amber-200 p-3" : "border-border p-0")}>
+    <div className={cn("rounded-lg border bg-card", compact ? cn("mb-4 p-3", orderToneClass(AWAITING_PAYMENT, "border")) : "border-border p-0")}>
       {compact && (
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <p className="flex items-center gap-2 text-sm font-bold text-navy">
@@ -62,7 +63,8 @@ export function CustomersPayingNow({ compact = false }: { compact?: boolean }) {
             // A rejected UTR gives the customer more time, so the timer starts again: say so.
             const rejected = submissions.find((item) => item.orderNo === hold.orderNo && item.status === "rejected");
             return (
-              <li key={hold.orderNo} className="py-2">
+              // Yellow like every order still waiting for its payment (the order colours, 11 Nov 2026).
+              <li key={hold.orderNo} className={cn("px-2 py-2", orderToneClass(hold.status, "row"))}>
                 <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-sm">
                   <span className="min-w-0">
                     <span className="font-semibold text-navy">{(hold.customer || "Customer").slice(0, 60)}</span>

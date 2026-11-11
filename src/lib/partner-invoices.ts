@@ -6,6 +6,7 @@
  */
 import type { Order, OrderStatus } from "./data.ts";
 import { invoicePayments, type InvoiceFacts, type InvoicePaymentRow, type ZohoInvoiceCopy } from "./invoice-lines.ts";
+import { customerInvoiceVisible, invoiceStage, type InvoiceStage } from "./invoice-visibility.ts";
 
 /** One row of the partner's invoice list. */
 export type PartnerInvoiceRow = {
@@ -37,7 +38,7 @@ const num = (value: unknown) => {
   return Number.isFinite(n) ? n : 0;
 };
 
-/** A tax invoice is issued once the order is fully paid: the same rule as the customer's Invoices page. */
+/** Paid in full: the payment half of partnerInvoiceVisible below, which the list uses. */
 export const invoiceReady = (paymentStatus: string) => paymentStatus.trim().toLowerCase() === "paid";
 
 /** The payment status as the site shows it (the customer's account uses the same words). */
@@ -45,6 +46,17 @@ export function paymentLabel(paymentStatus: string): Order["payment"] {
   const status = paymentStatus.trim().toLowerCase();
   return status === "paid" ? "Paid" : status.includes("partial") ? "Partially Paid" : status === "refunded" ? "Refunded" : status === "failed" ? "Failed" : "Pending";
 }
+
+/**
+ * The partner opens an order's invoice exactly when its customer can: paid in full and confirmed by the office, never
+ * cancelled or refunded (customerInvoiceVisible, the rule the customer's own pages use).
+ */
+export const partnerInvoiceVisible = (row: Pick<PartnerInvoiceRow, "order_status" | "payment_status">) =>
+  customerInvoiceVisible({ orderStatus: row.order_status, payment: paymentLabel(row.payment_status) });
+
+/** Where a row's invoice stands, for the words beside a row that cannot be opened yet. */
+export const partnerInvoiceStage = (row: Pick<PartnerInvoiceRow, "order_status" | "payment_status">): InvoiceStage =>
+  invoiceStage({ orderStatus: row.order_status, payment: paymentLabel(row.payment_status) });
 
 /** The rows of the list, with numbers as numbers (Postgres numerics come back as text). */
 export function partnerInvoiceRows(rows: unknown): PartnerInvoiceRow[] {

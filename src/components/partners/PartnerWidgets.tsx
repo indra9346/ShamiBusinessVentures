@@ -6,6 +6,8 @@ import { inrPrecise } from "@/lib/data";
 import { commissionsByOrder, describeRate, type CommissionKind } from "@/lib/partners";
 import { ResizableTable } from "@/hooks/use-column-resize";
 import { cn } from "@/lib/utils";
+import { orderToneClass } from "@/lib/order-status-tone";
+import { StatusBadge } from "@/components/panel/widgets";
 
 export type LeaderRow = Database["public"]["Functions"]["partner_leaderboard"]["Returns"][number];
 export type CommissionLine = Database["public"]["Functions"]["partner_commission_lines"]["Returns"][number];
@@ -123,9 +125,13 @@ export function CommissionLinesTable({ lines, showPartner, partnerNames }: { lin
         </thead>
         <tbody>
           {lines.map((line) => (
-            <tr key={line.order_item_id} className="border-b border-border/60 last:border-0">
+            // Each line tinted by its order's status, the same colours as the order lists (11 Nov 2026).
+            <tr key={line.order_item_id} className={cn("border-b border-border/60 transition-colors last:border-0", orderToneClass(line.order_status, "row"))}>
               <td className="px-2 py-2 whitespace-nowrap">{new Date(line.placed_at).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</td>
-              <td className="px-2 py-2 font-mono text-xs text-navy">{line.order_no}<div className="font-sans text-[11px] text-slate">{line.order_status} · {line.payment_status}</div></td>
+              <td className="px-2 py-2 font-mono text-xs text-navy">
+                {line.order_no}
+                <div className="mt-1 flex flex-wrap gap-1 font-sans"><StatusBadge status={line.order_status} /><StatusBadge status={line.payment_status} /></div>
+              </td>
               {showPartner && <td className="px-2 py-2">{partnerNames?.get(line.partner_id) ?? "—"}</td>}
               <td className="px-2 py-2">{line.customer_name}<span className="text-slate"> · {line.pin || "—"}</span></td>
               <td className="px-2 py-2">{line.product_name}</td>
@@ -154,12 +160,13 @@ export function CommissionOrders({ lines }: { lines: CommissionLine[] | null }) 
       {commissionsByOrder(lines).map((order) => {
         const isOpen = open === order.orderNo;
         return (
-          <li key={order.orderNo} className="rounded-lg border border-border text-sm">
+          // Each order's tile tinted by its status: waiting yellow, confirmed green, cancelled red (11 Nov 2026).
+          <li key={order.orderNo} className={cn("rounded-lg border text-sm", orderToneClass(order.orderStatus, "tile") || "border-border")}>
             <button type="button" aria-expanded={isOpen} onClick={() => setOpen(isOpen ? "" : order.orderNo)} className="flex w-full items-start justify-between gap-3 p-3 text-left">
               <span className="min-w-0">
                 <span className="block break-all font-mono text-xs font-semibold text-navy">{order.orderNo}</span>
                 <span className="block text-xs text-slate">{new Date(order.placedAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })} · {order.customerName} · {order.pin || "—"}</span>
-                <span className="block text-xs text-slate">{order.orderStatus} · {order.paymentStatus}</span>
+                <span className="mt-1 flex flex-wrap gap-1"><StatusBadge status={order.orderStatus} /><StatusBadge status={order.paymentStatus} /></span>
                 <span className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate">
                   <CommissionStatusBadge status={order.status} />
                   <span>{`${order.lines.length} item${order.lines.length === 1 ? "" : "s"} · Sale ${inrPrecise(order.sale)}`}</span>

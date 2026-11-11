@@ -4,6 +4,8 @@ import { Panel } from "@/components/panel/widgets";
 import { SendUtrForm } from "@/components/site/UpiIdPay";
 import { inrPrecise } from "@/lib/data";
 import { loadPartnerCheckouts, type PartnerCheckout } from "@/lib/upi-store";
+import { orderToneClass } from "@/lib/order-status-tone";
+import { cn } from "@/lib/utils";
 
 const when = (iso: string) => new Date(iso).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit", timeZone: "Asia/Kolkata" });
 
@@ -31,7 +33,8 @@ export function PartnerPaymentsPanel() {
         : (
           <ul className="space-y-3">
             {rows.map((row) => (
-              <li key={row.orderNo} className="rounded-lg border border-border bg-white p-3">
+              // The order colours (11 Nov 2026): waiting for payment yellow, time ran out red.
+              <li key={row.orderNo} className={cn("rounded-lg border p-3", orderToneClass(row.status, "tile") || "border-border bg-white")}>
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div className="min-w-0">
                     <p className="break-all font-mono text-xs font-semibold text-navy">{row.orderNo}</p>
@@ -40,7 +43,7 @@ export function PartnerPaymentsPanel() {
                   </div>
                   <div className="text-right">
                     <p className="font-bold tabular-nums text-navy">{inrPrecise(row.total)}</p>
-                    <p className={row.status === "Payment Expired" ? "text-[11px] font-semibold text-red-700" : "text-[11px] font-semibold text-amber-800"}>
+                    <p className={cn("text-[11px] font-semibold", orderToneClass(row.status, "text") || "text-amber-800")}>
                       {row.status === "Payment Expired" ? "Time ran out" : "Waiting for payment"}
                     </p>
                   </div>

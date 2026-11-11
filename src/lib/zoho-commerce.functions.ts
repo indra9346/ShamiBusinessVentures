@@ -2681,6 +2681,10 @@ async function syncLinkedZohoOrder(
     if (await syncZohoOrderInvoice(db, region, organizationId, token, order, zoho, (problem) => { invoiceAddressProblem = problem; }, moneyIssues)) zoho = await load();
     // Now, in case packing below stops the sync first.
     if (moneyIssues.review.length || moneyIssues.retry.length) await tellAdminsOfPaymentReview(db, order, [...moneyIssues.review, ...moneyIssues.retry].join(" "));
+    // Paid in full, with the invoice made and sent and the payments on it: the delivery note is released now, without
+    // anyone's press (owner, 11 Nov 2026). The database checks the payment again on Zoho read just now; it never stops
+    // the sync.
+    if (!moneyIssues.review.length && !moneyIssues.retry.length && order.payment_status === "Paid") await releaseDeliveryNoteAfterInvoice(order.order_no);
   }
   // Packed / Dispatched / Out for Delivery / Delivered on the website: package, shipment and
   // delivery in Zoho, at the sales order's godown location.
@@ -3065,6 +3069,19 @@ async function ensureZohoBooksInvoice(
     moneyIssues.review.push(`Zoho Books invoice ${label} totals ₹${Number(final.total).toFixed(2)}, more than Grain Bazar order ${order.order_no} at ₹${Number(order.total).toFixed(2)}, so ₹${Number(final.balance).toFixed(2)} stays due after the customer paid in full. Re-sync cannot clear this: correct the invoice in Zoho Books, then Retry.`);
   }
   return final;
+}
+
+/**
+ * The delivery note's automatic release (delivery-notes.functions.ts), loaded when it is needed so neither file imports
+ * the other at start. An order that has its note already costs nothing more. Never throws into the sync.
+ */
+async function releaseDeliveryNoteAfterInvoice(orderNo: string) {
+  try {
+    const { raiseDeliveryNoteAutomatically } = await import("@/lib/delivery-notes.functions");
+    await raiseDeliveryNoteAutomatically(orderNo);
+  } catch (cause) {
+    console.warn(zohoLogLine("delivery_note_auto_failed", { order: orderNo, error: cause instanceof Error ? cause.message : String(cause) }));
+  }
 }
 
 type InvoiceRow = Database["public"]["Tables"]["zoho_order_invoices"]["Row"];

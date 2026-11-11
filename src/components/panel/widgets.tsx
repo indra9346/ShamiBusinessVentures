@@ -3,6 +3,7 @@ import { Link, type LinkProps } from "@tanstack/react-router";
 import { useColumnResize } from "@/hooks/use-column-resize";
 import { ChevronRight, TrendingDown, TrendingUp } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { orderTone, paymentTone, TONE_CLASSES } from "@/lib/order-status-tone";
 
 export function StatCard({
   label,
@@ -137,12 +138,28 @@ const toneMap: Record<string, string> = {
   Expired: "bg-slate/10 text-slate border-slate/25",
 };
 
-export function StatusBadge({ status }: { status: string }) {
+/**
+ * An order's or a payment's status takes the shared order colours first (pending yellow, confirmed green, closed red;
+ * the owner's note of 11 Nov 2026), so the customer, admin, vendor and partner screens agree. Order and payment values
+ * are written with a capital (Placed, Paid, COD); the lower-case keys above are reviews', vendors' and Zoho jobs' own
+ * states, so they keep their colours, as do words that are not about an order (Active, Published, Low Stock, Expired).
+ */
+function orderBadgeClass(status: string) {
+  if (!/^[A-Z]/.test(status)) return null;
+  const tone = orderTone(status) ?? paymentTone(status);
+  return tone ? TONE_CLASSES[tone].badge : null;
+}
+
+/**
+ * plain: the general colours, not the order colours, for a word that means something else on that page, like a
+ * return's "Refunded", which there is the good outcome, not a reversal.
+ */
+export function StatusBadge({ status, plain = false }: { status: string; plain?: boolean }) {
   return (
     <span
       className={cn(
         "inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-semibold capitalize",
-        toneMap[status] ?? "bg-navy/6 text-navy border-navy/15",
+        (plain ? null : orderBadgeClass(status)) ?? toneMap[status] ?? "bg-navy/6 text-navy border-navy/15",
       )}
     >
       {status}
@@ -157,12 +174,18 @@ export function DataTable({
   columnClassNames,
   minWidth = 640,
   tableId,
+  rowClassNames,
 }: {
   columns: string[];
   rows: ReactNode[][];
   empty?: string;
   /** Optional classes per column (width, alignment, wrapping), applied to its header and cells. */
   columnClassNames?: (string | undefined)[];
+  /**
+   * Optional classes per row, in the same order as rows: an order row's status tint (orderToneClass(status, "row")).
+   * A tint brings its own hover, which replaces the plain one, so the row under the pointer still shows.
+   */
+  rowClassNames?: (string | undefined)[];
   /** Table min width in px before it scrolls sideways. */
   minWidth?: number;
   /** Where its column widths are remembered; defaults to this page and these columns. */
@@ -194,7 +217,7 @@ export function DataTable({
         </thead>
         <tbody>
           {rows.map((r, i) => (
-            <tr key={i} className="border-b border-border/70 transition-colors last:border-0 hover:bg-ivory">
+            <tr key={i} className={cn("border-b border-border/70 transition-colors last:border-0 hover:bg-ivory", rowClassNames?.[i])}>
               {r.map((cell, j) => (
                 <td key={j} className={cn("px-3 py-3.5 align-middle text-charcoal", columnClassNames?.[j])}>
                   {cell}

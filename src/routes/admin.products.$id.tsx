@@ -14,6 +14,7 @@ import { isZohoMirrorProduct } from "@/lib/data";
 import { resizedImage } from "@/lib/image-url";
 import { productImages } from "@/lib/product-images";
 import { useApp } from "@/lib/store";
+import { orderToneClass } from "@/lib/order-status-tone";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -235,6 +236,8 @@ function AdminProductDetail() {
         <Panel title={`Order History (${productOrders.length})`}>
           <DataTable
             columns={["Order", "Date", "Customer", "Qty", "Status"]}
+            // Each row tinted by its order status: waiting yellow, confirmed green, cancelled red.
+            rowClassNames={productOrders.slice(0, 8).map((o) => orderToneClass(o.status, "row"))}
             rows={productOrders.slice(0, 8).map((o) => {
               const line = o.items.find((i) => i.product.id === product.id)!;
               return [

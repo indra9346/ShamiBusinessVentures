@@ -6,6 +6,7 @@ import { PanelLayout } from "@/components/panel/PanelLayout";
 import { DataTable, Filters, Panel, StatCard, StatusBadge, ViewAll } from "@/components/panel/widgets";
 import { vendorNav } from "@/lib/panel-nav";
 import { OPEN_ORDERS } from "@/lib/panel-filters";
+import { orderToneClass } from "@/lib/order-status-tone";
 import { compactInr, getOrderItemTotal, inr, type Order } from "@/lib/data";
 import { useVendorScope } from "@/lib/store";
 
@@ -172,6 +173,8 @@ function VendorDashboard() {
           <DataTable
             columns={["Order", "Date", "Customer", "Amount", "Payment", "Status"]}
             empty="No orders in this period"
+            // Each row tinted by its order status: waiting yellow, confirmed green, cancelled red.
+            rowClassNames={recentOrders.map((o) => orderToneClass(o.status, "row"))}
             rows={recentOrders.map((o) => {
               const amt = vendorAmount(o);
               return [

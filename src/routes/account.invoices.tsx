@@ -11,6 +11,9 @@ import { downloadCSV } from "@/lib/export-utils";
 import { orderBelongsToUser } from "@/lib/account-identity";
 import { supabase } from "@/integrations/supabase/client";
 import { InvoicePreviewButton } from "@/components/site/InvoicePreviewDialog";
+import { STATIC_DATA_MODE } from "@/lib/demo-mode";
+import { customerInvoiceVisible } from "@/lib/invoice-visibility";
+import { issuedZohoNumber, type ZohoInvoiceCopy } from "@/lib/invoice-lines";
 
 export const Route = createFileRoute("/account/invoices")({
   head: () => ({
@@ -30,20 +33,26 @@ export const Route = createFileRoute("/account/invoices")({
 
 function AccountInvoices() {
   const { user, orders } = useApp();
-  const [invoicePrefix, setInvoicePrefix] = useState("INV-");
+  // Only orders whose invoice the customer may see: paid in full and confirmed by the office (owner, 11 Nov 2026), the
+  // same rule as the order page and the channel partner's list.
+  const list = orders.filter((order) => orderBelongsToUser(order, user) && customerInvoiceVisible({ orderStatus: order.status, payment: order.payment }));
+  const orderNos = list.map((order) => order.id).join(",");
+  // The invoice number is Zoho Books' own, never one made up here; an order Zoho has not invoiced yet shows none.
+  const [zohoNumbers, setZohoNumbers] = useState<Map<string, string>>(() => new Map());
   useEffect(() => {
+    if (STATIC_DATA_MODE || !orderNos) return;
     let active = true;
-    void supabase.from("settings").select("value").eq("key", "tax").eq("is_public", true).maybeSingle().then(({ data, error }) => {
+    void supabase.from("zoho_order_invoices").select("order_no,invoice_number,status").in("order_no", orderNos.split(",")).then(({ data, error }) => {
       if (!active || error) return;
-      const value = data?.value && typeof data.value === "object" && !Array.isArray(data.value)
-        ? data.value as Record<string, unknown>
-        : {};
-      const prefix = value["invoice_prefix"];
-      if (typeof prefix === "string" && prefix.trim()) setInvoicePrefix(prefix.trim());
+      const numbers = new Map<string, string>();
+      for (const row of data ?? []) {
+        const number = issuedZohoNumber(row as ZohoInvoiceCopy);
+        if (number) numbers.set(row.order_no, number);
+      }
+      setZohoNumbers(numbers);
     });
     return () => { active = false; };
-  }, []);
-  const list = orders.filter((order) => orderBelongsToUser(order, user));
+  }, [orderNos]);
   const total = list.reduce((s, o) => s + o.amount, 0);
   const gst = list.reduce((s, o) => s + o.tax, 0);
 
@@ -60,7 +69,7 @@ function AccountInvoices() {
         "Payment Method",
       ],
       list.map((o) => [
-        `${invoicePrefix}${o.id.replace(/[^0-9]/g, "") || o.id}`,
+        zohoNumbers.get(o.id) ?? "",
         o.id,
         o.date,
         o.amount,
@@ -94,10 +103,14 @@ function AccountInvoices() {
           </Button>
         }
       >
+        <p className="mb-3 text-xs text-slate">An order's invoice, with its delivery QR, appears here once your payment is confirmed.</p>
         <DataTable
+          empty="No invoices yet"
           columns={["Invoice No", "Order", "Date", "Amount", "GST", "Payment", "Actions"]}
           rows={list.map((o) => [
-            <span className="font-semibold text-navy">{invoicePrefix}{o.id.replace(/[^0-9]/g, "") || o.id}</span>,
+            zohoNumbers.get(o.id)
+              ? <span className="font-semibold text-navy">{zohoNumbers.get(o.id)}</span>
+              : <span className="text-xs text-slate">Being issued</span>,
             <Link
               to="/account/orders/$id"
               params={{ id: o.id }}
@@ -109,10 +122,8 @@ function AccountInvoices() {
             inr(o.amount),
             inr(o.tax),
             <StatusBadge status={o.payment} />,
-            // A tax invoice is issued once the order is fully paid.
-            o.payment === "Paid"
-              ? <InvoicePreviewButton order={o} size="sm" label="View / Download" />
-              : <span className="text-xs text-slate">Available after payment</span>,
+            // Only the tax invoice: while Zoho is issuing it there is nothing to download yet.
+            zohoNumbers.get(o.id) ? <InvoicePreviewButton order={o} size="sm" label="View / Download" /> : <span className="text-xs text-slate">Soon</span>,
           ])}
         />
       </Panel>

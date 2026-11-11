@@ -110,10 +110,50 @@ export function issuedZohoNumber(row: ZohoInvoiceCopy | null | undefined): strin
 export type InvoicePaymentRow = { amount: number; method: string | null; status: string | null; txn_ref: string | null; created_at: string };
 export type InvoicePayment = { date: string; mode: string; reference: string; amount: number };
 /**
- * The latest facts when the invoice is pulled: Zoho's own invoice number and date, every payment with its mode and UTR,
- * and what is paid. `paid` null = not known (the order's own figure is used).
+ * The invoice's delivery QR as the database hands it out (invoice_delivery_code). `code` is null until the order is
+ * paid, confirmed and invoiced; `why` then says which check is still open. `releasedAt` is when the delivery note was
+ * released (automatically when the payment was confirmed, or by the godown in-charge's scan), null while it is not.
  */
-export type InvoiceFacts = { zoho: ZohoInvoiceCopy | null; payments: InvoicePayment[]; paid: number | null };
+export type InvoiceDelivery = { code: string | null; why: string; noteNo: string | null; releasedAt: string | null };
+
+/** A delivery code: 22 characters of URL-safe base64, the same on every copy of the invoice. */
+export const DELIVERY_CODE = /^[A-Za-z0-9_-]{22}$/;
+
+/** invoice_delivery_code's answer, checked: anything that is not a well-formed code counts as no code. */
+export function invoiceDelivery(data: unknown): InvoiceDelivery | null {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+  const row = data as Record<string, unknown>;
+  const text = (value: unknown) => (typeof value === "string" && value.trim() ? value.trim() : null);
+  const code = text(row["code"]);
+  return {
+    code: code && DELIVERY_CODE.test(code) ? code : null,
+    why: text(row["why"]) ?? "",
+    noteNo: text(row["note_no"]),
+    releasedAt: text(row["released_at"]),
+  };
+}
+
+/** The code the invoice prints as its delivery QR: only on a tax invoice (Zoho's number) and only with a working code. */
+export function invoiceQrCode(zohoNumber: string | null | undefined, delivery: InvoiceDelivery | null | undefined) {
+  const code = delivery?.code ?? "";
+  return zohoNumber && DELIVERY_CODE.test(code) ? code : null;
+}
+
+/**
+ * The owner's "note under the QR" (11 Nov 2026), in both languages. The PDF's own fonts have no Kannada, so the browser
+ * draws the Kannada line as a picture.
+ */
+export const DELIVERY_QR_NOTE = {
+  en: "Show this at the godown. The godown in-charge scans it to release and hand over your goods, once per item.",
+  kn: "ಇದನ್ನು ಗೋದಾಮಿನಲ್ಲಿ ತೋರಿಸಿ. ಗೋದಾಮಿನ ಉಸ್ತುವಾರಿ ಇದನ್ನು ಸ್ಕ್ಯಾನ್ ಮಾಡಿ ನಿಮ್ಮ ಸರಕನ್ನು ಬಿಡುಗಡೆ ಮಾಡಿ ಹಸ್ತಾಂತರಿಸುತ್ತಾರೆ, ಪ್ರತಿ ವಸ್ತುವನ್ನು ಒಮ್ಮೆ ಮಾತ್ರ.",
+} as const;
+
+/**
+ * The latest facts when the invoice is pulled: Zoho's own invoice number and date, every payment with its mode and UTR,
+ * and what is paid. `paid` null = not known (the order's own figure is used). `delivery` left out = not read yet: the
+ * invoice asks the database as the signed-in account when it is built.
+ */
+export type InvoiceFacts = { zoho: ZohoInvoiceCopy | null; payments: InvoicePayment[]; paid: number | null; delivery?: InvoiceDelivery | null };
 
 const IST_MS = 330 * 60_000;
 const dayOf = (iso: string) => {

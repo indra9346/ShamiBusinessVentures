@@ -8,7 +8,9 @@ import { supabase } from "@/integrations/supabase/client";
 import { inrPrecise, type Order } from "@/lib/data";
 import { istToday } from "@/lib/godown-report";
 import type { InvoiceFacts } from "@/lib/invoice-lines";
-import { invoiceReady, partnerInvoiceOrder, partnerInvoiceRows, paymentLabel, type PartnerInvoiceRow } from "@/lib/partner-invoices";
+import { partnerInvoiceOrder, partnerInvoiceRows, partnerInvoiceStage, partnerInvoiceVisible, paymentLabel, type PartnerInvoiceRow } from "@/lib/partner-invoices";
+import { INVOICE_STAGE_WORDS } from "@/lib/invoice-visibility";
+import { orderToneClass } from "@/lib/order-status-tone";
 import { cn } from "@/lib/utils";
 
 const addDays = (date: string, days: number) => new Date(Date.parse(`${date}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
@@ -87,14 +89,15 @@ export function PartnerInvoices({ signaturePath }: { signaturePath: string | nul
           <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />Refresh
         </button>
       </div>
-      <p className="mb-3 text-xs text-slate">Orders of your godown placed while you run it. The customer gets the same copy.</p>
+      <p className="mb-3 text-xs text-slate">Orders of your godown placed while you run it. The customer gets the same copy, with the same delivery QR, once the order is paid and confirmed.</p>
 
       {rows === null ? <p className="text-sm text-slate">Loading…</p>
         : !rows.length ? <p className="py-6 text-center text-sm text-slate">No orders in this period.</p>
         : (
           <ul className="space-y-2">
             {rows.map((row) => (
-              <li key={row.order_no} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-card p-3">
+              // Tinted by the order's status, as in every portal: pending yellow, confirmed green, cancelled red.
+              <li key={row.order_no} className={cn("flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-card p-3", orderToneClass(row.order_status, "tile"))}>
                 <div className="min-w-0">
                   <p className="font-mono text-sm font-semibold text-navy">{row.order_no}{row.invoice_number ? <span className="ml-2 font-sans text-xs font-normal text-slate">Invoice {row.invoice_number}</span> : null}</p>
                   <p className="truncate text-sm text-charcoal">{row.customer_name || "Customer"}</p>
@@ -102,12 +105,12 @@ export function PartnerInvoices({ signaturePath }: { signaturePath: string | nul
                 </div>
                 <div className="flex shrink-0 items-center gap-3">
                   <span className="text-sm font-bold text-navy tabular-nums">{inrPrecise(row.total)}</span>
-                  {invoiceReady(row.payment_status) ? (
+                  {partnerInvoiceVisible(row) ? (
                     <button type="button" disabled={opening === row.order_no} onClick={() => void open(row.order_no)}
                       className="inline-flex h-9 items-center gap-1.5 rounded-md border border-border bg-white px-3 text-sm text-navy hover:border-gold disabled:opacity-60">
                       <FileText className="h-4 w-4" />{opening === row.order_no ? "Opening…" : "View / Download"}
                     </button>
-                  ) : <span className="text-xs text-slate">Available after payment</span>}
+                  ) : <span className="text-xs text-charcoal">{INVOICE_STAGE_WORDS[partnerInvoiceStage(row)]}</span>}
                 </div>
               </li>
             ))}

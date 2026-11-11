@@ -12,8 +12,13 @@ import {
 } from "@/lib/pickup-points";
 import { DEMO_BRANCH, branchFromRow, defaultBranchOf, type Branch } from "@/lib/branches";
 import { sellerAddressLines } from "@/lib/invoice-seller";
-import { invoiceBalance, invoiceLines, invoicePayments, issuedZohoNumber, type InvoiceFacts, type InvoicePaymentRow, type Line, type ZohoInvoiceCopy } from "@/lib/invoice-lines";
+import {
+  DELIVERY_QR_NOTE, invoiceBalance, invoiceDelivery, invoiceLines, invoicePayments, invoiceQrCode, issuedZohoNumber,
+  type InvoiceDelivery, type InvoiceFacts, type InvoicePaymentRow, type Line, type ZohoInvoiceCopy,
+} from "@/lib/invoice-lines";
 import { GODOWN_SIGNATURE_BUCKET } from "@/lib/godown-signature";
+import { canvasTextImage, loadLogoPng } from "@/lib/delivery-note-pdf";
+import { deliveryQrLink, deliveryQrOrigin, drawPdfQr } from "@/lib/pdf-qr";
 
 export { invoiceLines, type Line };
 
@@ -22,6 +27,9 @@ export { invoiceLines, type Line };
  * (seller header, Bill To / Ship To, HSN, CGST/SGST or IGST per line, total in words, terms,
  * signatory) with an Amazon-style finish (order details, "Original for Recipient", reverse
  * charge line, page x of y) and the Grain Bazar logo as a light watermark on every page.
+ *
+ * A tax invoice of a paid, confirmed order carries the order's delivery QR (owner, 11 Nov 2026: no separate delivery
+ * note paper any more): the godown in-charge scans it to release and hand over the goods.
  *
  * Grain Bazar (Shami Business Ventures Private Limited) is always the seller of record. The
  * customer copy never names a marketplace vendor; the office copy (admin / vendor panels)
@@ -120,22 +128,6 @@ async function loadInvoiceContext(): Promise<InvoiceContext> {
   }
 }
 
-async function loadLogo(): Promise<string | null> {
-  try {
-    const response = await fetch("/grainbazar-logo.png");
-    if (!response.ok) return null;
-    const blob = await response.blob();
-    return await new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : null);
-      reader.onerror = () => resolve(null);
-      reader.readAsDataURL(blob);
-    });
-  } catch {
-    return null;
-  }
-}
-
 /**
  * The latest facts when the invoice is pulled (Zoho's number and date, the payments, what is paid). Never from the page's
  * memory, so a payment recorded or removed a moment ago shows at once.
@@ -191,16 +183,38 @@ async function loadOrderSignature(orderNo: string, godownPath: string | null | u
   return (partnerPath ? await loadSignature(partnerPath) : null) ?? await loadSignature(godownPath);
 }
 
+/**
+ * The order's delivery QR code, asked of the database every time the invoice is built: never kept in the page or the
+ * browser, so a QR an admin replaced never prints again. Only the order's customer, its signing channel partner and
+ * admins get one; anyone else (a vendor's office copy) is refused, and that invoice simply has no QR. A failed read
+ * also means no QR: the invoice still builds.
+ */
+async function loadDeliveryCode(orderNo: string): Promise<InvoiceDelivery | null> {
+  if (STATIC_DATA_MODE) return null;
+  try {
+    const { data, error } = await supabase.rpc("invoice_delivery_code", { _order_no: orderNo });
+    return error ? null : invoiceDelivery(data);
+  } catch {
+    return null;
+  }
+}
+
 /** `facts`: already read by whoever may (the channel partner's copy); otherwise read here as the signed-in account. */
 export type InvoiceOptions = { copy?: InvoiceCopy; catalog?: Product[]; facts?: InvoiceFacts };
 
 /** Builds the invoice PDF. Returns the document and its file name. */
 export async function buildInvoicePdf(order: Order, options: InvoiceOptions = {}) {
   const copy = options.copy ?? "customer";
-  const [{ GState, jsPDF }, context, logo, facts] = await Promise.all([import("jspdf"), loadInvoiceContext(), loadLogo(), options.facts ?? loadInvoiceFacts(order.id)]);
+  // The logo as a small PNG (the file is a 1920 px WebP): one copy embedded, used by the letterhead and the watermark.
+  const [{ GState, jsPDF }, context, logo, facts] = await Promise.all([import("jspdf"), loadInvoiceContext(), loadLogoPng(), options.facts ?? loadInvoiceFacts(order.id)]);
   const { company } = context;
   const pdf: JsPdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+  // The tax invoice is the one Zoho Books issues, so it carries Zoho's number. Until Zoho has one, this is a proforma.
+  const zohoNumber = issuedZohoNumber(facts.zoho);
+  // The delivery QR goes on a tax invoice only; it is read while the signature loads.
+  const deliveryRead = !zohoNumber ? Promise.resolve(null) : facts.delivery !== undefined ? Promise.resolve(facts.delivery) : loadDeliveryCode(order.id);
   const signature = await loadOrderSignature(order.id, (context.branches.find((branch) => branch.id === order.branchId) ?? defaultBranchOf(context.branches))?.signaturePath);
+  const qrCode = invoiceQrCode(zohoNumber, await deliveryRead);
   const W = pdf.internal.pageSize.getWidth();
   const H = pdf.internal.pageSize.getHeight();
   const M = 14;
@@ -213,8 +227,6 @@ export async function buildInvoicePdf(order: Order, options: InvoiceOptions = {}
   const rule: [number, number, number] = [222, 226, 230];
   const card: [number, number, number] = [246, 248, 251];
 
-  // The tax invoice is the one Zoho Books issues, so it carries Zoho's number. Until Zoho has one, this is a proforma.
-  const zohoNumber = issuedZohoNumber(facts.zoho);
   const invoiceNo = zohoNumber ?? "";
   const orderDate = new Date(order.createdAt || order.date);
   const dateText = Number.isNaN(orderDate.getTime())
@@ -252,11 +264,18 @@ export async function buildInvoicePdf(order: Order, options: InvoiceOptions = {}
   const computedTotal = round2(taxableTotal - (couponInLines ? 0 : Math.abs(order.discount)) + taxTotal + order.shipping);
   const roundOff = round2(order.amount - computedTotal);
 
+  /*
+   * The GB logo, light and centred (owner, 11 Nov 2026: "a little darker than today"). It is drawn last on each page, over
+   * everything, so the navy table band and the card fills cannot hide it; at 9% it tints them without hiding any text.
+   */
   const watermark = () => {
     if (!logo) return;
     try {
-      pdf.setGState(new GState({ opacity: 0.06 }));
-      pdf.addImage(logo, "PNG", (W - 110) / 2, (H - 110) / 2, 110, 110);
+      const props = pdf.getImageProperties(logo);
+      const w = 110;
+      const h = props.width ? (w * props.height) / props.width : w;
+      pdf.setGState(new GState({ opacity: 0.09 }));
+      pdf.addImage(logo, "PNG", (W - w) / 2, (H - h) / 2, w, h, "gb-logo", "FAST");
     } catch {
       /* watermark is decorative */
     } finally {
@@ -264,8 +283,17 @@ export async function buildInvoicePdf(order: Order, options: InvoiceOptions = {}
     }
   };
 
+  /*
+   * The delivery QR (owner, 11-12 Nov 2026: on the invoice, "in the bottom not top"): the last thing on the invoice,
+   * under the terms and the signature, with the owner's note beside it. About 35 mm tall, which fits in the space an
+   * ordinary order leaves above the footer, so it stays on one page.
+   */
+  const QR_SIZE = 30;
+  const QR_BLOCK_H = 33;
+
   const brandHeader = (continued: boolean) => {
-    if (logo) pdf.addImage(logo, "PNG", M, 10, 18, 18);
+    // The same alias as the watermark: the picture is stored once in the file however often it is drawn.
+    if (logo) pdf.addImage(logo, "PNG", M, 10, 18, 18, "gb-logo", "FAST");
     const tx = M + (logo ? 22 : 0);
     pdf.setFont("helvetica", "bold");
     pdf.setFontSize(17);
@@ -276,15 +304,16 @@ export async function buildInvoicePdf(order: Order, options: InvoiceOptions = {}
     pdf.setTextColor(...muted);
     pdf.text(`A brand of ${company.legalName}`, tx, 23.5);
     pdf.text(`GSTIN ${company.gstin}  ·  ${godownPhone}  ·  ${company.email}`, tx, 27.5);
+    const right = R;
     pdf.setFont("helvetica", "bold");
     pdf.setFontSize(15);
     pdf.setTextColor(...ink);
     const heading = zohoNumber ? "TAX INVOICE" : "PROFORMA INVOICE";
-    pdf.text(continued ? `${heading} (contd.)` : heading, R, 17, { align: "right" });
+    pdf.text(continued ? `${heading} (contd.)` : heading, right, 17, { align: "right" });
     pdf.setFont("helvetica", "normal");
     pdf.setFontSize(8);
     pdf.setTextColor(...muted);
-    pdf.text(copy === "customer" ? "Original for Recipient" : "Duplicate for Supplier (office copy)", R, 22.5, { align: "right" });
+    pdf.text(copy === "customer" ? "Original for Recipient" : "Duplicate for Supplier (office copy)", right, 22.5, { align: "right" });
     pdf.text(zohoNumber ? `Invoice ${invoiceNo}` : `Order ${order.id}`, R, 27.5, { align: "right" });
     pdf.setDrawColor(...gold);
     pdf.setLineWidth(0.7);
@@ -293,10 +322,53 @@ export async function buildInvoicePdf(order: Order, options: InvoiceOptions = {}
     return 38;
   };
 
+  /**
+   * The delivery QR at the bottom of the invoice: a ruled band with the QR on the left and, beside it, the heading, the
+   * owner's note, the order number and the note in Kannada. Returns the band's bottom.
+   */
+  const deliveryQrBlock = (code: string, top: number) => {
+    const origin = typeof window === "undefined" ? "https://grainbazar.com" : deliveryQrOrigin(window.location.hostname, window.location.origin);
+    pdf.setDrawColor(...rule);
+    pdf.line(M, top, R, top);
+    const qrTop = top + 2;
+    drawPdfQr(pdf, deliveryQrLink(origin, code), M, qrTop, QR_SIZE);
+    pdf.setDrawColor(...rule);
+    pdf.rect(M, qrTop, QR_SIZE, QR_SIZE);
+    const tx = M + QR_SIZE + 6;
+    const textW = R - tx;
+    let at = qrTop + 3;
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(9);
+    pdf.setTextColor(...navy);
+    pdf.text("DELIVERY QR", tx, at);
+    at += 4.6;
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(8);
+    pdf.setTextColor(...ink);
+    const noteLines = pdf.splitTextToSize(DELIVERY_QR_NOTE.en, textW) as string[];
+    pdf.text(noteLines, tx, at);
+    at += noteLines.length * 3.6 + 1;
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(8);
+    pdf.setTextColor(...navy);
+    pdf.text(`Order ${order.id}${zohoNumber ? `  ·  Invoice ${invoiceNo}` : ""}`, tx, at);
+    at += 2;
+    // The PDF's own fonts have no Kannada: the browser draws that line as a picture (there is none outside a browser).
+    const kannada = canvasTextImage(DELIVERY_QR_NOTE.kn, { sizePt: 7.5, maxWidthMm: textW, color: ink });
+    if (kannada) {
+      try {
+        pdf.addImage(kannada.dataUrl, "PNG", tx, at, kannada.width, kannada.height, undefined, "FAST");
+        at += kannada.height;
+      } catch {
+        /* the English note above still says it */
+      }
+    }
+    return Math.max(qrTop + QR_SIZE, at) + 1;
+  };
+
   let y = 0;
   const newPage = (first: boolean) => {
     if (!first) pdf.addPage();
-    watermark();
     y = brandHeader(!first);
   };
   newPage(true);
@@ -312,18 +384,20 @@ export async function buildInvoicePdf(order: Order, options: InvoiceOptions = {}
     ["Fulfilment", pickupPoint ? "Pickup from godown" : order.delivery || "Delivery"],
   ];
   pdf.setFontSize(8.5);
-  const colW = usable / 2;
-  meta.forEach(([label, value], index) => {
-    const x = M + (index % 2) * colW;
-    const rowY = y + Math.floor(index / 2) * 5.2;
-    pdf.setFont("helvetica", "normal");
-    pdf.setTextColor(...muted);
-    pdf.text(label, x, rowY);
-    pdf.setFont("helvetica", "bold");
-    pdf.setTextColor(...ink);
-    pdf.text(`:  ${value}`, x + 27, rowY, { maxWidth: colW - 30 });
-  });
-  y += Math.ceil(meta.length / 2) * 5.2 + 3;
+  {
+    const colW = usable / 2;
+    meta.forEach(([label, value], index) => {
+      const x = M + (index % 2) * colW;
+      const rowY = y + Math.floor(index / 2) * 5.2;
+      pdf.setFont("helvetica", "normal");
+      pdf.setTextColor(...muted);
+      pdf.text(label, x, rowY);
+      pdf.setFont("helvetica", "bold");
+      pdf.setTextColor(...ink);
+      pdf.text(`:  ${value}`, x + 27, rowY, { maxWidth: colW - 30 });
+    });
+    y += Math.ceil(meta.length / 2) * 5.2 + 3;
+  }
 
   // Address cards (the "Sold by" card style), three across.
   const cardGap = 4;
@@ -548,7 +622,10 @@ export async function buildInvoicePdf(order: Order, options: InvoiceOptions = {}
   pdf.setTextColor(...ink);
   const notes = [
     `Order ${order.id} placed on Grain Bazar.`,
-    pickupPoint ? `Collect from ${pickupPoint.name}. Bring this invoice or your order number.` : "",
+    // The goods are handed over against the delivery QR now, not the order number (owner, 11 Nov 2026).
+    pickupPoint ? (qrCode
+      ? `Collect from ${pickupPoint.name}. Show this invoice's delivery QR at the godown counter.`
+      : `Collect from ${pickupPoint.name}. The tax invoice carries your delivery QR once the payment is confirmed; show it at the godown counter.`) : "",
     !facts.payments.length && (order.utr || order.txn) ? `Payment reference: ${order.utr || order.txn}` : "",
     couponInLines ? `Coupon ${order.coupon ?? ""}: Rs. ${money(order.discount)} taken off the items above in proportion, with the GST on it.`.replace("  ", " ") : "",
     zohoNumber ? "" : "Proforma: the tax invoice number comes from Zoho Books once the invoice is raised.",
@@ -558,10 +635,13 @@ export async function buildInvoicePdf(order: Order, options: InvoiceOptions = {}
   ly += 4.5 + notes.length * 3.8;
   y = Math.max(sy + 8, ly + 4);
 
+  // The terms and the signature line take about 31 mm. Reserving no more than that keeps an ordinary order on one page.
+  const termsH = 33;
+
   // Every payment received, with its mode and UTR; the balance above is worked out from the same record.
   if (facts.payments.length) {
     const blockH = 11 + facts.payments.length * 4.8;
-    if (y + blockH + 40 > bottomLimit) newPage(false);
+    if (y + blockH + termsH > bottomLimit) newPage(false);
     pdf.setDrawColor(...rule);
     pdf.line(M, y, R, y);
     y += 5;
@@ -585,7 +665,7 @@ export async function buildInvoicePdf(order: Order, options: InvoiceOptions = {}
   }
 
   // Terms & declaration (left) and signatory (right).
-  if (y + 40 > bottomLimit) newPage(false);
+  if (y + termsH > bottomLimit) newPage(false);
   pdf.setDrawColor(...rule);
   pdf.line(M, y, R, y);
   y += 5;
@@ -625,6 +705,15 @@ export async function buildInvoicePdf(order: Order, options: InvoiceOptions = {}
   pdf.setTextColor(...ink);
   pdf.text("Authorized Signatory", R, y + 25.5, { align: "right" });
 
+  // The delivery QR at the very bottom (owner, 12 Nov 2026), under the terms and the signature. The same QR is on every
+  // copy of this invoice; the godown in-charge scans it to release and hand over the goods.
+  if (qrCode) {
+    y += 27.5;
+    // The band may run down to just above the footer line (H - 15).
+    if (y + QR_BLOCK_H > H - 17) newPage(false);
+    y = deliveryQrBlock(qrCode, y);
+  }
+
   // Footer on every page.
   const pages = pdf.getNumberOfPages();
   for (let page = 1; page <= pages; page += 1) {
@@ -638,6 +727,8 @@ export async function buildInvoicePdf(order: Order, options: InvoiceOptions = {}
     pdf.text("Whether tax is payable under reverse charge - No", M, H - 6.8);
     pdf.text(`Page ${page} of ${pages}`, R, H - 10.5, { align: "right" });
     pdf.text(`${company.brand}  ·  ${company.email}`, R, H - 6.8, { align: "right" });
+    // Last on the page, so nothing drawn earlier covers it.
+    watermark();
   }
 
   const fileName = (zohoNumber ? `Invoice-${invoiceNo}` : `Proforma-${order.id}`).replace(/[^A-Za-z0-9._-]+/g, "-") + ".pdf";

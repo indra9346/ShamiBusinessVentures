@@ -108,7 +108,7 @@ function AdminReturns() {
             r.vendor,
             inr(r.amount),
             <StatusBadge status={r.status} />,
-            <StatusBadge status={r.refund} />,
+            <StatusBadge status={r.refund} plain />,
             <div className="flex flex-wrap gap-2">
               <Button size="sm" variant="outline" onClick={() => setView(r)}>View</Button>
               {r.status === "Requested" && <Button size="sm" variant="outline" onClick={() => approve(r.id)}>Approve</Button>}

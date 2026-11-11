@@ -1,8 +1,11 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ScanLine } from "lucide-react";
+import { toast } from "sonner";
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { DataTable, Panel } from "@/components/panel/widgets";
+import { Switch } from "@/components/ui/switch";
+import { supabase } from "@/integrations/supabase/client";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { gateWords, istDateTime, paperWarnings, type DeliveryRegisterRow } from "@/lib/delivery-notes";
 import { listDeliveryNotes, listDeliveryScans } from "@/lib/delivery-notes.functions";
@@ -14,12 +17,91 @@ export const Route = createFileRoute("/admin/delivery-notes")({
   head: () => ({
     meta: [
       { title: "Delivery Notes | Shami Business Ventures Admin" },
-      { name: "description", content: "Every delivery note, who generated and printed it, and any that need attention." },
+      { name: "description", content: "Every delivery note, how it was released, who printed it, the godown's scans, and the delivery QR rules." },
       { name: "robots", content: "noindex" },
     ],
   }),
   component: AdminDeliveryNotes,
 });
+
+/** What godown staff and the channel partner may do on a scan of the invoice QR (public.delivery_qr_rules). */
+type QrRules = {
+  staff_print_slips: boolean; staff_print_note: boolean; staff_handover: boolean;
+  partner_print_slips: boolean; partner_print_note: boolean; partner_handover: boolean;
+};
+type QrRule = keyof QrRules;
+
+const RULE_ROWS: { who: string; detail: string; rules: { key: QrRule; label: string }[] }[] = [
+  {
+    who: "Godown staff",
+    detail: "Staff of the order's godown who are not the in-charge.",
+    rules: [{ key: "staff_print_slips", label: "Print delivery slips" }, { key: "staff_print_note", label: "Print the delivery note" }, { key: "staff_handover", label: "Hand over goods" }],
+  },
+  {
+    who: "Channel partner",
+    detail: "The partner who runs the order's godown.",
+    rules: [{ key: "partner_print_slips", label: "Print delivery slips" }, { key: "partner_print_note", label: "Print the delivery note" }, { key: "partner_handover", label: "Hand over goods" }],
+  },
+];
+
+/**
+ * The admin's switches for the invoice QR (owner, 11 Nov 2026: "both options should be there and enable this option in
+ * admin for controlling"). The godown in-charge and admins can always print and hand over; staff and the channel
+ * partner only what is on here. The database reads these again on every scan.
+ */
+function DeliveryQrRules() {
+  const [rules, setRules] = useState<QrRules | null>(null);
+  const [failed, setFailed] = useState("");
+  const [saving, setSaving] = useState<QrRule | "">("");
+
+  useEffect(() => {
+    if (STATIC_DATA_MODE) return;
+    void (async () => {
+      const { data, error } = await supabase.rpc("delivery_qr_rules");
+      if (error) { setFailed(/does not exist|schema cache|could not find/i.test(error.message) ? "The delivery QR rules are not set up in the database yet." : error.message); return; }
+      setRules(data as unknown as QrRules);
+    })();
+  }, []);
+
+  const change = async (key: QrRule, on: boolean) => {
+    setSaving(key);
+    const { data, error } = await supabase.rpc("admin_set_delivery_qr_rules", { _rules: { [key]: on } });
+    setSaving("");
+    if (error) { toast.error("Could not change the rule", { description: error.message }); return; }
+    setRules(data as unknown as QrRules);
+    toast.success("Delivery QR rule saved", { description: "It applies from the next scan." });
+  };
+
+  return (
+    <Panel title="Delivery QR rules" className="mb-4">
+      <p className="-mt-1 mb-3 text-xs text-slate">
+        When someone at the godown scans the QR on a customer's invoice: the godown in-charge and admins can always print the delivery note and slips and hand over the goods. Choose what godown staff and the channel partner may do.
+      </p>
+      {STATIC_DATA_MODE && <p className="text-sm text-slate">The rules need the live database, so they are not available in this demo.</p>}
+      {failed && <p className="text-sm text-danger">{failed}</p>}
+      {!rules && !failed && !STATIC_DATA_MODE && <p className="text-sm text-slate">Loading…</p>}
+      {rules && (
+        <div className="grid gap-3 md:grid-cols-2">
+          {RULE_ROWS.map((row) => (
+            <div key={row.who} className="rounded-md border border-border p-3">
+              <p className="text-sm font-bold text-navy">{row.who}</p>
+              <p className="mb-2 text-xs text-slate">{row.detail}</p>
+              <ul className="space-y-2">
+                {row.rules.map((rule) => (
+                  <li key={rule.key} className="flex items-center justify-between gap-3 text-sm">
+                    <label htmlFor={`qr-rule-${rule.key}`} className="text-charcoal">{rule.label}</label>
+                    <Switch id={`qr-rule-${rule.key}`} checked={rules[rule.key]} disabled={saving !== ""} onCheckedChange={(on) => void change(rule.key, on)} />
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+      )}
+      <p className="mt-3 text-xs text-slate">Choose the in-charge in Attendance &gt; Employees (Make in-charge).</p>
+    </Panel>
+  );
+}
 
 /** The register of delivery notes: every number, in order, with any that need attention at the top of mind. */
 function AdminDeliveryNotes() {
@@ -66,20 +148,21 @@ function AdminDeliveryNotes() {
       )}
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <Link to="/slip" className="inline-flex items-center gap-1.5 rounded-md bg-navy px-3 py-2 text-sm font-semibold text-white hover:bg-navy/90">
-          <ScanLine className="h-4 w-4" /> Scan a delivery note or slip
+          <ScanLine className="h-4 w-4" /> Scan the QR on an invoice
         </Link>
-        <span className="text-xs text-slate">Checks a paper's QR. Godown staff scan from their attendance app, channel partners from their partner page.</span>
+        <span className="text-xs text-slate">The godown in-charge scans from the staff app, channel partners from their partner page. Delivery papers printed before 12 Nov 2026 can still be scanned.</span>
       </div>
+      <DeliveryQrRules />
       <Panel title={rows ? `All delivery notes (${rows.length})` : "All delivery notes"}>
         <p className="-mt-1 mb-3 text-xs text-slate">
-          Numbers run on with no gap and are never reused. A note is generated on the order page, only after its full invoice amount is paid. This list uses what the website last read from Zoho; opening an order reads Zoho again.
+          Numbers run on with no gap and are never reused. A note is released automatically once the order's full payment is confirmed and Zoho Books has the paid invoice; if that did not happen, the godown in-charge's scan or Release now on the order page releases it. This list uses what the website last read from Zoho; opening an order reads Zoho again.
         </p>
         {failed && <p className="mb-2 text-sm text-danger">{failed}</p>}
         {!rows && !failed && <p className="text-sm text-slate">Loading…</p>}
         {rows && (
           <DataTable
             tableId="admin-delivery-notes"
-            columns={["Note", "State", "Order", "Customer", "Godown", "Items", "Handed over", "Generated", "Prints"]}
+            columns={["Note", "State", "Order", "Customer", "Godown", "Items", "Handed over", "Released", "Prints"]}
             empty={STATIC_DATA_MODE ? "Delivery notes need the live database, so they are not available in this demo." : "No delivery notes yet"}
             minWidth={1000}
             rows={rows.map((row) => {
@@ -106,12 +189,12 @@ function AdminDeliveryNotes() {
       </Panel>
       <Panel title={scans ? `QR scans (latest ${scans.length})` : "QR scans"} className="mt-4">
         <p className="-mt-1 mb-3 text-xs text-slate">
-          Every scan of a delivery note's or slip's QR code: who (staff, channel partner or office), when, at which godown, on the godown's registered phone or their own, and what the system answered. Nothing here can be changed or deleted.
+          Every scan of an invoice's QR code, and of delivery papers printed before 12 Nov 2026: who (in-charge, staff, channel partner or office), when, at which godown, on the godown's registered phone or their own, and what the system answered. Nothing here can be changed or deleted.
         </p>
         {scans && (
           <DataTable
             tableId="admin-delivery-scans"
-            columns={["When", "Answer", "Paper", "Note", "Scanned by", "Phone"]}
+            columns={["When", "Answer", "QR", "Note", "Scanned by", "Phone"]}
             empty="No scans yet"
             minWidth={880}
             rows={scans.map((scan) => [
@@ -121,7 +204,7 @@ function AdminDeliveryNotes() {
                 {scan.order_delivered && <span className="block text-[11px] text-emerald-800">Order marked Delivered</span>}
               </span>,
               scannedPaperLabel(scan),
-              scan.order_no ? <Link key="note" to="/admin/orders/$id" params={{ id: scan.order_no }} className="font-semibold text-gold hover:underline">{scan.note_no} · {scan.order_no}</Link> : "—",
+              scan.order_no ? <Link key="note" to="/admin/orders/$id" params={{ id: scan.order_no }} className="font-semibold text-gold hover:underline">{scan.note_no ? `${scan.note_no} · ${scan.order_no}` : scan.order_no}</Link> : "—",
               `${scan.actor_name} (${roleWords(scan.actor_role).en}${scan.branch_name ? `, ${scan.branch_name}` : ""})`,
               scan.device_registered ? `Godown phone${scan.device_label ? `: ${scan.device_label}` : ""}` : "Own phone",
             ])}

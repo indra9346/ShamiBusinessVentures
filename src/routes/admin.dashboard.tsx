@@ -32,6 +32,7 @@ import { DataTable, Filters, Panel, StatCard, StatusBadge, ViewAll } from "@/com
 import { adminNav } from "@/lib/panel-nav";
 import { inr } from "@/lib/data";
 import { NEEDS_RESTOCK, OPEN_ORDERS, orderTimestamp } from "@/lib/panel-filters";
+import { orderToneClass } from "@/lib/order-status-tone";
 import { useApp } from "@/lib/store";
 import { HOUSE_SELLER_ID } from "@/lib/house-seller";
 import { netMoneyReceived } from "@/lib/net-receipts";
@@ -366,6 +367,10 @@ function AdminDashboard() {
       .sort((a, b) => b.periodSales - a.periodSales);
   }, [vendors, filteredOrders]);
 
+  const latestOrders = [...filteredOrders]
+    .sort((a, b) => orderTimestamp(b).getTime() - orderTimestamp(a).getTime())
+    .slice(0, 10);
+
   return (
     <PanelLayout
       items={adminNav}
@@ -549,18 +554,17 @@ function AdminDashboard() {
         <Panel title={`Latest Orders (${dateRange.label})`} action={<ViewAll to="/admin/orders" search={rangeSearch} />}>
           <DataTable
             columns={["Order", "Date", "Customer", "Vendor", "Amount", "Payment", "Status"]}
-            rows={[...filteredOrders]
-              .sort((a, b) => orderTimestamp(b).getTime() - orderTimestamp(a).getTime())
-              .slice(0, 10)
-              .map((o) => [
-                <span className="font-semibold text-navy">{o.id}</span>,
-                o.date,
-                o.customer,
-                o.items[0]?.vendor || "—",
-                inr(o.amount),
-                <StatusBadge status={o.payment} />,
-                <StatusBadge status={o.status} />,
-              ])}
+            // Each row tinted by its order status: waiting yellow, confirmed green, cancelled red.
+            rowClassNames={latestOrders.map((o) => orderToneClass(o.status, "row"))}
+            rows={latestOrders.map((o) => [
+              <span className="font-semibold text-navy">{o.id}</span>,
+              o.date,
+              o.customer,
+              o.items[0]?.vendor || "—",
+              inr(o.amount),
+              <StatusBadge status={o.payment} />,
+              <StatusBadge status={o.status} />,
+            ])}
           />
         </Panel>
       </div>
