@@ -9,8 +9,9 @@ import { inrPrecise } from "@/lib/data";
 import { supabase } from "@/integrations/supabase/client";
 import { downloadXlsx } from "@/lib/xlsx";
 import { cn } from "@/lib/utils";
+import { monthLabel } from "@/lib/partners";
 import {
-  PAYOUT_MODES, addDays, dayLabel, groupByDay, istToday, lineState, payoutProblem, payoutStatusLabel, payoutsSheet, rupees, selectionTotals, waitingReason,
+  PAYOUT_MODES, addDays, dayLabel, groupByDay, istToday, lineState, payoutMonthLabel, payoutProblem, payoutStatusLabel, payoutsSheet, rupees, selectionTotals, waitingReason,
   type PartnerPosition, type PayoutRow, type SettlementLine,
 } from "@/lib/partner-payouts";
 import { Button } from "@/components/ui/button";
@@ -34,6 +35,7 @@ const asLine = (row: Record<string, unknown>) => ({
 const asPayout = (row: Record<string, unknown>) => ({
   ...row, amount: num(row["amount"]), lines_total: num(row["lines_total"]), recovered_total: num(row["recovered_total"]),
 }) as unknown as PayoutRow;
+type MonthToPay = { statement_id: string; partner_id: string; partner_name: string; godown: string; month: string; share_amount: number; paid: number; due: number };
 
 const STATE_STYLE: Record<string, string> = {
   "To pay": "bg-amber-100 text-amber-800",
@@ -42,6 +44,7 @@ const STATE_STYLE: Record<string, string> = {
   Waiting: "bg-slate-100 text-slate-600",
   Cancelled: "bg-slate-100 text-slate-500",
   "To take back": "bg-red-100 text-red-700",
+  "No commission": "bg-slate-100 text-slate-500",
 };
 const PRESETS = [
   { label: "All dates", range: () => ["", ""] as const },
@@ -55,6 +58,8 @@ const PRESETS = [
 function AdminPartnerPayouts() {
   const [positions, setPositions] = useState<PartnerPosition[] | null>(null);
   const [payouts, setPayouts] = useState<PayoutRow[] | null>(null);
+  const [months, setMonths] = useState<MonthToPay[]>([]);
+  const [payingMonth, setPayingMonth] = useState<MonthToPay | null>(null);
   const [partnerId, setPartnerId] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
@@ -67,10 +72,13 @@ function AdminPartnerPayouts() {
   const [historyFilter, setHistoryFilter] = useState("");
 
   const loadOverview = useCallback(async () => {
-    const [summary, list] = await Promise.all([
+    const [summary, list, closed] = await Promise.all([
       supabase.rpc("partner_settlement_summary"),
       supabase.from("partner_payouts").select("*").order("paid_on", { ascending: false }).order("created_at", { ascending: false }).limit(1000),
+      supabase.rpc("partner_statements_to_pay"),
     ]);
+    // On its own: a database without monthly profit share yet must not stop this page.
+    if (!closed.error) setMonths((closed.data ?? []).map((row) => ({ ...row, share_amount: num(row.share_amount), paid: num(row.paid), due: num(row.due) })));
     if (summary.error) { toast.error("Could not load the commission balances", { description: summary.error.message }); return; }
     if (list.error) { toast.error("Could not load the payouts", { description: list.error.message }); return; }
     const rows = (summary.data ?? []).map((row) => asPosition(row as unknown as Record<string, unknown>));
@@ -141,6 +149,26 @@ function AdminPartnerPayouts() {
           </div>
         )}
       </Panel>
+
+      {months.some((row) => row.due > 0) && (
+        <Panel title="Monthly profit share to pay" className="mb-6">
+          <ul className="space-y-2">
+            {months.filter((row) => row.due > 0).map((row) => (
+              <li key={row.statement_id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border p-3 text-sm">
+                <span className="min-w-0">
+                  <span className="block font-semibold text-navy">{row.partner_name} · {row.godown}</span>
+                  <span className="block text-xs text-slate">{monthLabel(row.month)}</span>
+                  {row.paid > 0 && <span className="block text-xs text-slate">{`Paid so far: ${inrPrecise(row.paid)}`}</span>}
+                </span>
+                <span className="flex items-center gap-3">
+                  <b className="tabular-nums text-amber-700">{inrPrecise(row.due)}</b>
+                  <Button size="sm" className="bg-navy text-white hover:bg-navy/90" onClick={() => setPayingMonth(row)}><Banknote className="mr-1.5 h-3.5 w-3.5" />Record payout</Button>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </Panel>
+      )}
 
       <div id="settle" className="mb-6 scroll-mt-36">
         <Panel title={position ? `Settle · ${position.partner_name}` : "Settle"}
@@ -241,6 +269,7 @@ function AdminPartnerPayouts() {
                     <span className="font-semibold text-navy">{row.payout_no} · {partnerName(row.partner_id)}</span>
                     <span className={cn("tabular-nums font-bold text-navy", row.status === "voided" && "line-through")}>{inrPrecise(row.amount)}</span>
                   </div>
+                  {payoutMonthLabel(row) && <p className="mt-1 text-xs font-semibold text-navy">{payoutMonthLabel(row)}</p>}
                   <p className="mt-1 break-words text-xs text-slate">{dayLabel(row.paid_on)} · {row.mode}{row.reference ? ` · ${row.reference}` : ""}{row.recovered_total > 0 ? ` · ${inrPrecise(row.recovered_total)} taken back` : ""}{row.note ? ` · ${row.note}` : ""}</p>
                   <p className="text-xs text-slate">{`Recorded by ${row.created_by_name || "—"}`}</p>
                   {row.status === "voided" && <p className="text-xs font-semibold text-red-700">{`${payoutStatusLabel(row.status)}: ${row.void_reason}`}</p>}
@@ -260,6 +289,7 @@ function AdminPartnerPayouts() {
         <RecordPayoutDialog position={position} ids={[...picked]} selection={selection} from={from} to={to}
           onClose={() => setPaying(false)} onDone={async () => { setPaying(false); await reload(); }} />
       )}
+      {payingMonth && <PayMonthDialog row={payingMonth} onClose={() => setPayingMonth(null)} onDone={async () => { setPayingMonth(null); await reload(); }} />}
       {viewing && <PayoutDetailsDialog payout={viewing} partner={partnerName(viewing.partner_id)} onClose={() => setViewing(null)} />}
       {correcting && <CorrectPayoutDialog payout={correcting} onClose={() => setCorrecting(null)} onDone={async () => { setCorrecting(null); await reload(); }} />}
       {undoing && <UndoPayoutDialog payout={undoing} onClose={() => setUndoing(null)} onDone={async () => { setUndoing(null); await reload(); }} />}
@@ -336,6 +366,58 @@ function RecordPayoutDialog({ position, ids, selection, from, to, onClose, onDon
   );
 }
 
+function PayMonthDialog({ row, onClose, onDone }: { row: MonthToPay; onClose: () => void; onDone: () => Promise<void> }) {
+  const today = istToday();
+  const [paidOn, setPaidOn] = useState(today);
+  const [amount, setAmount] = useState(String(row.due));
+  const [mode, setMode] = useState<string>("UPI");
+  const [reference, setReference] = useState("");
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  // One press of the button, however many times it is pressed or retried.
+  const requestKey = useRef(crypto.randomUUID());
+  const value = Number(amount);
+  const problem = payoutProblem({ amount: value, most: row.due, recovered: 0, mode, reference, paidOn, today });
+  const save = async () => {
+    setBusy(true);
+    const { data, error } = await supabase.rpc("admin_pay_partner_statement", {
+      _statement_id: row.statement_id, _paid_on: paidOn, _mode: mode, _reference: reference, _note: note.trim(), _amount: rupees(value), _request_key: requestKey.current,
+    });
+    setBusy(false);
+    if (error) { toast.error("The payout was not recorded", { description: error.message }); return; }
+    const saved = data as { payout_no?: string } | null;
+    toast.success(`Payout ${saved?.payout_no ?? ""} recorded`, { description: `${row.partner_name} now sees it on their dashboard.` });
+    await onDone();
+  };
+  return (
+    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{`Record payout · ${row.partner_name}`}</DialogTitle>
+          <DialogDescription>Record this after the money has been sent. Nothing is paid from here.</DialogDescription>
+        </DialogHeader>
+        <dl className="space-y-1 rounded-md bg-ivory/70 p-3 text-sm">
+          <div className="flex justify-between gap-3"><dt className="text-slate">{monthLabel(row.month)}</dt><dd className="font-semibold text-navy">{inrPrecise(row.share_amount)}</dd></div>
+          {row.paid > 0 && <div className="flex justify-between gap-3"><dt className="text-slate">Paid so far</dt><dd className="font-semibold text-navy">{inrPrecise(row.paid)}</dd></div>}
+          <div className="flex justify-between gap-3 border-t border-border pt-1"><dt className="font-semibold text-navy">To pay</dt><dd className="font-bold text-navy">{inrPrecise(row.due)}</dd></div>
+        </dl>
+        <div className="grid gap-3 sm:grid-cols-2 [&>*]:min-w-0">
+          <div className="grid gap-1"><Label className="text-xs">Date paid</Label><Input type="date" value={paidOn} max={today} onChange={(e) => setPaidOn(e.target.value)} /></div>
+          <div className="grid gap-1"><Label className="text-xs">Amount paid (₹)</Label><Input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} /></div>
+          <ModeField value={mode} onChange={setMode} />
+          <div className="grid gap-1"><Label className="text-xs">{mode === "Cash" ? "Voucher no. (optional)" : "UTR / reference"}</Label><Input value={reference} onChange={(e) => setReference(e.target.value)} autoComplete="off" /></div>
+          <div className="grid gap-1 sm:col-span-2"><Label className="text-xs">Note (optional)</Label><Textarea rows={2} maxLength={300} value={note} onChange={(e) => setNote(e.target.value)} className="bg-white text-base sm:text-sm" /></div>
+        </div>
+        {problem && <p className="text-xs text-danger">{problem}</p>}
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button className="bg-navy text-white hover:bg-navy/90" disabled={busy || Boolean(problem)} onClick={() => void save()}>{busy ? "Saving…" : "Save payout"}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function PayoutDetailsDialog({ payout, partner, onClose }: { payout: PayoutRow; partner: string; onClose: () => void }) {
   const [lines, setLines] = useState<{ id: string; order_no: string; product_name: string; amount: number }[] | null>(null);
   const [events, setEvents] = useState<{ id: string; event: string; at: string; by_name: string; detail: Record<string, unknown> }[]>([]);
@@ -353,6 +435,7 @@ function PayoutDetailsDialog({ payout, partner, onClose }: { payout: PayoutRow; 
     <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-lg">
         <DialogHeader><DialogTitle>{`${payout.payout_no} · ${partner}`}</DialogTitle><DialogDescription>{dayLabel(payout.paid_on)} · {payout.mode}{payout.reference ? ` · ${payout.reference}` : ""}</DialogDescription></DialogHeader>
+        {payoutMonthLabel(payout) && <p className="text-sm font-semibold text-navy">{payoutMonthLabel(payout)}</p>}
         {!lines ? <p className="text-sm text-slate">Loading…</p> : (
           <ul className="divide-y divide-border/60 text-sm">
             {lines.map((line) => (

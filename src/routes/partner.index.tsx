@@ -1,17 +1,19 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { CalendarCheck, IndianRupee, LogOut, RefreshCw, ScanLine, Target, Timer, Trophy } from "lucide-react";
 import { BrandLogo, LogoMark } from "@/components/brand/Logo";
 import { FilterNote, Panel, scrollToSection, StatCard } from "@/components/panel/widgets";
-import { CommissionLinesTable, PartnerLeaderboard, TargetBar, commissionTotals, usePartnerData } from "@/components/partners/PartnerWidgets";
+import { CommissionOrders, PartnerLeaderboard, TargetBar, commissionTotals, usePartnerData } from "@/components/partners/PartnerWidgets";
 import { MyPartnerReport } from "@/components/partners/MyPartnerReport";
 import { PartnerPayouts } from "@/components/partners/PartnerPayouts";
 import { PartnerInvoices } from "@/components/partners/PartnerInvoices";
+import { MonthlyIncome } from "@/components/partners/MonthlyIncome";
 import { GodownTransfers } from "@/components/batches/GodownTransfers";
 import { supabase } from "@/integrations/supabase/client";
 import { inrPrecise } from "@/lib/data";
 import { describeRate, monthLabel, monthStart, targetProgress, type CommissionKind } from "@/lib/partners";
 import { matchesCommissionStatus } from "@/lib/panel-filters";
+import { percentText, type MonthStatement } from "@/lib/partner-month";
 
 export const Route = createFileRoute("/partner/")({
   head: () => ({ meta: [{ title: "Channel Partner Commission Platform | Grain Bazar" }, { name: "robots", content: "noindex" }] }),
@@ -19,7 +21,7 @@ export const Route = createFileRoute("/partner/")({
 });
 
 type Me = { id: string; name: string; branchId: string; godown: string; signaturePath: string | null };
-type Rate = { productName: string; kind: CommissionKind; value: number };
+type Rate = { productName: string; kind: CommissionKind; value: number; enabled: boolean };
 
 /** The godown channel partner's live dashboard: commissions, target, rates and the leaderboard. */
 function PartnerDashboard() {
@@ -28,6 +30,9 @@ function PartnerDashboard() {
   const [month, setMonth] = useState(monthStart());
   const [rates, setRates] = useState<Rate[]>([]);
   const [target, setTarget] = useState<number>(0);
+  // Set when the chosen month is on monthly profit share: the per-unit figures then say nothing.
+  const [statement, setStatement] = useState<MonthStatement | null>(null);
+  const onStatement = useCallback((next: MonthStatement | null) => setStatement(next), []);
   const { leaders, lines, error } = usePartnerData(month);
   // The money cards open the commission list below, showing just what they add up.
   const [lineView, setLineView] = useState("all");
@@ -50,13 +55,13 @@ function PartnerDashboard() {
         supabase.from("channel_partners").select("signature_path").eq("id", partner.id).maybeSingle(),
       ]);
       setMe({ id: partner.id, name: partner.name, branchId: partner.branch_id, godown: branch?.name ?? partner.branch_id, signaturePath: signed?.signature_path ?? null });
-      const { data: rules } = await supabase.from("partner_commission_rules").select("product_id,kind,value").eq("branch_id", partner.branch_id);
+      const { data: rules } = await supabase.from("partner_commission_rules").select("*").eq("branch_id", partner.branch_id);
       const ids = (rules ?? []).map((rule) => rule.product_id).filter((id): id is string => Boolean(id));
       const { data: products } = ids.length ? await supabase.from("catalog_products").select("id,payload").in("id", ids) : { data: [] };
       const names = new Map((products ?? []).map((row) => [row.id, String((row.payload as Record<string, unknown>)?.["name"] ?? row.id)]));
       setRates((rules ?? []).map((rule) => ({
         productName: rule.product_id ? names.get(rule.product_id) ?? rule.product_id : "All other products",
-        kind: rule.kind as CommissionKind, value: Number(rule.value),
+        kind: rule.kind as CommissionKind, value: Number(rule.value), enabled: rule.enabled !== false,
       })).sort((a, b) => (a.productName === "All other products" ? 1 : b.productName === "All other products" ? -1 : a.productName.localeCompare(b.productName))));
     })();
   }, [navigate]);
@@ -114,11 +119,22 @@ function PartnerDashboard() {
         </Link>
         <p className="text-xs text-slate">{monthLabel(month)} · updates live every 30 seconds</p>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <StatCard onClick={() => openLines("earned")} label="Commission earned" value={inrPrecise(totals.earned)} icon={IndianRupee} description="Delivered and fully paid orders" />
-          <StatCard onClick={() => openLines("pending")} label="Commission pending" value={inrPrecise(totals.pending)} icon={Timer} description="Becomes earned on delivery + full payment" />
+          {statement ? (
+            <>
+              <StatCard onClick={() => scrollToSection("monthly-income")} label="Total income" value={inrPrecise(statement.income)} icon={IndianRupee} description="Profit on delivered and fully paid orders" />
+              <StatCard onClick={() => scrollToSection("monthly-income")} label="Your share" value={inrPrecise(statement.share_amount)} icon={Timer} description="After deductions and income tax" />
+            </>
+          ) : (
+            <>
+              <StatCard onClick={() => openLines("earned")} label="Commission earned" value={inrPrecise(totals.earned)} icon={IndianRupee} description="Delivered and fully paid orders" />
+              <StatCard onClick={() => openLines("pending")} label="Commission pending" value={inrPrecise(totals.pending)} icon={Timer} description="Becomes earned on delivery + full payment" />
+            </>
+          )}
           <StatCard onClick={() => openLines("sales")} label="Sales (excl. GST)" value={inrPrecise(totals.sales)} icon={Target} description={`${totals.orders} orders`} />
           <StatCard onClick={() => scrollToSection("leaderboard")} label="Leaderboard rank" value={myRank ? `#${myRank} of ${leaders?.length ?? 0}` : "—"} icon={Trophy} />
         </div>
+
+        <MonthlyIncome month={month} audience="partner" onLoaded={onStatement} />
 
         <PartnerPayouts partnerId={me.id} partnerName={me.name} />
 
@@ -146,12 +162,14 @@ function PartnerDashboard() {
             </Panel>
           </div>
           <Panel title="Your commission rates">
-            {rates.length ? (
+            {statement ? (
+              <p className="text-sm text-charcoal">{`You earn ${percentText(statement.share_percent)}% of what remains each month, after deductions and income tax.`}</p>
+            ) : rates.length ? (
               <ul className="space-y-2 text-sm">
                 {rates.map((rate) => (
                   <li key={rate.productName} className="flex justify-between gap-3 border-b border-border/60 pb-2 last:border-0">
                     <span className="text-charcoal">{rate.productName}</span>
-                    <span className="shrink-0 font-semibold text-navy">{describeRate(rate.kind, rate.value)}</span>
+                    <span className="shrink-0 font-semibold text-navy">{rate.enabled ? describeRate(rate.kind, rate.value) : "No commission (₹0)"}</span>
                   </li>
                 ))}
               </ul>
@@ -164,7 +182,7 @@ function PartnerDashboard() {
             {lineView !== "all" && (
               <FilterNote label={lineView === "earned" ? "Commission earned" : lineView === "pending" ? "Commission pending" : "Sales (excl. GST)"} onClear={() => setLineView("all")} />
             )}
-            <CommissionLinesTable lines={lines?.filter((line) => line.partner_id === me.id && matchesCommissionStatus(line.status, lineView)) ?? null} />
+            <CommissionOrders lines={lines?.filter((line) => line.partner_id === me.id && matchesCommissionStatus(line.status, lineView)) ?? null} />
           </Panel>
         </div>
       </main>

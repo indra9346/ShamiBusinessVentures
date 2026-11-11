@@ -4,6 +4,7 @@
  * Kept free of app imports so the node tests can load it.
  */
 import type { XlsxSheet } from "./xlsx.ts";
+import { monthLabel } from "./partners.ts";
 
 export const PAYOUT_MODES = ["UPI", "NEFT", "RTGS", "IMPS", "Cash", "Cheque"] as const;
 export type PayoutMode = (typeof PAYOUT_MODES)[number];
@@ -65,7 +66,14 @@ export type PayoutRow = {
   voided_at: string | null;
   voided_by_name: string;
   void_reason: string;
+  /** Set when this payout pays a closed month on monthly profit share rather than order lines. */
+  statement_id?: string | null;
+  period_from?: string | null;
 };
+
+/** "Monthly profit share · October 2026" for a payout of a closed month, "" for a commission payout. */
+export const payoutMonthLabel = (row: Pick<PayoutRow, "statement_id" | "period_from">) =>
+  row.statement_id && row.period_from ? `Monthly profit share · ${monthLabel(row.period_from)}` : "";
 
 export const rupees = (n: number) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
 
@@ -78,9 +86,11 @@ export const addDays = (day: string, days: number) => new Date(Date.parse(`${day
 export const dayLabel = (day: string) => new Date(`${day}T00:00:00Z`).toLocaleDateString("en-IN", { timeZone: "UTC", day: "2-digit", month: "short", year: "numeric" });
 
 /** Where a line stands, in the words the screens use. */
-export function lineState(line: Pick<SettlementLine, "status" | "payable" | "paid_amount" | "due_amount">) {
+export function lineState(line: Pick<SettlementLine, "status" | "payable" | "paid_amount" | "due_amount"> & { amount?: number }) {
   if (line.due_amount < 0) return "To take back";
   if (line.status === "cancelled" && line.due_amount === 0) return "Cancelled";
+  // A product whose commission is switched off (or a zero rate) earns nothing; it is neither waiting nor cancelled.
+  if (line.amount === 0 && line.paid_amount === 0 && line.due_amount === 0) return "No commission";
   if (line.status === "pending") return "Waiting";
   if (line.due_amount === 0 && line.payable > 0) return "Paid";
   if (line.paid_amount > 0 && line.due_amount > 0) return "Part paid";

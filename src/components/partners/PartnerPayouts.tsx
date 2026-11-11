@@ -6,7 +6,7 @@ import { useLiveRefresh } from "@/components/partners/PartnerWidgets";
 import { inrPrecise } from "@/lib/data";
 import { supabase } from "@/integrations/supabase/client";
 import { downloadXlsx } from "@/lib/xlsx";
-import { dayLabel, istToday, payoutsSheet, type PartnerPosition, type PayoutRow } from "@/lib/partner-payouts";
+import { dayLabel, istToday, payoutMonthLabel, payoutsSheet, type PartnerPosition, type PayoutRow } from "@/lib/partner-payouts";
 import { cn } from "@/lib/utils";
 
 type PayoutLine = { id: string; order_no: string; product_name: string; amount: number };
@@ -61,6 +61,7 @@ export function PartnerPayouts({ partnerId, partnerName }: { partnerId: string; 
                     <span className="min-w-0">
                       <span className="block font-semibold text-navy">{dayLabel(row.paid_on)} · {row.payout_no}</span>
                       <span className="block break-words text-xs text-slate">{row.mode}{row.reference ? ` · ${row.reference}` : ""}{row.note ? ` · ${row.note}` : ""}</span>
+                      {payoutMonthLabel(row) && <span className="block text-xs font-semibold text-navy">{payoutMonthLabel(row)}</span>}
                       {row.recovered_total > 0 && <span className="block text-xs text-slate">{`${inrPrecise(row.recovered_total)} taken back from this payout`}</span>}
                       {undone && <span className="block text-xs font-semibold text-red-700">{`Undone: ${row.void_reason}`}</span>}
                     </span>
@@ -71,6 +72,7 @@ export function PartnerPayouts({ partnerId, partnerName }: { partnerId: string; 
                   </button>
                   {open === row.id && (
                     <ul className="divide-y divide-border/60 border-t border-border px-3 py-1">
+                      {row.statement_id && <li className="py-2 text-xs text-slate">This payment is for the whole month, not order by order.</li>}
                       {!lines[row.id] ? <li className="py-2 text-xs text-slate">Loading…</li> : lines[row.id]!.map((line) => (
                         <li key={line.id} className="flex items-baseline justify-between gap-3 py-1.5">
                           <span className="min-w-0"><span className="block break-all font-mono text-xs text-navy">{line.order_no}</span><span className="block text-xs text-slate">{line.product_name}</span></span>

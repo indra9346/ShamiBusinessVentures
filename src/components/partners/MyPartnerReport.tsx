@@ -70,7 +70,6 @@ export function MyPartnerReport({ partnerName }: { partnerName: string }) {
     ["Commission balance to pay", inrPrecise(me.commissionBalance)],
     ["Collected from customers", inrPrecise(me.collected)],
     ["Due from customers", inrPrecise(me.due)],
-    ["Cancelled sales", inrPrecise(me.cancelledValue)],
   ] : [];
 
   return (

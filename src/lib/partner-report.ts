@@ -137,7 +137,7 @@ export function buildPartnerReport(input: {
       godown: partner?.godown ?? line.godown,
       partnerId: line.godownId,
       commissionStatus: commission?.status ?? "no rate",
-      rate: commission ? (commission.kind === "percent" ? `${Number(commission.rate)}%` : `₹${Number(commission.rate)} per unit`) : "—",
+      rate: commission ? (commission.kind === "net_profit" ? "Monthly profit share" : commission.kind === "percent" ? `${Number(commission.rate)}%` : `₹${Number(commission.rate)} per unit`) : "—",
     };
   });
   const total = rows.reduce((acc, row) => ({
@@ -178,7 +178,6 @@ export const PARTNER_COLUMNS: Column[] = [
   ["Commission cancelled (₹)", (r) => r.commissionCancelled],
   ["Commission paid (₹)", (r) => r.commissionPaid],
   ["Commission balance to pay (₹)", (r) => r.commissionBalance],
-  ["Cancelled sales (₹)", (r) => r.cancelledValue],
   ["Refunded (₹)", (r) => r.refunded],
   ["GST (₹)", (r) => r.gst],
   ["Billed incl. GST (₹)", (r) => r.billed],
@@ -195,7 +194,9 @@ export const ADMIN_PARTNER_COLUMNS: Column[] = [
   ["Net profit / loss after commission (₹)", (r) => r.netProfit],
   ["Result", (r) => profitOrLoss(r.netProfit)],
   ["Loss on items sold below cost (₹)", (r) => r.lossBelowCost],
-  ...PARTNER_COLUMNS.slice(7),
+  ...PARTNER_COLUMNS.slice(7, 15),
+  ["Cancelled sales (₹)", (r) => r.cancelledValue],
+  ...PARTNER_COLUMNS.slice(15),
 ];
 
 // Money columns before GST, so qty × rate = sale (unit_price includes GST on orders from 7 Nov 2026).

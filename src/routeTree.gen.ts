@@ -51,6 +51,7 @@ import { Route as AdminInventoryRouteImport } from './routes/admin.inventory'
 import { Route as AdminLoginRouteImport } from './routes/admin.login'
 import { Route as AdminNotificationsRouteImport } from './routes/admin.notifications'
 import { Route as AdminOrdersRouteImport } from './routes/admin.orders'
+import { Route as AdminPartnerIncomeRouteImport } from './routes/admin.partner-income'
 import { Route as AdminPartnerPayoutsRouteImport } from './routes/admin.partner-payouts'
 import { Route as AdminPartnerReportRouteImport } from './routes/admin.partner-report'
 import { Route as AdminPartnersRouteImport } from './routes/admin.partners'
@@ -317,6 +318,11 @@ const AdminNotificationsRoute = AdminNotificationsRouteImport.update({
 const AdminOrdersRoute = AdminOrdersRouteImport.update({
   id: '/admin/orders',
   path: '/admin/orders',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminPartnerIncomeRoute = AdminPartnerIncomeRouteImport.update({
+  id: '/admin/partner-income',
+  path: '/admin/partner-income',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AdminPartnerPayoutsRoute = AdminPartnerPayoutsRouteImport.update({
@@ -648,6 +654,7 @@ export interface FileRoutesByFullPath {
   '/admin/login': typeof AdminLoginRoute
   '/admin/notifications': typeof AdminNotificationsRoute
   '/admin/orders': typeof AdminOrdersRouteWithChildren
+  '/admin/partner-income': typeof AdminPartnerIncomeRoute
   '/admin/partner-payouts': typeof AdminPartnerPayoutsRoute
   '/admin/partner-report': typeof AdminPartnerReportRoute
   '/admin/partners': typeof AdminPartnersRoute
@@ -748,6 +755,7 @@ export interface FileRoutesByTo {
   '/admin/login': typeof AdminLoginRoute
   '/admin/notifications': typeof AdminNotificationsRoute
   '/admin/orders': typeof AdminOrdersRouteWithChildren
+  '/admin/partner-income': typeof AdminPartnerIncomeRoute
   '/admin/partner-payouts': typeof AdminPartnerPayoutsRoute
   '/admin/partner-report': typeof AdminPartnerReportRoute
   '/admin/partners': typeof AdminPartnersRoute
@@ -850,6 +858,7 @@ export interface FileRoutesById {
   '/admin/login': typeof AdminLoginRoute
   '/admin/notifications': typeof AdminNotificationsRoute
   '/admin/orders': typeof AdminOrdersRouteWithChildren
+  '/admin/partner-income': typeof AdminPartnerIncomeRoute
   '/admin/partner-payouts': typeof AdminPartnerPayoutsRoute
   '/admin/partner-report': typeof AdminPartnerReportRoute
   '/admin/partners': typeof AdminPartnersRoute
@@ -953,6 +962,7 @@ export interface FileRouteTypes {
     | '/admin/login'
     | '/admin/notifications'
     | '/admin/orders'
+    | '/admin/partner-income'
     | '/admin/partner-payouts'
     | '/admin/partner-report'
     | '/admin/partners'
@@ -1053,6 +1063,7 @@ export interface FileRouteTypes {
     | '/admin/login'
     | '/admin/notifications'
     | '/admin/orders'
+    | '/admin/partner-income'
     | '/admin/partner-payouts'
     | '/admin/partner-report'
     | '/admin/partners'
@@ -1154,6 +1165,7 @@ export interface FileRouteTypes {
     | '/admin/login'
     | '/admin/notifications'
     | '/admin/orders'
+    | '/admin/partner-income'
     | '/admin/partner-payouts'
     | '/admin/partner-report'
     | '/admin/partners'
@@ -1248,6 +1260,7 @@ export interface RootRouteChildren {
   AdminLoginRoute: typeof AdminLoginRoute
   AdminNotificationsRoute: typeof AdminNotificationsRoute
   AdminOrdersRoute: typeof AdminOrdersRouteWithChildren
+  AdminPartnerIncomeRoute: typeof AdminPartnerIncomeRoute
   AdminPartnerPayoutsRoute: typeof AdminPartnerPayoutsRoute
   AdminPartnerReportRoute: typeof AdminPartnerReportRoute
   AdminPartnersRoute: typeof AdminPartnersRoute
@@ -1591,6 +1604,13 @@ declare module '@tanstack/react-router' {
       path: '/admin/orders'
       fullPath: '/admin/orders'
       preLoaderRoute: typeof AdminOrdersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/partner-income': {
+      id: '/admin/partner-income'
+      path: '/admin/partner-income'
+      fullPath: '/admin/partner-income'
+      preLoaderRoute: typeof AdminPartnerIncomeRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/admin/partner-payouts': {
@@ -2176,6 +2196,7 @@ const rootRouteChildren: RootRouteChildren = {
   AdminLoginRoute: AdminLoginRoute,
   AdminNotificationsRoute: AdminNotificationsRoute,
   AdminOrdersRoute: AdminOrdersRouteWithChildren,
+  AdminPartnerIncomeRoute: AdminPartnerIncomeRoute,
   AdminPartnerPayoutsRoute: AdminPartnerPayoutsRoute,
   AdminPartnerReportRoute: AdminPartnerReportRoute,
   AdminPartnersRoute: AdminPartnersRoute,
