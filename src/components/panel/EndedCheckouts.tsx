@@ -8,7 +8,7 @@ import { PAYMENT_EXPIRED, type PaymentHold } from "@/lib/payment-hold";
 import { closedPaymentLabel, endedOutcomeLabel } from "@/lib/order-payment-state";
 import { useApp } from "@/lib/store";
 import { DeleteOrderDialog } from "@/components/panel/DeleteOrderDialog";
-import { DeleteAllDetailsDialog } from "@/components/panel/OrderPaymentsPanel";
+import { DeleteOrderRecordDialog } from "@/components/panel/DeleteOrderRecord";
 
 const when = (iso: string) => new Date(iso).toLocaleString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit", timeZone: "Asia/Kolkata" });
 
@@ -92,7 +92,7 @@ export function EndedCheckouts({ compact = false }: { compact?: boolean }) {
         </ul>
       )}
       {deleting && <DeleteOrderDialog orderNo={deleting.orderNo} onClose={() => setDeleting(null)} />}
-      {deletingAll && <DeleteAllDetailsDialog orderNo={deletingAll.orderNo} onClose={() => setDeletingAll(null)} />}
+      {deletingAll && <DeleteOrderRecordDialog orderNo={deletingAll.orderNo} onClose={() => setDeletingAll(null)} />}
     </div>
   );
 }

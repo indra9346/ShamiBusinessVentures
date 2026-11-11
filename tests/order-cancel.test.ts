@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { adminCancelPlan, cancelFormProblem, cancelSteps, deletedPaymentKind, refundArgument, REFUND_MODES, type CancelForm } from "../src/lib/order-cancel.ts";
+import { adminCancelPlan, cancelFormProblem, cancelSteps, deleteAsksAboutMoney, deletedPaymentKind, deletePlan, refundArgument, REFUND_MODES, type CancelForm, type DeleteCheck } from "../src/lib/order-cancel.ts";
 import {
   liveZohoInvoices, matchRefundPayments, refundAlreadyInZoho, zohoOrderPapers, zohoRefundBody, zohoRefundMode, zohoRefundProblem, zohoVoidRefusedReview,
   type WebsiteRefund,
@@ -94,7 +94,7 @@ test("the admin pages cancel only through the new dialog", () => {
   }
   assert.match(readFileSync("src/lib/panel-nav.ts", "utf8"), /"\/admin\/delete-log"/);
   assert.match(readFileSync("src/lib/panel-menu.ts", "utf8"), /"\/admin\/delete-log"/);
-  assert.match(readFileSync("src/components/panel/EndedCheckouts.tsx", "utf8"), /DeleteAllDetailsDialog/);
+  assert.match(readFileSync("src/components/panel/EndedCheckouts.tsx", "utf8"), /DeleteOrderRecordDialog/);
   assert.match(readFileSync("src/lib/zoho-commerce.functions.ts", "utf8"), /await settleZohoBooksForCancelledOrder\(db, region, organizationId, token, order, zoho, moneyIssues\);/);
 });
 
@@ -146,4 +146,65 @@ test("every new line has its Kannada", () => {
     "Order {0} was cancelled. Rs {1} was paid back to you by {2} on {3}.", "Order {0} was cancelled. Rs {1} was paid back to you by {2} on {3}. Reference: {4}.",
     "Refunded by {0} on {1} (order {2} cancelled)",
   ]) assert.ok(kn[key], key);
+});
+
+// ---- Delete from Payments & Matching (11 Nov 2026, ORD-26102686593: a delivered test order with 3 typed-in payments)
+const check = (extra: Partial<DeleteCheck> = {}): DeleteCheck => ({
+  blocker: null, status: "Delivered", paid: 2518.95,
+  payments: [
+    { id: "p1", amount: 755.69, method: "UPI", reference: "2535", in_zoho: false },
+    { id: "p2", amount: 1259.48, method: "UPI", reference: "1250", in_zoho: false },
+    { id: "p3", amount: 503.78, method: "UPI", reference: "503.78", in_zoho: false },
+  ],
+  paid_without_record: 0, bank_alert: false, confirmed_utr: null, needs_cancel: true, after_dispatch: true, zoho_alive: false, ...extra,
+});
+
+test("Delete asks whether the money was real before it removes anything", () => {
+  assert.equal(deleteAsksAboutMoney(check()), true);
+  assert.equal(deletePlan(check(), null, null).why, "Say whether this money was really received.");
+  assert.equal(deletePlan(check(), "kept", false).why, "Then it is a real sale and stays for the accounts.");
+  assert.match(deletePlan(check(), "paid_back", false).why!, /Record the refund first/);
+  assert.equal(deletePlan(check(), "not_real", null).why, "Say whether the goods came back to the godown.");
+  assert.equal(deletePlan(check({ bank_alert: true }), "not_real", false).why, "A bank alert shows this money came in. Record its refund instead.");
+  assert.match(deletePlan(check({ paid_without_record: 100 }), "not_real", false).why!, /^₹100\.00 is on this order with no payment record behind it/);
+  assert.equal(deletePlan(check({ blocker: "A delivery note was issued for this order, so it stays. It can still be cancelled." }), "not_real", false).why,
+    "A delivery note was issued for this order, so it stays. It can still be cancelled.");
+});
+
+test("the owner's test order: remove 3 payments, cancel, delete", () => {
+  const plan = deletePlan(check(), "not_real", false);
+  assert.equal(plan.why, null);
+  assert.deepEqual(plan.steps, [
+    "Remove its 3 payments (₹2,518.95), keeping a copy of each.",
+    "Cancel the order with your reason.",
+    "The goods did not come back, so the stock stays as it is.",
+    "Delete the order with all its details. A full copy stays in the Delete Log, its number is never used again, and nothing is deleted in Zoho.",
+  ]);
+  // Nothing paid and already cancelled: straight to the delete, no question.
+  const plain = deletePlan(check({ paid: 0, payments: [], needs_cancel: false, status: "Cancelled" }), null, null);
+  assert.equal(plain.why, null); assert.equal(plain.steps.length, 1);
+  // A payment in Zoho Books, and a sales order still open in Zoho, are said.
+  const zoho = deletePlan(check({ payments: [{ id: "p", amount: 10, method: "UPI", reference: "123456789012", in_zoho: true }], paid: 10, zoho_alive: true, after_dispatch: false }), "not_real", null);
+  assert.deepEqual(zoho.steps.slice(0, 2), ["Remove its payment of ₹10.00, keeping a copy.", "A payment that is in Zoho Books is taken out of Zoho Books first."]);
+  assert.ok(zoho.steps.some((step) => step.startsWith("The Zoho sync voids its sales order.")));
+});
+
+test("Payments & Matching has Refund and Delete, and every order page has Delete all details", () => {
+  const payments = readFileSync("src/routes/admin.payments.tsx", "utf8");
+  assert.doesNotMatch(payments, /Refund unavailable/);
+  assert.match(payments, /<DeleteOrderRecordDialog /); assert.match(payments, /<CancelOrderDialog /);
+  const page = readFileSync("src/routes/admin.orders.$id.tsx", "utf8");
+  assert.match(page, /\n\s*<DeleteOrderRecordButton orderNo=\{order\.id\} \/>/, "not only on cancelled orders");
+  for (const key of [
+    "Was this money really received?", "No, it was a test or typed by mistake", "Yes, and it was paid back to the customer", "Yes, and we kept it",
+    "Record the refund", "What happens", "Delete stopped", "Almost done", "Removed {0} ({1})", "It is at {0}.", "{0} is recorded as paid", "in Zoho Books",
+    "The order is cancelled. The Zoho sync is voiding its sales order; press Delete again in a minute to finish.",
+    "Cancel the order and record how the money was paid back", "Remove its {0} payments ({1}), keeping a copy of each.", "Remove its payment of {0}, keeping a copy.",
+    "{0} is on this order with no payment record behind it. Record its refund instead.",
+  ]) assert.ok(kn[key], key);
+  for (const step of [...deletePlan(check({ zoho_alive: true, payments: [{ id: "p", amount: 1, method: "", reference: "", in_zoho: true }] }), "not_real", true).steps,
+    deletePlan(check(), null, null).why!, deletePlan(check(), "kept", null).why!, deletePlan(check(), "paid_back", null).why!, deletePlan(check({ bank_alert: true }), "not_real", null).why!])
+    if (!/^Remove its/.test(step)) assert.ok(kn[step], step);
+  const sql = readFileSync("supabase/migrations/20261111230000_delete_order_with_payments_check.sql", "utf8");
+  for (const m of sql.matchAll(/blocker := '((?:[^']|'')+)'/g)) assert.ok(kn[m[1]!.replace(/''/g, "'")], m[1]);
 });

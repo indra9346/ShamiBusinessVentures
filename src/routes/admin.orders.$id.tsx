@@ -44,7 +44,8 @@ import {
 import { cn } from "@/lib/utils";
 import { DeleteOrderButton } from "@/components/panel/DeleteOrderDialog";
 import { CancelOrderButton } from "@/components/panel/CancelOrderDialog";
-import { DeleteAllDetailsButton, OrderPaymentsPanel } from "@/components/panel/OrderPaymentsPanel";
+import { OrderPaymentsPanel } from "@/components/panel/OrderPaymentsPanel";
+import { DeleteOrderRecordButton } from "@/components/panel/DeleteOrderRecord";
 import { InvoicePreviewButton } from "@/components/site/InvoicePreviewDialog";
 import { ResizableTable } from "@/hooks/use-column-resize";
 import { ItemBatchCodes, useOrderItemBatches } from "@/components/batches/OrderItemBatches";
@@ -234,7 +235,8 @@ function AdminOrderDetail() {
               the sales order but money was received here, which is how that order gets closed. */}
           {!isCancelled && (!voidInZoho || hasUnrefundedPayment) && <CancelOrderButton order={order} />}
           {isCancelled && <DeleteOrderButton orderNo={order.id} voidInZoho={voidInZoho} />}
-          {(isCancelled || voidInZoho) && <DeleteAllDetailsButton orderNo={order.id} />}
+          {/* Changed 11 Nov 2026: at every step; the dialog asks first whether money recorded on it was really received. */}
+          <DeleteOrderRecordButton orderNo={order.id} />
         </div>
       </div>
 

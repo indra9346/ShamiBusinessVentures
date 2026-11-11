@@ -5,6 +5,8 @@ import { CheckCircle2, Clock, IndianRupee, RotateCcw, XCircle } from "lucide-rea
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { DataTable, FilterNote, Panel, scrollToSection, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { DepositAccountsPanel } from "@/components/panel/DepositAccountsPanel";
+import { CancelOrderDialog } from "@/components/panel/CancelOrderDialog";
+import { DeleteOrderRecordDialog } from "@/components/panel/DeleteOrderRecord";
 import { adminNav } from "@/lib/panel-nav";
 import { inr, inrPrecise } from "@/lib/data";
 import { loadAdvancePercent } from "@/lib/business-rules";
@@ -98,6 +100,10 @@ function AdminPayments() {
     scrollToSection("transactions");
   };
   const [view, setView] = useState<(typeof txns)[number] | null>(null);
+  // Added 11 Nov 2026: Refund (cancel and record the refund) and Delete (asks whether the money was real) on every row.
+  const [refunding, setRefunding] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
+  const refundOrder = refunding ? orders.find((o) => o.id === refunding) : undefined;
   const [confirmOrder, setConfirmOrder] = useState<string | null>(null);
   const [utr, setUtr] = useState("");
   const [paidBy, setPaidBy] = useState("UPI");
@@ -264,17 +270,14 @@ function AdminPayments() {
               <Button size="sm" variant="outline" onClick={() => setView(t)}>
                 View
               </Button>
-              {t.status === "Successful" && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="text-danger"
-                  disabled
-                  title="Configure a payment gateway before processing refunds"
-                >
-                  Refund unavailable
+              {(t.status === "Successful" || t.status === "Partially Paid" || t.status === "Overdue") && t.paid > 0 && (
+                <Button size="sm" variant="outline" className="text-danger" onClick={() => setRefunding(t.order)} title="Cancel the order and record how the money was paid back">
+                  Refund
                 </Button>
               )}
+              <Button size="sm" variant="outline" className="text-danger" onClick={() => setDeleting(t.order)}>
+                Delete
+              </Button>
               {t.status === "Failed" && (
                 <Button
                   size="sm"
@@ -329,6 +332,8 @@ function AdminPayments() {
 
       <DepositAccountsPanel className="mt-6" />
 
+      {refundOrder && <CancelOrderDialog order={refundOrder} onClose={() => setRefunding(null)} />}
+      {deleting && <DeleteOrderRecordDialog orderNo={deleting} onClose={() => setDeleting(null)} />}
       <Dialog open={!!view} onOpenChange={(o) => !o && setView(null)}>
         <DialogContent>
           <DialogHeader>

@@ -76,3 +76,59 @@ export function cancelSteps(order: CancelOrder, goodsBack: boolean | null): stri
 export function deletedPaymentKind(kind: string) {
   return kind === "utr" ? "UTR record" : "Payment";
 }
+
+/*
+ * Delete any order (11 Nov 2026, the owner on Payments & Matching: "need delete option ... make and work with sense").
+ * order_delete_with_payments_check says what the Delete would do; the admin says first whether the money recorded on the
+ * order was really received. Only "no, a test or typed by mistake" removes payments: real money is refunded instead, or
+ * the order is a real sale and stays.
+ */
+export type DeleteCheck = {
+  blocker: string | null;
+  status: string;
+  paid: number;
+  payments: { id: string; amount: number; method: string; reference: string; in_zoho: boolean }[];
+  paid_without_record: number;
+  bank_alert: boolean;
+  confirmed_utr: string | null;
+  needs_cancel: boolean;
+  after_dispatch: boolean;
+  zoho_alive: boolean;
+};
+export type MoneyAnswer = "not_real" | "paid_back" | "kept" | null;
+
+const rupees = (value: number) => `₹${(Math.round(value * 100) / 100).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+/** Whether money is recorded on the order, so the dialog must ask about it. */
+export function deleteAsksAboutMoney(check: DeleteCheck) {
+  return check.paid > 0 || check.paid_without_record > 0;
+}
+
+/** What the Delete will do, in order, and why it cannot run yet (null when it can). */
+export function deletePlan(check: DeleteCheck, answer: MoneyAnswer, goodsBack: boolean | null): { why: string | null; steps: string[] } {
+  if (check.blocker) return { why: check.blocker, steps: [] };
+  const money = deleteAsksAboutMoney(check);
+  if (money) {
+    if (answer === null) return { why: "Say whether this money was really received.", steps: [] };
+    if (answer === "kept") return { why: "Then it is a real sale and stays for the accounts.", steps: [] };
+    if (answer === "paid_back") return { why: "Record the refund first (Refund cancels the order). Then delete it.", steps: [] };
+    if (check.bank_alert) return { why: "A bank alert shows this money came in. Record its refund instead.", steps: [] };
+    if (check.paid_without_record > 0)
+      return { why: `${rupees(check.paid_without_record)} is on this order with no payment record behind it. Record its refund instead.`, steps: [] };
+  }
+  if (check.needs_cancel && check.after_dispatch && goodsBack === null) return { why: "Say whether the goods came back to the godown.", steps: [] };
+  const steps: string[] = [];
+  if (money && check.payments.length) {
+    steps.push(check.payments.length === 1
+      ? `Remove its payment of ${rupees(check.paid)}, keeping a copy.`
+      : `Remove its ${check.payments.length} payments (${rupees(check.paid)}), keeping a copy of each.`);
+    if (check.payments.some((payment) => payment.in_zoho)) steps.push("A payment that is in Zoho Books is taken out of Zoho Books first.");
+  }
+  if (check.needs_cancel) {
+    steps.push("Cancel the order with your reason.");
+    if (check.after_dispatch) steps.push(goodsBack ? "The goods came back, so the stock goes back to the godown." : "The goods did not come back, so the stock stays as it is.");
+  }
+  if (check.zoho_alive) steps.push("The Zoho sync voids its sales order. If it is not void yet when the delete runs, press Delete again in a minute.");
+  steps.push("Delete the order with all its details. A full copy stays in the Delete Log, its number is never used again, and nothing is deleted in Zoho.");
+  return { why: null, steps };
+}
