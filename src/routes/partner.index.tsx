@@ -1,4 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { PartnerPaymentsPanel } from "@/components/panel/PartnerPaymentsPanel";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { CalendarCheck, IndianRupee, LogOut, RefreshCw, ScanLine, Target, Timer, Trophy } from "lucide-react";
 import { BrandLogo, LogoMark } from "@/components/brand/Logo";
@@ -133,6 +134,9 @@ function PartnerDashboard() {
           <StatCard onClick={() => openLines("sales")} label="Sales (excl. GST)" value={inrPrecise(totals.sales)} icon={Target} description={`${totals.orders} orders`} />
           <StatCard onClick={() => scrollToSection("leaderboard")} label="Leaderboard rank" value={myRank ? `#${myRank} of ${leaders?.length ?? 0}` : "—"} icon={Trophy} />
         </div>
+
+        {/* Added 12 Nov 2026 (owner): send the UTR a customer shows you; our office confirms it. */}
+        <PartnerPaymentsPanel />
 
         <MonthlyIncome month={month} audience="partner" onLoaded={onStatement} />
 

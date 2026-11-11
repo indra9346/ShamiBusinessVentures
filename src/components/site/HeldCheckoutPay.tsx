@@ -16,7 +16,7 @@ import { BankTransferDetails, BankUtrForm } from "@/components/site/BankTransfer
 import { ReorderButton } from "@/components/site/ReorderButton";
 import { isBankMethod, lapsedTransfer, REFUNDED_UTR_NOTE, REUSED_UTR_NOTE, UNCHECKED_UTR_NOTE } from "@/lib/payment-rules";
 import { useBankDetails, useUpiPayments } from "@/lib/upi-store";
-import { UpiIdPay, UpiUtrForm } from "@/components/site/UpiIdPay";
+import { SendUtrForm, UpiIdPay, UpiUtrForm } from "@/components/site/UpiIdPay";
 import { cn } from "@/lib/utils";
 
 /**
@@ -84,6 +84,8 @@ export function HeldCheckoutPay({ settings, orderNo, amount, holdUntil, customer
   // Why it ended is told by its UTR row, read fresh: the list of submissions on screen can be behind.
   const ended = view === "expired" || view === "dropped";
   const [finalUtr, setFinalUtr] = useState<{ status: string; note: string | null; utr: string } | null | undefined>(undefined);
+  // Read again after the customer sends a UTR for it (paid after the time ran out).
+  const [reread, setReread] = useState(0);
   useEffect(() => {
     if (!ended) return;
     onEnded?.(orderNo);
@@ -97,7 +99,7 @@ export function HeldCheckoutPay({ settings, orderNo, amount, holdUntil, customer
       });
     read();
     return () => { stopped = true; };
-  }, [ended, orderNo, onEnded]);
+  }, [ended, orderNo, onEnded, reread]);
 
   // The demo's hold ends on the screen's clock.
   useEffect(() => {
@@ -159,6 +161,12 @@ export function HeldCheckoutPay({ settings, orderNo, amount, holdUntil, customer
     return (
       <div id={payPanelId(orderNo)} className="scroll-mt-24 rounded-lg border border-border bg-card p-5 text-left">
         <p className="flex items-center gap-2 text-base font-bold text-navy"><XCircle className="h-5 w-5 text-slate" /> Not placed: {reason}</p>
+        {row?.status === "submitted" ? (
+          <div className="mt-3 rounded-md border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">
+            <p className="flex items-center gap-2 font-semibold"><ShieldCheck className="h-4 w-4" /> {`Checking UTR ${row.utr} with our bank`}</p>
+            <p className="mt-1">It was sent after the time ran out. If the money reached us, we place this order and tell you. Please do not pay again.</p>
+          </div>
+        ) : (
         <p className="mt-1 text-sm text-slate">
           {moneyCame
             ? "Your money reached us, so do not pay again. Press Reorder and call us: we will place the order with it or refund it."
@@ -168,7 +176,13 @@ export function HeldCheckoutPay({ settings, orderNo, amount, holdUntil, customer
             : byAdmin && row?.status === "rejected" ? `If you already transferred the money, call us with UTR ${row.utr} and we will place the order or refund it.`
             : `${orderNo} was not placed and nothing is due. If money already left your account, call us with the UTR from your bank or UPI app and we will place the order or refund it.`}
         </p>
-        {(storeHold?.lines.length ?? 0) > 0 && (
+        )}
+        {/* Added 12 Nov 2026 (owner): paid after the time ran out, or offline: send the UTR; an admin checks the bank. */}
+        {row?.status !== "submitted" && !moneyCame && !closed && !unchecked && !STATIC_DATA_MODE && (
+          <SendUtrForm className="mt-3" orderNo={orderNo} defaultMethod={method} title="Paid already? Send the UTR"
+            help="If you paid after the time ran out, send the UTR from your UPI app or bank. We check it with our bank, and if the money came we place this order and tell you." onSent={() => setReread((n) => n + 1)} />
+        )}
+        {row?.status !== "submitted" && (storeHold?.lines.length ?? 0) > 0 && (
           <div className="mt-3">
             <ReorderButton lines={storeHold?.lines ?? []} />
             <p className="mt-1.5 text-xs text-slate">Puts the same items back in your cart, at today's prices and stock.</p>

@@ -8,6 +8,8 @@ import { PAYMENT_EXPIRED, type PaymentHold } from "@/lib/payment-hold";
 import { closedPaymentLabel, endedOutcomeLabel } from "@/lib/order-payment-state";
 import { useApp } from "@/lib/store";
 import { DeleteOrderDialog } from "@/components/panel/DeleteOrderDialog";
+import { RecordLatePaymentDialog } from "@/components/panel/RecordLatePaymentDialog";
+import type { UpiSubmission } from "@/lib/upi-pay";
 import { DeleteAllDetailsDialog } from "@/components/panel/OrderPaymentsPanel";
 
 const when = (iso: string) => new Date(iso).toLocaleString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit", timeZone: "Asia/Kolkata" });
@@ -18,9 +20,11 @@ const when = (iso: string) => new Date(iso).toLocaleString("en-IN", { day: "nume
  * Added 11 Nov 2026: one the ordinary delete keeps (a refunded UTR, say) may still go with Delete all details, which
  * keeps a full copy in the Delete Log, when the database allows that.
  */
-export function EndedCheckouts({ compact = false }: { compact?: boolean }) {
+export function EndedCheckouts({ compact = false, submissions = [] }: { compact?: boolean; submissions?: UpiSubmission[] }) {
   const { paymentHolds } = useApp();
   const [deleting, setDeleting] = useState<PaymentHold | null>(null);
+  // Added 12 Nov 2026 (owner): the customer paid it after all (late or offline); the admin records it once the bank shows it.
+  const [recording, setRecording] = useState<PaymentHold | null>(null);
   const [deletingAll, setDeletingAll] = useState<PaymentHold | null>(null);
   const ended = paymentHolds
     .filter((hold) => hold.status === PAYMENT_EXPIRED)
@@ -73,6 +77,14 @@ export function EndedCheckouts({ compact = false }: { compact?: boolean }) {
               </span>
               <span className="font-semibold tabular-nums text-navy">{inrPrecise(hold.amount)}</span>
               <span className="rounded bg-red-50 px-2 py-0.5 text-xs font-semibold text-red-700">{closedPaymentLabel(PAYMENT_EXPIRED)}</span>
+              {(() => {
+                const sent = submissions.find((item) => item.orderNo === hold.orderNo);
+                if (sent?.status === "submitted") return <span className="text-[11px] font-semibold text-sky-800">{`UTR ${sent.utr} sent: check it under Payments to check`}</span>;
+                if (sent && (sent.note === "refunded by our team" || /^Placed again as /.test(sent.note ?? ""))) return null;
+                return (
+                  <button type="button" onClick={() => setRecording(hold)} className="text-xs font-semibold text-emerald-700 underline">Record payment</button>
+                );
+              })()}
               {kept[hold.orderNo] && allDetails[hold.orderNo] ? (
                 <span className="flex max-w-xs flex-col items-end gap-1 text-right text-[11px] text-slate">
                   <span><span className="font-semibold">Ordinary delete keeps it:</span> <span>{kept[hold.orderNo]}</span></span>
@@ -92,6 +104,7 @@ export function EndedCheckouts({ compact = false }: { compact?: boolean }) {
         </ul>
       )}
       {deleting && <DeleteOrderDialog orderNo={deleting.orderNo} onClose={() => setDeleting(null)} />}
+      {recording && <RecordLatePaymentDialog orderNo={recording.orderNo} amount={recording.amount} method={recording.method} onClose={() => setRecording(null)} />}
       {deletingAll && <DeleteAllDetailsDialog orderNo={deletingAll.orderNo} onClose={() => setDeletingAll(null)} />}
     </div>
   );

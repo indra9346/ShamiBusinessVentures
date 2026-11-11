@@ -5,7 +5,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { inrPrecise } from "@/lib/data";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { normaliseUtr, utrFromText, utrProblem, type UpiSubmission } from "@/lib/upi-pay";
-import { submitUpiPayment } from "@/lib/upi-store";
+import { sendUtrForOrder, submitUpiPayment } from "@/lib/upi-store";
 import { cn } from "@/lib/utils";
 
 /** Copies text, also where the browser has no clipboard API (an older phone browser, or a page not on https). */
@@ -129,5 +129,69 @@ export function UpiUtrForm({ orderNo, amount, customer, submission, label = "Pai
       </div>
       {error && <p role="alert" className="mt-1.5 text-xs font-semibold text-danger">{error}</p>}
     </>
+  );
+}
+
+const SEND_METHODS = ["UPI", "NEFT", "RTGS", "IMPS"] as const;
+
+/**
+ * Added 12 Nov 2026 (owner): a UTR for a checkout, from the customer after its time ran out ("paid already"), or from
+ * the godown's channel partner for a customer. It only waits for an admin's check against the bank (submit_utr_for_order):
+ * nothing is confirmed by sending it. A checkout that ended is placed again only when the admin finds the money.
+ */
+export function SendUtrForm({ orderNo, defaultMethod = "UPI", title, help, onSent, className }: {
+  orderNo: string; defaultMethod?: string; title: string; help: string; onSent?: () => void; className?: string;
+}) {
+  const start = (SEND_METHODS as readonly string[]).includes(defaultMethod) ? defaultMethod : "UPI";
+  const [method, setMethod] = useState(start);
+  const [utr, setUtr] = useState("");
+  const [error, setError] = useState("");
+  const [sending, setSending] = useState(false);
+  const send = async () => {
+    const typed = method === "UPI" ? utrFromText(utr) ?? utr : utr;
+    const clean = typed.replace(/\s+/g, "").toUpperCase();
+    if (method === "UPI" ? !/^\d{12}$/.test(clean) : !/^[0-9A-Z]{12,22}$/.test(clean)) {
+      setError(method === "UPI" ? "The UTR has 12 digits" : "Enter the UTR from the bank: 12 to 22 letters and numbers");
+      return;
+    }
+    setSending(true);
+    try {
+      await sendUtrForOrder(orderNo, clean, method);
+      setError("");
+      setUtr("");
+      toast.success("UTR sent", { description: "We check it with our bank. If the money came, the order is placed and you are told." });
+      onSent?.();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not send the UTR");
+    } finally {
+      setSending(false);
+    }
+  };
+  return (
+    <div className={cn("rounded-md border border-border bg-white p-3", className)}>
+      <p className="text-sm font-bold text-navy">{title}</p>
+      <p className="mt-0.5 text-xs text-slate">{help}</p>
+      <div className="mt-2 flex flex-wrap gap-1.5" role="group" aria-label="How it was paid">
+        {SEND_METHODS.map((option) => (
+          <button key={option} type="button" aria-pressed={method === option} onClick={() => { setMethod(option); setError(""); }}
+            className={cn("rounded-md border px-2.5 py-1 text-xs font-bold", method === option ? "border-navy bg-navy text-white" : "border-border bg-white text-navy hover:border-navy")}>
+            {option}
+          </button>
+        ))}
+      </div>
+      <div className="mt-2 flex flex-wrap gap-2">
+        <input aria-label="UTR" inputMode={method === "UPI" ? "numeric" : "text"} autoComplete="off" autoCapitalize="characters" spellCheck={false} maxLength={300}
+          placeholder={method === "UPI" ? "e.g. 612345678901" : "e.g. HDFCN52026111212345"} value={utr}
+          onChange={(e) => { setUtr(e.target.value); setError(""); }}
+          onPaste={(e) => {
+            if (method !== "UPI") return;
+            const found = utrFromText(e.clipboardData.getData("text"));
+            if (found) { e.preventDefault(); setUtr(found); setError(""); }
+          }}
+          className="h-10 min-w-0 flex-1 rounded-md border border-input bg-white px-3 font-mono text-sm uppercase tracking-wider placeholder:normal-case placeholder:tracking-normal" />
+        <button type="button" disabled={sending} onClick={() => void send()} className="h-10 rounded-md bg-navy px-4 text-sm font-semibold text-white hover:bg-midnight disabled:opacity-60">{sending ? "Sending…" : "Send UTR"}</button>
+      </div>
+      {error && <p role="alert" className="mt-1.5 text-xs font-semibold text-danger">{error}</p>}
+    </div>
   );
 }
