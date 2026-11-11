@@ -364,7 +364,7 @@ function AdminOrderDetail() {
                 ? `Order is synchronized with Zoho under Sales Order ${zohoSalesOrderId}, in ${zohoLocationLabel(orderBranch)}.`
                 : "Active write sync will automatically mirror this sales order into Zoho Inventory & Commerce."}
             </p>
-            {zohoSalesOrderId && <ZohoInvoiceStatus key={`${order.status}-${order.payment}`} orderNo={order.id} audience="admin" className="mt-3" readOnly={voidInZoho} />}
+            {zohoSalesOrderId && <ZohoInvoiceStatus key={`zoho-invoice-${order.status}-${order.payment}`} orderNo={order.id} audience="admin" className="mt-3" readOnly={voidInZoho} />}
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -389,7 +389,9 @@ function AdminOrderDetail() {
         </div>
       </div>
 
-      <DeliveryNotePanel key={`${order.status}-${order.payment}`} orderNo={order.id} className="mb-5" readOnly={voidInZoho} />
+      {/* Each panel that re-reads after a cancel or refund needs its own key: two siblings sharing one made React
+          draw the delivery note panel again and again (11 Nov 2026). */}
+      <DeliveryNotePanel key={`delivery-note-${order.status}-${order.payment}`} orderNo={order.id} className="mb-5" readOnly={voidInZoho} />
 
       {/* Zoho ERP Style 4-Stage Horizontal Progression Tracker */}
       <Panel title="Order Stage Progression" className="mb-5">
@@ -642,7 +644,7 @@ function AdminOrderDetail() {
         </Panel>
       </div>
 
-      <OrderPaymentsPanel key={`${order.status}-${order.payment}`} orderNo={order.id} total={order.amount} cancelled={isCancelled} />
+      <OrderPaymentsPanel key={`order-payments-${order.status}-${order.payment}`} orderNo={order.id} total={order.amount} cancelled={isCancelled} />
 
       {/* Items Table with FIFO Cost and Pricing Breakdown */}
       <div className="mt-6">
