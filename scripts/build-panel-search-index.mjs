@@ -40,6 +40,7 @@ const EXTRA_LABELS = {
 const STOP = new Set([
   "cancel", "close", "save", "saved", "edit", "delete", "remove", "copy", "copied", "new", "yes", "no", "ok", "back", "next",
   "previous", "prev", "refresh", "retry", "try again", "reload", "more", "less", "show all", "show fewer", "show less", "done",
+  "show everything",
   "submit", "add", "open", "view", "apply", "clear", "reset", "change", "update", "confirm", "search", "filter", "download",
   "print", "upload", "all", "today", "reopen", "hide", "show", "details", "loading", "keep", "skip", "send", "undo", "go",
   "on", "off", "select", "choose", "start", "stop", "logout", "log out", "sign out", "sign in",
@@ -53,6 +54,13 @@ function navLabels() {
   return labels;
 }
 
+/** A quote that starts a string: " and ` always; ' only where code is, not inside a word ("can't", "godown's"). */
+function quoteStarts(src, i) {
+  const ch = src[i];
+  if (ch === '"' || ch === "`") return true;
+  return ch === "'" && !/[A-Za-z0-9]/.test(src[i - 1] ?? "");
+}
+
 /** The opening tag starting at `at` ("<Name ...>" or "<Name .../>"), skipping braces and strings. */
 function openingTag(src, at) {
   let depth = 0;
@@ -64,7 +72,7 @@ function openingTag(src, at) {
       else if (ch === quote) quote = "";
       continue;
     }
-    if (ch === '"' || ch === "'" || ch === "`") quote = ch;
+    if (quoteStarts(src, i)) quote = ch;
     else if (ch === "{") depth += 1;
     else if (ch === "}") depth -= 1;
     else if (ch === ">" && depth === 0) return { text: src.slice(at, i + 1), end: i + 1, selfClosing: src[i - 1] === "/" };
@@ -171,8 +179,139 @@ function componentImports(src) {
   return out;
 }
 
+/** The end of a balanced {...} that starts at `at`, skipping strings and template literals. */
+function closingBrace(src, at) {
+  let depth = 0;
+  let quote = "";
+  for (let i = at; i < src.length; i += 1) {
+    const ch = src[i];
+    if (quote) {
+      if (ch === "\\") i += 1;
+      else if (ch === quote) quote = "";
+      continue;
+    }
+    if (quoteStarts(src, i)) quote = ch;
+    else if (ch === "{") depth += 1;
+    else if (ch === "}" && --depth === 0) return i;
+  }
+  return -1;
+}
+
+/** Where a condition ends at the top level of an expression: the first "&&" or "?" outside brackets and strings. */
+function conditionEnd(expr) {
+  let depth = 0;
+  let quote = "";
+  for (let i = 0; i < expr.length; i += 1) {
+    const ch = expr[i];
+    if (quote) {
+      if (ch === "\\") i += 1;
+      else if (ch === quote) quote = "";
+      continue;
+    }
+    if (quoteStarts(expr, i)) quote = ch;
+    else if ("([{".includes(ch)) depth += 1;
+    else if (")]}".includes(ch)) depth -= 1;
+    else if (depth === 0 && (expr.startsWith("&&", i) || (ch === "?" && expr[i + 1] !== "." && expr[i + 1] !== "?"))) return { at: i, op: ch === "?" ? "?" : "&&" };
+  }
+  return null;
+}
+
+/** The ":" that ends the first branch of a ternary, at the top level. */
+function ternaryElse(expr) {
+  let depth = 0;
+  let quote = "";
+  let nested = 0;
+  for (let i = 0; i < expr.length; i += 1) {
+    const ch = expr[i];
+    if (quote) {
+      if (ch === "\\") i += 1;
+      else if (ch === quote) quote = "";
+      continue;
+    }
+    if (quoteStarts(expr, i)) quote = ch;
+    else if ("([{".includes(ch)) depth += 1;
+    else if (")]}".includes(ch)) depth -= 1;
+    else if (depth === 0 && ch === "?" && expr[i + 1] !== "." && expr[i + 1] !== "?") nested += 1;
+    else if (depth === 0 && ch === ":") {
+      if (nested === 0) return i;
+      nested -= 1;
+    }
+  }
+  return -1;
+}
+
+/** Conditions that mean "only the office sees this" in the components the partner and staff pages share with the admin. */
+// (?![\w.]) rather than \b: after the closing quote of "admin" there is no word boundary to find.
+const OFFICE_ONLY = /^\s*(viewer === "admin"|editable|[A-Za-z_.]*\.is_admin|isAdmin)(?![\w.])/;
+
+/**
+ * The source as a channel partner or godown staff member sees it: `{office && X}` goes, `{office ? X : Y}` keeps Y.
+ * Only JSX expressions are touched (a "{" whose condition is one of the office-only ones).
+ */
+function withoutOfficeOnly(src) {
+  let out = "";
+  let i = 0;
+  while (i < src.length) {
+    const open = src.indexOf("{", i);
+    if (open < 0) { out += src.slice(i); break; }
+    out += src.slice(i, open);
+    const close = closingBrace(src, open);
+    if (close < 0) { out += src.slice(open); break; }
+    const expr = src.slice(open + 1, close);
+    const cond = conditionEnd(expr);
+    if (cond && OFFICE_ONLY.test(expr.slice(0, cond.at)) && !/^\s*!/.test(expr)) {
+      if (cond.op === "?") {
+        const rest = expr.slice(cond.at + 1);
+        const colon = ternaryElse(rest);
+        out += colon >= 0 ? `{${withoutOfficeOnly(rest.slice(colon + 1))}}` : "{null}";
+      } else {
+        out += "{null}";
+      }
+      i = close + 1;
+      continue;
+    }
+    out += "{";
+    i = open + 1;
+  }
+  return out;
+}
+
+/** Pop-ups: not on the page until they are opened, so nothing in them can be shown from the search. */
+const POPUPS = ["DialogContent", "AlertDialogContent", "SheetContent", "PopoverContent", "DropdownMenuContent", "DrawerContent"];
+function withoutPopups(src) {
+  let out = src;
+  for (const name of POPUPS) {
+    let at = out.search(new RegExp(`<${name}\\b`));
+    while (at >= 0) {
+      const tag = openingTag(out, at);
+      if (!tag) break;
+      let end = tag.end;
+      if (!tag.selfClosing) {
+        // The matching close, counting pop-ups of the same kind inside it.
+        let depth = 1;
+        const pattern = new RegExp(`<${name}\\b|</${name}>`, "g");
+        pattern.lastIndex = tag.end;
+        let match;
+        while (depth > 0 && (match = pattern.exec(out))) {
+          if (match[0].startsWith("</")) depth -= 1;
+          else if (!(openingTag(out, match.index)?.selfClosing)) depth += 1;
+          end = match.index + match[0].length;
+        }
+        if (depth > 0) break;
+      }
+      out = out.slice(0, at) + out.slice(end);
+      at = out.search(new RegExp(`<${name}\\b`));
+    }
+  }
+  return out;
+}
+
 /** The source a page actually draws: the route file and, from each component file it uses, the parts it uses. */
-function pageSource(routeFile) {
+function pageSource(routeFile, panel) {
+  const shown = (body) => {
+    const visible = withoutPopups(body);
+    return panel === "admin" ? visible : withoutOfficeOnly(visible);
+  };
   const parts = [];
   const seen = new Set();
   const visit = (file, wanted, depth) => {
@@ -186,13 +325,13 @@ function pageSource(routeFile) {
       if (used.has(name) || seen.has(key) || !all.has(name)) continue;
       used.add(name);
       seen.add(key);
-      const body = all.get(name);
+      const body = shown(all.get(name));
       parts.push(body);
       // Same-file components this one draws.
       for (const ref of body.matchAll(/<([A-Z][A-Za-z0-9_]*)\b/g)) if (all.has(ref[1])) queue.push(ref[1]);
     }
     if (depth >= 3) return;
-    const usedSource = [...used].map((name) => all.get(name)).join("\n");
+    const usedSource = [...used].map((name) => shown(all.get(name))).join("\n");
     for (const { file: next, names } of componentImports(src)) {
       const drawn = names.filter((name) => new RegExp(`<${name}\\b`).test(usedSource));
       if (drawn.length) visit(next, drawn, depth + 1);
@@ -233,7 +372,7 @@ export function buildIndex() {
       pages[panel].push({ to, label });
       if (PAGES_ONLY.has(name)) continue;
       const seen = new Set([label.toLowerCase()]);
-      for (const feature of features(pageSource(file))) {
+      for (const feature of features(pageSource(file, panel))) {
         const key = feature.text.toLowerCase();
         if (seen.has(key)) continue;
         seen.add(key);

@@ -122,8 +122,13 @@ function GodownPartnerCard({ godownId, godownName, partner, pastPartners, rules,
       <div className="grid gap-6 xl:grid-cols-2">
         <div className="min-w-0">
           <h3 className="mb-2 text-xs font-bold uppercase tracking-wider text-slate">Channel partner</h3>
-          {created && <div className="mb-3"><CredentialsBox email={created.email} password={created.password} godownName={godownName} /></div>}
-          {partner ? <PartnerAccount partner={partner} onChange={onChange} /> : !created && <CreatePartnerForm godownId={godownId} godownName={godownName} onChange={onChange} onCreated={setCreated} />}
+          {/* Only beside the partner it was made for: gone once they are suspended (the form comes back) or changed. */}
+          {created && partner && partner.email.toLowerCase() === created.email && (
+            <div className="mb-3"><CredentialsBox email={created.email} password={created.password} godownName={godownName} /></div>
+          )}
+          {partner
+            ? <PartnerAccount partner={partner} onChange={async () => { setCreated(null); await onChange(); }} />
+            : <CreatePartnerForm godownId={godownId} godownName={godownName} onChange={onChange} onCreated={setCreated} />}
           {pastPartners.length > 0 && (
             <div className="mt-3 text-xs text-slate">
               Suspended: {pastPartners.map((p) => (

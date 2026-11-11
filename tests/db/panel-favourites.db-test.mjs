@@ -108,6 +108,30 @@ const resaved = await as(STAFF, () => q(
 assert.equal(resaved[0].position, 0, "moving one at 40 is a save, not a 41st");
 // The same person's other panel has its own 40.
 await add(STAFF, "customer", "/account/orders", "/account/orders");
+// Changing a row in place at 40 still works (a new key, a new place).
+const renamed = await as(STAFF, () => q("UPDATE public.panel_favourites SET item_key = '/staff#Renamed', find_text = 'Renamed' WHERE user_id = $1 AND item_key = '/staff#Item 0' RETURNING item_key", [STAFF]));
+assert.equal(renamed[0].item_key, "/staff#Renamed");
+// Moving a row into a full panel is a 41st there: refused.
+await add(STAFF, "admin", "/admin/a", "/admin/a");
+await fails(() => as(STAFF, () => q("UPDATE public.panel_favourites SET panel = 'staff' WHERE user_id = $1 AND item_key = '/admin/a'", [STAFF])), /up to 40/, "moved into a full panel");
+
+// ---- no peeking at someone else's (review, 12 Nov 2026): the 40 check runs with the caller's own rights, so a row in
+// someone else's name is refused by the policy the same way whether or not that person has the favourite or is full.
+const refusal = async (key) => {
+  try {
+    await as(ADMIN, () => q("INSERT INTO public.panel_favourites (user_id, panel, item_key, label, to_path) VALUES ($1, 'staff', $2, 'x', '/staff')", [STAFF, key]));
+  } catch (error) {
+    return `${error.code ?? ""} ${String(error.message).replace(/"[^"]*"/g, "")}`;
+  }
+  return "allowed";
+};
+const known = await refusal("/slip");
+const unknown = await refusal("/staff#Not there");
+assert.equal(known, unknown, "the same answer either way");
+assert.match(known, /row-level security|42501/i, "refused by the policy, not by the 40 check");
+assert.doesNotMatch(known, /up to 40/);
+const fn = await q("SELECT prosecdef FROM pg_proc WHERE proname = 'panel_favourites_cap'");
+assert.equal(fn[0].prosecdef, false, "the check runs with the caller's rights");
 
 // ---- gone with the person
 await q("DELETE FROM auth.users WHERE id = $1", [PARTNER]);

@@ -38,15 +38,20 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON public.panel_favourites TO authenticated
 GRANT ALL ON public.panel_favourites TO service_role;
 
 -- At most 40 per person and panel, so a stuck script cannot fill the table.
+-- SECURITY INVOKER (review, 12 Nov 2026): the count runs with the caller's own rights, so it only ever sees the
+-- caller's rows. A row in someone else's name counts nothing here and is then refused by the policy, always the same
+-- way: nobody can learn anything about another person's favourites from the answer.
 CREATE OR REPLACE FUNCTION private.panel_favourites_cap()
 RETURNS trigger
 LANGUAGE plpgsql
-SECURITY DEFINER
+SECURITY INVOKER
 SET search_path TO 'public'
 AS $function$
 BEGIN
-  -- The row itself does not count: saving the order again (an upsert of the same rows) must still work at 40.
-  IF (SELECT count(*) FROM public.panel_favourites WHERE user_id = NEW.user_id AND panel = NEW.panel AND item_key <> NEW.item_key) >= 40 THEN
+  -- The row itself does not count (by its id, or by its key for an upsert of the same favourite): saving the order
+  -- again must still work at 40, and so must changing a row in place.
+  IF (SELECT count(*) FROM public.panel_favourites
+      WHERE user_id = NEW.user_id AND panel = NEW.panel AND item_key <> NEW.item_key AND id IS DISTINCT FROM NEW.id) >= 40 THEN
     RAISE EXCEPTION 'You can keep up to 40 favourites here. Remove one first.' USING ERRCODE = 'check_violation';
   END IF;
   RETURN NEW;
@@ -55,7 +60,8 @@ $function$;
 REVOKE ALL ON FUNCTION private.panel_favourites_cap() FROM PUBLIC, anon, authenticated;
 
 DROP TRIGGER IF EXISTS panel_favourites_cap ON public.panel_favourites;
-CREATE TRIGGER panel_favourites_cap BEFORE INSERT ON public.panel_favourites
+-- Also when a row is moved to another panel or given another key, so the 40 cannot be passed that way.
+CREATE TRIGGER panel_favourites_cap BEFORE INSERT OR UPDATE OF user_id, panel, item_key ON public.panel_favourites
   FOR EACH ROW EXECUTE FUNCTION private.panel_favourites_cap();
 
 NOTIFY pgrst, 'reload schema';

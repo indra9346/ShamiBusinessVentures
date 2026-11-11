@@ -144,12 +144,16 @@ function openTab(tab: HTMLElement) {
   if (tab.getAttribute("aria-selected") !== "true") tab.click();
 }
 
-export async function revealOnPage(words: string[]): Promise<boolean> {
+export async function revealOnPage(words: string[]): Promise<"shown" | "missing" | "left"> {
   const started = Date.now();
+  // The person may move to another page meanwhile: then nothing more is done, there or here.
+  const startPath = window.location.pathname;
+  const left = () => window.location.pathname !== startPath;
   const waitFor = async (until: number) => {
-    let hit = findOnPage(words);
-    while (!hit && Date.now() < until) {
+    let hit = left() ? null : findOnPage(words);
+    while (!hit && !left() && Date.now() < until) {
       await sleep(200);
+      if (left()) return null;
       hit = findOnPage(words);
     }
     return hit;
@@ -161,17 +165,20 @@ export async function revealOnPage(words: string[]): Promise<boolean> {
     const tabs = Array.from(root.querySelectorAll<HTMLElement>("[role='tab']")).filter(visible).slice(0, 10);
     const original = tabs.find((tab) => tab.getAttribute("aria-selected") === "true" || tab.getAttribute("data-state") === "active");
     for (const tab of tabs) {
+      if (left()) return "left";
       if (tab === original) continue;
       openTab(tab);
       found = await waitFor(Date.now() + 500);
       if (found) break;
     }
+    if (left()) return "left";
     if (!found && original) {
       openTab(original);
       found = await waitFor(started + 7000);
     }
   }
-  if (!found) return false;
+  if (left()) return "left";
+  if (!found) return "missing";
   const target = found.closest<HTMLElement>("button, a, [role='tab'], summary") ?? found.closest<HTMLElement>("section, li") ?? found;
   if (target.getAttribute("role") === "tab" && target.getAttribute("aria-selected") !== "true") openTab(target);
   const closed = target.closest("details");
@@ -180,7 +187,7 @@ export async function revealOnPage(words: string[]): Promise<boolean> {
   target.classList.add(...HIGHLIGHT);
   window.setTimeout(() => target.classList.remove(...HIGHLIGHT), 2800);
   if (target instanceof HTMLButtonElement || target instanceof HTMLAnchorElement || target.tagName === "SUMMARY") target.focus({ preventScroll: true });
-  return true;
+  return "shown";
 }
 
 /** Opens a page, and on it shows the button or section with `find` (when given). */
@@ -192,7 +199,7 @@ export function usePanelGo() {
   const { language, t } = useLanguage();
   const show = useCallback(async (find: string) => {
     const words = [find, language === "kn" ? translateText(find, "kn") : find];
-    if (!(await revealOnPage(words))) toast.message(t(`"${find}" is not shown on this page for you right now.`));
+    if ((await revealOnPage(words)) === "missing") toast.message(t(`"${find}" is not shown on this page for you right now.`));
   }, [language, t]);
   // Arrived from a search on another page: show what was picked, once that page is the one on screen.
   useEffect(() => {
@@ -258,6 +265,7 @@ export function PanelSearch({ panel, dataResults, className, compact = false }: 
   const [open, setOpen] = useState(false);
   const [sheet, setSheet] = useState(false);
   const [active, setActive] = useState(0);
+  const [drop, setDrop] = useState<{ left: number; width: number } | null>(null);
   const [entries, setEntries] = useState<PanelEntry[] | null>(null);
   const [recent, setRecent] = useState<string[]>(() => (typeof window === "undefined" ? [] : readRecent(panel)));
   const [kannadaReady, setKannadaReady] = useState(() => isKannadaLoaded());
@@ -292,6 +300,21 @@ export function PanelSearch({ panel, dataResults, className, compact = false }: 
     : [...favourites.map((fav) => ({ kind: "fav" as const, fav, entry: byKey.get(fav.key) ?? null })), ...recentEntries.map((entry) => ({ kind: "entry" as const, entry }))]),
   [typed, results, data, favourites, byKey, recentEntries]);
   useEffect(() => { setActive(0); }, [typed]);
+
+  // The suggestions under the search, right-aligned to it, moved in so they stay on the screen with 16 px to spare.
+  const placeDrop = useCallback(() => {
+    const box = wrap.current?.getBoundingClientRect();
+    if (!box) return;
+    const width = Math.min(448, window.innerWidth - 32);
+    const left = Math.min(Math.max(box.width - width, 16 - box.left), window.innerWidth - 16 - width - box.left);
+    setDrop({ left, width });
+  }, []);
+  useEffect(() => {
+    if (!open) return undefined;
+    placeDrop();
+    window.addEventListener("resize", placeDrop);
+    return () => window.removeEventListener("resize", placeDrop);
+  }, [open, placeDrop]);
 
   const close = () => {
     setOpen(false);
@@ -357,7 +380,11 @@ export function PanelSearch({ panel, dataResults, className, compact = false }: 
       setActive((index) => (rows.length ? (index - 1 + rows.length) % rows.length : 0));
     } else if (event.key === "Enter") {
       const row = rows[active];
-      if (row) {
+      if (!open && !sheet) {
+        // Closed (after Escape or a pick): Enter opens the suggestions rather than going somewhere unseen.
+        event.preventDefault();
+        setOpen(true);
+      } else if (row) {
         event.preventDefault();
         pick(row);
       }
@@ -484,7 +511,7 @@ export function PanelSearch({ panel, dataResults, className, compact = false }: 
         <div ref={wrap} className="relative hidden md:block">
           {field(input, false)}
           {open && !sheet && (
-            <div className="absolute right-0 top-full z-50 mt-1 w-[min(28rem,calc(100vw-2rem))] overflow-hidden rounded-lg border border-border bg-card text-left shadow-xl">{list}</div>
+            <div style={drop ?? { right: 0, width: "min(28rem, calc(100vw - 2rem))" }} className="absolute top-full z-50 mt-1 overflow-hidden rounded-lg border border-border bg-card text-left shadow-xl">{list}</div>
           )}
         </div>
       )}

@@ -196,6 +196,30 @@ test("wired in: every panel's header, the side menu, the title star, the partner
   assert.match(search, /try \{\n\s+return decodeURIComponent\(last\);\n\s+\} catch \{/);
   // the phone's search sheet sits on the page, not inside the header (whose blur would trap it).
   assert.match(search, /createPortal\(\n\s+<div data-panel-search-ui="" className=\{cn\("fixed inset-0 z-\[60\]"/);
+  // Second review: moving to another page stops the search for the button quietly (no tabs flipped there);
+  assert.match(search, /const left = \(\) => window\.location\.pathname !== startPath;/);
+  assert.match(search, /if \(left\(\)\) return "left";\n\s+if \(!found\) return "missing";/);
+  assert.match(search, /\(await revealOnPage\(words\)\) === "missing"/);
+  // the suggestions open inside the screen;
+  assert.match(search, /const left = Math\.min\(Math\.max\(box\.width - width, 16 - box\.left\), window\.innerWidth - 16 - width - box\.left\);/);
+  // Enter picks only from suggestions that are showing.
+  assert.match(search, /if \(!open && !sheet\) \{\n[^\n]*\n\s+event\.preventDefault\(\);\n\s+setOpen\(true\);/);
+});
+
+test("partners and staff are not offered office-only buttons, nor anything inside a closed pop-up", () => {
+  const officeOnly = ["Godown devices", "Make device code", "Add employee", "Make in-charge", "Remove in-charge", "Reset password", "Set password",
+    "Save password", "Deactivate", "Reactivate", "Save rules", "Add holiday", "Use this device's location", "Save location", "Close this month", "Reopen this month"];
+  for (const panel of ["partner", "staff"] as const) {
+    for (const text of officeOnly) assert.ok(!PANEL_FEATURES[panel].some((item) => item.text === text), `${panel}: ${text}`);
+  }
+  // The admin still has them.
+  for (const text of ["Godown devices", "Add employee", "Make in-charge", "Reset password", "Save rules"]) {
+    assert.ok(PANEL_FEATURES.admin.some((item) => item.to === "/admin/attendance" && item.text === text), `admin: ${text}`);
+  }
+  // Only on screen while a filter is on, or inside a pop-up: never offered.
+  for (const panel of ["admin", "partner", "staff"] as const) {
+    assert.ok(!PANEL_FEATURES[panel].some((item) => item.text === "Show everything" || item.text === "Open the godown's card"), panel);
+  }
 });
 
 test("pages with no search on them are offered as pages only", () => {
@@ -232,7 +256,10 @@ test("filters and search on the partner's and staff's order lists; Add channel p
   // The login shown once stays on screen after the list reloads (review, 12 Nov 2026): in the window and on the card.
   assert.match(partners, /\{created \? <CredentialsBox email=\{created\.email\} password=\{created\.password\} godownName=\{created\.godownName\} \/>/);
   assert.match(partners, /onCreated=\{\(login\) => setCreated\(\{ \.\.\.login, godownName: godown\.name \}\)\}/);
-  assert.match(partners, /\{created && <div className="mb-3"><CredentialsBox email=\{created\.email\}/);
+  // On the card only beside the partner it was made for, and gone after a change to that partner (second review).
+  assert.match(partners, /\{created && partner && partner\.email\.toLowerCase\(\) === created\.email && \(/);
+  assert.match(partners, /<PartnerAccount partner=\{partner\} onChange=\{async \(\) => \{ setCreated\(null\); await onChange\(\); \}\} \/>/);
+  assert.match(partners, /: <CreatePartnerForm godownId=\{godownId\} godownName=\{godownName\} onChange=\{onChange\} onCreated=\{setCreated\} \/>\}/);
   assert.match(partners, /onCreated\?\.\(login\);/);
 });
 
@@ -243,6 +270,9 @@ test("the favourites table: own rows only, this site's addresses, 40 at most", (
   assert.match(sql, /REVOKE ALL ON public\.panel_favourites FROM anon;/);
   assert.match(sql, /to_path ~ '\^\/\[A-Za-z0-9\/_\.-\]\{0,199\}\$' AND to_path !~ '\^\/\/'/);
   assert.match(sql, /You can keep up to 40 favourites here/);
+  // The 40 check runs with the caller's rights (no peeking at another person's), on adds and on changes.
+  assert.match(sql, /LANGUAGE plpgsql\nSECURITY INVOKER\n/);
+  assert.match(sql, /BEFORE INSERT OR UPDATE OF user_id, panel, item_key ON public\.panel_favourites/);
 });
 
 test("new words have Kannada", () => {
