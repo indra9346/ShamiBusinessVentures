@@ -22,6 +22,7 @@ import { Route as RegisterRouteImport } from './routes/register'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as ShopRouteImport } from './routes/shop'
 import { Route as SitemapDotxmlRouteImport } from './routes/sitemap[.]xml'
+import { Route as SlipRouteImport } from './routes/slip'
 import { Route as WishlistRouteImport } from './routes/wishlist'
 import { Route as AccountAddressesRouteImport } from './routes/account.addresses'
 import { Route as AccountInvoicesRouteImport } from './routes/account.invoices'
@@ -170,6 +171,11 @@ const ShopRoute = ShopRouteImport.update({
 const SitemapDotxmlRoute = SitemapDotxmlRouteImport.update({
   id: '/sitemap.xml',
   path: '/sitemap.xml',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SlipRoute = SlipRouteImport.update({
+  id: '/slip',
+  path: '/slip',
   getParentRoute: () => rootRouteImport,
 } as any)
 const WishlistRoute = WishlistRouteImport.update({
@@ -608,6 +614,7 @@ export interface FileRoutesByFullPath {
   '/reset-password': typeof ResetPasswordRoute
   '/shop': typeof ShopRoute
   '/sitemap.xml': typeof SitemapDotxmlRoute
+  '/slip': typeof SlipRoute
   '/wishlist': typeof WishlistRoute
   '/account/addresses': typeof AccountAddressesRoute
   '/account/invoices': typeof AccountInvoicesRoute
@@ -706,6 +713,7 @@ export interface FileRoutesByTo {
   '/reset-password': typeof ResetPasswordRoute
   '/shop': typeof ShopRoute
   '/sitemap.xml': typeof SitemapDotxmlRoute
+  '/slip': typeof SlipRoute
   '/wishlist': typeof WishlistRoute
   '/account/addresses': typeof AccountAddressesRoute
   '/account/invoices': typeof AccountInvoicesRoute
@@ -806,6 +814,7 @@ export interface FileRoutesById {
   '/reset-password': typeof ResetPasswordRoute
   '/shop': typeof ShopRoute
   '/sitemap.xml': typeof SitemapDotxmlRoute
+  '/slip': typeof SlipRoute
   '/wishlist': typeof WishlistRoute
   '/account/addresses': typeof AccountAddressesRoute
   '/account/invoices': typeof AccountInvoicesRoute
@@ -907,6 +916,7 @@ export interface FileRouteTypes {
     | '/reset-password'
     | '/shop'
     | '/sitemap.xml'
+    | '/slip'
     | '/wishlist'
     | '/account/addresses'
     | '/account/invoices'
@@ -1005,6 +1015,7 @@ export interface FileRouteTypes {
     | '/reset-password'
     | '/shop'
     | '/sitemap.xml'
+    | '/slip'
     | '/wishlist'
     | '/account/addresses'
     | '/account/invoices'
@@ -1104,6 +1115,7 @@ export interface FileRouteTypes {
     | '/reset-password'
     | '/shop'
     | '/sitemap.xml'
+    | '/slip'
     | '/wishlist'
     | '/account/addresses'
     | '/account/invoices'
@@ -1204,6 +1216,7 @@ export interface RootRouteChildren {
   ResetPasswordRoute: typeof ResetPasswordRoute
   ShopRoute: typeof ShopRoute
   SitemapDotxmlRoute: typeof SitemapDotxmlRoute
+  SlipRoute: typeof SlipRoute
   WishlistRoute: typeof WishlistRoute
   AdminAdsRoute: typeof AdminAdsRoute
   AdminAttendanceRoute: typeof AdminAttendanceRoute
@@ -1362,6 +1375,13 @@ declare module '@tanstack/react-router' {
       path: '/sitemap.xml'
       fullPath: '/sitemap.xml'
       preLoaderRoute: typeof SitemapDotxmlRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/slip': {
+      id: '/slip'
+      path: '/slip'
+      fullPath: '/slip'
+      preLoaderRoute: typeof SlipRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/wishlist': {
@@ -2116,6 +2136,7 @@ const rootRouteChildren: RootRouteChildren = {
   ResetPasswordRoute: ResetPasswordRoute,
   ShopRoute: ShopRoute,
   SitemapDotxmlRoute: SitemapDotxmlRoute,
+  SlipRoute: SlipRoute,
   WishlistRoute: WishlistRoute,
   AdminAdsRoute: AdminAdsRoute,
   AdminAttendanceRoute: AdminAttendanceRoute,

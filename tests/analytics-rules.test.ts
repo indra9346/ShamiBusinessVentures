@@ -29,6 +29,7 @@ test("analytics: every staff panel is left out, however the address is typed", (
     "/partner/attendance",
     "/staff",
     "/staff/device",
+    "/slip",
     "/ADMIN/Login",
   ]) {
     assert.equal(isPanelPath(path), true, path);
