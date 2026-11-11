@@ -9,7 +9,8 @@ import { accountNav } from "@/lib/account-nav";
 import { canCancelOrder, inr, inrPrecise, orderStages, type Order } from "@/lib/data";
 import { supabase } from "@/integrations/supabase/client";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
-import { invoiceDelivery, issuedZohoNumber, type InvoiceDelivery, type ZohoInvoiceCopy } from "@/lib/invoice-lines";
+import { godownLine, handoverWords, invoiceDelivery, issuedZohoNumber, type InvoiceDelivery, type ZohoInvoiceCopy } from "@/lib/invoice-lines";
+import { useLanguage } from "@/lib/i18n";
 import { customerInvoiceVisible, invoiceStage, invoiceStageTone } from "@/lib/invoice-visibility";
 import { orderToneClass, TONE_CLASSES } from "@/lib/order-status-tone";
 import { deliveryQrLink, deliveryQrOrigin } from "@/lib/pdf-qr";
@@ -392,6 +393,25 @@ type InvoiceDeliveryFacts = { zohoNumber: string | null; delivery: InvoiceDelive
  * printed on the invoice: the godown in-charge scans it to release and hand over the goods. It is asked of the database
  * each time this page opens or comes back into view, never kept in the browser, so a QR the office replaced never shows.
  */
+/**
+ * Who handed over the goods, when, with their mobile, and the godown with its channel partner: what the invoice prints
+ * under the QR (owner, 11 Nov 2026). The sentences carry names and times, so they come in the page's language here
+ * rather than through the word list.
+ */
+function HandoverFacts({ delivery, status }: { delivery: InvoiceDelivery; status: string }) {
+  const { language } = useLanguage();
+  const words = handoverWords(delivery, status);
+  const godown = godownLine(delivery.godown, language === "kn" ? "kn" : "en");
+  const kn = language === "kn";
+  return (
+    <div className="mt-2 space-y-1 rounded-md border border-emerald-600/25 bg-white/70 p-2 text-xs text-charcoal" data-no-translate>
+      <p className="font-bold text-navy">{kn ? "ಹಸ್ತಾಂತರ" : "Handed over"}</p>
+      {words.lines.map((line, index) => <p key={`handover-${index}`} className="break-words" lang={kn ? "kn" : "en"}>{kn ? line.kn : line.en}</p>)}
+      {godown && <p className="break-words"><span className="font-semibold">{kn ? "ಗೋದಾಮು" : "Godown"}:</span> {godown}</p>}
+    </div>
+  );
+}
+
 function InvoiceDeliveryPanel({ order }: { order: Order }) {
   const visible = customerInvoiceVisible({ orderStatus: order.status, payment: order.payment });
   const stage = invoiceStage({ orderStatus: order.status, payment: order.payment });
@@ -471,6 +491,7 @@ function InvoiceDeliveryPanel({ order }: { order: Order }) {
                   )
                   : <p className="font-semibold">Delivery note not released yet. The godown in-charge releases it when they scan your QR.</p>}
                 <p className="text-xs text-charcoal">The same QR is printed on your invoice. Keep it private: show it only at the godown counter.</p>
+                {facts?.delivery && <HandoverFacts delivery={facts.delivery} status={order.status} />}
               </div>
             ) : facts ? (
               <p className="text-sm text-charcoal">Your delivery QR appears here once Zoho Books shows your paid invoice. Please check again in a little while.</p>
