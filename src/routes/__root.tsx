@@ -15,6 +15,7 @@ import { AppProvider } from "@/lib/store";
 import { absoluteUrl, DEFAULT_DESCRIPTION, DEFAULT_IMAGE, LEGAL_NAME, SITE_NAME } from "@/lib/seo";
 import { LanguageProvider } from "@/lib/i18n";
 import { Toaster } from "@/components/ui/sonner";
+import { PwaInstallBanner } from "@/components/site/PwaInstallBanner";
 import { CartFloatingNotifier } from "@/components/site/CartFloatingNotification";
 import { AuthNoticeHost } from "@/components/site/AuthNotice";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
@@ -101,6 +102,9 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { name: "description", content: DEFAULT_DESCRIPTION },
       { name: "author", content: LEGAL_NAME },
       { name: "theme-color", content: "#2f5d46" },
+      { name: "mobile-web-app-capable", content: "yes" },
+      { name: "apple-mobile-web-app-capable", content: "yes" },
+      { name: "apple-mobile-web-app-title", content: "Grain Bazar" },
       { property: "og:site_name", content: SITE_NAME },
       { property: "og:locale", content: "en_IN" },
       { property: "og:type", content: "website" },
@@ -191,6 +195,7 @@ function RootComponent() {
             <Outlet />
             <CartFloatingNotifier />
             <Toaster position="top-right" richColors />
+            <PwaInstallBanner />
             <AuthNoticeHost />
           </AppProvider>
         </LanguageProvider>

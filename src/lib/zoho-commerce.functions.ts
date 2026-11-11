@@ -5134,15 +5134,16 @@ export const syncSingleOrderToZoho = createServerFn({ method: "POST" })
   });
 
 /**
- * Server-only: sends an order to Zoho at once (used when a bank alert confirms a paid order).
- * Never throws; a failure stays in the queue for the 15-minute sync.
+ * Server-only: sends an order to Zoho at once, the same push as an admin's status change (a bank alert confirmed
+ * the payment, or the godown's QR handover delivered the last item). Never throws; a failure stays in the queue for
+ * the 15-minute sync.
  */
-export async function pushPaidOrderToZohoNow(orderNo: string): Promise<boolean> {
+export async function pushOrderToZohoFromServer(orderNo: string, purpose: string): Promise<boolean> {
   try {
     const db = await dbAdmin();
     const { data: order } = await db.from("orders").select("id").eq("order_no", orderNo).maybeSingle();
     if (!order || !(await isZohoWriteSyncActive(db))) return false;
-    await withZohoPurpose("Website → Zoho: paid order (bank alert)", () => pushOrderToZohoDirect(db, order.id));
+    await withZohoPurpose(purpose, () => pushOrderToZohoDirect(db, order.id));
     await flushZohoCallLog();
     return true;
   } catch (cause) {
@@ -5150,6 +5151,9 @@ export async function pushPaidOrderToZohoNow(orderNo: string): Promise<boolean> 
     return false;
   }
 }
+
+/** Server-only: sends a paid order to Zoho at once (a bank alert confirmed it). */
+export const pushPaidOrderToZohoNow = (orderNo: string) => pushOrderToZohoFromServer(orderNo, "Website → Zoho: paid order (bank alert)");
 
 /**
  * Called right after an order is placed or changed (status, items, cancellation), so Zoho

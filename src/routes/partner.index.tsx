@@ -1,6 +1,6 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
-import { CalendarCheck, IndianRupee, LogOut, RefreshCw, Target, Timer, Trophy } from "lucide-react";
+import { CalendarCheck, IndianRupee, LogOut, RefreshCw, ScanLine, Target, Timer, Trophy } from "lucide-react";
 import { BrandLogo, LogoMark } from "@/components/brand/Logo";
 import { FilterNote, Panel, scrollToSection, StatCard } from "@/components/panel/widgets";
 import { CommissionLinesTable, PartnerLeaderboard, TargetBar, commissionTotals, usePartnerData } from "@/components/partners/PartnerWidgets";
@@ -105,6 +105,13 @@ function PartnerDashboard() {
       <main className="mx-auto max-w-6xl space-y-6 px-4 py-6">
         {error && <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
         <GodownTransfers />
+        <Link to="/slip" className="flex items-center gap-3 rounded-2xl border-2 border-navy bg-card p-4 shadow-sm hover:border-gold sm:max-w-md">
+          <ScanLine className="h-8 w-8 shrink-0 text-navy" />
+          <span className="min-w-0">
+            <span className="block text-sm font-extrabold text-navy">Hand over goods: scan the slip</span>
+            <span className="block text-xs text-slate">Scan the QR on a delivery slip or note of {me.godown}. Give the goods only when the screen turns green.</span>
+          </span>
+        </Link>
         <p className="text-xs text-slate">{monthLabel(month)} · updates live every 30 seconds</p>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <StatCard onClick={() => openLines("earned")} label="Commission earned" value={inrPrecise(totals.earned)} icon={IndianRupee} description="Delivered and fully paid orders" />

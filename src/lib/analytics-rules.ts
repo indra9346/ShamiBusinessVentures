@@ -6,8 +6,11 @@
 
 const LIVE_HOSTS = ["grainbazar.com", "www.grainbazar.com"];
 
-/** Staff panels. Never counted, and a browser that has opened one is not counted on the storefront either. */
-const PANEL_PATHS = ["/admin", "/vendor", "/partner", "/staff"];
+/**
+ * Staff panels. Never counted, and a browser that has opened one is not counted on the storefront either.
+ * /slip is the godown's check of a delivery paper's QR code.
+ */
+const PANEL_PATHS = ["/admin", "/vendor", "/partner", "/staff", "/slip"];
 
 /** A customer's own pages: their addresses hold order numbers and one-time sign-in codes. */
 const PRIVATE_PATHS = ["/account", "/reset-password"];

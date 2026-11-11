@@ -7,7 +7,8 @@ import { Button } from "@/components/ui/button";
 import { inrPrecise } from "@/lib/data";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { copyLabel, gateWords, istDateTime, paperWarnings, type DeliveryNoteEvent, type DeliveryNoteView } from "@/lib/delivery-notes";
-import { generateDeliveryNote, getDeliveryNote, setDeliveryStop } from "@/lib/delivery-notes.functions";
+import { generateDeliveryNote, getDeliveryNote, reopenDeliveryHandover, setDeliveryStop } from "@/lib/delivery-notes.functions";
+import { paperKindWords, scanIsRefusal, scannedPaperLabel, scannerLabel, scanResultLabel, type DeliveryPaperRow } from "@/lib/delivery-papers";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
@@ -17,17 +18,118 @@ const TONES = {
   stop: "border-red-200 bg-red-50 text-red-900",
 };
 
-function eventText(event: DeliveryNoteEvent) {
+function eventText(event: DeliveryNoteEvent, papers: Map<number, DeliveryPaperRow>) {
   const who = event.actor_name ? ` by ${event.actor_name}` : "";
   if (event.kind === "generated") return `Generated${who}`;
   if (event.kind === "printed") {
     const what = event.doc === "note" ? "Note" : `Slip ${event.slip_line}`;
     const warned = event.gate_code && event.gate_code !== "paid" ? " (printed with a warning)" : "";
-    return `${what} printed${who}: ${copyLabel(event.copy_no)}${warned}`;
+    // A print made with a QR is labelled by its paper: original, duplicate copy n or replacement original.
+    const paper = papers.get(event.id);
+    const label = paper ? paperKindWords(paper.kind, paper.duplicate_no).en : copyLabel(event.copy_no);
+    return `${what} printed${who}: ${label}${paper?.reason ? ` (${paper.reason})` : ""}${warned}`;
   }
   if (event.kind === "invoice_changed") return `Zoho invoice changed: ${event.detail}`;
   if (event.kind === "order_changed") return `Order changed: ${event.detail}`;
   return event.detail;
+}
+
+/**
+ * Which items were handed over at the godown on a QR scan (each round, and an administrator's reopenings), the
+ * reopen button, and every scan of this note's papers.
+ */
+function HandoverList({ view, orderNo, readOnly, onView }: { view: DeliveryNoteView; orderNo: string; readOnly: boolean; onView: (next: DeliveryNoteView) => void }) {
+  const [reopening, setReopening] = useState<number | null>(null);
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const lines = view.note ? view.note.snapshot.items.length : 0;
+  const reopens = new Map(view.reopens.map((row) => [row.handover_id, row]));
+  const rounds = (line: number) => view.handovers.filter((row) => row.slip_line === line);
+  const current = (line: number) => rounds(line).find((row) => !reopens.has(row.id)) ?? null;
+  const done = (view.note?.snapshot.items ?? []).filter((item) => current(item.line)).length;
+  const deliveredByHandover = view.scans.some((scan) => scan.order_delivered);
+
+  const reopen = async (line: number) => {
+    setBusy(true);
+    try {
+      const result = await reopenDeliveryHandover({ data: { orderNo, line, reason } });
+      onView(result.view);
+      setReopening(null);
+      setReason("");
+      toast.success(`Item ${line} reopened`, {
+        description: result.orderStatus === "Delivered"
+          ? "The order is still marked Delivered, here and in Zoho. If the goods did not go, change the order's status and Zoho's delivery yourself."
+          : "Its original can hand it over again.",
+        duration: 12_000,
+      });
+    } catch (cause) {
+      toast.error("Could not reopen the item", { description: cause instanceof Error ? cause.message : undefined });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-2">
+      <p className="text-xs font-bold uppercase tracking-wider text-slate">Handed over at the godown ({done} of {lines})</p>
+      {deliveredByHandover && (
+        <p className="text-xs font-semibold text-emerald-800">
+          The handover of the last item marked this order Delivered{(() => {
+            const scan = view.scans.find((row) => row.order_delivered);
+            return scan ? ` (${istDateTime(scan.occurred_at)}, by ${scan.actor_name})` : "";
+          })()}.
+        </p>
+      )}
+      <ul className="space-y-1.5 text-xs text-charcoal">
+        {(view.note?.snapshot.items ?? []).map((item) => {
+          const row = current(item.line);
+          const history = rounds(item.line).filter((round) => reopens.has(round.id));
+          return (
+            <li key={item.line} className="break-words">
+              <div className="flex items-start gap-1.5">
+                {row ? <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-700" /> : <Clock className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate" />}
+                <span className="min-w-0">
+                  <span className="font-semibold">Slip {item.line}</span> {item.name}:{" "}
+                  {row
+                    ? `${istDateTime(row.handed_over_at)} by ${scannerLabel({ actor_name: row.actor_name, actor_role: row.actor_role, branch_name: row.branch_name, device_registered: row.device_registered, device_label: row.device_label })}${row.round > 1 ? `, round ${row.round}` : ""}${row.gate_source === "last_reading" ? ". Zoho could not be read then; checked on the last reading" : ""}`
+                    : "not handed over yet"}
+                  {row && !readOnly && reopening !== item.line && (
+                    <button type="button" className="ml-1.5 font-semibold text-danger hover:underline" onClick={() => { setReopening(item.line); setReason(""); }}>Reopen</button>
+                  )}
+                </span>
+              </div>
+              {history.map((round) => (
+                <p key={round.id} className="ml-5 text-slate">
+                  Round {round.round}: handed over {istDateTime(round.handed_over_at)} by {round.actor_name}; reopened {istDateTime(reopens.get(round.id)!.reopened_at)} by {reopens.get(round.id)!.actor_name}: {reopens.get(round.id)!.reason}
+                </p>
+              ))}
+              {reopening === item.line && (
+                <div className="ml-5 mt-1 flex flex-wrap items-center gap-1.5">
+                  <Input aria-label={`Why item ${item.line} is reopened`} value={reason} maxLength={300} onChange={(event) => setReason(event.target.value)}
+                    placeholder="Reason, for example: pressed by mistake, goods still in godown" className="h-8 min-w-0 flex-1 text-xs sm:max-w-sm" />
+                  <Button size="sm" className="h-8 bg-danger text-white hover:bg-danger/90" disabled={busy || reason.trim().length < 3} onClick={() => void reopen(item.line)}>Reopen item {item.line}</Button>
+                  <Button size="sm" variant="outline" className="h-8" disabled={busy} onClick={() => setReopening(null)}>Back</Button>
+                </div>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      {view.scans.length > 0 && (
+        <details className="text-xs">
+          <summary className="cursor-pointer font-semibold text-navy">QR scans ({view.scans.length}{view.scans.some((scan) => scanIsRefusal(scan.result)) ? `, ${view.scans.filter((scan) => scanIsRefusal(scan.result)).length} refused` : ""})</summary>
+          <ul className="mt-1 space-y-1 text-charcoal">
+            {view.scans.slice(0, 50).map((scan) => (
+              <li key={scan.id} className={cn("break-words", scanIsRefusal(scan.result) && "text-red-800")}>
+                <span className="text-slate">{istDateTime(scan.occurred_at)}</span> · {scannedPaperLabel(scan)} · {scanResultLabel(scan.result)}
+                {scan.lines.length > 0 ? ` (item${scan.lines.length === 1 ? "" : "s"} ${scan.lines.join(", ")})` : ""}{scan.order_delivered ? " · order marked Delivered" : ""} · {scannerLabel(scan)}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </div>
+  );
 }
 
 /**
@@ -100,6 +202,7 @@ export function DeliveryNotePanel({ orderNo, className = "", readOnly = false }:
   const note = view?.note ?? null;
   const words = state ? gateWords(state) : null;
   const warnings = note && state ? paperWarnings(state) : [];
+  const papersByEvent = new Map((view?.papers ?? []).map((paper) => [paper.print_event_id, paper]));
   if (readOnly && !note) return null;
   const recheck = readOnly ? null : (
     <Button size="sm" variant="outline" disabled={busy !== ""} onClick={() => void check(true)}>
@@ -190,12 +293,13 @@ export function DeliveryNotePanel({ orderNo, className = "", readOnly = false }:
           )}
           {recheck}
           {stopControl}
+          <HandoverList view={view!} orderNo={orderNo} readOnly={readOnly} onView={setView} />
           {view!.events.length > 0 && (
             <div>
               <p className="text-xs font-bold uppercase tracking-wider text-slate">History</p>
               <ul className="mt-1 space-y-1 text-xs text-charcoal">
                 {view!.events.slice(0, 30).map((event) => (
-                  <li key={event.id} className="break-words"><span className="text-slate">{istDateTime(event.occurred_at)}</span> · {eventText(event)}</li>
+                  <li key={event.id} className="break-words"><span className="text-slate">{istDateTime(event.occurred_at)}</span> · {eventText(event, papersByEvent)}</li>
                 ))}
               </ul>
             </div>
