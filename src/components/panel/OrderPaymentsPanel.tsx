@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState } from "react";
-import { useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { Trash2 } from "lucide-react";
 import { Panel } from "@/components/panel/widgets";
@@ -7,10 +6,7 @@ import { inrPrecise } from "@/lib/data";
 import { supabase } from "@/integrations/supabase/client";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { invoiceBalance, invoicePayments } from "@/lib/invoice-lines";
-import { useApp } from "@/lib/store";
-import { upiRecordsChanged } from "@/lib/upi-store";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
@@ -151,73 +147,5 @@ function RemovePaymentDialog({ payment, onClose, onDone }: { payment: Row; onClo
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  );
-}
-
-type Check = { blocker: string | null; notes: string[] };
-
-/** Admin: delete a closed order with everything on it, for the ones the ordinary delete keeps. */
-export function DeleteAllDetailsButton({ orderNo }: { orderNo: string }) {
-  const [open, setOpen] = useState(false);
-  const navigate = useNavigate();
-  return (
-    <>
-      <Button variant="outline" size="sm" className="text-danger hover:border-danger" onClick={() => setOpen(true)}><Trash2 className="mr-1.5 h-3.5 w-3.5" />Delete all details</Button>
-      {open && <DeleteAllDetailsDialog orderNo={orderNo} onClose={() => setOpen(false)} onDeleted={() => void navigate({ to: "/admin/orders" })} />}
-    </>
-  );
-}
-
-/** The question itself: the database says first whether it may go, and what goes with it. */
-export function DeleteAllDetailsDialog({ orderNo, onClose, onDeleted }: { orderNo: string; onClose: () => void; onDeleted?: () => void }) {
-  const [check, setCheck] = useState<Check | null>(null);
-  const [reason, setReason] = useState("");
-  const [typed, setTyped] = useState("");
-  const [busy, setBusy] = useState(false);
-  const { forgetOrder } = useApp();
-  useEffect(() => {
-    setCheck(null);
-    if (STATIC_DATA_MODE) { setCheck({ blocker: null, notes: [] }); return; }
-    void supabase.rpc("order_delete_all_check", { _order_no: orderNo }).then(({ data, error }) => {
-      if (error) setCheck({ blocker: error.message, notes: [] });
-      else setCheck(data as unknown as Check);
-    });
-  }, [orderNo]);
-  const remove = async () => {
-    setBusy(true);
-    const { error } = STATIC_DATA_MODE ? { error: null } : await supabase.rpc("admin_delete_order_all_details", { _order_no: orderNo, _reason: reason.trim() });
-    setBusy(false);
-    if (error) { toast.error("Could not delete the order", { description: error.message }); return; }
-    forgetOrder(orderNo);
-    upiRecordsChanged();
-    toast.success(`Order ${orderNo} deleted with all its details`, { description: "A full copy is kept in the Delete Log." });
-    onClose();
-    onDeleted?.();
-  };
-  const setOpen = (open: boolean) => { if (!open) onClose(); };
-  return (
-        <Dialog open onOpenChange={(next) => { if (!next) setOpen(false); }}>
-          <DialogContent className="sm:max-w-md">
-            <DialogHeader>
-              <DialogTitle>{`Delete everything on ${orderNo}?`}</DialogTitle>
-              <DialogDescription>
-                {!check ? "Checking whether it can be deleted…" : check.blocker ? check.blocker : "The order, its items, refund records and UTRs are removed from this website for good. A full copy stays in the Delete Log with your reason, its number is never used again, and nothing changes in Zoho."}
-              </DialogDescription>
-            </DialogHeader>
-            {check && !check.blocker && (
-              <>
-                {check.notes.length > 0 && <ul className="list-disc space-y-1 pl-5 text-sm text-amber-800">{check.notes.map((note) => <li key={note}>{note}</li>)}</ul>}
-                <Textarea rows={2} maxLength={300} className="bg-white text-base sm:text-sm" placeholder="Why is it being deleted?" value={reason} onChange={(event) => setReason(event.target.value)} />
-                <label className="grid gap-1 text-xs font-semibold text-slate">Type DELETE to confirm<Input value={typed} onChange={(event) => setTyped(event.target.value)} autoComplete="off" data-no-translate /></label>
-              </>
-            )}
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setOpen(false)}>Keep it</Button>
-              {check && !check.blocker && (
-                <Button className="bg-danger text-white hover:bg-danger/90" disabled={busy || reason.trim().length < 4 || typed.trim() !== "DELETE"} onClick={() => void remove()}>{busy ? "Deleting…" : "Delete everything"}</Button>
-              )}
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
   );
 }

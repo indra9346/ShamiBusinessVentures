@@ -1442,6 +1442,7 @@ export type Database = {
       admin_end_payment_hold: { Args: { _order_no: string; _reason?: string }; Returns: boolean }
       admin_cancel_order: { Args: { _order_no: string; _reason: string; _goods_back?: boolean | null; _refund?: Json | null }; Returns: Json }
       admin_delete_utr: { Args: { _order_no: string; _reason: string }; Returns: Json }
+      order_delete_with_payments_check: { Args: { _order_no: string }; Returns: Json }
       complete_follow_up_task: { Args: { _id: string; _note?: string }; Returns: Json }
       admin_reject_utr_and_end_checkout: { Args: { _order_no: string; _note: string; _expected_utr?: string | null }; Returns: boolean }
       order_delete_blocker: { Args: { _order_no: string }; Returns: string | null }
