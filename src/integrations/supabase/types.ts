@@ -90,6 +90,12 @@ export type Database = {
         Update: { product_id?: string; zoho_item_id?: string; deleted_at?: string }
         Relationships: []
       }
+      zoho_webhook_inbox: {
+        Row: { id: number; received_at: string; body: string; signature: string; content_type: string | null; query: string; attempts: number }
+        Insert: { id?: never; received_at?: string; body: string; signature: string; content_type?: string | null; query?: string; attempts?: number }
+        Update: { id?: never; received_at?: string; body?: string; signature?: string; content_type?: string | null; query?: string; attempts?: number }
+        Relationships: []
+      }
       zoho_sync_outbox: {
         Row: { id: string; entity_type: string; entity_id: string; event_type: string; status: string; attempts: number; available_at: string; locked_until: string | null; last_error: string | null; created_at: string; updated_at: string; push_holder: string | null }
         Insert: { id?: string; entity_type: string; entity_id: string; event_type: string; status?: string; attempts?: number; available_at?: string; locked_until?: string | null; last_error?: string | null; created_at?: string; updated_at?: string; push_holder?: string | null }

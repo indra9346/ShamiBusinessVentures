@@ -1,54 +1,18 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { verifyZohoSignature, webhookKeyMatches, webhookSecrets, zohoLogLine } from "@/lib/zoho-sync-core";
-
-type WebhookRecord =
-  | { kind: "salesorder" | "item"; id: string }
-  | { kind: "invoice"; id: string; salesOrderId: string; reference: string };
-
-/** Finds the sales order, invoice or item in a Zoho webhook body (JSON, or form data with a JSONString field). */
-function recordFrom(body: string): WebhookRecord | null {
-  const candidates: unknown[] = [];
-  try {
-    candidates.push(JSON.parse(body));
-  } catch {
-    const form = new URLSearchParams(body);
-    for (const value of form.values()) {
-      try {
-        candidates.push(JSON.parse(value));
-      } catch {
-        // not JSON
-      }
-    }
-    candidates.push(Object.fromEntries(form.entries()));
-  }
-  for (const candidate of candidates) {
-    if (!candidate || typeof candidate !== "object") continue;
-    const record = candidate as Record<string, unknown>;
-    const order = (record["salesorder"] ?? record["sales_order"]) as Record<string, unknown> | undefined;
-    const orderId = order?.["salesorder_id"] ?? record["salesorder_id"];
-    if (typeof orderId === "string" || typeof orderId === "number") return { kind: "salesorder", id: String(orderId) };
-    const invoice = record["invoice"] as Record<string, unknown> | undefined;
-    const invoiceId = invoice?.["invoice_id"];
-    if (typeof invoiceId === "string" || typeof invoiceId === "number") {
-      const text = (value: unknown) => (typeof value === "string" || typeof value === "number" ? String(value) : "");
-      return { kind: "invoice", id: String(invoiceId), salesOrderId: text(invoice?.["salesorder_id"]), reference: text(invoice?.["reference_number"]) };
-    }
-    const item = record["item"] as Record<string, unknown> | undefined;
-    const itemId = item?.["item_id"] ?? record["item_id"];
-    if (typeof itemId === "string" || typeof itemId === "number") return { kind: "item", id: String(itemId) };
-  }
-  return null;
-}
+import { webhookRecordFrom } from "@/lib/zoho-webhook-inbox";
 
 /**
- * Zoho calls this (Workflow Rule webhooks) when a sales order or an item is created or edited.
+ * Zoho calls this (Workflow Rule webhooks) when a sales order or an item is created or edited. Since Hostinger began
+ * refusing calls from servers (10 Nov 2026) Zoho delivers to the Supabase function zoho-webhook instead; this address
+ * stays so Zoho can be pointed back here if Hostinger lifts that block.
  * The record is re-read from Zoho, never trusted from the payload, and applied to Grain Bazar.
  */
 export const Route = createFileRoute("/api/zoho/webhook")({
   server: {
     handlers: {
       POST: async ({ request }) => {
-        const { zohoWebhookKey, handleZohoOrderWebhook, handleZohoItemWebhook, handleZohoInvoiceWebhook, withZohoPurpose, flushZohoCallLog } = await import("@/lib/zoho-commerce.functions");
+        const { zohoWebhookKey, applyZohoWebhookRecord } = await import("@/lib/zoho-commerce.functions");
         // Authentication, strongest first. The payload is never trusted either way: the record
         // is re-read from Zoho.
         // 1. Signed: Zoho's X-Zoho-Webhook-Signature (HMAC of the body with the webhook Secret,
@@ -82,16 +46,10 @@ export const Route = createFileRoute("/api/zoho/webhook")({
             return Response.json({ error: "Unauthorized" }, { status: 401 });
           }
         }
-        const record = recordFrom(body);
+        const record = webhookRecordFrom(body);
         if (!record) return Response.json({ ok: true, ignored: "no sales order, invoice or item id" });
         try {
-          const outcome = await withZohoPurpose(`Zoho webhook: ${record.kind === "salesorder" ? "sales order" : record.kind}`, () =>
-            record.kind === "salesorder"
-              ? handleZohoOrderWebhook(record.id)
-              : record.kind === "invoice"
-                ? handleZohoInvoiceWebhook(record)
-                : handleZohoItemWebhook(record.id));
-          await flushZohoCallLog();
+          const outcome = await applyZohoWebhookRecord(record);
           console.info(zohoLogLine("webhook_applied", { kind: record.kind, zohoId: record.id, outcome }));
           return Response.json({ ok: true, outcome });
         } catch (cause) {
