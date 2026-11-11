@@ -280,9 +280,20 @@ export function DeliveryNotePanel({ orderNo, className = "", readOnly = false }:
               <p className="text-xs text-slate">Invoice {note.invoice_number}</p>
             </div>
             <Button size="sm" className="bg-navy text-white hover:bg-navy/90" asChild>
-              <Link to="/admin/delivery-note/$orderNo" params={{ orderNo }}><Printer className="mr-1.5 h-4 w-4" /> Open to print</Link>
+              <Link to="/admin/delivery-note/$orderNo" params={{ orderNo }}><Printer className="mr-1.5 h-4 w-4" /> Print or download</Link>
             </Button>
           </div>
+          {(() => {
+            // 11 Nov 2026 (owner): a duplicate copy went to the godown and was refused. Say where the original comes from.
+            const reopenedIds = new Set(view!.reopens.map((row) => row.handover_id));
+            const handed = new Set(view!.handovers.filter((row) => !reopenedIds.has(row.id)).map((row) => row.slip_line));
+            const toGo = note.snapshot.items.some((item) => !handed.has(item.line));
+            return !readOnly && toGo && view!.papers.some((row) => row.kind === "duplicate") ? (
+              <p className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-950">
+                Only the original (or a replacement original) hands goods over; duplicate copies scan red at the godown. If the original is lost or a duplicate was sent, open Print or download and use &quot;Need the original again?&quot;.
+              </p>
+            ) : null;
+          })()}
           {warnings.length > 0 ? (
             <div className="rounded-md border-2 border-red-300 bg-red-50 p-3 text-sm text-red-900">
               {warnings.map((warning) => <p key={warning} className="font-bold">{warning}</p>)}
