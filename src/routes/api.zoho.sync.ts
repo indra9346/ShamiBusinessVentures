@@ -26,9 +26,18 @@ export const Route = createFileRoute("/api/zoho/sync")({
         } catch (cause) {
           console.warn("Could not end expired payment holds", cause);
         }
+        // Zoho's webhook calls parked on Supabase. First, and on its own, so a problem here never stops the outbound sync.
+        let webhookInbox: unknown = null;
+        try {
+          const { drainZohoWebhookInbox } = await import("@/lib/zoho-commerce.functions");
+          webhookInbox = await drainZohoWebhookInbox();
+        } catch (cause) {
+          console.error("Zoho webhook inbox failed", cause);
+          webhookInbox = { error: "Zoho webhook inbox failed" };
+        }
         try {
           const { processZohoSyncOutbox } = await import("@/lib/zoho-commerce.functions");
-          return Response.json(await processZohoSyncOutbox(20), {
+          return Response.json({ ...(await processZohoSyncOutbox(20)), webhookInbox }, {
             headers: { "cache-control": "no-store" },
           });
         } catch (cause) {

@@ -28,6 +28,8 @@ import {
   zohoGstFields,
 } from "@/lib/zoho-sync-core";
 import { gstStateCodeOf } from "@/lib/gstin";
+import { verifyZohoSignature, webhookSecrets } from "@/lib/zoho-sync-core";
+import { drainWebhookInbox, type InboxResult, type WebhookRecord } from "@/lib/zoho-webhook-inbox";
 import {
   ZOHO_CALL_DEFAULT_PURPOSE, ZOHO_CALL_LOG_SETTING, describeZohoCall, mergeZohoCalls, type ZohoCall, type ZohoCallLog,
 } from "@/lib/zoho-call-log";
@@ -3323,6 +3325,51 @@ async function zohoOrderContext(db: Awaited<ReturnType<typeof dbAdmin>>) {
 }
 
 /** Shared secret in the webhook address, so only Zoho (holding the address) can call it. */
+/** Applies one Zoho webhook call. The record is re-read from Zoho, never trusted from the call itself. */
+export async function applyZohoWebhookRecord(record: WebhookRecord) {
+  const outcome = await withZohoPurpose(`Zoho webhook: ${record.kind === "salesorder" ? "sales order" : record.kind}`, () =>
+    record.kind === "salesorder"
+      ? handleZohoOrderWebhook(record.id)
+      : record.kind === "invoice"
+        ? handleZohoInvoiceWebhook(record)
+        : handleZohoItemWebhook(record.id));
+  await flushZohoCallLog();
+  return outcome;
+}
+
+/**
+ * Works through the Zoho webhook calls parked by the Supabase function zoho-webhook (see that function for why).
+ * Run by the 15-minute job. While Zoho's daily API limit is used up, badly signed calls are still cleared but good
+ * ones wait for a later run.
+ */
+export async function drainZohoWebhookInbox(): Promise<InboxResult> {
+  const db = await dbAdmin();
+  const { data: budgetRow } = await db.from("settings").select("value").eq("key", ZOHO_API_BUDGET_SETTING).maybeSingle();
+  const paused = zohoPaused(str(plainObject(budgetRow?.value)["pausedUntil"]), Date.now());
+  return drainWebhookInbox({
+    secrets: webhookSecrets(process.env["ZOHO_WEBHOOK_SECRET"]),
+    verify: verifyZohoSignature,
+    load: async (limit) => {
+      const { data, error } = await db.from("zoho_webhook_inbox")
+        .select("id, body, signature, content_type, query, attempts")
+        .order("id", { ascending: true })
+        .limit(limit);
+      if (error) throw new Error(error.message);
+      return data ?? [];
+    },
+    remove: async (ids) => {
+      const { error } = await db.from("zoho_webhook_inbox").delete().in("id", ids);
+      if (error) throw new Error(error.message);
+    },
+    setAttempts: async (ids, attempts) => {
+      const { error } = await db.from("zoho_webhook_inbox").update({ attempts }).in("id", ids);
+      if (error) throw new Error(error.message);
+    },
+    apply: applyZohoWebhookRecord,
+    log: (event, fields) => console.info(zohoLogLine(event, fields)),
+  }, { maxApplied: paused ? 0 : 25 });
+}
+
 export async function zohoWebhookKey() {
   // v2: the v1 key was exposed on 2026-10-17 and no longer works.
   return (await sign("zoho-order-webhook-v2")).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "").slice(0, 40);
