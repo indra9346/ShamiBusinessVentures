@@ -8,14 +8,16 @@
 // (public.panel_favourites), so they follow them to any phone; before that table exists, on this device only.
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type ComponentType } from "react";
+import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import { ArrowDown, ArrowUp, FileText, FolderOpen, History, LayoutGrid, Link2, MousePointerClick, Rows3, Search, Star, X } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
+import { createFavouritesStore, type FavouritesDb, type FavouritesStorage, type FavouritesStore } from "@/lib/favourites-store";
 import { translateText, useLanguage } from "@/lib/i18n";
 import { isKannadaLoaded, loadKannada } from "@/lib/i18n-core";
 import {
-  MAX_FAVOURITES, cleanFavourites, entryKey, moveFavourite, panelEntries, pickElement, rememberPick, searchPanel, toggleFavourite,
+  MAX_FAVOURITES, entryKey, panelEntries, pickElement, rememberPick, searchPanel,
   type Favourite, type PanelEntry, type PanelKey,
 } from "@/lib/panel-search";
 import { cn } from "@/lib/utils";
@@ -26,130 +28,72 @@ export type PanelDataResult = { label: string; detail: string; to: string; image
 const samePath = (a: string, b: string) => a.replace(/\/+$/, "") === b.replace(/\/+$/, "");
 const pathOf = (pathname: string) => (pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname);
 
-// ---- favourites: one shared copy per panel, so the menu, the star and the search agree on every page
+// ---- favourites: one store per panel (src/lib/favourites-store.ts), so the menu, the star and the search agree
 
-type FavState = { list: Favourite[]; ready: boolean; synced: boolean };
-type Slot = { state: FavState; listeners: Set<() => void>; userId: string | null; loading: Promise<void> | null };
-const slots = new Map<PanelKey, Slot>();
-function slotOf(panel: PanelKey): Slot {
-  let slot = slots.get(panel);
-  if (!slot) {
-    slot = { state: { list: [], ready: false, synced: false }, listeners: new Set(), userId: null, loading: null };
-    slots.set(panel, slot);
+const favouritesDb: FavouritesDb = {
+  async select(userId, panel) {
+    if (STATIC_DATA_MODE) return { data: null, error: { message: "demo" } };
+    const { data, error } = await supabase.from("panel_favourites").select("item_key,label,to_path,find_text,position")
+      .eq("user_id", userId).eq("panel", panel).order("position").order("id");
+    return { data, error };
+  },
+  async add(rows) {
+    const { error } = await supabase.from("panel_favourites").upsert(rows, { onConflict: "user_id,panel,item_key" });
+    return { error };
+  },
+  async remove(userId, panel, key) {
+    const { error } = await supabase.from("panel_favourites").delete().eq("user_id", userId).eq("panel", panel).eq("item_key", key);
+    return { error };
+  },
+  async place(userId, panel, key, position) {
+    const { error } = await supabase.from("panel_favourites").update({ position }).eq("user_id", userId).eq("panel", panel).eq("item_key", key);
+    return { error };
+  },
+};
+const deviceStorage: FavouritesStorage = {
+  get: (key) => localStorage.getItem(key),
+  set: (key, value) => localStorage.setItem(key, value),
+  remove: (key) => localStorage.removeItem(key),
+};
+const currentUser = async () => (await supabase.auth.getSession()).data.session?.user.id ?? null;
+const stores = new Map<PanelKey, FavouritesStore>();
+function storeOf(panel: PanelKey): FavouritesStore {
+  let store = stores.get(panel);
+  if (!store) {
+    store = createFavouritesStore(panel, { db: favouritesDb, storage: deviceStorage, currentUser });
+    stores.set(panel, store);
   }
-  return slot;
+  return store;
 }
-function publish(slot: Slot, state: FavState) {
-  slot.state = state;
-  slot.listeners.forEach((listener) => listener());
-}
-
-const localKey = (userId: string, panel: PanelKey) => `gb-favourites:${userId}:${panel}`;
-function readLocal(userId: string, panel: PanelKey): Favourite[] {
-  try {
-    return cleanFavourites(JSON.parse(localStorage.getItem(localKey(userId, panel)) ?? "[]"));
-  } catch {
-    return [];
-  }
-}
-function writeLocal(userId: string, panel: PanelKey, list: Favourite[]) {
-  try {
-    localStorage.setItem(localKey(userId, panel), JSON.stringify(list.map(({ to, label, find }) => ({ to, label, find }))));
-  } catch {
-    /* storage blocked: the database copy still holds them */
-  }
-}
-const rowsOf = (userId: string, panel: PanelKey, list: Favourite[]) =>
-  list.map((fav, position) => ({ user_id: userId, panel, item_key: fav.key, label: fav.label, to_path: fav.to, find_text: fav.find, position }));
-
-async function loadFavourites(panel: PanelKey) {
-  const slot = slotOf(panel);
-  const { data: session } = await supabase.auth.getSession();
-  const userId = session.session?.user.id ?? null;
-  if (!userId) {
-    slot.userId = null;
-    publish(slot, { list: [], ready: true, synced: false });
-    return;
-  }
-  // This device's copy first, so the menu does not wait for the network.
-  if (slot.userId !== userId) {
-    slot.userId = userId;
-    publish(slot, { list: readLocal(userId, panel), ready: true, synced: false });
-  }
-  if (STATIC_DATA_MODE) return;
-  const { data, error } = await supabase.from("panel_favourites").select("item_key,label,to_path,find_text,position")
-    .eq("user_id", userId).eq("panel", panel).order("position").order("id");
-  // No table yet (before the database update) or no network: keep this device's copy.
-  if (error) return;
-  let list = cleanFavourites(data);
-  const local = readLocal(userId, panel);
-  if (!list.length && local.length) {
-    // The first time with the table: this device's favourites move into the database.
-    const { error: saveError } = await supabase.from("panel_favourites").upsert(rowsOf(userId, panel, local), { onConflict: "user_id,panel,item_key" });
-    if (!saveError) list = local;
-  }
-  writeLocal(userId, panel, list);
-  publish(slot, { list, ready: true, synced: true });
-}
-
-async function saveFavourites(panel: PanelKey, next: Favourite[], removed: Favourite | null): Promise<boolean> {
-  const slot = slotOf(panel);
-  const before = slot.state;
-  const userId = slot.userId;
-  if (!userId) {
-    toast.error("Sign in again to keep favourites");
-    return false;
-  }
-  publish(slot, { ...before, list: next });
-  writeLocal(userId, panel, next);
-  if (!before.synced) return true;
-  const { error } = removed
-    ? await supabase.from("panel_favourites").delete().eq("user_id", userId).eq("panel", panel).eq("item_key", removed.key)
-    : await supabase.from("panel_favourites").upsert(rowsOf(userId, panel, next), { onConflict: "user_id,panel,item_key" });
-  if (error) {
-    publish(slot, before);
-    writeLocal(userId, panel, before.list);
-    toast.error("Could not save your favourites", { description: error.message });
-    return false;
-  }
-  return true;
-}
+const EMPTY_FAVOURITES = { list: [] as Favourite[], userId: null, mode: "loading" as const };
 
 /** This person's favourites in a panel, with adding, removing and moving. */
 export function usePanelFavourites(panel: PanelKey) {
-  const slot = slotOf(panel);
-  const subscribe = useCallback((listener: () => void) => {
-    slot.listeners.add(listener);
-    return () => { slot.listeners.delete(listener); };
-  }, [slot]);
-  const state = useSyncExternalStore(subscribe, () => slot.state, () => slot.state);
+  const store = storeOf(panel);
+  const state = useSyncExternalStore(store.subscribe, store.getState, () => EMPTY_FAVOURITES);
   useEffect(() => {
-    if (!slot.loading) slot.loading = loadFavourites(panel).catch(() => undefined);
-    // Another person signing in on this browser gets their own favourites.
-    const { data } = supabase.auth.onAuthStateChange((event, session) => {
-      if ((event === "SIGNED_IN" || event === "SIGNED_OUT") && (session?.user.id ?? null) !== slot.userId) {
-        slot.loading = loadFavourites(panel).catch(() => undefined);
-      }
+    // Every page checks who is signed in: a sign-out and another person's sign-in in between gets their own list.
+    void store.ensure().catch(() => undefined);
+    const { data } = supabase.auth.onAuthStateChange(() => {
+      // Supabase asks for no awaits inside this callback: check just after it.
+      window.setTimeout(() => void store.ensure().catch(() => undefined), 0);
     });
     return () => data.subscription.unsubscribe();
-  }, [panel, slot]);
+  }, [store]);
   const keys = useMemo(() => new Set(state.list.map((fav) => fav.key)), [state.list]);
   const toggle = useCallback((item: Omit<Favourite, "key">) => {
-    const list = slot.state.list;
-    const key = entryKey(item.to, item.find);
-    const existing = list.find((fav) => fav.key === key) ?? null;
-    if (!existing && list.length >= MAX_FAVOURITES) {
-      toast.error(`You can keep up to ${MAX_FAVOURITES} favourites. Remove one first.`);
-      return;
-    }
-    void saveFavourites(panel, toggleFavourite(list, item), existing).then((saved) => {
-      if (saved) toast.success(existing ? "Removed from favourites" : "Added to favourites");
+    void store.toggle(item).then((result) => {
+      if (result === "added") toast.success("Added to favourites");
+      else if (result === "removed") toast.success("Removed from favourites");
+      else if (result === "full") toast.error(`You can keep up to ${MAX_FAVOURITES} favourites. Remove one first.`);
+      else if (result === "signed-out") toast.error("Sign in again to keep favourites");
+      else toast.error("Could not save your favourites");
     });
-  }, [panel, slot]);
+  }, [store]);
   const move = useCallback((key: string, step: -1 | 1) => {
-    void saveFavourites(panel, moveFavourite(slot.state.list, key, step), null);
-  }, [panel, slot]);
-  return { favourites: state.list, ready: state.ready, keys, toggle, move };
+    void store.move(key, step).then((saved) => { if (!saved) toast.error("Could not save your favourites"); });
+  }, [store]);
+  return { favourites: state.list, ready: state.mode !== "loading" || state.list.length > 0, keys, toggle, move };
 }
 
 // ---- opening a page and showing the button on it
@@ -181,8 +125,9 @@ const visible = (element: HTMLElement) => {
 const HIGHLIGHT = ["ring-4", "ring-gold", "ring-offset-2", "ring-offset-white"];
 
 function findOnPage(words: string[]): HTMLElement | null {
-  const root = document.querySelector<HTMLElement>("main") ?? document.body;
-  const nodes = Array.from(root.querySelectorAll<HTMLElement>("h1, h2, h3, h4, button, a, [role='tab'], summary, label, p"))
+  // The page itself first, then its header (the partner page's "Attendance & stock"); never the side menu.
+  const roots = [document.querySelector<HTMLElement>("main") ?? document.body, ...Array.from(document.querySelectorAll<HTMLElement>("header"))];
+  const nodes = roots.flatMap((root) => Array.from(root.querySelectorAll<HTMLElement>("h1, h2, h3, h4, button, a, [role='tab'], summary, label, p")))
     // The favourites bar and the search say the same words: never the thing to show.
     .filter((element) => !element.closest("[data-panel-search-ui]"));
   const candidates = nodes.filter(visible).map((element) => ({ element, text: element.innerText || element.textContent || "", size: (element.innerText || "").length }));
@@ -242,16 +187,19 @@ export async function revealOnPage(words: string[]): Promise<boolean> {
 export function usePanelGo() {
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
+  // The page on screen: the router changes location before the new page has loaded, while the old one still shows.
+  const shownPath = useRouterState({ select: (state) => (state.status === "idle" ? (state.resolvedLocation ?? state.location).pathname : "") });
   const { language, t } = useLanguage();
   const show = useCallback(async (find: string) => {
     const words = [find, language === "kn" ? translateText(find, "kn") : find];
     if (!(await revealOnPage(words))) toast.message(t(`"${find}" is not shown on this page for you right now.`));
   }, [language, t]);
-  // Arrived from a search on another page: show what was picked.
+  // Arrived from a search on another page: show what was picked, once that page is the one on screen.
   useEffect(() => {
-    const find = takePendingFind(pathname);
+    if (!shownPath) return;
+    const find = takePendingFind(shownPath);
     if (find) void show(find);
-  }, [pathname, show]);
+  }, [shownPath, show]);
   return useCallback((to: string, find: string) => {
     if (!find) {
       navigate({ to: to as never });
@@ -544,9 +492,10 @@ export function PanelSearch({ panel, dataResults, className, compact = false }: 
         className={cn("grid h-9 w-9 place-items-center rounded-full border border-border text-navy hover:border-gold hover:text-gold", !compact && "md:hidden")}>
         <Search className="h-4 w-4" />
       </button>
-      {sheet && (
-        <div className={cn("fixed inset-0 z-[60]", !compact && "md:hidden")}>
-          <button type="button" aria-label="Close search" className="absolute inset-0 bg-midnight/50" onClick={close} />
+      {/* On the page itself, not inside the header: the header's blur would keep a fixed sheet inside the header. */}
+      {sheet && typeof document !== "undefined" && createPortal(
+        <div data-panel-search-ui="" className={cn("fixed inset-0 z-[60]", !compact && "md:hidden")}>
+          <button type="button" aria-label="Close search" className="absolute inset-0 bg-midnight/60" onClick={close} />
           <div className="relative mx-auto max-w-2xl border-b border-border bg-card p-3 shadow-xl sm:rounded-b-xl">
             <div className="flex items-center gap-2">
               <div className="min-w-0 flex-1">{field(sheetInput, true)}</div>
@@ -554,7 +503,8 @@ export function PanelSearch({ panel, dataResults, className, compact = false }: 
             </div>
             <div className="mt-2 overflow-hidden rounded-lg border border-border bg-card">{list}</div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
       <span className="sr-only" aria-live="polite">{typed ? t(`${rows.length} suggestions`) : ""}</span>
     </div>
@@ -570,7 +520,14 @@ export function FavouriteToggle({ panel, label, className }: { panel: PanelKey; 
   const on = keys.has(entryKey(pathname));
   // A record's own page (an order, a customer) keeps its number in the name.
   const last = pathname.split("/").at(-1) ?? "";
-  const name = pathname.split("/").length > 3 && /\d|[A-Z]/.test(last) && !label.includes(last) ? `${label} · ${decodeURIComponent(last)}` : label;
+  const readable = (() => {
+    try {
+      return decodeURIComponent(last);
+    } catch {
+      return last; // "%" without its two digits: shown as it is
+    }
+  })();
+  const name = pathname.split("/").length > 3 && /\d|[A-Z]/.test(last) && !label.includes(readable) ? `${label} · ${readable}` : label;
   return (
     <button type="button" aria-pressed={on} onClick={() => toggle({ to: pathname, label: name, find: "" })}
       aria-label={on ? "Remove this page from favourites" : "Add this page to favourites"} title={on ? "Remove this page from favourites" : "Add this page to favourites"}

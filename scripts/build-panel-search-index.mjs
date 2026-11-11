@@ -23,6 +23,12 @@ const PANELS = {
   partner: ["partner.index.tsx", "partner.attendance.tsx", "slip.tsx"],
   staff: ["staff.index.tsx", "staff.device.tsx", "slip.tsx"],
 };
+/**
+ * Pages offered as pages only: they have no panel search on them to show a button after opening (the scanner, the
+ * godown phone's setup, the shop's wishlist), and the scanner's buttons change with each scan or are for signed-out
+ * visitors.
+ */
+const PAGES_ONLY = new Set(["slip.tsx", "staff.device.tsx", "wishlist.tsx"]);
 
 /** Page names people know them by: the side menus first, then these, then the page's own heading. */
 const EXTRA_LABELS = {
@@ -225,6 +231,7 @@ export function buildIndex() {
       const to = routePath(src, name);
       const label = pageLabel(to, src, labels);
       pages[panel].push({ to, label });
+      if (PAGES_ONLY.has(name)) continue;
       const seen = new Set([label.toLowerCase()]);
       for (const feature of features(pageSource(file))) {
         const key = feature.text.toLowerCase();

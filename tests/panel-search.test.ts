@@ -180,6 +180,39 @@ test("wired in: every panel's header, the side menu, the title star, the partner
   assert.match(search, /from\("panel_favourites"\)/);
   assert.match(search, /import\("@\/lib\/panel-search-index"\)/, "the index loads when needed, not with every page");
   assert.match(search, /\(event\.ctrlKey \|\| event\.metaKey\) && event\.key\.toLowerCase\(\) === "k"/);
+  // Review of 12 Nov 2026:
+  // the favourites go through the store, which every page re-checks for who is signed in;
+  assert.match(search, /createFavouritesStore\(panel, \{ db: favouritesDb, storage: deviceStorage, currentUser \}\)/);
+  assert.match(search, /void store\.ensure\(\)\.catch\(\(\) => undefined\);\n\s+const \{ data \} = supabase\.auth\.onAuthStateChange/);
+  // moving one is an update of that row, never an upsert that could bring back a removed one;
+  assert.match(search, /from\("panel_favourites"\)\.update\(\{ position \}\)/);
+  // the button is looked for once the new page is the one on screen;
+  assert.match(search, /state\.status === "idle" \? \(state\.resolvedLocation \?\? state\.location\)\.pathname : ""/);
+  assert.match(search, /const find = takePendingFind\(shownPath\);/);
+  // the page header is searched too, never the search or the favourites;
+  assert.match(search, /\.\.\.Array\.from\(document\.querySelectorAll<HTMLElement>\("header"\)\)/);
+  assert.match(search, /!element\.closest\("\[data-panel-search-ui\]"\)/);
+  // a broken address does not break the title's star;
+  assert.match(search, /try \{\n\s+return decodeURIComponent\(last\);\n\s+\} catch \{/);
+  // the phone's search sheet sits on the page, not inside the header (whose blur would trap it).
+  assert.match(search, /createPortal\(\n\s+<div data-panel-search-ui="" className=\{cn\("fixed inset-0 z-\[60\]"/);
+});
+
+test("pages with no search on them are offered as pages only", () => {
+  for (const panel of ["partner", "staff", "customer"] as const) {
+    for (const to of ["/slip", "/staff/device", "/wishlist"]) {
+      assert.ok(!PANEL_FEATURES[panel].some((item) => item.to === to), `${panel}: no buttons of ${to}`);
+    }
+  }
+  assert.ok(PANEL_PAGES.partner.some((page) => page.to === "/slip"), "the scan page itself is still there");
+  assert.ok(PANEL_PAGES.customer.some((page) => page.to === "/wishlist"));
+  assert.ok(!PANEL_FEATURES.partner.some((item) => /sign in$/i.test(item.text)), "no buttons for signed-out visitors");
+});
+
+test("the admin's customer and vendor numbers are read in pages, so none are cut off", () => {
+  const hook = read("src/hooks/use-zoho-contact-numbers.ts");
+  assert.match(hook, /supabase\.rpc\("zoho_contact_numbers"\)\.range\(from, from \+ PAGE - 1\)/);
+  assert.match(hook, /if \(page\.length < PAGE\) break;/);
 });
 
 test("filters and search on the partner's and staff's order lists; Add channel partner on the admin page", () => {
@@ -196,6 +229,11 @@ test("filters and search on the partner's and staff's order lists; Add channel p
   assert.match(partners, /onClick=\{\(\) => setAdding\(true\)\}><UserPlus className="mr-1\.5 h-4 w-4" \/>Add channel partner<\/Button>/);
   assert.match(partners, /<CreatePartnerForm key=\{godown\.id\} godownId=\{godown\.id\}/);
   assert.match(partners, /A godown has one channel partner at a time/);
+  // The login shown once stays on screen after the list reloads (review, 12 Nov 2026): in the window and on the card.
+  assert.match(partners, /\{created \? <CredentialsBox email=\{created\.email\} password=\{created\.password\} godownName=\{created\.godownName\} \/>/);
+  assert.match(partners, /onCreated=\{\(login\) => setCreated\(\{ \.\.\.login, godownName: godown\.name \}\)\}/);
+  assert.match(partners, /\{created && <div className="mb-3"><CredentialsBox email=\{created\.email\}/);
+  assert.match(partners, /onCreated\?\.\(login\);/);
 });
 
 test("the favourites table: own rows only, this site's addresses, 40 at most", () => {
