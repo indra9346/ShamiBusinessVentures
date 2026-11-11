@@ -683,6 +683,8 @@ export const PANEL_FEATURES: Record<PanelKey, PanelFeature[]> = {
     { "to": "/admin/zoho", "text": "Queued outbox processing", "kind": "section" },
     { "to": "/admin/zoho", "text": "Scheduled fulfillment reconciliation", "kind": "section" },
     { "to": "/admin/zoho", "text": "What is not available in this integration?", "kind": "section" },
+    { "to": "/admin/zoho", "text": "Customer and vendor numbers", "kind": "section" },
+    { "to": "/admin/zoho", "text": "Fetch customer and vendor numbers from Zoho", "kind": "button" },
     { "to": "/admin/zoho", "text": "Edit this order", "kind": "button" },
     { "to": "/admin/zoho", "text": "Reload from Zoho", "kind": "button" },
     { "to": "/admin/zoho", "text": "Save to Zoho", "kind": "button" },
