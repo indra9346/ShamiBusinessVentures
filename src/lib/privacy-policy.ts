@@ -17,7 +17,7 @@ export type PolicySection = {
 };
 
 export const POLICY_TITLE = "Privacy Policy";
-export const POLICY_UPDATED = "Last updated: 3 November 2026";
+export const POLICY_UPDATED = "Last updated: 11 November 2026";
 export const POLICY_INTRO =
   "This page explains what information Grain Bazar collects when you use grainbazar.com, why we collect it, who it goes to, and the choices you have.";
 
@@ -90,8 +90,9 @@ const WHO_CAN_SEE_IT: PolicySection = {
     { lead: "Our team", text: "Admin staff can see customer accounts, addresses, orders, payments and enquiries." },
     {
       lead: "Godown partners and vendors",
-      text: "The channel partner who runs the godown handling your order can see your name, PIN code, what you bought and the amounts. A vendor whose goods are in your order can open that order, including your contact details and delivery address.",
+      text: "The channel partner who runs the godown handling your order can see your name, PIN code, what you bought and the amounts, and can open that order's invoice, which shows your contact details, delivery address, any GSTIN and the payment. A vendor whose goods are in your order can open that order, including your contact details and delivery address.",
     },
+    { lead: "At handover", text: "When a delivery slip is scanned, the godown staff or channel partner handing over the goods see the order number, the customer's name and the items." },
     {
       lead: "Supabase",
       text: "Our database, sign-in system and file storage. Your account, addresses, orders and enquiries are stored there, on servers in Japan.",
@@ -102,7 +103,7 @@ const WHO_CAN_SEE_IT: PolicySection = {
     },
     { lead: "Resend", text: "Sends our sign-in emails, so it receives your email address and the one-time code." },
     { lead: "Fast2SMS", text: "Your mobile number and the one-time code, when you sign in by phone." },
-    { lead: "Hostinger", text: "Runs the website and keeps the visit logs." },
+    { lead: "Hostinger", text: "Runs the website and keeps the visit logs. Its security check can sometimes show a Google reCAPTCHA page before the site opens." },
     { lead: "OpenStreetMap Nominatim and BigDataCloud", text: "The map position, as explained above." },
     {
       lead: "Google Fonts",
@@ -175,7 +176,8 @@ const PEOPLE_WHO_WORK_WITH_US: PolicySection = {
       lead: "Vendors",
       text: "Your business details, and the GST certificate, PAN card and bank account proof you upload for verification, which are kept in private storage.",
     },
-    { lead: "Channel partners", text: "Your contact details, your godown, its sales and your commission." },
+    { lead: "Channel partners", text: "Your contact details, your godown, its sales, your commission and payouts, and the signature you give us for your godown's invoices." },
+    { lead: "Delivery handovers", text: "When you scan a delivery paper, we keep who scanned it, when, at which godown, on which phone, which paper and which items." },
   ],
 };
 
