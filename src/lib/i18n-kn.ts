@@ -6112,6 +6112,11 @@ export const kn: Record<string, string> = {
   "note copy {0}": "ನೋಟ್ ಪ್ರತಿ {0}",
   "slip {0} copy {1}": "ಸ್ಲಿಪ್ {0} ಪ್ರತಿ {1}",
   "Could not check the QR. Please scan again.": "QR ಪರಿಶೀಲಿಸಲು ಆಗಲಿಲ್ಲ. ದಯವಿಟ್ಟು ಮತ್ತೆ ಸ್ಕ್ಯಾನ್ ಮಾಡಿ.",
+  // 12 Nov 2026: late and partner UTRs, bank statement matching
+  "The godowns did not load. Press Reload. If they still don't show, sign out and sign in again.": "ಗೋದಾಮುಗಳು ತೆರೆಯಲಿಲ್ಲ. ಮರುಲೋಡ್ ಒತ್ತಿ. ಆಗಲೂ ಕಾಣದಿದ್ದರೆ, ಸೈನ್ ಔಟ್ ಮಾಡಿ ಮತ್ತೆ ಸೈನ್ ಇನ್ ಮಾಡಿ.",
+  "Reload": "ಮರುಲೋಡ್",
+  "Your sign-in has expired on this device. Sign out and sign in again, then open Attendance.": "ಈ ಸಾಧನದಲ್ಲಿ ನಿಮ್ಮ ಸೈನ್-ಇನ್ ಅವಧಿ ಮುಗಿದಿದೆ. ಸೈನ್ ಔಟ್ ಮಾಡಿ ಮತ್ತೆ ಸೈನ್ ಇನ್ ಮಾಡಿ, ನಂತರ ಹಾಜರಾತಿ ತೆರೆಯಿರಿ.",
+  "Some attendance data did not load ({0}). It tries again every minute; check the connection.": "ಕೆಲವು ಹಾಜರಾತಿ ಮಾಹಿತಿ ತೆರೆಯಲಿಲ್ಲ ({0}). ಪ್ರತಿ ನಿಮಿಷ ಮತ್ತೆ ಪ್ರಯತ್ನಿಸುತ್ತದೆ; ಸಂಪರ್ಕ ಪರಿಶೀಲಿಸಿ.",
 };
 
 /** Word-level fallbacks for text that isn't in the dictionary (product names, specs from the database). */

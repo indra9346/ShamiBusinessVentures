@@ -68,23 +68,32 @@ function useAttendanceDesk(viewer: Viewer, partnerBranchId: string | undefined, 
     const end = monthEnd(month);
     let branchQuery = supabase.from("branches").select(GODOWN_COLUMNS).order("sort_order");
     if (partnerBranchId) branchQuery = branchQuery.eq("id", partnerBranchId);
+    // Each list settles on its own (owner, 12 Nov 2026: the godown list came up empty): a request that fails, even with a
+    // dropped connection, leaves an error for that list and the rest still shows.
+    type Settled = { data: unknown; error: { message: string } | null };
+    const settle = (request: PromiseLike<unknown>): Promise<Settled> => Promise.resolve(request).then(
+      (result) => result as Settled,
+      (cause: unknown) => ({ data: null, error: { message: cause instanceof Error ? cause.message : "The connection dropped" } }),
+    );
     const [b, e, p, t, tp, m, l, dv, rv, hd] = await Promise.all([
-      branchQuery,
-      supabase.from("staff_employees").select("*").order("name"),
-      viewer === "admin" ? supabase.from("channel_partners").select("branch_id").eq("status", "active") : Promise.resolve({ data: partnerBranchId ? [{ branch_id: partnerBranchId }] : [], error: null }),
-      supabase.from("attendance_days").select("*").eq("work_date", today),
-      supabase.from("attendance_presence").select("*").gte("taken_at", istStart(today)).lt("taken_at", istStart(nextDay(today))).order("taken_at"),
-      supabase.from("attendance_days").select("*").gte("work_date", month).lte("work_date", end),
-      supabase.from("leave_requests").select("*").or(`status.eq.pending,and(to_date.gte.${month},from_date.lte.${end})`).order("from_date", { ascending: false }),
-      viewer === "admin" ? supabase.from("godown_devices").select("id,branch_id,label,active,created_at,last_seen_at,revoked_at").order("created_at", { ascending: false }) : Promise.resolve({ data: [], error: null }),
-      supabase.from("godown_rule_versions").select("*").order("effective_from").order("created_at"),
-      supabase.from("godown_holidays").select("id,branch_id,holiday_date,name").is("removed_at", null).order("holiday_date"),
+      settle(branchQuery),
+      settle(supabase.from("staff_employees").select("*").order("name")),
+      settle(viewer === "admin" ? supabase.from("channel_partners").select("branch_id").eq("status", "active") : Promise.resolve({ data: partnerBranchId ? [{ branch_id: partnerBranchId }] : [], error: null })),
+      settle(supabase.from("attendance_days").select("*").eq("work_date", today)),
+      settle(supabase.from("attendance_presence").select("*").gte("taken_at", istStart(today)).lt("taken_at", istStart(nextDay(today))).order("taken_at")),
+      settle(supabase.from("attendance_days").select("*").gte("work_date", month).lte("work_date", end)),
+      settle(supabase.from("leave_requests").select("*").or(`status.eq.pending,and(to_date.gte.${month},from_date.lte.${end})`).order("from_date", { ascending: false })),
+      settle(viewer === "admin" ? supabase.from("godown_devices").select("id,branch_id,label,active,created_at,last_seen_at,revoked_at").order("created_at", { ascending: false }) : Promise.resolve({ data: [], error: null })),
+      settle(supabase.from("godown_rule_versions").select("*").order("effective_from").order("created_at")),
+      settle(supabase.from("godown_holidays").select("id,branch_id,holiday_date,name").is("removed_at", null).order("holiday_date")),
     ]);
     const failed = [b, e, t, tp, m, l, rv, hd].find((result) => result.error);
     if (failed?.error) {
       setError(/does not exist|schema cache/i.test(failed.error.message)
         ? "Attendance is not fully set up in the database yet (migration 20261102120000_godown_attendance_rules)."
-        : failed.error.message);
+        : /jwt|token|not authorized|permission denied|401/i.test(failed.error.message)
+          ? "Your sign-in has expired on this device. Sign out and sign in again, then open Attendance."
+          : `Some attendance data did not load (${failed.error.message}). It tries again every minute; check the connection.`);
     } else setError("");
     setGodowns(((b.data ?? []) as (Godown & { vendor_id: string | null })[]).filter((row) => !row.vendor_id));
     setEmployees((e.data as Employee[] | null) ?? []);
@@ -111,7 +120,10 @@ function useAttendanceDesk(viewer: Viewer, partnerBranchId: string | undefined, 
   useEffect(() => {
     void load();
     const timer = setInterval(() => void load(), 60_000);
-    return () => clearInterval(timer);
+    const { data: auth } = supabase.auth.onAuthStateChange((event) => {
+      if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") void load();
+    });
+    return () => { clearInterval(timer); auth.subscription.unsubscribe(); };
   }, [load]);
 
   return { godowns, employees, partnerGodowns, todayDays, todayPhotos, monthRows, leaves, devices, versions, holidays, selfies, setSelfies, loaded, error, today, load };
@@ -691,9 +703,16 @@ function AddEmployeeForm({ godowns, onAdded }: { godowns: Godown[]; onAdded: () 
         <label className="block"><span className="mb-1 block text-xs font-semibold text-charcoal">Mobile number</span>
           <Input required inputMode="numeric" value={phone} onChange={(event) => setPhone(event.target.value.replace(/[^\d+ ]/g, ""))} placeholder="98XXXXXXXX" /></label>
         <label className="block"><span className="mb-1 block text-xs font-semibold text-charcoal">Godown</span>
-          <select value={branch} onChange={(event) => setBranchId(event.target.value)} className="h-10 w-full rounded-md border border-input bg-white px-2 text-sm">
-            {godowns.map((godown) => <option key={godown.id} value={godown.id}>{godown.name}</option>)}
-          </select></label>
+          {godowns.length ? (
+            <select value={branch} onChange={(event) => setBranchId(event.target.value)} className="h-10 w-full rounded-md border border-input bg-white px-2 text-sm">
+              {godowns.map((godown) => <option key={godown.id} value={godown.id}>{godown.name}</option>)}
+            </select>
+          ) : (
+            <span className="flex flex-wrap items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-950">
+              <span>The godowns did not load. Press Reload. If they still don't show, sign out and sign in again.</span>
+              <button type="button" onClick={() => void onAdded()} className="rounded-md border border-amber-400 bg-white px-2 py-1 font-semibold text-navy">Reload</button>
+            </span>
+          )}</label>
         <label className="block"><span className="mb-1 block text-xs font-semibold text-charcoal">Designation (optional)</span>
           <Input value={designation} onChange={(event) => setDesignation(event.target.value)} placeholder="Loader, Supervisor…" /></label>
         <label className="block"><span className="mb-1 block text-xs font-semibold text-charcoal">Password</span><PasswordField value={password} onChange={setPassword} /></label>
