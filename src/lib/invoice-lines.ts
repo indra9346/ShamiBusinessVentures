@@ -151,9 +151,13 @@ export const DELIVERY_QR_NOTE = {
 /**
  * The latest facts when the invoice is pulled: Zoho's own invoice number and date, every payment with its mode and UTR,
  * and what is paid. `paid` null = not known (the order's own figure is used). `delivery` left out = not read yet: the
- * invoice asks the database as the signed-in account when it is built.
+ * invoice asks the database as the signed-in account when it is built. `customerNumber` (Zoho's customer number, printed
+ * under Bill to) likewise: left out = read when the invoice is built; null = none.
  */
-export type InvoiceFacts = { zoho: ZohoInvoiceCopy | null; payments: InvoicePayment[]; paid: number | null; delivery?: InvoiceDelivery | null };
+export type InvoiceFacts = {
+  zoho: ZohoInvoiceCopy | null; payments: InvoicePayment[]; paid: number | null; delivery?: InvoiceDelivery | null;
+  customerNumber?: string | null | undefined;
+};
 
 const IST_MS = 330 * 60_000;
 const dayOf = (iso: string) => {

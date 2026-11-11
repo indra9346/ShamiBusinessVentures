@@ -19,6 +19,7 @@ import {
 import { GODOWN_SIGNATURE_BUCKET } from "@/lib/godown-signature";
 import { canvasTextImage, loadLogoPng } from "@/lib/delivery-note-pdf";
 import { deliveryQrLink, deliveryQrOrigin, drawPdfQr } from "@/lib/pdf-qr";
+import { cleanContactNumber, contactNumberLine } from "@/lib/zoho-contact-numbers";
 
 export { invoiceLines, type Line };
 
@@ -138,14 +139,30 @@ async function loadInvoiceFacts(orderNo: string): Promise<InvoiceFacts> {
   try {
     const { data: row } = await supabase.from("orders").select("id,paid_amount").eq("order_no", orderNo).maybeSingle();
     if (!row) return none;
-    const [{ data: zoho }, { data: payments }] = await Promise.all([
+    const [{ data: zoho }, { data: payments }, customerNumber] = await Promise.all([
       supabase.from("zoho_order_invoices").select("invoice_number,status,invoice_date").eq("order_id", row.id).maybeSingle(),
       // A vendor's account cannot read payments: its copy shows the totals only.
       supabase.from("payments").select("amount,method,status,txn_ref,created_at").eq("order_id", row.id),
+      loadCustomerNumber(orderNo),
     ]);
-    return { zoho: (zoho as ZohoInvoiceCopy | null) ?? null, payments: invoicePayments((payments ?? []) as InvoicePaymentRow[]), paid: Number(row.paid_amount) };
+    return { zoho: (zoho as ZohoInvoiceCopy | null) ?? null, payments: invoicePayments((payments ?? []) as InvoicePaymentRow[]), paid: Number(row.paid_amount), customerNumber };
   } catch {
     return none;
+  }
+}
+
+/**
+ * Zoho's customer number of the order's customer, printed under Bill to. The database tells only those who may open the
+ * customer copy (the customer, admins, the signing channel partner: public.invoice_customer_number); anyone else, a
+ * database without the 12 Nov 2026 update, or a customer with no number in Zoho gets null, and no line is printed.
+ */
+async function loadCustomerNumber(orderNo: string): Promise<string | null> {
+  if (STATIC_DATA_MODE) return null;
+  try {
+    const { data, error } = await supabase.rpc("invoice_customer_number", { _order_no: orderNo });
+    return error ? null : cleanContactNumber(data);
+  } catch {
+    return null;
   }
 }
 
@@ -213,8 +230,11 @@ export async function buildInvoicePdf(order: Order, options: InvoiceOptions = {}
   const zohoNumber = issuedZohoNumber(facts.zoho);
   // The delivery QR goes on a tax invoice only; it is read while the signature loads.
   const deliveryRead = !zohoNumber ? Promise.resolve(null) : facts.delivery !== undefined ? Promise.resolve(facts.delivery) : loadDeliveryCode(order.id);
+  // Zoho's customer number: with the facts when they were read here; asked now when the caller's facts left it out.
+  const customerNumberRead = facts.customerNumber !== undefined ? Promise.resolve(facts.customerNumber) : loadCustomerNumber(order.id);
   const signature = await loadOrderSignature(order.id, (context.branches.find((branch) => branch.id === order.branchId) ?? defaultBranchOf(context.branches))?.signaturePath);
   const qrCode = invoiceQrCode(zohoNumber, await deliveryRead);
+  const customerNumber = await customerNumberRead;
   const W = pdf.internal.pageSize.getWidth();
   const H = pdf.internal.pageSize.getHeight();
   const M = 14;
@@ -417,6 +437,8 @@ export async function buildInvoicePdf(order: Order, options: InvoiceOptions = {}
         // A business purchase is billed to the legal name registered with its GSTIN.
         order.businessName || order.customer || "Customer",
         order.businessName && order.customer ? `Attn: ${order.customer}` : "",
+        // "Customer No. CUS-00012": the customer's number in Zoho Books, when Zoho has given one.
+        contactNumberLine("customer", customerNumber),
         order.address,
         addressHasCity ? "" : cityLine,
         order.phone ? `Phone ${order.phone}` : "",

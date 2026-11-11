@@ -8,6 +8,7 @@ import { useApp } from "@/lib/store";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
+import { useZohoContactNumbers } from "@/hooks/use-zoho-contact-numbers";
 
 export const Route = createFileRoute("/account/profile")({
   head: () => ({
@@ -24,6 +25,8 @@ export const Route = createFileRoute("/account/profile")({
 
 function AccountProfile() {
   const { user, updateProfile } = useApp();
+  // The customer number Zoho gave this account, when it has one.
+  const customerNumber = useZohoContactNumbers(user?.id).customers.get(user?.id ?? "");
   const [name, setName] = useState(user?.name ?? "");
   const [email, setEmail] = useState(user?.email ?? "");
   const [phone, setPhone] = useState(user?.phone ?? "");
@@ -55,6 +58,13 @@ function AccountProfile() {
             <Label>Account Type</Label>
             <Input value="Retail & Bulk Buyer" disabled />
           </div>
+          {customerNumber && (
+            <div className="grid gap-1.5">
+              <Label>Customer No.</Label>
+              <Input value={customerNumber} readOnly className="font-mono" aria-describedby="customer-number-note" />
+              <p id="customer-number-note" className="text-xs text-slate">Your number in our accounts. It is printed on your invoices.</p>
+            </div>
+          )}
         </div>
         <div className="mt-6 flex justify-end">
           <Button

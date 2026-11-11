@@ -28,6 +28,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
 import { orderBelongsToUser } from "@/lib/account-identity";
+import { useZohoContactNumbers } from "@/hooks/use-zoho-contact-numbers";
 import { PickupPointCard } from "@/components/site/PickupPointCard";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -85,6 +86,8 @@ function AccountOrderDetail() {
     (candidate) => candidate.id === id && orderBelongsToUser(candidate, user),
   );
   const itemBatches = useOrderItemBatches(order?.dbOrderId, order?.items.map((item) => `${item.dbItemId}:${item.qty}:${order.status}`).join(",") ?? "");
+  // The customer number Zoho gave this account (the order is the signed-in customer's own).
+  const customerNumber = useZohoContactNumbers(user?.id).customers.get(order?.customerId || (user?.id ?? ""));
 
   // A checkout waiting for payment is not an order yet: show its payment screen.
   const hold = order ? undefined : paymentHolds.find((candidate) => candidate.orderNo === id);
@@ -246,6 +249,12 @@ function AccountOrderDetail() {
               <dt className="text-slate">Name</dt>
               <dd className="font-medium text-navy">{order.customer}</dd>
             </div>
+            {customerNumber && (
+              <div className="flex justify-between">
+                <dt className="text-slate">Customer No.</dt>
+                <dd data-no-translate className="font-mono font-semibold text-navy">{customerNumber}</dd>
+              </div>
+            )}
             <div className="flex justify-between">
               <dt className="text-slate">Email</dt>
               <dd className="font-medium text-navy">{order.email}</dd>

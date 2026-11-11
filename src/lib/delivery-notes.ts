@@ -115,6 +115,8 @@ export type DeliveryNoteView = {
   scans: DeliveryScanRow[];
   /** False while the database lacks the QR migration: the note shows, but printing is refused. */
   qrReady: boolean;
+  /** The customer's number in Zoho Books, read now for the papers (not part of the note's snapshot); null = none. */
+  customerNumber?: string | null;
 };
 
 export type DeliveryPrintRecord = {

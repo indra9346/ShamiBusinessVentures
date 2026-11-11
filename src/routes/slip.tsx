@@ -128,7 +128,7 @@ function SlipCheckPage() {
       ? { note: true, slips: [] }
       : { note: false, slips: Object.keys(print.slip_copies ?? {}).map(Number).sort((a, b) => a - b) };
     const handovers = Object.fromEntries((answer.lines ?? []).map((line) => [String(line.line), line.handover]));
-    const input = releasedPdfInput(print, { gate: answer.gate ?? { code: "not_found" }, selection, handovers, origin: window.location.origin });
+    const input = releasedPdfInput(print, { gate: answer.gate ?? { code: "not_found" }, selection, handovers, origin: window.location.origin, customerNumber: answer.customer_number ?? null });
     const { pdf, fileName } = buildDeliveryNotePdf(input, { jspdf: kit[0], logo: kit[1], textImage: canvasTextImage });
     pdf.save(fileName);
     const what = answer.action === "print_note"

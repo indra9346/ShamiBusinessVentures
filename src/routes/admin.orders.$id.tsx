@@ -51,6 +51,8 @@ import { ResizableTable } from "@/hooks/use-column-resize";
 import { ItemBatchCodes, useOrderItemBatches } from "@/components/batches/OrderItemBatches";
 import { isVoidInZoho, zohoVoidNotice } from "@/lib/zoho-void";
 import { orderTone, orderToneClass, TONE_CLASSES } from "@/lib/order-status-tone";
+import { useZohoContactNumbers } from "@/hooks/use-zoho-contact-numbers";
+import { vendorNumberOf } from "@/lib/zoho-contact-numbers";
 
 export const Route = createFileRoute("/admin/orders/$id")({
   head: ({ params }) => ({
@@ -94,8 +96,11 @@ function AdminOrderDetail() {
     updateOrderStatus,
     updateOrderItem,
     updateOrderDelivery,
+    user,
   } = useApp();
   const order = orders.find((o) => o.id === id);
+  // Zoho's customer number of the order's customer and the vendor numbers of its vendors.
+  const contactNumbers = useZohoContactNumbers(user?.id);
   const itemBatches = useOrderItemBatches(order?.dbOrderId, order?.items.map((item) => `${item.dbItemId}:${item.qty}:${order.status}`).join(",") ?? "");
   // Hooks stay above the early return: orders load after the first render.
   const [pushedZohoId, setPushedZohoId] = useState<string | null>(null);
@@ -138,6 +143,7 @@ function AdminOrderDetail() {
   // Only this order's or this customer's own GSTIN: a shared name or a blank email is not the same person.
   const matchedCustomer = customers.find((c) => c.id === order.customerId);
   const customerGstin = order.gstin || matchedCustomer?.gst;
+  const customerNumber = order.customerId ? contactNumbers.customers.get(order.customerId) : undefined;
 
   // Retrieve vendor records involved in this order
   const orderVendors = vendors.filter((v) =>
@@ -525,6 +531,12 @@ function AdminOrderDetail() {
               <dt className="text-slate">Name</dt>
               <dd className="font-semibold text-navy">{order.customer}</dd>
             </div>
+            {customerNumber && (
+              <div className="flex justify-between">
+                <dt className="text-slate">Customer No.</dt>
+                <dd data-no-translate className="font-mono font-semibold text-navy">{customerNumber}</dd>
+              </div>
+            )}
             <div className="flex justify-between">
               <dt className="text-slate">Phone</dt>
               <dd className="font-medium text-navy">{order.phone}</dd>
@@ -850,6 +862,12 @@ function AdminOrderDetail() {
                     {v.id}
                   </span>
                 </div>
+                {vendorNumberOf(contactNumbers, v.id) && (
+                  <div className="flex justify-between text-xs">
+                    <span className="text-slate">Vendor No.:</span>
+                    <span data-no-translate className="font-mono font-bold text-navy">{vendorNumberOf(contactNumbers, v.id)}</span>
+                  </div>
+                )}
                 <div className="flex justify-between text-xs">
                   <span className="text-slate">Proprietor / Contact:</span>
                   <span className="font-medium text-navy">{v.owner}</span>

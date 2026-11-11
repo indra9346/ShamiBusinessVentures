@@ -14,6 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { downloadCSV } from "@/lib/export-utils";
 import { CustomerDataLog } from "@/components/customers/CustomerDataPanel";
+import { useZohoContactNumbers } from "@/hooks/use-zoho-contact-numbers";
 
 export const Route = createFileRoute("/admin/customers")({
   head: () => ({
@@ -42,7 +43,9 @@ function AdminCustomers() {
 }
 
 function AdminCustomersPanel() {
-  const { customers, setCustomerStatus } = useApp();
+  const { customers, setCustomerStatus, user } = useApp();
+  // Zoho's customer number of each customer, when Zoho has given one.
+  const numbers = useZohoContactNumbers(user?.id);
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("all");
   const [city, setCity] = useState("all");
@@ -62,7 +65,8 @@ function AdminCustomersPanel() {
   const filtered = useMemo(() => {
     let list = customers.filter((c) => {
       const s = q.trim().toLowerCase();
-      const matchesQ = !s || c.name.toLowerCase().includes(s) || c.email.toLowerCase().includes(s) || c.phone.includes(s);
+      const matchesQ = !s || c.name.toLowerCase().includes(s) || c.email.toLowerCase().includes(s) || c.phone.includes(s)
+        || (numbers.customers.get(c.id) ?? "").toLowerCase().includes(s);
       const matchesStatus = status === "all" || c.status === status;
       const matchesCity = city === "all" || c.city === city;
       return matchesQ && matchesStatus && matchesCity;
@@ -74,7 +78,7 @@ function AdminCustomersPanel() {
       return 0;
     });
     return list;
-  }, [customers, q, status, city, sort]);
+  }, [customers, numbers, q, status, city, sort]);
 
   const pages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const pageSafe = Math.min(page, pages);
@@ -161,9 +165,10 @@ function AdminCustomersPanel() {
   const handleExportCustomers = () => {
     downloadCSV(
       "Customers_List",
-      ["Customer ID", "Name", "Email", "Phone", "City", "State", "GSTIN", "Total Orders", "Lifetime Spend (INR)", "Status", "Joined Date"],
+      ["Customer ID", "Customer No.", "Name", "Email", "Phone", "City", "State", "GSTIN", "Total Orders", "Lifetime Spend (INR)", "Status", "Joined Date"],
       filtered.map((c) => [
         c.id,
+        numbers.customers.get(c.id) ?? "",
         c.name,
         c.email,
         c.phone,
@@ -201,7 +206,7 @@ function AdminCustomersPanel() {
             >
               <Download className="mr-1.5 h-3.5 w-3.5" /> Export CSV
             </Button>
-            <Input placeholder="Search name, email, phone" value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} className="h-9 w-56" />
+            <Input placeholder="Search name, email, phone, customer no." value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} className="h-9 w-56" />
             <Select value={status} onValueChange={(v) => { setStatus(v); setPage(1); }}>
               <SelectTrigger className="h-9 w-32"><SelectValue placeholder="Status" /></SelectTrigger>
               <SelectContent>
@@ -262,7 +267,14 @@ function AdminCustomersPanel() {
             />,
             <div className="flex items-center gap-3">
               <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-navy/10 text-xs font-bold text-navy">{c.avatar}</span>
-              <Link to="/admin/customers/$id" params={{ id: c.id }} className="font-medium text-navy hover:text-gold">{c.name}</Link>
+              <div className="min-w-0">
+                <Link to="/admin/customers/$id" params={{ id: c.id }} className="font-medium text-navy hover:text-gold">{c.name}</Link>
+                {numbers.customers.get(c.id) && (
+                  <p className="text-xs text-slate">
+                    <span>Customer No.</span> <span data-no-translate className="font-mono font-semibold text-navy">{numbers.customers.get(c.id)}</span>
+                  </p>
+                )}
+              </div>
             </div>,
             <div><p className="text-charcoal">{c.email}</p><p className="text-xs text-slate">{c.phone}</p></div>,
             `${c.city}, ${c.state}`,

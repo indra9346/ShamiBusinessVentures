@@ -6,6 +6,8 @@ import { PanelLayout } from "@/components/panel/PanelLayout";
 import { Panel, StatusBadge } from "@/components/panel/widgets";
 import { vendorNav } from "@/lib/panel-nav";
 import { useApp, useVendorScope } from "@/lib/store";
+import { useZohoContactNumbers } from "@/hooks/use-zoho-contact-numbers";
+import { vendorNumberOf } from "@/lib/zoho-contact-numbers";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -29,6 +31,8 @@ function VendorProfile() {
   const { vendors, user } = useApp();
   const { vendorId } = useVendorScope();
   const vendor = vendors.find((v) => v.id === vendorId);
+  // The vendor number Zoho gave this vendor, when it has one.
+  const vendorNumber = vendorNumberOf(useZohoContactNumbers(user?.id), vendorId);
   const vendorBusiness = vendor?.business;
   const vendorOwner = vendor?.owner;
   const vendorEmail = vendor?.email;
@@ -179,6 +183,13 @@ function VendorProfile() {
               <Input value={city} readOnly aria-describedby="city-profile-note" />
               <p id="city-profile-note" className="text-xs text-slate">City is part of your approved vendor registration. Contact support to request a change.</p>
             </div>
+            {vendorNumber && (
+              <div className="grid gap-1.5">
+                <Label>Vendor No.</Label>
+                <Input value={vendorNumber} readOnly className="font-mono" aria-describedby="vendor-number-note" />
+                <p id="vendor-number-note" className="text-xs text-slate">Your number in our accounts.</p>
+              </div>
+            )}
             <div className="grid gap-1.5">
               <Label>GST Number</Label>
               <Input value={vendor.gst} disabled />

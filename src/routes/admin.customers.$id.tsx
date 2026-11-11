@@ -13,6 +13,7 @@ import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CustomerDataPanel } from "@/components/customers/CustomerDataPanel";
+import { useZohoContactNumbers } from "@/hooks/use-zoho-contact-numbers";
 
 export const Route = createFileRoute("/admin/customers/$id")({
   head: ({ params }) => ({
@@ -89,8 +90,9 @@ function CustomerAddresses({ customerId }: { customerId: string }) {
 
 function AdminCustomerDetail() {
   const { id } = Route.useParams();
-  const { customers, orders, reviews, setCustomerStatus } = useApp();
+  const { customers, orders, reviews, setCustomerStatus, user } = useApp();
   const customer = customers.find((c) => c.id === id);
+  const customerNumber = useZohoContactNumbers(user?.id).customers.get(id);
 
   if (!customer) {
     return (
@@ -192,6 +194,10 @@ function AdminCustomerDetail() {
             {customer.avatar}
           </span>
           <div className="grid flex-1 gap-1 text-sm sm:grid-cols-3">
+            <p>
+              <span className="text-slate">Customer No.:</span>{" "}
+              <span data-no-translate className="font-mono font-semibold text-navy">{customerNumber || "—"}</span>
+            </p>
             <p>
               <span className="text-slate">Phone:</span>{" "}
               <span className="font-medium text-navy">{customer.phone}</span>

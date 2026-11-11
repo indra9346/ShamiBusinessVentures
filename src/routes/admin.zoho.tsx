@@ -30,6 +30,7 @@ import {
 import { toast } from "sonner";
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { Panel, StatusBadge } from "@/components/panel/widgets";
+import { ZohoContactNumbersPanel } from "@/components/panel/ZohoContactNumbersPanel";
 import { adminNav } from "@/lib/panel-nav";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1460,6 +1461,8 @@ function ZohoCommerceAdmin() {
             <p className="rounded-md border border-dashed border-border p-4 text-sm text-slate">No customer, vendor, catalogue, or order sync jobs are recorded yet. Queue details appear after the production migration is applied.</p>
           )}
         </Panel>
+
+        <ZohoContactNumbersPanel connected={Boolean(connection)} />
 
         <section
           aria-label="Zoho data overview"

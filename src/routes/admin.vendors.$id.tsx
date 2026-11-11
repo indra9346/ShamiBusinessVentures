@@ -15,6 +15,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { supabase } from "@/integrations/supabase/client";
+import { useZohoContactNumbers } from "@/hooks/use-zoho-contact-numbers";
+import { vendorNumberOf } from "@/lib/zoho-contact-numbers";
 
 const GSTIN_PATTERN = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
 
@@ -33,7 +35,8 @@ export const Route = createFileRoute("/admin/vendors/$id")({
 
 function AdminVendorDetail() {
   const { id } = Route.useParams();
-  const { vendors, products, orders, reviews, setVendorStatus } = useApp();
+  const { vendors, products, orders, reviews, setVendorStatus, user } = useApp();
+  const vendorNumber = vendorNumberOf(useZohoContactNumbers(user?.id), id);
   const [businessForm, setBusinessForm] = useState<{ gstin: string; city: string; address: string } | null>(null);
   const [savingBusiness, setSavingBusiness] = useState(false);
   const [kycDocuments, setKycDocuments] = useState<Array<{ id: string; document_type: string; object_path: string; status: string; admin_notes: string | null; created_at: string }>>([]);
@@ -173,6 +176,7 @@ function AdminVendorDetail() {
         }
       >
         <div className="grid gap-2 text-sm sm:grid-cols-3">
+          <p><span className="text-slate">Vendor No.:</span> <span data-no-translate className="font-mono font-semibold text-navy">{vendorNumber || "—"}</span></p>
           <p><span className="text-slate">Email:</span> <span className="font-medium text-navy">{vendor.email}</span></p>
           <p><span className="text-slate">Phone:</span> <span className="font-medium text-navy">{vendor.phone}</span></p>
           <p>
