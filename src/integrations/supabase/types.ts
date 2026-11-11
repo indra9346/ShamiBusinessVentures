@@ -1445,6 +1445,7 @@ export type Database = {
       submit_utr_for_order: { Args: { _order_no: string; _utr: string; _method?: string | null }; Returns: Json }
       admin_place_ended_checkout: { Args: { _order_no: string; _utr?: string | null; _method?: string | null; _checked_against?: string | null }; Returns: Json }
       partner_payment_checkouts: { Args: Record<string, never>; Returns: { order_no: string; status: string; total: number; method: string; placed_at: string; hold_until: string | null; customer: string; items: string; utr: string | null; utr_status: string | null; utr_late: boolean; utr_sent_by: string | null }[] }
+      order_delete_with_payments_check: { Args: { _order_no: string }; Returns: Json }
       complete_follow_up_task: { Args: { _id: string; _note?: string }; Returns: Json }
       admin_reject_utr_and_end_checkout: { Args: { _order_no: string; _note: string; _expected_utr?: string | null }; Returns: boolean }
       order_delete_blocker: { Args: { _order_no: string }; Returns: string | null }

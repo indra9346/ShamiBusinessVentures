@@ -10,7 +10,7 @@ import { useApp } from "@/lib/store";
 import { DeleteOrderDialog } from "@/components/panel/DeleteOrderDialog";
 import { RecordLatePaymentDialog } from "@/components/panel/RecordLatePaymentDialog";
 import type { UpiSubmission } from "@/lib/upi-pay";
-import { DeleteAllDetailsDialog } from "@/components/panel/OrderPaymentsPanel";
+import { DeleteOrderRecordDialog } from "@/components/panel/DeleteOrderRecord";
 
 const when = (iso: string) => new Date(iso).toLocaleString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit", timeZone: "Asia/Kolkata" });
 
@@ -105,7 +105,7 @@ export function EndedCheckouts({ compact = false, submissions = [] }: { compact?
       )}
       {deleting && <DeleteOrderDialog orderNo={deleting.orderNo} onClose={() => setDeleting(null)} />}
       {recording && <RecordLatePaymentDialog orderNo={recording.orderNo} amount={recording.amount} method={recording.method} onClose={() => setRecording(null)} />}
-      {deletingAll && <DeleteAllDetailsDialog orderNo={deletingAll.orderNo} onClose={() => setDeletingAll(null)} />}
+      {deletingAll && <DeleteOrderRecordDialog orderNo={deletingAll.orderNo} onClose={() => setDeletingAll(null)} />}
     </div>
   );
 }
