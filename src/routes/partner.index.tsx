@@ -1,5 +1,6 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { PartnerPaymentsPanel } from "@/components/panel/PartnerPaymentsPanel";
+import { FavouritesBar, PanelSearch } from "@/components/panel/PanelSearch";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { CalendarCheck, IndianRupee, LogOut, RefreshCw, ScanLine, Target, Timer, Trophy } from "lucide-react";
 import { BrandLogo, LogoMark } from "@/components/brand/Logo";
@@ -95,6 +96,7 @@ function PartnerDashboard() {
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <PanelSearch panel="partner" />
             <input type="month" value={month.slice(0, 7)} max={monthStart().slice(0, 7)}
               onChange={(event) => event.target.value && setMonth(`${event.target.value}-01`)}
               className="h-9 rounded-md border border-input bg-white px-2 text-sm" aria-label="Month" />
@@ -110,6 +112,7 @@ function PartnerDashboard() {
       </header>
 
       <main className="mx-auto max-w-6xl space-y-6 px-4 py-6">
+        <FavouritesBar panel="partner" />
         {error && <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
         <GodownTransfers />
         <div className="grid gap-4 lg:grid-cols-2">

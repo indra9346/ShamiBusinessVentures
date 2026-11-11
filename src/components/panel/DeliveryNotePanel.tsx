@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { AlertTriangle, CheckCircle2, Clock, FileCheck2, Printer, QrCode, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
@@ -12,6 +12,8 @@ import { generateDeliveryNote, getDeliveryNote, reopenDeliveryHandover, setDeliv
 import { paperKindWords, releasedHowLabel, releasedWords, scanIsRefusal, scannedPaperLabel, scannerLabel, scanResultLabel, type DeliveryPaperRow } from "@/lib/delivery-papers";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { ListFilters } from "@/components/panel/ListFilters";
+import { RELEASED_FILTERS, filterCounts, matchesReleasedFilter, matchesSearch } from "@/lib/list-search";
 
 const TONES = {
   ok: "border-emerald-200 bg-emerald-50 text-emerald-900",
@@ -395,6 +397,9 @@ export function ReleasedDeliveryNotes({ showGodown = false }: { showGodown?: boo
   const [failed, setFailed] = useState("");
   const [all, setAll] = useState(false);
   const [loading, setLoading] = useState(false);
+  // Search and filter (owner, 11 Nov 2026): order, customer or note number; goods still to hand over.
+  const [query, setQuery] = useState("");
+  const [view, setView] = useState("all");
 
   const load = useCallback(async () => {
     if (STATIC_DATA_MODE) { setRows([]); return; }
@@ -416,7 +421,12 @@ export function ReleasedDeliveryNotes({ showGodown = false }: { showGodown?: boo
     return () => clearInterval(timer);
   }, [load]);
 
-  const shown = all ? rows ?? [] : (rows ?? []).slice(0, 8);
+  const found = useMemo(() => (rows ?? []).filter((row) => matchesSearch([row.order_no, row.customer, row.note_no, row.godown], query)), [rows, query]);
+  const matching = useMemo(() => found.filter((row) => matchesReleasedFilter(row, view)), [found, view]);
+  const counts = useMemo(() => filterCounts(found, RELEASED_FILTERS.map((item) => item.key), (row, key) => matchesReleasedFilter(row, key)), [found]);
+  const filtering = Boolean(query.trim()) || view !== "all";
+  // Searching or filtering shows every match; otherwise the newest 8 until "Show all".
+  const shown = all || filtering ? matching : matching.slice(0, 8);
   const waiting = (rows ?? []).filter((row) => !row.delivered && row.to_go > 0).length;
 
   return (
@@ -435,6 +445,9 @@ export function ReleasedDeliveryNotes({ showGodown = false }: { showGodown?: boo
       {rows && rows.length > 0 && (
         <>
           {waiting > 0 && <p className="mt-2 text-xs font-semibold text-amber-800">{`${waiting} with goods still to hand over`}</p>}
+          <ListFilters className="mt-2" query={query} onQuery={setQuery} placeholder="Search order no., customer or note no." shown={matching.length} total={rows.length}
+            groups={[{ label: "Hand-over", choices: RELEASED_FILTERS, value: view, onChange: setView, counts }]} />
+          {!matching.length && <p className="py-3 text-center text-sm text-slate">No delivery notes match. Clear the search or pick another filter.</p>}
           <ul className="mt-2 divide-y divide-border text-sm">
             {shown.map((row) => (
               <li key={row.note_no} className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1 py-2">
@@ -450,7 +463,7 @@ export function ReleasedDeliveryNotes({ showGodown = false }: { showGodown?: boo
               </li>
             ))}
           </ul>
-          {rows.length > 8 && (
+          {!filtering && rows.length > 8 && (
             <button type="button" className="mt-1 text-xs font-semibold text-navy hover:underline" onClick={() => setAll(!all)}>
               {all ? "Show fewer" : `Show all ${rows.length}`}
             </button>

@@ -1,3 +1,4 @@
+import { FavouritesBar, PanelSearch } from "@/components/panel/PanelSearch";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { ArrowLeft, LogOut, RefreshCw } from "lucide-react";
@@ -47,7 +48,8 @@ function PartnerAttendance() {
               <p className="text-xs text-slate">{me.name} · {me.godown}</p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <PanelSearch panel="partner" />
             <Link to="/partner" className="inline-flex h-9 items-center gap-1.5 rounded-md border border-border px-3 text-sm text-navy hover:border-gold hover:text-gold">
               <ArrowLeft className="h-4 w-4" /> Commission dashboard
             </Link>
@@ -59,6 +61,7 @@ function PartnerAttendance() {
         </div>
       </header>
       <main className="mx-auto max-w-6xl space-y-10 px-4 py-6">
+        <FavouritesBar panel="partner" />
         <AttendanceManager viewer="partner" partnerBranchId={me.branchId} />
         <StockCountLog godowns={[{ id: me.branchId, name: me.godown }]} />
       </main>

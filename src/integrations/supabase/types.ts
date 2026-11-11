@@ -627,6 +627,12 @@ export type Database = {
         Update: { id?: string; branch_id?: string; product_id?: string | null; kind?: string; value?: number; enabled?: boolean; updated_by?: string | null; updated_at?: string }
         Relationships: []
       }
+      panel_favourites: {
+        Row: { id: number; user_id: string; panel: string; item_key: string; label: string; to_path: string; find_text: string; position: number; created_at: string }
+        Insert: { user_id: string; panel: string; item_key: string; label: string; to_path: string; find_text?: string; position?: number; id?: never; created_at?: string }
+        Update: { user_id?: string; panel?: string; item_key?: string; label?: string; to_path?: string; find_text?: string; position?: number; created_at?: string }
+        Relationships: []
+      }
       ad_banners: {
         Row: { id: string; title: string; subtitle: string; media_kind: string; media_url: string; mobile_media_url: string | null; fit: string; background: string; link_url: string | null; cta_label: string; placement: string; sort_order: number; active: boolean; starts_at: string | null; ends_at: string | null; created_at: string; updated_at: string }
         Insert: { id?: string; title?: string; subtitle?: string; media_kind?: string; media_url: string; mobile_media_url?: string | null; fit?: string; background?: string; link_url?: string | null; cta_label?: string; placement?: string; sort_order?: number; active?: boolean; starts_at?: string | null; ends_at?: string | null }

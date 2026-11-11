@@ -1,6 +1,6 @@
 import { Link, useNavigate, useRouter, useRouterState } from "@tanstack/react-router";
-import { AlertTriangle, Bell, ChevronDown, ChevronsLeft, ChevronsRight, LogOut, Menu, RefreshCw, Search, X } from "lucide-react";
-import { useState, useMemo, useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
+import { AlertTriangle, Bell, ChevronDown, ChevronsLeft, ChevronsRight, LogOut, Menu, RefreshCw, X } from "lucide-react";
+import { useState, useMemo, useEffect, useLayoutEffect, useRef, useCallback, type ReactNode } from "react";
 import { toast } from "sonner";
 import { BrandLogo, LogoMark } from "@/components/brand/Logo";
 import { useApp } from "@/lib/store";
@@ -9,7 +9,6 @@ import { orderBelongsToUser } from "@/lib/account-identity";
 import { cn } from "@/lib/utils";
 import { notificationTarget } from "@/lib/notification-target";
 import { notificationBelongsToUser } from "@/lib/account-identity";
-import { Input } from "@/components/ui/input";
 import { LanguageSwitcher } from "@/components/site/LanguageSwitcher";
 import { supabase } from "@/integrations/supabase/client";
 import { adminActivityKey, clearAdminIdleClock } from "@/lib/admin-idle";
@@ -17,6 +16,7 @@ import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { AdminBranchSelect } from "@/components/panel/AdminBranchSelect";
 import { CustomerCareLine } from "@/components/panel/CustomerCareLine";
 import { AccountMenu } from "@/components/panel/AccountMenu";
+import { FavouriteToggle, FavouritesNav, PanelSearch, type PanelDataResult } from "@/components/panel/PanelSearch";
 import { useBranches } from "@/lib/branches";
 import {
   activeNavTarget,
@@ -37,14 +37,6 @@ export type NavItem = {
   label: string;
   to: string;
   icon: React.ComponentType<{ className?: string }>;
-};
-
-type PanelSearchResult = {
-  label: string;
-  detail: string;
-  to: string;
-  image?: string;
-  fallbackImage?: string;
 };
 
 const ROLE_VERIFICATION_TIMEOUT_MS = 15_000;
@@ -78,7 +70,6 @@ export function PanelLayout({
     try { localStorage.setItem(SIDEBAR_COLLAPSED_KEY, next ? "1" : "0"); } catch { /* storage blocked */ }
   };
   const [notifOpen, setNotifOpen] = useState(false);
-  const [globalQuery, setGlobalQuery] = useState("");
   const {
     user,
     hydrated,
@@ -403,8 +394,8 @@ export function PanelLayout({
     return relevantNotifs.filter((n) => !n.read).length;
   }, [relevantNotifs]);
 
-  const searchResults = useMemo<PanelSearchResult[]>(() => {
-    const query = globalQuery.trim().toLowerCase();
+  const dataResults = useCallback((typed: string): PanelDataResult[] => {
+    const query = typed.trim().toLowerCase();
     if (!query) return [];
     const vendor = vendors.find((item) => item.email.toLowerCase() === user?.email.toLowerCase());
     const availableProducts = tone === "vendor"
@@ -459,7 +450,7 @@ export function PanelLayout({
           to: tone === "admin" ? `/admin/orders/${item.id}` : tone === "vendor" ? `/vendor/orders?q=${encodeURIComponent(query)}` : `/account/orders?q=${encodeURIComponent(query)}`,
         })),
     ].slice(0, 8);
-  }, [globalQuery, products, categories, customers, vendors, orders, tone, user]);
+  }, [products, categories, customers, vendors, orders, tone, user]);
 
   // Side menu scroll: each page builds the menu again, so remember where it was scrolled to (per panel, and per
   // wide, folded and phone menu) and put it back before the page paints. Then bring this page's item into view,
@@ -585,6 +576,7 @@ export function PanelLayout({
         ref={place === "side" ? sideMenu : drawerMenu}
         onScroll={(event) => saveMenuScroll(place, event.currentTarget)}
         className={cn("flex-1 overflow-x-hidden overflow-y-auto pb-6", rail ? "space-y-0.5 px-1 pt-3 [scrollbar-width:thin]" : "space-y-1 px-3")}>
+        <FavouritesNav panel={tone} rail={rail} onPick={() => setOpen(false)} />
         {navGroups.map((group, groupIndex) => {
           // The folded rail has no room for headings: all its icons, with a thin line between sections.
           const collapsible = !rail && Boolean(group.key);
@@ -694,7 +686,10 @@ export function PanelLayout({
                 <Menu className="h-5 w-5" />
               </button>
               <div className="min-w-0">
-                <h1 className="truncate text-lg font-bold text-navy sm:text-xl">{title}</h1>
+                <div className="flex min-w-0 items-center gap-1">
+                  <h1 className="truncate text-lg font-bold text-navy sm:text-xl">{title}</h1>
+                  <FavouriteToggle panel={tone} label={title} />
+                </div>
                 {subtitle && <p className="truncate text-xs text-slate">{subtitle}</p>}
               </div>
             </div>
@@ -702,67 +697,7 @@ export function PanelLayout({
               {tone === "admin" && <AdminBranchSelect className="hidden sm:flex" />}
               <LanguageSwitcher compact className="sm:hidden" />
               <LanguageSwitcher className="hidden sm:inline-flex" />
-              <div className="relative hidden md:block">
-                <Search className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-slate" />
-                <Input
-                  placeholder={tone === "admin" ? "Search products, people, orders…" : tone === "vendor" ? "Search my products and orders…" : "Search products and my orders…"}
-                  value={globalQuery}
-                  onChange={(event) => setGlobalQuery(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" && searchResults[0]) {
-                      navigate({ to: searchResults[0].to as never });
-                      setGlobalQuery("");
-                    }
-                    if (event.key === "Escape") setGlobalQuery("");
-                  }}
-                  className="h-9 w-56 pl-9"
-                />
-                {searchResults.length > 0 && (
-                  <div className="absolute right-0 top-full z-50 mt-1 max-h-80 w-72 overflow-auto rounded-lg border border-border bg-card shadow-xl">
-                    {searchResults.map((result) => (
-                      <button
-                        key={`${result.to}-${result.label}`}
-                        type="button"
-                        onClick={() => {
-                          navigate({ to: result.to as never });
-                          setGlobalQuery("");
-                        }}
-                        className="flex w-full items-center gap-3 border-b border-border/60 px-3 py-2 text-left last:border-0 hover:bg-ivory"
-                      >
-                        {result.image ? (
-                          <img
-                            src={result.image}
-                            alt=""
-                            loading="lazy"
-                            className="h-10 w-10 shrink-0 rounded-md border border-border bg-card object-cover"
-                            onError={(event) => {
-                              const image = event.currentTarget;
-                              const fallback = result.fallbackImage ?? "/products/rice.jpg";
-                              if (image.getAttribute("src") === fallback) image.style.visibility = "hidden";
-                              else image.src = fallback;
-                            }}
-                          />
-                        ) : (
-                          <span
-                            aria-hidden="true"
-                            className="grid h-10 w-10 shrink-0 place-items-center rounded-md border border-border bg-ivory text-xs font-semibold text-slate"
-                          >
-                            {result.detail.split(" · ").at(-1)?.slice(0, 1)}
-                          </span>
-                        )}
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-sm font-medium text-navy">
-                            {result.label}
-                          </span>
-                          <span className="block truncate text-[10px] text-slate">
-                            {result.detail}
-                          </span>
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
+              <PanelSearch panel={tone} dataResults={dataResults} />
               <div className="relative">
                 <button
                   type="button"
