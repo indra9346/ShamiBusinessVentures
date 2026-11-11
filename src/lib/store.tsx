@@ -233,6 +233,8 @@ type AppState = {
   updateOrderDelivery: (orderId: string, delivery: string) => void;
   confirmPayment: (id: string, amount: number, utr: string, advancePercent?: number, method?: string) => Promise<boolean>;
   refundOrder: (id: string) => Promise<boolean>;
+  /** Admin: cancel at any step (admin_cancel_order), with a reason, whether the goods came back, and the refund if money came. */
+  cancelOrderAsAdmin: (id: string, input: { reason: string; goodsBack: boolean | null; refund: { mode: string; reference: string; refunded_on: string } | null }) => Promise<boolean>;
 
   vendors: Vendor[];
   setVendorStatus: (id: string, status: string) => Promise<boolean>;
@@ -1961,6 +1963,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
           return false;
         }
         setOrders((list) => list.map((o) => (o.id === id ? { ...o, payment: "Refunded", status: "Cancelled" } : o)));
+        return true;
+      },
+      cancelOrderAsAdmin: async (id, input) => {
+        if (!STATIC_DATA_MODE) {
+          const { error } = await supabase.rpc("admin_cancel_order", {
+            _order_no: id, _reason: input.reason.trim(), _goods_back: input.goodsBack, _refund: input.refund,
+          });
+          if (error) { toast.error("Could not cancel the order", { description: error.message }); return false; }
+          pushOrderToZohoInBackground(id);
+        }
+        setOrders((list) => list.map((o) => o.id !== id ? o : {
+          ...o,
+          status: "Cancelled",
+          ...(input.refund ? { payment: "Refunded" as const, paidAmount: 0 } : {}),
+          ...(o.vendorStatuses ? { vendorStatuses: o.vendorStatuses.map((vendor) => ({ ...vendor, status: "Cancelled" as const })) } : {}),
+        }));
         return true;
       },
 

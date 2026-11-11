@@ -57,7 +57,8 @@ test("the order page offers nothing to change once the sales order is void in Zo
   );
   for (const guard of [
     /!voidInZoho && \(\s*<Select/,
-    /!voidInZoho && \(\s*<AlertDialog>/,
+    // Changed 11 Nov 2026: cancel stays open when Zoho voided it but money was received here, to record the refund.
+    /!isCancelled && \(!voidInZoho \|\| hasUnrefundedPayment\) && <CancelOrderButton/,
     /!isCancelled && !voidInZoho && order\.status !== "Delivered"/,
     /<ZohoInvoiceStatus[^>]*readOnly=\{voidInZoho\}/,
     /<DeliveryNotePanel[^>]*readOnly=\{voidInZoho\}/,

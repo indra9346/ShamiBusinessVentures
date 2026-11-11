@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -10,6 +10,9 @@ import { useServerNow } from "@/lib/server-clock";
 import { useApp } from "@/lib/store";
 import { endPaymentHold, useUpiPayments } from "@/lib/upi-store";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 /**
  * Admin: customers whose checkout is waiting for payment right now, each with the same live
@@ -34,16 +37,8 @@ export function CustomersPayingNow({ compact = false }: { compact?: boolean }) {
     const overdue = paying.filter((hold) => holdSecondsLeft(hold.holdUntil, now) === 0).map((hold) => hold.orderNo);
     void supabase.rpc("expire_payment_holds").then(() => refreshHeldCheckouts(overdue));
   }, [anyOver, now]);
+  const [ending, setEnding] = useState<string | null>(null);
   if (compact && paying.length === 0) return null;
-  const endHold = async (orderNo: string) => {
-    if (!window.confirm(`End checkout ${orderNo}?\n\nIts stock goes back on sale and the customer is told it was not placed.`)) return;
-    try {
-      await endPaymentHold(orderNo);
-      toast.message(`${orderNo} ended`, { description: "Its stock is back on sale." });
-    } catch (cause) {
-      toast.error("Could not end it", { description: cause instanceof Error ? cause.message : undefined });
-    }
-  };
 
   return (
     <div className={cn("rounded-lg border bg-card", compact ? "mb-4 border-amber-200 p-3" : "border-border p-0")}>
@@ -80,8 +75,8 @@ export function CustomersPayingNow({ compact = false }: { compact?: boolean }) {
                     left === 0 ? "text-slate" : left <= 60 ? "text-red-700" : "text-amber-700")}>
                     {left > 0 ? <><Clock className="h-3.5 w-3.5" />{clockText(left)} left</> : <><ShieldCheck className="h-3.5 w-3.5" /> time up · check the bank</>}
                   </span>
-                  {!compact && !STATIC_DATA_MODE && (
-                    <button type="button" onClick={() => void endHold(hold.orderNo)} className="text-xs font-semibold text-danger underline">End checkout</button>
+                  {!STATIC_DATA_MODE && (
+                    <button type="button" onClick={() => setEnding(hold.orderNo)} className="text-xs font-semibold text-danger underline">End checkout</button>
                   )}
                 </div>
                 {rejected && left > 0 && (
@@ -97,6 +92,40 @@ export function CustomersPayingNow({ compact = false }: { compact?: boolean }) {
           })}
         </ul>
       )}
+      {ending && <EndCheckoutDialog orderNo={ending} onClose={() => setEnding(null)} />}
     </div>
+  );
+}
+
+/** Admin: end a checkout that is waiting for payment, saying why (kept with the cancellations in the Delete Log). */
+function EndCheckoutDialog({ orderNo, onClose }: { orderNo: string; onClose: () => void }) {
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const end = async () => {
+    setBusy(true);
+    try {
+      await endPaymentHold(orderNo, reason);
+      toast.message(`${orderNo} ended`, { description: "Its stock is back on sale." });
+      onClose();
+    } catch (cause) {
+      toast.error("Could not end it", { description: cause instanceof Error ? cause.message : undefined });
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{`End checkout ${orderNo}?`}</DialogTitle>
+          <DialogDescription>Its stock goes back on sale and the customer is told it was not placed.</DialogDescription>
+        </DialogHeader>
+        <Textarea rows={2} maxLength={300} className="bg-white text-base sm:text-sm" placeholder="Why is it being ended?" value={reason} onChange={(event) => setReason(event.target.value)} />
+        <DialogFooter className="gap-2">
+          <Button variant="outline" onClick={onClose}>Keep it</Button>
+          <Button className="bg-danger text-white hover:bg-danger/90" disabled={busy || reason.trim().length < 4} onClick={() => void end()}>{busy ? "Ending…" : "End checkout"}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

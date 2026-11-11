@@ -41,19 +41,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
 import { DeleteOrderButton } from "@/components/panel/DeleteOrderDialog";
+import { CancelOrderButton } from "@/components/panel/CancelOrderDialog";
 import { DeleteAllDetailsButton, OrderPaymentsPanel } from "@/components/panel/OrderPaymentsPanel";
 import { InvoicePreviewButton } from "@/components/site/InvoicePreviewDialog";
 import { ResizableTable } from "@/hooks/use-column-resize";
@@ -240,45 +230,9 @@ function AdminOrderDetail() {
           </Select>
           )}
 
-          {!voidInZoho && (
-          <AlertDialog>
-            <AlertDialogTrigger asChild>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={!canCancel}
-                className="text-danger hover:border-danger"
-              >
-                Cancel Order
-              </Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Cancel order {order.id}?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  {canCancel
-                    ? "This will mark the order as cancelled, stop fulfilment, and restore its available inventory."
-                    : hasUnrefundedPayment
-                      ? "Paid orders cannot be cancelled until a verified refund is completed. Refund processing is not configured yet."
-                      : order.vendorStatuses?.some((fulfillment) => ["Dispatched", "Out for Delivery", "Delivered"].includes(fulfillment.status))
-                        ? "Orders cannot be cancelled after any vendor has dispatched."
-                        : "A vendor has already started fulfilment."}
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>Back</AlertDialogCancel>
-                <AlertDialogAction
-                  onClick={async () => {
-                    if (await updateOrderStatus(order.id, "Cancelled")) toast.success(`Order ${order.id} cancelled`);
-                  }}
-                  className="bg-danger text-white hover:bg-danger/90"
-                >
-                  Confirm Cancellation
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
-          )}
+          {/* Changed 11 Nov 2026: at any step, with a reason; a paid order records its refund first. Also when Zoho voided
+              the sales order but money was received here, which is how that order gets closed. */}
+          {!isCancelled && (!voidInZoho || hasUnrefundedPayment) && <CancelOrderButton order={order} />}
           {isCancelled && <DeleteOrderButton orderNo={order.id} voidInZoho={voidInZoho} />}
           {(isCancelled || voidInZoho) && <DeleteAllDetailsButton orderNo={order.id} />}
         </div>
@@ -373,20 +327,7 @@ function AdminOrderDetail() {
                 <CheckCircle2 className="mr-1.5 h-4 w-4" /> Mark Delivered
               </Button>
             )}
-            {canCancel && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="border-rose-300 text-rose-700 hover:bg-rose-50"
-                onClick={async () => {
-                  if (await updateOrderStatus(order.id, "Cancelled")) {
-                    toast.success(`Order ${order.id} cancelled`);
-                  }
-                }}
-              >
-                Cancel Order
-              </Button>
-            )}
+            <CancelOrderButton order={order} className="border-rose-300 text-rose-700 hover:bg-rose-50" />
           </div>
         </div>
       )}
@@ -421,7 +362,7 @@ function AdminOrderDetail() {
                 ? `Order is synchronized with Zoho under Sales Order ${zohoSalesOrderId}, in ${zohoLocationLabel(orderBranch)}.`
                 : "Active write sync will automatically mirror this sales order into Zoho Inventory & Commerce."}
             </p>
-            {zohoSalesOrderId && <ZohoInvoiceStatus orderNo={order.id} audience="admin" className="mt-3" readOnly={voidInZoho} />}
+            {zohoSalesOrderId && <ZohoInvoiceStatus key={`${order.status}-${order.payment}`} orderNo={order.id} audience="admin" className="mt-3" readOnly={voidInZoho} />}
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -446,7 +387,7 @@ function AdminOrderDetail() {
         </div>
       </div>
 
-      <DeliveryNotePanel orderNo={order.id} className="mb-5" readOnly={voidInZoho} />
+      <DeliveryNotePanel key={`${order.status}-${order.payment}`} orderNo={order.id} className="mb-5" readOnly={voidInZoho} />
 
       {/* Zoho ERP Style 4-Stage Horizontal Progression Tracker */}
       <Panel title="Order Stage Progression" className="mb-5">
@@ -699,7 +640,7 @@ function AdminOrderDetail() {
         </Panel>
       </div>
 
-      <OrderPaymentsPanel orderNo={order.id} total={order.amount} />
+      <OrderPaymentsPanel key={`${order.status}-${order.payment}`} orderNo={order.id} total={order.amount} cancelled={isCancelled} />
 
       {/* Items Table with FIFO Cost and Pricing Breakdown */}
       <div className="mt-6">

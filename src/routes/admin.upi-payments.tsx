@@ -3,7 +3,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { renderSVG } from "uqr";
 import { toast } from "sonner";
-import { CheckCircle2, Clock, KeyRound, Landmark, MessageSquare, QrCode, ShieldAlert, Smartphone, XCircle } from "lucide-react";
+import { CheckCircle2, Clock, KeyRound, Landmark, MessageSquare, QrCode, ShieldAlert, Smartphone, Trash2, XCircle } from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { Panel, scrollToSection, StatCard } from "@/components/panel/widgets";
 import { adminNav } from "@/lib/panel-nav";
@@ -20,6 +20,7 @@ import { CreditHint, CreditsWithoutUtrPanel } from "@/components/panel/CreditsWi
 import { SameUtrBadge, UtrChecksPanel, useUtrChecks } from "@/components/panel/UtrChecksPanel";
 import { AWAITING_PAYMENT, clockText, holdSecondsLeft } from "@/lib/payment-hold";
 import { CustomersPayingNow } from "@/components/panel/CustomersPayingNow";
+import { DeleteUtrDialog } from "@/components/panel/DeleteUtrDialog";
 import { ResizableTable } from "@/hooks/use-column-resize";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -93,6 +94,7 @@ function AdminUpiPayments() {
   };
 
   const [confirming, setConfirming] = useState<{ orderNo: string; amount: number; utr: string } | null>(null);
+  const [deletingUtr, setDeletingUtr] = useState<{ orderNo: string; utr: string; note: string | null } | null>(null);
   const confirm = async (orderNo: string, amount: number, utr: string, checkedAgainst: string, remark: string) => {
     setConfirming(null);
     setBusy(orderNo);
@@ -315,7 +317,7 @@ function AdminUpiPayments() {
           <div className="overflow-x-auto">
             <ResizableTable tableId="upi-done" className="w-full min-w-[700px] text-left text-sm">
               <thead><tr className="border-b border-border text-[11px] font-bold uppercase tracking-wider text-slate">
-                <th className="px-2 py-2">Checked</th><th className="px-2 py-2">Order</th><th className="px-2 py-2 text-right">Amount</th><th className="px-2 py-2">UTR</th><th className="px-2 py-2">Result</th>
+                <th className="px-2 py-2">Checked</th><th className="px-2 py-2">Order</th><th className="px-2 py-2 text-right">Amount</th><th className="px-2 py-2">UTR</th><th className="px-2 py-2">Result</th><th className="px-2 py-2"><span className="sr-only">Delete</span></th>
               </tr></thead>
               <tbody>
                 {doneShown.map((s) => {
@@ -335,6 +337,17 @@ function AdminUpiPayments() {
                         : REUSED_UTR_NOTE.test(s.note ?? "") ? s.note
                         : `Rejected${s.note ? `: ${s.note}` : ""}`}
                     </td>
+                    <td className="whitespace-nowrap px-2 py-2 text-right text-xs">
+                      {s.status === "confirmed" ? (
+                        <Link to="/admin/orders/$id" params={{ id: s.orderNo }} hash="payments-received" className="font-semibold text-gold hover:underline" title="A confirmed payment is removed on its order, so the balance stays right">
+                          Remove on order
+                        </Link>
+                      ) : s.status === "rejected" && s.note !== UNCHECKED_UTR_NOTE ? (
+                        <button type="button" onClick={() => setDeletingUtr({ orderNo: s.orderNo, utr: s.utr, note: s.note ?? null })} className="inline-flex items-center gap-1 font-semibold text-danger underline">
+                          <Trash2 className="h-3.5 w-3.5" />Delete
+                        </button>
+                      ) : null}
+                    </td>
                   </tr>
                   );
                 })}
@@ -345,6 +358,7 @@ function AdminUpiPayments() {
         </Panel>
         </div>
       )}
+      {deletingUtr && <DeleteUtrDialog {...deletingUtr} onClose={() => setDeletingUtr(null)} />}
       {confirming && <ConfirmPaidDialog {...confirming} onClose={() => setConfirming(null)} onConfirm={(checkedAgainst, remark) => void confirm(confirming.orderNo, confirming.amount, confirming.utr, checkedAgainst, remark)} />}
     </PanelLayout>
   );

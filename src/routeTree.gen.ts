@@ -43,6 +43,7 @@ import { Route as AdminCommissionsRouteImport } from './routes/admin.commissions
 import { Route as AdminCouponsRouteImport } from './routes/admin.coupons'
 import { Route as AdminCustomersRouteImport } from './routes/admin.customers'
 import { Route as AdminDashboardRouteImport } from './routes/admin.dashboard'
+import { Route as AdminDeleteLogRouteImport } from './routes/admin.delete-log'
 import { Route as AdminDeliveryNotesRouteImport } from './routes/admin.delivery-notes'
 import { Route as AdminEnquiriesRouteImport } from './routes/admin.enquiries'
 import { Route as AdminFollowUpsRouteImport } from './routes/admin.follow-ups'
@@ -278,6 +279,11 @@ const AdminCustomersRoute = AdminCustomersRouteImport.update({
 const AdminDashboardRoute = AdminDashboardRouteImport.update({
   id: '/admin/dashboard',
   path: '/admin/dashboard',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminDeleteLogRoute = AdminDeleteLogRouteImport.update({
+  id: '/admin/delete-log',
+  path: '/admin/delete-log',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AdminDeliveryNotesRoute = AdminDeliveryNotesRouteImport.update({
@@ -646,6 +652,7 @@ export interface FileRoutesByFullPath {
   '/admin/coupons': typeof AdminCouponsRoute
   '/admin/customers': typeof AdminCustomersRouteWithChildren
   '/admin/dashboard': typeof AdminDashboardRoute
+  '/admin/delete-log': typeof AdminDeleteLogRoute
   '/admin/delivery-notes': typeof AdminDeliveryNotesRoute
   '/admin/enquiries': typeof AdminEnquiriesRouteWithChildren
   '/admin/follow-ups': typeof AdminFollowUpsRoute
@@ -747,6 +754,7 @@ export interface FileRoutesByTo {
   '/admin/coupons': typeof AdminCouponsRoute
   '/admin/customers': typeof AdminCustomersRouteWithChildren
   '/admin/dashboard': typeof AdminDashboardRoute
+  '/admin/delete-log': typeof AdminDeleteLogRoute
   '/admin/delivery-notes': typeof AdminDeliveryNotesRoute
   '/admin/enquiries': typeof AdminEnquiriesRouteWithChildren
   '/admin/follow-ups': typeof AdminFollowUpsRoute
@@ -850,6 +858,7 @@ export interface FileRoutesById {
   '/admin/coupons': typeof AdminCouponsRoute
   '/admin/customers': typeof AdminCustomersRouteWithChildren
   '/admin/dashboard': typeof AdminDashboardRoute
+  '/admin/delete-log': typeof AdminDeleteLogRoute
   '/admin/delivery-notes': typeof AdminDeliveryNotesRoute
   '/admin/enquiries': typeof AdminEnquiriesRouteWithChildren
   '/admin/follow-ups': typeof AdminFollowUpsRoute
@@ -954,6 +963,7 @@ export interface FileRouteTypes {
     | '/admin/coupons'
     | '/admin/customers'
     | '/admin/dashboard'
+    | '/admin/delete-log'
     | '/admin/delivery-notes'
     | '/admin/enquiries'
     | '/admin/follow-ups'
@@ -1055,6 +1065,7 @@ export interface FileRouteTypes {
     | '/admin/coupons'
     | '/admin/customers'
     | '/admin/dashboard'
+    | '/admin/delete-log'
     | '/admin/delivery-notes'
     | '/admin/enquiries'
     | '/admin/follow-ups'
@@ -1157,6 +1168,7 @@ export interface FileRouteTypes {
     | '/admin/coupons'
     | '/admin/customers'
     | '/admin/dashboard'
+    | '/admin/delete-log'
     | '/admin/delivery-notes'
     | '/admin/enquiries'
     | '/admin/follow-ups'
@@ -1252,6 +1264,7 @@ export interface RootRouteChildren {
   AdminCouponsRoute: typeof AdminCouponsRoute
   AdminCustomersRoute: typeof AdminCustomersRouteWithChildren
   AdminDashboardRoute: typeof AdminDashboardRoute
+  AdminDeleteLogRoute: typeof AdminDeleteLogRoute
   AdminDeliveryNotesRoute: typeof AdminDeliveryNotesRoute
   AdminEnquiriesRoute: typeof AdminEnquiriesRouteWithChildren
   AdminFollowUpsRoute: typeof AdminFollowUpsRoute
@@ -1548,6 +1561,13 @@ declare module '@tanstack/react-router' {
       path: '/admin/dashboard'
       fullPath: '/admin/dashboard'
       preLoaderRoute: typeof AdminDashboardRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/delete-log': {
+      id: '/admin/delete-log'
+      path: '/admin/delete-log'
+      fullPath: '/admin/delete-log'
+      preLoaderRoute: typeof AdminDeleteLogRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/admin/delivery-notes': {
@@ -2188,6 +2208,7 @@ const rootRouteChildren: RootRouteChildren = {
   AdminCouponsRoute: AdminCouponsRoute,
   AdminCustomersRoute: AdminCustomersRouteWithChildren,
   AdminDashboardRoute: AdminDashboardRoute,
+  AdminDeleteLogRoute: AdminDeleteLogRoute,
   AdminDeliveryNotesRoute: AdminDeliveryNotesRoute,
   AdminEnquiriesRoute: AdminEnquiriesRouteWithChildren,
   AdminFollowUpsRoute: AdminFollowUpsRoute,

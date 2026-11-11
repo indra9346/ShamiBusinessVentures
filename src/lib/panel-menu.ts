@@ -113,7 +113,7 @@ export type MenuGroup<T> = { key: string; label: string; items: T[] };
 
 const ADMIN_GROUPS: { key: string; label: string; pages: string[] }[] = [
   { key: "", label: "", pages: ["/admin/dashboard"] },
-  { key: "sales", label: "Sales", pages: ["/admin/orders", "/admin/delivery-notes", "/admin/customers", "/admin/enquiries", "/admin/follow-ups", "/admin/coupons"] },
+  { key: "sales", label: "Sales", pages: ["/admin/orders", "/admin/delivery-notes", "/admin/customers", "/admin/enquiries", "/admin/follow-ups", "/admin/coupons", "/admin/delete-log"] },
   { key: "money", label: "Payments", pages: ["/admin/payments", "/admin/upi-payments", "/admin/payouts", "/admin/commissions"] },
   { key: "products", label: "Products", pages: ["/admin/products", "/admin/product-codes", "/admin/categories", "/admin/pricing", "/admin/ads"] },
   { key: "inventory", label: "Inventory", pages: ["/admin/inventory", "/admin/batches", "/admin/stock-counts", "/admin/rice-samples"] },

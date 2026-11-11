@@ -12,6 +12,7 @@ import {
 } from "@/lib/batches";
 import { awaitingImportApproval, zohoItemAsHiddenProduct, zohoItemImportable, zohoItemSaleProblem, zohoItemsNotOnWebsite } from "@/lib/zoho-item-import";
 import { zohoDiscountFields } from "@/lib/zoho-sync-core";
+import { liveZohoInvoices, matchRefundPayments, refundAlreadyInZoho, zohoRefundBody, zohoRefundProblem, zohoVoidRefusedReview, type ListedZohoRefund, type WebsiteRefund } from "@/lib/zoho-cancel";
 import {
   cleanEmailList, godownPricesFromPricebook, godownStockFromZohoItem, mergeGodownPrices, newOrderEmail, parseZohoItemSyncVendorIds, pendingOrderQty, sameGodownPrices,
   zohoPricebookItemsFor, reconcileCatalog, reconcileCustomers, reconcileOrders, shouldRetryZohoCall,
@@ -2592,17 +2593,33 @@ async function syncLinkedZohoOrder(
   let zoho = await load();
   const zohoStatus = () => str(zoho["order_status"] ?? zoho["status"]).toLowerCase();
 
+  // Problems with the money in Zoho Books, raised once the goods side is done.
+  const moneyIssues: ZohoMoneyIssues = { review: [], retry: [] };
   if (order.order_status === "Cancelled") {
+    // Added 11 Nov 2026: its Books invoices are voided and the refunds recorded there first, so nothing in Books still
+    // counts a cancelled order as owed or paid.
+    await settleZohoBooksForCancelledOrder(db, region, organizationId, token, order, zoho, moneyIssues);
     if (!["void", "cancelled"].includes(zohoStatus())) {
-      // Zoho voids only confirmed sales orders; a draft must be confirmed first.
-      if (zohoStatus() === "draft") {
-        await inventoryRequest(region, organizationId, token, `${path}/status/confirmed`, "POST");
+      try {
+        // Zoho voids only confirmed sales orders; a draft must be confirmed first.
+        if (zohoStatus() === "draft") {
+          await inventoryRequest(region, organizationId, token, `${path}/status/confirmed`, "POST");
+        }
+        await inventoryRequest(region, organizationId, token, `${path}/status/void`, "POST");
+      } catch (cause) {
+        const message = cause instanceof Error ? cause.message : String(cause);
+        // Zoho not reached, or its daily limit: the queue tries again by itself.
+        if (/could not be reached/i.test(message) || isZohoDailyLimitError(message)) throw cause;
+        await saveZohoZohoState(db, order.id, zoho);
+        const goodsBack = await cancelledGoodsBack(db, order.id);
+        throw new NeedsReviewError([...moneyIssues.review, ...moneyIssues.retry,
+          zohoVoidRefusedReview(order.order_no, str(zoho["salesorder_number"]), `${message}${zohoPermissionHint(message)}`, zoho, goodsBack)].join(" "));
       }
-      await inventoryRequest(region, organizationId, token, `${path}/status/void`, "POST");
       zoho = await load();
       if (!["void", "cancelled"].includes(zohoStatus())) {
         await saveZohoZohoState(db, order.id, zoho);
-        throw new NeedsReviewError(`Grain Bazar order ${order.order_no} is cancelled, but Zoho sales order ${str(zoho["salesorder_number"])} is still ${zohoStatus()}. Void it in Zoho.`);
+        throw new NeedsReviewError([...moneyIssues.review, ...moneyIssues.retry,
+          `Grain Bazar order ${order.order_no} is cancelled, but Zoho sales order ${str(zoho["salesorder_number"])} is still ${zohoStatus()}. Void it in Zoho.`].join(" "));
       }
     }
   } else if (ZOHO_CLOSED_ORDER_STATES.includes(zohoStatus())) {
@@ -2660,7 +2677,6 @@ async function syncLinkedZohoOrder(
   if (orderAddress.written) zoho = await load();
   // Confirmed by the admin: the Zoho Books invoice, with the verified payments recorded on it.
   let invoiceAddressProblem: string | null = null;
-  const moneyIssues: ZohoMoneyIssues = { review: [], retry: [] };
   if (orderNeedsZohoInvoice(order.order_status) && !["draft", ...ZOHO_CLOSED_ORDER_STATES].includes(zohoStatus())) {
     if (await syncZohoOrderInvoice(db, region, organizationId, token, order, zoho, (problem) => { invoiceAddressProblem = problem; }, moneyIssues)) zoho = await load();
     // Now, in case packing below stops the sync first.
@@ -2758,6 +2774,123 @@ async function depositAccountForOrder(
     godowns = (data ?? []).map((row) => ({ id: row.id, zohoLocationId: str(row.zoho_location_id) }));
   }
   return depositAccountFor(accounts, godownOfPayment(orderBranch, str(zoho["location_id"]), godowns));
+}
+
+/** After dispatch the admin said whether the goods came back (order_cancellations.goods_back); null before dispatch. */
+async function cancelledGoodsBack(db: Awaited<ReturnType<typeof dbAdmin>>, orderId: string) {
+  const { data } = await db.from("order_cancellations").select("goods_back").eq("order_id", orderId).maybeSingle();
+  return data?.goods_back ?? null;
+}
+
+/**
+ * Zoho Books for an order cancelled on the website (src/lib/zoho-cancel.ts says why in this order):
+ *   1. a refund whose Books payment id the website lost finds it on the invoice by its UTR;
+ *   2. every invoice that still counts is voided, which leaves its payments as the customer's credit in Books;
+ *   3. each refund the admin recorded is recorded in Books against its payment, from the account the money went into.
+ * Every step looks at Zoho first, so a retry never refunds twice. Nothing is deleted in Zoho. What Zoho refused goes
+ * into `moneyIssues`.
+ */
+async function settleZohoBooksForCancelledOrder(
+  db: Awaited<ReturnType<typeof dbAdmin>>,
+  region: Region,
+  organizationId: string,
+  token: string,
+  order: Database["public"]["Tables"]["orders"]["Row"],
+  zoho: Record<string, unknown>,
+  moneyIssues: ZohoMoneyIssues,
+) {
+  const invoices = liveZohoInvoices(zoho);
+  const { data: rows, error } = await db.from("order_refunds")
+    .select("id,amount,mode,reference,refunded_on,paid_ref,zoho_payment_id,zoho_refunded_at").eq("order_id", order.id).order("created_at");
+  if (error) throw new Error("Could not read the order's refunds from Grain Bazar");
+  const refunds: WebsiteRefund[] = (rows ?? []).filter((row) => !row.zoho_refunded_at).map((row) => ({
+    id: row.id, amount: Number(row.amount), mode: row.mode, reference: row.reference, refundedOn: row.refunded_on,
+    paidRef: row.paid_ref, zohoPaymentId: row.zoho_payment_id,
+  }));
+  if (!invoices.length && !refunds.some((refund) => refund.zohoPaymentId)) return;
+  const said = (cause: unknown) => {
+    const message = cause instanceof Error ? cause.message : String(cause);
+    return `${message}${zohoPermissionHint(message)}`;
+  };
+
+  // 1. Its Books payment, for a refund whose payment was sent to Zoho but whose id never came back.
+  if (refunds.some((refund) => !refund.zohoPaymentId && refund.paidRef)) {
+    for (const invoice of invoices) {
+      try {
+        const listed = await booksRequest<{ payments?: { payment_id?: string; reference_number?: string; amount?: number }[] }>(region, organizationId, token, `invoices/${encodeURIComponent(invoice.id)}/payments`, "GET");
+        const found = matchRefundPayments(refunds, (listed.payments ?? []).map((payment) => ({ paymentId: str(payment.payment_id), reference: str(payment.reference_number), amount: Number(payment.amount) || 0 })));
+        for (const [refundId, paymentId] of found) {
+          await db.from("order_refunds").update({ zoho_payment_id: paymentId }).eq("id", refundId).is("zoho_payment_id", null);
+          const refund = refunds.find((row) => row.id === refundId);
+          if (refund) refund.zohoPaymentId = paymentId;
+        }
+      } catch (cause) {
+        moneyIssues.retry.push(`Zoho Books invoice ${invoice.number || invoice.id} of cancelled Grain Bazar order ${order.order_no}: reading its payments failed: ${said(cause)}.`);
+      }
+    }
+  }
+
+  // 2. Void what still counts. A refund needs its payment off the invoice first, so a refusal here stops the refunds.
+  let voided = true;
+  for (const invoice of invoices) {
+    try {
+      await booksRequest(region, organizationId, token, `invoices/${encodeURIComponent(invoice.id)}/status/void`, "POST");
+      console.info(zohoLogLine("zoho_invoice_voided_on_cancel", { order: order.order_no, invoice: invoice.number || invoice.id }));
+      await db.from("zoho_order_invoices").update({ status: "void", updated_at: new Date().toISOString() }).eq("order_id", order.id).eq("zoho_invoice_id", invoice.id);
+    } catch (cause) {
+      voided = false;
+      moneyIssues.review.push(`Zoho Books invoice ${invoice.number || invoice.id} of cancelled Grain Bazar order ${order.order_no} could not be voided: ${said(cause)}. Void it in Zoho Books, then Retry.`);
+    }
+  }
+  if (!voided) return;
+
+  // 3. The refunds. Claimed before the post, so two syncs at once cannot both send one; a lost answer is found by 3a next time.
+  for (const refund of refunds) {
+    if (!refund.zohoPaymentId) continue;
+    const paymentPath = `customerpayments/${encodeURIComponent(refund.zohoPaymentId)}`;
+    const note = async (refundId: string) => {
+      await db.from("order_refunds").update({ zoho_refund_id: refundId, zoho_refunded_at: new Date().toISOString(), zoho_problem: null }).eq("id", refund.id);
+    };
+    try {
+      // 3a. Already there?
+      const listed = await booksRequest<{ payment_refunds?: ListedZohoRefund[] }>(region, organizationId, token, `${paymentPath}/refunds`, "GET");
+      const already = refundAlreadyInZoho(listed.payment_refunds ?? [], refund, order.order_no);
+      if (already) { await note(already); continue; }
+    } catch (cause) {
+      moneyIssues.retry.push(zohoRefundProblem(order.order_no, refund.amount, `reading the payment's refunds failed: ${said(cause)}`));
+      continue;
+    }
+    const staleClaim = new Date(Date.now() - 10 * 60_000).toISOString();
+    const { data: claimed, error: claimError } = await db.from("order_refunds").update({ zoho_claimed_at: new Date().toISOString() })
+      .eq("id", refund.id).is("zoho_refund_id", null).or(`zoho_claimed_at.is.null,zoho_claimed_at.lt.${staleClaim}`).select("id");
+    if (claimError) throw new Error("Could not note the refund before sending it to Zoho");
+    if (!claimed?.length) continue;
+    let account = "";
+    try {
+      const read = await booksRequest<{ payment?: { account_id?: string } }>(region, organizationId, token, paymentPath, "GET");
+      account = str(read.payment?.account_id);
+    } catch (cause) {
+      await db.from("order_refunds").update({ zoho_claimed_at: null }).eq("id", refund.id);
+      moneyIssues.retry.push(zohoRefundProblem(order.order_no, refund.amount, `reading the payment failed: ${said(cause)}`));
+      continue;
+    }
+    if (!account) {
+      await db.from("order_refunds").update({ zoho_claimed_at: null, zoho_problem: "Zoho did not say which account the payment went into" }).eq("id", refund.id);
+      moneyIssues.review.push(zohoRefundProblem(order.order_no, refund.amount, "Zoho did not say which account the payment went into"));
+      continue;
+    }
+    try {
+      const created = await booksRequest<{ payment_refunds?: { payment_refund_id?: string }[] }>(region, organizationId, token, `${paymentPath}/refunds`, "POST",
+        zohoRefundBody(refund, order.order_no, account));
+      await note(str(created.payment_refunds?.[0]?.payment_refund_id) || "recorded");
+      console.info(zohoLogLine("zoho_refund_recorded", { order: order.order_no, amount: refund.amount }));
+    } catch (cause) {
+      // Not sent, or the answer was lost: the next sync looks at Zoho's refunds first either way.
+      const message = said(cause);
+      await db.from("order_refunds").update({ zoho_claimed_at: null, zoho_problem: message.slice(0, 500) }).eq("id", refund.id);
+      moneyIssues.retry.push(zohoRefundProblem(order.order_no, refund.amount, message));
+    }
+  }
 }
 
 /**
