@@ -230,7 +230,8 @@ test("the admin action: small batches, the call log, the daily-limit pause, read
 test("the pages read the numbers through the database function, and show nothing when it is not there", () => {
   const hook = read("src/hooks/use-zoho-contact-numbers.ts");
   assert.match(hook, /supabase\.rpc\("zoho_contact_numbers"\)/);
-  assert.match(hook, /return error \? NO_CONTACT_NUMBERS : contactNumbersFrom\(data\);/);
+  // Read in pages of 1000 (review, 12 Nov 2026); an error before any page means no numbers.
+  assert.match(hook, /if \(error\) return rows\.length \? contactNumbersFrom\(rows\) : NO_CONTACT_NUMBERS;/);
   const pages: [string, RegExp[]][] = [
     ["src/routes/admin.customers.tsx", [/numbers\.customers\.get\(c\.id\)/, /<span>Customer No\.<\/span>/, /"Customer No\.",/]],
     ["src/routes/admin.customers.$id.tsx", [/Customer No\.:<\/span>/, /customers\.get\(id\)/]],
@@ -277,5 +278,5 @@ test("the delivery papers get the number when printed, from the website's own re
 
 test("the test runs with the Zoho tests", () => {
   const scripts = JSON.parse(read("package.json")).scripts as Record<string, string>;
-  assert.ok(scripts["test:zoho"]!.trim().endsWith("tests/zoho-contact-numbers.test.ts"));
+  assert.ok(scripts["test:zoho"]!.split(/\s+/).includes("tests/zoho-contact-numbers.test.ts"));
 });
