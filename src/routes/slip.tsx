@@ -10,11 +10,12 @@ import { istDateTime } from "@/lib/delivery-notes";
 import { buildDeliveryNotePdf, canvasTextImage, loadLogoPng, releasedPdfInput } from "@/lib/delivery-note-pdf";
 import { scanDeliveryPaper } from "@/lib/delivery-notes.functions";
 import {
-  CUSTOMER_SCAN_WORDS, codeFromHash, invoiceScanWords, isInvoiceScan, paperKindWords, paperName, phoneWords, readScannedText, releasedWords, roleTitle,
+  CUSTOMER_SCAN_WORDS, codeFromHash, handoverWho, invoiceScanWords, isInvoiceScan, paperKindWords, paperName, phoneWords, readScannedText, releasedWords, roleTitle,
   roleWords, scannedTextWords, scanWords,
   type Bi, type InvoiceScan, type InvoiceScanAction, type PaperScan, type PaperScanLine, type ScannerRole, type ScanTone, type ScanWords,
 } from "@/lib/delivery-papers";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
+import { godownDetails, godownLine } from "@/lib/invoice-lines";
 import { cn } from "@/lib/utils";
 
 /*
@@ -435,6 +436,13 @@ function LineList({ lines, handedNow, ticking, ticked, onTick }: { lines: PaperS
             ) : (
               <div className={cn("flex items-start justify-between gap-3", ticking && "opacity-60")}>{label}</div>
             )}
+            {/* Who handed it over, when, with their mobile (owner, 11 Nov 2026). */}
+            {line.handover && (
+              <p className="break-words text-[11px] font-semibold opacity-90">
+                Handed over {istDateTime(line.handover.at)} by {handoverWho(line.handover).en}
+                <span className="block font-normal" lang="kn">{istDateTime(line.handover.at)} ರಂದು {handoverWho(line.handover).kn} ಅವರಿಂದ ಹಸ್ತಾಂತರ</span>
+              </p>
+            )}
           </li>
         );
       })}
@@ -445,7 +453,7 @@ function LineList({ lines, handedNow, ticking, ticked, onTick }: { lines: PaperS
 /** "Checked 12 Nov 2026, … by Ravi (godown in-charge, Challakere Godown, own phone)". */
 function CheckedBy({ scan }: { scan: PaperScan | InvoiceScan }) {
   return (
-    <p className="mt-2 text-[11px] opacity-80">Checked {istDateTime(scan.scanned_at)} by {scan.by} ({roleWords(scan.role).en}{scan.godown ? `, ${scan.godown}` : ""}, {phoneWords(Boolean(scan.device?.registered)).en}{scan.device?.registered && scan.device.label ? `: ${scan.device.label}` : ""})</p>
+    <p className="mt-2 text-[11px] opacity-80">Checked {istDateTime(scan.scanned_at)} by {scan.by} ({roleWords(scan.role).en}{"by_phone" in scan && scan.by_phone ? `, mobile ${scan.by_phone}` : ""}{scan.godown ? `, ${scan.godown}` : ""}, {phoneWords(Boolean(scan.device?.registered)).en}{scan.device?.registered && scan.device.label ? `: ${scan.device.label}` : ""})</p>
   );
 }
 
@@ -492,6 +500,8 @@ function InvoiceFacts({ scan, tone, ticking, ticked, onTick }: { scan: InvoiceSc
       <p className="mt-2 font-bold">Delivery note {note.note_no} released · ಡೆಲಿವರಿ ನೋಟ್ {note.note_no} ಬಿಡುಗಡೆಯಾಗಿದೆ</p>
       <Both className="text-xs" knClassName="opacity-90" text={released} />
       <p className="mt-1 text-xs">Invoice · ಇನ್‌ವಾಯ್ಸ್ {note.invoice_number || "—"} · Godown · ಗೋದಾಮು: {note.godown || scan.order_godown || "—"}</p>
+      {/* The godown's address, phone and channel partner, as the invoice prints them under the QR. */}
+      {godownLine(godownDetails(scan.godown_details)) && <p className="break-words text-[11px] opacity-90">{godownLine(godownDetails(scan.godown_details))}</p>}
       <LineList lines={scan.lines ?? []} handedNow={scan.handed_now ?? []} ticking={ticking} ticked={ticked} onTick={onTick} />
       <CheckedBy scan={scan} />
     </div>

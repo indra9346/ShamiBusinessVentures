@@ -179,10 +179,10 @@ const PEOPLE_WHO_WORK_WITH_US: PolicySection = {
       lead: "Vendors",
       text: "Your business details, and the GST certificate, PAN card and bank account proof you upload for verification, which are kept in private storage.",
     },
-    { lead: "Channel partners", text: "Your contact details, your godown, its sales, your commission and payouts, and the signature you give us for your godown's invoices." },
+    { lead: "Channel partners", text: "Your contact details, your godown, its sales, your commission and payouts, and the signature you give us for your godown's invoices. Your name and mobile number are printed with your godown's details on its customers' invoices, under the delivery QR, and shown on their order pages." },
     {
       lead: "Delivery handovers",
-      text: "When you scan the QR on a customer's invoice, or a delivery paper printed earlier, we keep who scanned it, when, at which godown, on which phone, which order, what was printed and which items were handed over. If head office makes you the godown in-charge, we keep who did it and when.",
+      text: "When you scan the QR on a customer's invoice, or a delivery paper printed earlier, we keep who scanned it, when, at which godown, on which phone, which order, what was printed and which items were handed over. If head office makes you the godown in-charge, we keep who did it and when. After you hand over goods, your name, role, mobile number, the time and the godown are printed on that customer's invoice under the delivery QR and shown on their order page.",
     },
   ],
 };

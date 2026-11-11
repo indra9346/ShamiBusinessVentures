@@ -77,7 +77,8 @@ export type PaperScanResult =
 export type ScannerRole = "admin" | "incharge" | "staff" | "partner";
 export type PaperKind = "original" | "duplicate" | "replacement";
 
-export type PaperHandover = { at: string; by: string; role: ScannerRole; godown: string; registered_phone?: boolean; round?: number };
+/** `phone`: the hand-over person's mobile, kept from 12 Nov 2026 (empty on older hand-overs). */
+export type PaperHandover = { at: string; by: string; role: ScannerRole; godown: string; registered_phone?: boolean; round?: number; phone?: string };
 
 export type PaperScanLine = { line: number; name: string; qty: number; pack_size: string; stock_no: string; handover: PaperHandover | null };
 
@@ -141,10 +142,11 @@ export const roleTitle = (role: string): Bi => ROLE_TITLES[role as ScannerRole] 
 export const phoneWords = (registered: boolean): Bi =>
   (registered ? bi("godown's registered phone", "ಗೋದಾಮಿನ ನೋಂದಾಯಿತ ಫೋನ್") : bi("own phone", "ಸ್ವಂತ ಫೋನ್"));
 
-/** "Ravi (staff, Challakere Godown, own phone)" */
-export function personWords(by: string, role: string, godown: string, registered?: boolean): Bi {
+/** "Ravi (staff, mobile 9000000011, Challakere Godown, own phone)": the mobile once the database keeps it (12 Nov 2026). */
+export function personWords(by: string, role: string, godown: string, registered?: boolean, mobile?: string | null): Bi {
   const part = (lang: keyof Bi) =>
-    [roleWords(role)[lang], godown, registered === undefined ? "" : phoneWords(registered)[lang]].filter(Boolean).join(", ");
+    [roleWords(role)[lang], mobile ? `${lang === "kn" ? "ಮೊಬೈಲ್" : "mobile"} ${mobile}` : "", godown, registered === undefined ? "" : phoneWords(registered)[lang]]
+      .filter(Boolean).join(", ");
   return bi(`${by} (${part("en")})`, `${by} (${part("kn")})`);
 }
 
@@ -161,7 +163,8 @@ export function paperKindWords(kind: string | null | undefined, duplicateNo?: nu
   return bi("Original", "ಮೂಲ ಪ್ರತಿ");
 }
 
-const handoverWho = (handover: PaperHandover) => personWords(handover.by, handover.role, handover.godown, handover.registered_phone);
+/** "Ravi (godown staff, mobile 9…, Challakere Godown, own phone)" for one hand-over. */
+export const handoverWho = (handover: PaperHandover) => personWords(handover.by, handover.role, handover.godown, handover.registered_phone, handover.phone);
 
 /** "Handed over 10 Nov 2026, 10:32:15 AM IST by Ravi (staff, …)" for each line already handed over. */
 export function handoverLines(lines: PaperScanLine[] | undefined, many: boolean): Bi[] {
@@ -373,6 +376,12 @@ export type ReleasePrint = {
   };
 };
 
+/** A godown's details as private.delivery_godown_details gives them, with its active channel partner (12 Nov 2026). */
+export type GodownDetailsAnswer = {
+  id?: string; name?: string; address?: string; city?: string; state?: string; pincode?: string; phone?: string; gstin?: string;
+  partner_name?: string; partner_phone?: string;
+};
+
 /** What the database answered for one scan of an invoice's QR (public.delivery_invoice_scan). */
 export type InvoiceScan = {
   kind: "invoice";
@@ -385,6 +394,9 @@ export type InvoiceScan = {
   /** The scanner's godown, and the order's; the scanner's is empty for an administrator. */
   godown: string;
   order_godown: string;
+  /** The scanner's mobile and the order's godown with its channel partner (12 Nov 2026; absent before that update). */
+  by_phone?: string;
+  godown_details?: GodownDetailsAnswer | null;
   device?: { registered: boolean; label: string };
   /** What this person may do now (the in-charge and admins everything; staff and the partner what the admin allows). */
   can?: { print_note: boolean; print_slips: boolean; handover: boolean };
@@ -503,7 +515,7 @@ const LAST_READING = bi("Zoho Books could not be read just now, so the payment w
 export function invoiceScanWords(scan: InvoiceScan): ScanWords {
   const note = scan.note?.note_no ?? scan.print?.note.note_no ?? "";
   const order = scan.invoice?.order_no || scan.note?.order_no || "";
-  const me = personWords(scan.by, scan.role, scan.godown, scan.device?.registered);
+  const me = personWords(scan.by, scan.role, scan.godown, scan.device?.registered, scan.by_phone);
   const toGo = (scan.lines ?? []).filter((line) => !line.handover).map((line) => line.line);
   const stillToGo = toGo.length
     ? [bi(`Still to go: item${plural(toGo.length)} ${toGo.join(", ")}.`, `ಇನ್ನೂ ಕೊಡಬೇಕಾದವು: ಸರಕು ${toGo.join(", ")}.`)] : [];
@@ -691,6 +703,8 @@ export function handedOverWarning(handover: PaperHandover | null | undefined) {
 export type DeliveryHandoverRow = {
   id: number; slip_line: number; round: number; actor_name: string; actor_role: string; branch_name: string;
   device_registered: boolean; device_label: string; gate_code: string; gate_source: string; handed_over_at: string;
+  /** The hand-over person's mobile (12 Nov 2026; empty on older rows). */
+  actor_phone?: string;
 };
 
 /** An administrator's reopening of a handed-over item (public.delivery_handover_reopens). */
@@ -717,9 +731,9 @@ export function scannedPaperLabel(row: Pick<DeliveryScanRow, "doc" | "slip_line"
   return `${row.doc === "note" ? "Note" : `Slip ${row.slip_line}`}, ${paperKindWords(row.paper_kind, row.duplicate_no).en.toLowerCase()}`;
 }
 
-/** "Ravi (staff, Challakere Godown, own phone)" for the history. */
-export const scannerLabel = (row: Pick<DeliveryScanRow, "actor_name" | "actor_role" | "branch_name" | "device_registered" | "device_label">) =>
-  `${personWords(row.actor_name, row.actor_role, row.branch_name, row.device_registered).en.replace(/\)$/, "")}${row.device_registered && row.device_label ? `: ${row.device_label}` : ""})`;
+/** "Ravi (staff, mobile 9…, Challakere Godown, own phone)" for the history; the mobile where the row keeps one. */
+export const scannerLabel = (row: Pick<DeliveryScanRow, "actor_name" | "actor_role" | "branch_name" | "device_registered" | "device_label"> & { actor_phone?: string | null | undefined }) =>
+  `${personWords(row.actor_name, row.actor_role, row.branch_name, row.device_registered, row.actor_phone).en.replace(/\)$/, "")}${row.device_registered && row.device_label ? `: ${row.device_label}` : ""})`;
 
 /** Plain words for a kept scan, for the admin's history. "replaced" covers a replaced original and a replaced invoice QR. */
 export const SCAN_RESULT_LABELS: Record<PaperScanResult | InvoiceScanResult, string> = {

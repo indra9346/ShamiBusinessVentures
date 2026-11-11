@@ -116,6 +116,8 @@ function papersState(view: DeliveryNoteView | null) {
     at: row.handed_over_at, by: row.actor_name,
     role: row.actor_role === "admin" || row.actor_role === "partner" || row.actor_role === "incharge" ? row.actor_role : "staff",
     godown: row.branch_name, registered_phone: row.device_registered, round: row.round,
+    // The hand-over person's mobile (12 Nov 2026; older hand-overs have none).
+    ...(row.actor_phone ? { phone: row.actor_phone } : {}),
   } satisfies PaperHandover]));
   const handedLines = Object.keys(handovers).map(Number).sort((a, b) => a - b);
   const { noteWarnings, slipWarnings } = releasedPaperWarnings(warnings, allSlips, handovers);
@@ -272,7 +274,7 @@ function DeliveryNotePrintPage() {
               <ul className="space-y-0.5 text-xs text-emerald-900">
                 {handedLines.map((line) => {
                   const handover = handovers[String(line)]!;
-                  return <li key={line}>Slip {line} handed over {istDateTime(handover.at)} by {personWords(handover.by, handover.role, handover.godown, handover.registered_phone).en}</li>;
+                  return <li key={line}>Slip {line} handed over {istDateTime(handover.at)} by {personWords(handover.by, handover.role, handover.godown, handover.registered_phone, handover.phone).en}</li>;
                 })}
               </ul>
             )}

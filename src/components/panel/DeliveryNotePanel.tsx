@@ -103,7 +103,7 @@ function HandoverList({ view, orderNo, readOnly, onView }: { view: DeliveryNoteV
                 <span className="min-w-0">
                   <span className="font-semibold">Slip {item.line}</span> {item.name}:{" "}
                   {row
-                    ? `${istDateTime(row.handed_over_at)} by ${scannerLabel({ actor_name: row.actor_name, actor_role: row.actor_role, branch_name: row.branch_name, device_registered: row.device_registered, device_label: row.device_label })}${row.round > 1 ? `, round ${row.round}` : ""}${row.gate_source === "last_reading" ? ". Zoho could not be read then; checked on the last reading" : ""}`
+                    ? `${istDateTime(row.handed_over_at)} by ${scannerLabel({ actor_name: row.actor_name, actor_role: row.actor_role, branch_name: row.branch_name, device_registered: row.device_registered, device_label: row.device_label, actor_phone: row.actor_phone })}${row.round > 1 ? `, round ${row.round}` : ""}${row.gate_source === "last_reading" ? ". Zoho could not be read then; checked on the last reading" : ""}`
                     : "not handed over yet"}
                   {row && !readOnly && reopening !== item.line && (
                     <button type="button" className="ml-1.5 font-semibold text-danger hover:underline" onClick={() => { setReopening(item.line); setReason(""); }}>Reopen</button>
