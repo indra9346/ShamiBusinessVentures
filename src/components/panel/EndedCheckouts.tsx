@@ -8,29 +8,42 @@ import { PAYMENT_EXPIRED, type PaymentHold } from "@/lib/payment-hold";
 import { closedPaymentLabel, endedOutcomeLabel } from "@/lib/order-payment-state";
 import { useApp } from "@/lib/store";
 import { DeleteOrderDialog } from "@/components/panel/DeleteOrderDialog";
+import { DeleteAllDetailsDialog } from "@/components/panel/OrderPaymentsPanel";
 
 const when = (iso: string) => new Date(iso).toLocaleString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit", timeZone: "Asia/Kolkata" });
 
 /**
  * Admin: checkouts whose payment window ran out, or that the customer or an admin ended. They were never
  * orders and owe nothing. An admin may delete one when it is no longer wanted; the database checks it first.
+ * Added 11 Nov 2026: one the ordinary delete keeps (a refunded UTR, say) may still go with Delete all details, which
+ * keeps a full copy in the Delete Log, when the database allows that.
  */
 export function EndedCheckouts({ compact = false }: { compact?: boolean }) {
   const { paymentHolds } = useApp();
   const [deleting, setDeleting] = useState<PaymentHold | null>(null);
+  const [deletingAll, setDeletingAll] = useState<PaymentHold | null>(null);
   const ended = paymentHolds
     .filter((hold) => hold.status === PAYMENT_EXPIRED)
     .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
   // Why a row cannot be deleted (the database's own check), so the list says it instead of offering a Delete that fails.
   const [kept, setKept] = useState<Record<string, string>>({});
+  // Of those kept, the ones Delete all details may still take.
+  const [allDetails, setAllDetails] = useState<Record<string, boolean>>({});
   const endedKey = ended.map((hold) => hold.orderNo).join(",");
   useEffect(() => {
     if (compact || STATIC_DATA_MODE || !endedKey) return;
     let active = true;
     void Promise.all(endedKey.split(",").map(async (orderNo) => {
       const { data, error } = await supabase.rpc("order_delete_blocker", { _order_no: orderNo });
-      return [orderNo, error ? "" : (data as string | null) ?? ""] as const;
-    })).then((rows) => { if (active) setKept(Object.fromEntries(rows.filter(([, why]) => why))); });
+      const why = error ? "" : (data as string | null) ?? "";
+      if (!why) return [orderNo, why, false] as const;
+      const all = await supabase.rpc("order_delete_all_check", { _order_no: orderNo });
+      return [orderNo, why, !all.error && !(all.data as { blocker?: string | null } | null)?.blocker] as const;
+    })).then((rows) => {
+      if (!active) return;
+      setKept(Object.fromEntries(rows.filter(([, why]) => why).map(([orderNo, why]) => [orderNo, why])));
+      setAllDetails(Object.fromEntries(rows.filter(([, , all]) => all).map(([orderNo]) => [orderNo, true])));
+    });
     return () => { active = false; };
   }, [compact, endedKey]);
   if (compact) {
@@ -60,7 +73,14 @@ export function EndedCheckouts({ compact = false }: { compact?: boolean }) {
               </span>
               <span className="font-semibold tabular-nums text-navy">{inrPrecise(hold.amount)}</span>
               <span className="rounded bg-red-50 px-2 py-0.5 text-xs font-semibold text-red-700">{closedPaymentLabel(PAYMENT_EXPIRED)}</span>
-              {kept[hold.orderNo] ? (
+              {kept[hold.orderNo] && allDetails[hold.orderNo] ? (
+                <span className="flex max-w-xs flex-col items-end gap-1 text-right text-[11px] text-slate">
+                  <span><span className="font-semibold">Ordinary delete keeps it:</span> <span>{kept[hold.orderNo]}</span></span>
+                  <button type="button" onClick={() => setDeletingAll(hold)} className="inline-flex items-center gap-1 text-xs font-semibold text-danger underline">
+                    <Trash2 className="h-3.5 w-3.5" />Delete all details
+                  </button>
+                </span>
+              ) : kept[hold.orderNo] ? (
                 <span className="max-w-xs text-right text-[11px] text-slate"><span className="font-semibold">Kept:</span> <span>{kept[hold.orderNo]}</span></span>
               ) : (
                 <button type="button" onClick={() => setDeleting(hold)} className="inline-flex items-center gap-1 text-xs font-semibold text-danger underline">
@@ -72,6 +92,7 @@ export function EndedCheckouts({ compact = false }: { compact?: boolean }) {
         </ul>
       )}
       {deleting && <DeleteOrderDialog orderNo={deleting.orderNo} onClose={() => setDeleting(null)} />}
+      {deletingAll && <DeleteAllDetailsDialog orderNo={deletingAll.orderNo} onClose={() => setDeletingAll(null)} />}
     </div>
   );
 }

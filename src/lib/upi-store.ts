@@ -217,10 +217,27 @@ export async function markUtrRefunded(orderNo: string) {
   changed();
 }
 
-/** Admin: ends a checkout waiting for payment, UTR or not. Its stock goes back and the customer is told. */
-export async function endPaymentHold(orderNo: string) {
-  const { error } = await supabase.rpc("admin_end_payment_hold", { _order_no: orderNo });
+/** Admin: ends a checkout waiting for payment, UTR or not, saying why. Its stock goes back and the customer is told. */
+export async function endPaymentHold(orderNo: string, reason: string) {
+  const { error } = await supabase.rpc("admin_end_payment_hold", { _order_no: orderNo, _reason: reason.trim() });
   if (error) throw new Error(error.message);
+  changed();
+}
+
+/** Admin: deletes a customer's UTR record that was rejected or refunded, saying why. A copy stays in the Delete Log. */
+export async function deleteUtrRecord(orderNo: string, reason: string) {
+  if (STATIC_DATA_MODE) {
+    writeJson(DEMO_SUBMISSIONS, readJson<UpiSubmission[]>(DEMO_SUBMISSIONS, []).filter((row) => row.orderNo !== orderNo));
+    changed();
+    return;
+  }
+  const { error } = await supabase.rpc("admin_delete_utr", { _order_no: orderNo, _reason: reason.trim() });
+  if (error) throw new Error(error.message);
+  changed();
+}
+
+/** Tell every open payments list to read again (after an order with UTRs was deleted elsewhere). */
+export function upiRecordsChanged() {
   changed();
 }
 

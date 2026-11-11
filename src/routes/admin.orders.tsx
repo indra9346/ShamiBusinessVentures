@@ -1,4 +1,5 @@
 import { EndedCheckouts } from "@/components/panel/EndedCheckouts";
+import { CancelOrderButton } from "@/components/panel/CancelOrderDialog";
 import { CustomersPayingNow } from "@/components/panel/CustomersPayingNow";
 import { createFileRoute, Link, Outlet, useRouterState } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
@@ -18,7 +19,7 @@ import { PanelLayout } from "@/components/panel/PanelLayout";
 import { DataTable, FilterNote, Panel, scrollToSection, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { Pager } from "@/components/panel/pager";
 import { adminNav } from "@/lib/panel-nav";
-import { canCancelOrder, inr, orderStages, type OrderStatus } from "@/lib/data";
+import { inr, orderStages, type OrderStatus } from "@/lib/data";
 import { allowedMethods } from "@/lib/payment-rules";
 import { inOrderRange, matchesOrderStatus, OPEN_ORDERS, orderListSearch, orderStatusFilter } from "@/lib/panel-filters";
 import { useApp, type Address } from "@/lib/store";
@@ -43,17 +44,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { downloadCSV } from "@/lib/export-utils";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
 import { InvoicePreviewButton } from "@/components/site/InvoicePreviewDialog";
 
 export const Route = createFileRoute("/admin/orders")({
@@ -505,8 +495,6 @@ function AdminOrders() {
           ]}
           rows={rows.map((o) => {
             const vendorSet = Array.from(new Set(o.items.map((i) => i.vendor)));
-            const canCancel = canCancelOrder(o, "admin");
-            const needsRefund = (o.paidAmount ?? 0) > 0 || o.payment === "Paid" || o.payment === "Partially Paid";
             return [
               <div>
                 <Link
@@ -571,44 +559,7 @@ function AdminOrders() {
                     ))}
                   </SelectContent>
                 </Select>
-                <AlertDialog>
-                  <AlertDialogTrigger asChild>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={!canCancel}
-                      title={!canCancel && needsRefund
-                        ? "A verified refund must be completed before cancellation."
-                        : undefined}
-                    >
-                      Cancel
-                    </Button>
-                  </AlertDialogTrigger>
-                  <AlertDialogContent>
-                    <AlertDialogHeader>
-                      <AlertDialogTitle>Cancel order {o.id}?</AlertDialogTitle>
-                      <AlertDialogDescription>
-                        {canCancel
-                          ? "This will mark the order as cancelled and restore its available inventory."
-                          : needsRefund
-                            ? "Paid orders cannot be cancelled until a verified refund is completed. Refund processing is not configured yet."
-                            : o.vendorStatuses?.some((fulfillment) => ["Dispatched", "Out for Delivery", "Delivered"].includes(fulfillment.status))
-                              ? "Orders cannot be cancelled after any vendor has dispatched. Contact support if this order needs intervention."
-                              : "A vendor has already started fulfilment. Contact support if this order needs intervention."}
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel>Back</AlertDialogCancel>
-                      <AlertDialogAction
-                        onClick={async () => {
-                          if (await updateOrderStatus(o.id, "Cancelled")) toast.success(`Order ${o.id} cancelled`);
-                        }}
-                      >
-                        Confirm Cancel
-                      </AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
+                <CancelOrderButton order={o} label="Cancel" />
                 <Button
                   variant="outline"
                   size="sm"
