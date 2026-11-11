@@ -762,7 +762,7 @@ export type Database = {
         Relationships: []
       }
       delivery_handovers: {
-        Row: { id: number; note_id: string; slip_line: number; round: number; code_id: number; actor_id: string; actor_name: string; actor_role: string; branch_id: string | null; branch_name: string; device_registered: boolean; device_label: string; gate_code: string; gate_source: string; handed_over_at: string }
+        Row: { id: number; note_id: string; slip_line: number; round: number; code_id: number; actor_id: string; actor_name: string; actor_role: string; actor_phone: string; branch_id: string | null; branch_name: string; device_registered: boolean; device_label: string; gate_code: string; gate_source: string; handed_over_at: string }
         Insert: Record<string, never>
         Update: Record<string, never>
         Relationships: []

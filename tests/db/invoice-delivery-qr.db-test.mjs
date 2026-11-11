@@ -232,6 +232,28 @@ assert.equal((await iscan(c1.code, "check", IN_CHARGE, z1)).result, "already_han
 const rows = await q("SELECT h.slip_line, h.actor_role, h.code_id, h.invoice_code_id IS NOT NULL AS by_invoice FROM public.delivery_handovers h JOIN public.delivery_notes n ON n.id = h.note_id WHERE n.order_no = 'TEST-INV-1' ORDER BY h.slip_line");
 assert.deepEqual(rows.map((x) => [x.slip_line, x.actor_role, x.code_id, x.by_invoice]), [[1, "staff", null, true], [2, "incharge", null, true], [3, "incharge", null, true]]);
 
+// ---- 20261112150000: who handed over, with their mobile, shows on the scan and on the invoice, with the godown
+const phones = await q("SELECT h.slip_line, h.actor_phone FROM public.delivery_handovers h JOIN public.delivery_notes n ON n.id = h.note_id WHERE n.order_no = 'TEST-INV-1' ORDER BY h.slip_line");
+assert.deepEqual(phones.map((x) => x.actor_phone), ["9000000011", "9000000014", "9000000014"], "each hand-over keeps the person's mobile");
+const shown = await codeFor(CUSTOMER, "TEST-INV-1");
+assert.equal(shown.items, 3);
+assert.equal(shown.handovers.length, 3);
+assert.deepEqual(
+  shown.handovers.map((x) => [x.line, x.item, x.by, x.role, x.phone, x.godown]),
+  [[1, "TEST Rice 25 kg", "Ravi CLK", "staff", "9000000011", "Challakere Godown"],
+   [2, "TEST Oil 1 L", "Inchara CLK", "incharge", "9000000014", "Challakere Godown"],
+   [3, "TEST Sugar 50 kg", "Inchara CLK", "incharge", "9000000014", "Challakere Godown"]],
+  "the invoice lists who handed over which item");
+assert.ok(shown.handovers.every((x) => typeof x.at === "string" && x.at.length > 10), "with the time");
+assert.equal(shown.godown.name, "Challakere Godown");
+assert.equal(shown.godown.id, "BR-CLK");
+assert.equal(shown.godown.partner_name, "Partner CLK", "the godown's channel partner too");
+assert.equal(shown.godown.partner_phone, "9000000021");
+const checked = await iscan(c1.code, "check", IN_CHARGE, z1);
+assert.equal(checked.by_phone, "9000000014", "the scan says who scanned, with their mobile");
+assert.equal(checked.godown_details.name, "Challakere Godown");
+assert.equal(checked.lines[0].handover.phone, "9000000011", "each line's hand-over carries the mobile");
+
 // ---- not raised yet: staff see it is not released; the in-charge's scan raises it (Zoho read just now)
 const c2 = await codeFor(CUSTOMER, "TEST-INV-2");
 const z2 = { invoice: "INV-12", number: "CLKINV-12" };
@@ -269,6 +291,19 @@ assert.ok(listed.some((x) => x.order_no === "TEST-INV-1" && x.to_go === 0 && x.d
 assert.ok(listed.some((x) => x.order_no === "TEST-INV-2" && x.to_go === 3 && x.released_how === "scan"));
 assert.equal((await as(HBL_USER, "authenticated", () => q("SELECT * FROM public.godown_released_notes() WHERE order_no LIKE 'TEST-INV-%'"))).length, 0, "another godown's list");
 await refuses(() => as(CUSTOMER, "authenticated", () => q("SELECT * FROM public.godown_released_notes()")), /Only godown staff/, "customer");
+
+// ---- 20261112150000: the invoice keeps the order's own channel partner (whose signature it carries) after the
+// godown changes partner; the scan screen shows the partner running the godown today.
+const P_NEW = uid("b4");
+await q(`INSERT INTO auth.users (id, email) VALUES ('${P_NEW}', 'p4@test.local') ON CONFLICT DO NOTHING`);
+await q("UPDATE public.channel_partners SET status = 'suspended' WHERE user_id = $1", [P_CLK]);
+await q(`INSERT INTO public.channel_partners (user_id, branch_id, name, email, phone) VALUES ('${P_NEW}','BR-CLK','Partner New','p4@test.local','9000000024')`);
+const keptPartner = await codeFor(CUSTOMER, "TEST-INV-1");
+assert.equal(keptPartner.godown.partner_name, "Partner CLK", "an older invoice keeps its own partner");
+assert.equal(keptPartner.godown.partner_phone, "9000000021");
+const today = await iscan(c1.code, "check", IN_CHARGE, z1);
+assert.equal(today.godown_details.partner_name, "Partner New", "the scan screen names today's partner");
+assert.equal(keptPartner.reopened, 0, "nothing reopened on this order");
 
 // ---- a printed paper's QR still works through the old scan (DN papers already printed)
 assert.equal(await one("SELECT public.delivery_invoice_scan($1,'check',NULL,$2) AS r", [noteOriginal, IN_CHARGE]), null, "a paper code is not an invoice code");

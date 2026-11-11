@@ -13,7 +13,8 @@ import { readScannedText } from "../src/lib/delivery-papers.ts";
 // under it, and the invoice (with the QR) shows in the customer's orders only after payment and the admin's confirmation.
 
 const root = new URL("../", import.meta.url);
-const read = (path: string) => readFileSync(new URL(path, root), "utf8");
+// Sources are checked out with Windows line endings: the checks below read them with plain newlines.
+const read = (path: string) => readFileSync(new URL(path, root), "utf8").replace(/\r\n/g, "\n");
 const CODE = "AbCdEfGhIjKlMnOpQrSt_-";
 
 /** Records what drawPdfQr draws, so the QR can be read back module by module. */
@@ -132,8 +133,8 @@ test("the channel partner's list follows the customer's rule", () => {
 
 test("the database's answer is checked: only a well-formed code prints, and only on a tax invoice", () => {
   const live = invoiceDelivery({ code: CODE, generation: 1, why: "paid", note_no: "DN-000004", released_at: "2026-11-12T06:30:00Z", released_how: "auto" });
-  assert.deepEqual(live, { code: CODE, why: "paid", noteNo: "DN-000004", releasedAt: "2026-11-12T06:30:00Z" });
-  assert.deepEqual(invoiceDelivery({ code: null, why: "not_confirmed", note_no: null }), { code: null, why: "not_confirmed", noteNo: null, releasedAt: null });
+  assert.deepEqual(live, { code: CODE, why: "paid", noteNo: "DN-000004", releasedAt: "2026-11-12T06:30:00Z", handovers: [], godown: null, items: 0, reopened: 0 });
+  assert.deepEqual(invoiceDelivery({ code: null, why: "not_confirmed", note_no: null }), { code: null, why: "not_confirmed", noteNo: null, releasedAt: null, handovers: [], godown: null, items: 0, reopened: 0 });
   assert.equal(invoiceDelivery({ code: "short", why: "paid" })!.code, null);
   assert.equal(invoiceDelivery({ code: `${CODE}x`, why: "paid" })!.code, null);
   assert.equal(invoiceDelivery({ code: "AbCdEfGhIjKlMnOpQrSt <", why: "paid" })!.code, null);
@@ -143,7 +144,7 @@ test("the database's answer is checked: only a well-formed code prints, and only
   assert.equal(invoiceQrCode(null, live), null, "a proforma has no QR");
   assert.equal(invoiceQrCode("", live), null);
   assert.equal(invoiceQrCode("CLKINV0711260364", null), null, "no code from the database: no QR");
-  assert.equal(invoiceQrCode("CLKINV0711260364", { code: null, why: "unpaid", noteNo: null, releasedAt: null }), null);
+  assert.equal(invoiceQrCode("CLKINV0711260364", { code: null, why: "unpaid", noteNo: null, releasedAt: null, handovers: [], godown: null, items: 0, reopened: 0 }), null);
 });
 
 test("the note under the QR is the owner's, in English and Kannada", () => {
@@ -157,18 +158,19 @@ test("the invoice asks the database for the code each time, and draws the QR onl
   assert.match(source, /supabase\.rpc\("invoice_delivery_code", \{ _order_no: orderNo \}\)/);
   assert.match(source, /return error \? null : invoiceDelivery\(data\);/, "a refusal (a vendor's copy) or an error means no QR");
   assert.match(source, /const deliveryRead = !zohoNumber \? Promise\.resolve\(null\)/, "no Zoho number: the code is not even asked for");
-  assert.match(source, /const qrCode = invoiceQrCode\(zohoNumber, await deliveryRead\);/);
+  assert.match(source, /const delivery = await deliveryRead;\n  const qrCode = invoiceQrCode\(zohoNumber, delivery\);/);
   // The QR is drawn in one place, and that is called only in the branch for a tax invoice with a code.
   assert.equal(source.match(/drawPdfQr\(/g)?.length, 1);
-  const blockAt = source.indexOf("const deliveryQrBlock = (code: string, top: number) => {");
+  const blockAt = source.indexOf("const deliveryQrBlock = (code: string, top: number, band: ReturnType<typeof qrBandText>) => {");
   assert.ok(blockAt > 0);
   const block = source.slice(blockAt, source.indexOf("\n  };", blockAt));
   assert.match(block, /drawPdfQr\(pdf, deliveryQrLink\(origin, code\), M, qrTop, QR_SIZE\);/);
-  assert.equal(source.match(/deliveryQrBlock\(qrCode, y\)/g)?.length, 1);
+  assert.equal(source.match(/deliveryQrBlock\(qrCode, y, band\)/g)?.length, 1);
   // At the very bottom (owner, 12 Nov 2026: "in the bottom not top"): after the terms and the signature, before the footer.
-  const bottomAt = source.indexOf("y = deliveryQrBlock(qrCode, y);");
+  const bottomAt = source.indexOf("y = deliveryQrBlock(qrCode, y, band);");
   assert.ok(bottomAt > source.indexOf('"Authorized Signatory"') && bottomAt < source.indexOf("// Footer on every page."), "the QR band is the last thing on the invoice");
-  assert.match(source, /if \(qrCode\) \{\s*y \+= 27\.5;\s*(?:\/\/[^\n]*\s*)?if \(y \+ QR_BLOCK_H > H - 17\) newPage\(false\);/, "a band that does not fit goes to a new page");
+  assert.match(source, /if \(qrCode\) \{\s*y \+= 27\.5;\s*(?:\/\/[^\n]*\s*)*const band = qrBandText\(delivery\);\s*const below = handoverBlock\(delivery\);\s*(?:\/\/[^\n]*\s*)*if \(y \+ band\.height \+ below\.height > H - 17\) newPage\(false\);\s*y = deliveryQrBlock\(qrCode, y, band\);\s*y = below\.draw\(y\);/,
+    "a band that does not fit goes to a new page, with the hand-over lines under it");
   assert.ok(!source.includes("qrCorner"), "nothing at the top any more");
   assert.match(source, /canvasTextImage\(DELIVERY_QR_NOTE\.kn,/);
   assert.match(source, /DELIVERY_QR_NOTE\.en/);

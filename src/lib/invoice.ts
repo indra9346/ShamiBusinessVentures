@@ -13,7 +13,7 @@ import {
 import { DEMO_BRANCH, branchFromRow, defaultBranchOf, type Branch } from "@/lib/branches";
 import { sellerAddressLines } from "@/lib/invoice-seller";
 import {
-  DELIVERY_QR_NOTE, invoiceBalance, invoiceDelivery, invoiceLines, invoicePayments, invoiceQrCode, issuedZohoNumber,
+  DELIVERY_QR_NOTE, godownLine, handoverWords, invoiceBalance, invoiceDelivery, invoiceLines, invoicePayments, invoiceQrCode, issuedZohoNumber,
   type InvoiceDelivery, type InvoiceFacts, type InvoicePaymentRow, type Line, type ZohoInvoiceCopy,
 } from "@/lib/invoice-lines";
 import { GODOWN_SIGNATURE_BUCKET } from "@/lib/godown-signature";
@@ -214,7 +214,8 @@ export async function buildInvoicePdf(order: Order, options: InvoiceOptions = {}
   // The delivery QR goes on a tax invoice only; it is read while the signature loads.
   const deliveryRead = !zohoNumber ? Promise.resolve(null) : facts.delivery !== undefined ? Promise.resolve(facts.delivery) : loadDeliveryCode(order.id);
   const signature = await loadOrderSignature(order.id, (context.branches.find((branch) => branch.id === order.branchId) ?? defaultBranchOf(context.branches))?.signaturePath);
-  const qrCode = invoiceQrCode(zohoNumber, await deliveryRead);
+  const delivery = await deliveryRead;
+  const qrCode = invoiceQrCode(zohoNumber, delivery);
   const W = pdf.internal.pageSize.getWidth();
   const H = pdf.internal.pageSize.getHeight();
   const M = 14;
@@ -285,11 +286,11 @@ export async function buildInvoicePdf(order: Order, options: InvoiceOptions = {}
 
   /*
    * The delivery QR (owner, 11-12 Nov 2026: on the invoice, "in the bottom not top"): the last thing on the invoice,
-   * under the terms and the signature, with the owner's note beside it. About 35 mm tall, which fits in the space an
-   * ordinary order leaves above the footer, so it stays on one page.
+   * under the terms and the signature, with the owner's note and the godown beside it and, once the godown has handed
+   * the goods over, who did it under it. Before that it is about 33 mm, which fits in the space an ordinary order
+   * leaves above the footer, so it stays on one page.
    */
   const QR_SIZE = 30;
-  const QR_BLOCK_H = 33;
 
   const brandHeader = (continued: boolean) => {
     // The same alias as the watermark: the picture is stored once in the file however often it is drawn.
@@ -323,10 +324,30 @@ export async function buildInvoicePdf(order: Order, options: InvoiceOptions = {}
   };
 
   /**
-   * The delivery QR at the bottom of the invoice: a ruled band with the QR on the left and, beside it, the heading, the
-   * owner's note, the order number and the note in Kannada. Returns the band's bottom.
+   * What the band's text column holds, measured before anything is drawn: the owner's note, its Kannada picture, and
+   * the godown that gives the goods with its channel partner (owner, 11 Nov 2026: "accordingly godown details"). The
+   * band is as tall as the QR, or as this column when that is taller.
    */
-  const deliveryQrBlock = (code: string, top: number) => {
+  const qrBandText = (facts: InvoiceDelivery | null) => {
+    const tx = M + QR_SIZE + 6;
+    const textW = R - tx;
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(8);
+    const noteLines = pdf.splitTextToSize(DELIVERY_QR_NOTE.en, textW) as string[];
+    // The PDF's own fonts have no Kannada: the browser draws that line as a picture (there is none outside a browser).
+    const kannada = canvasTextImage(DELIVERY_QR_NOTE.kn, { sizePt: 7.5, maxWidthMm: textW, color: ink });
+    const godown = godownLine(facts?.godown);
+    pdf.setFontSize(7);
+    const godownLines = godown ? (pdf.splitTextToSize(`Godown: ${godown}`, textW) as string[]) : [];
+    const column = 3 + 4.6 + noteLines.length * 3.6 + 1 + 2 + (kannada?.height ?? 0) + (godownLines.length ? 0.6 + godownLines.length * 2.9 : 0);
+    return { tx, noteLines, kannada, godownLines, height: 2 + Math.max(QR_SIZE, column) + 1 };
+  };
+
+  /**
+   * The delivery QR at the bottom of the invoice: a ruled band with the QR on the left and, beside it, the heading, the
+   * owner's note, the order number, the note in Kannada and the godown. Returns the band's bottom.
+   */
+  const deliveryQrBlock = (code: string, top: number, band: ReturnType<typeof qrBandText>) => {
     const origin = typeof window === "undefined" ? "https://grainbazar.com" : deliveryQrOrigin(window.location.hostname, window.location.origin);
     pdf.setDrawColor(...rule);
     pdf.line(M, top, R, top);
@@ -334,8 +355,7 @@ export async function buildInvoicePdf(order: Order, options: InvoiceOptions = {}
     drawPdfQr(pdf, deliveryQrLink(origin, code), M, qrTop, QR_SIZE);
     pdf.setDrawColor(...rule);
     pdf.rect(M, qrTop, QR_SIZE, QR_SIZE);
-    const tx = M + QR_SIZE + 6;
-    const textW = R - tx;
+    const { tx } = band;
     let at = qrTop + 3;
     pdf.setFont("helvetica", "bold");
     pdf.setFontSize(9);
@@ -345,25 +365,95 @@ export async function buildInvoicePdf(order: Order, options: InvoiceOptions = {}
     pdf.setFont("helvetica", "normal");
     pdf.setFontSize(8);
     pdf.setTextColor(...ink);
-    const noteLines = pdf.splitTextToSize(DELIVERY_QR_NOTE.en, textW) as string[];
-    pdf.text(noteLines, tx, at);
-    at += noteLines.length * 3.6 + 1;
+    pdf.text(band.noteLines, tx, at);
+    at += band.noteLines.length * 3.6 + 1;
     pdf.setFont("helvetica", "bold");
     pdf.setFontSize(8);
     pdf.setTextColor(...navy);
     pdf.text(`Order ${order.id}${zohoNumber ? `  ·  Invoice ${invoiceNo}` : ""}`, tx, at);
     at += 2;
-    // The PDF's own fonts have no Kannada: the browser draws that line as a picture (there is none outside a browser).
-    const kannada = canvasTextImage(DELIVERY_QR_NOTE.kn, { sizePt: 7.5, maxWidthMm: textW, color: ink });
-    if (kannada) {
+    if (band.kannada) {
       try {
-        pdf.addImage(kannada.dataUrl, "PNG", tx, at, kannada.width, kannada.height, undefined, "FAST");
-        at += kannada.height;
+        pdf.addImage(band.kannada.dataUrl, "PNG", tx, at, band.kannada.width, band.kannada.height, undefined, "FAST");
       } catch {
         /* the English note above still says it */
       }
+      at += band.kannada.height;
     }
-    return Math.max(qrTop + QR_SIZE, at) + 1;
+    if (band.godownLines.length) {
+      pdf.setFont("helvetica", "normal");
+      pdf.setFontSize(7);
+      pdf.setTextColor(...ink);
+      at += 0.6;
+      band.godownLines.forEach((line, index) => pdf.text(line, tx, at + 2.3 + index * 2.9));
+    }
+    return top + band.height;
+  };
+
+  /**
+   * Under the QR (owner, 11 Nov 2026: "below QR code it should mention who handed over goods and time"): who handed
+   * over which item, when, with their role and mobile, at which godown, in English and Kannada; nothing before any
+   * hand-over. Measured first, so the QR and these lines stay on one page together.
+   */
+  const handoverBlock = (facts: InvoiceDelivery | null) => {
+    const LABEL_W = 23;
+    const LINE = 3.05;
+    const GAP = 0.9;
+    const textX = M + LABEL_W;
+    const textW = R - textX;
+    type Row = { label: string; lines: string[]; kannada: ReturnType<typeof canvasTextImage>; beside: boolean };
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(7.4);
+    // Before any hand-over the invoice prints nothing here (the order page says "not handed over yet"), so an
+    // ordinary order stays on one page; the lines come once the godown hands the goods over.
+    const words = handoverWords(facts, order.status);
+    const rows: Row[] = (words.done ? words.lines : []).map((line, index) => {
+      const lines = pdf.splitTextToSize(line.en, textW) as string[];
+      const kannada = canvasTextImage(line.kn, { sizePt: 7, maxWidthMm: textW, color: ink });
+      // A short sentence ("Not handed over yet.") keeps its Kannada beside it, on the same line.
+      const beside = Boolean(kannada) && lines.length === 1 && pdf.getTextWidth(lines[0] ?? "") + 3 + (kannada?.width ?? 0) <= textW;
+      return { label: index === 0 ? "HANDED OVER" : "", lines, kannada, beside };
+    });
+    const rowHeight = (row: Row) => (row.beside && row.kannada
+      ? Math.max(LINE, row.kannada.height)
+      : row.lines.length * LINE + (row.kannada ? 0.2 + row.kannada.height : 0));
+    // A small gap above the rows and between them; none after the last.
+    const height = rows.length ? 0.8 + rows.reduce((sum, row) => sum + rowHeight(row), 0) + GAP * (rows.length - 1) : 0;
+    const draw = (top: number) => {
+      let at = top + 0.8;
+      rows.forEach((row, rowIndex) => {
+        // A long list (many items handed over one at a time) carries on onto the next page, never over the footer.
+        let label = row.label;
+        if (at + rowHeight(row) > H - 17) {
+          newPage(false);
+          at = y + 0.8;
+          label = "HANDED OVER (contd.)";
+        }
+        const baseline = at + 2.3;
+        if (label) {
+          pdf.setFont("helvetica", "bold");
+          pdf.setFontSize(7.4);
+          pdf.setTextColor(...navy);
+          pdf.text(pdf.splitTextToSize(label, LABEL_W - 1) as string[], M, baseline);
+        }
+        pdf.setFont("helvetica", "normal");
+        pdf.setFontSize(7.4);
+        pdf.setTextColor(...ink);
+        row.lines.forEach((text, index) => pdf.text(text, textX, baseline + index * LINE));
+        if (row.kannada) {
+          const x = row.beside ? textX + pdf.getTextWidth(row.lines[0] ?? "") + 3 : textX;
+          const imageTop = row.beside ? at : at + row.lines.length * LINE + 0.2;
+          try {
+            pdf.addImage(row.kannada.dataUrl, "PNG", x, imageTop, row.kannada.width, row.kannada.height, undefined, "FAST");
+          } catch {
+            /* the English sentence still says it */
+          }
+        }
+        at += rowHeight(row) + (rowIndex < rows.length - 1 ? GAP : 0);
+      });
+      return at;
+    };
+    return { height, draw };
   };
 
   let y = 0;
@@ -709,9 +799,13 @@ export async function buildInvoicePdf(order: Order, options: InvoiceOptions = {}
   // copy of this invoice; the godown in-charge scans it to release and hand over the goods.
   if (qrCode) {
     y += 27.5;
+    // The godown beside the QR and who handed over under it (owner, 11 Nov 2026); the QR and these lines move together.
+    const band = qrBandText(delivery);
+    const below = handoverBlock(delivery);
     // The band may run down to just above the footer line (H - 15).
-    if (y + QR_BLOCK_H > H - 17) newPage(false);
-    y = deliveryQrBlock(qrCode, y);
+    if (y + band.height + below.height > H - 17) newPage(false);
+    y = deliveryQrBlock(qrCode, y, band);
+    y = below.draw(y);
   }
 
   // Footer on every page.

@@ -224,6 +224,9 @@ assert.deepEqual(answer.handed_now, [1]);
 assert.deepEqual(answer.device, { registered: true, label: "CLK counter phone" });
 assert.equal(answer.order_delivered, false, "items 2 and 3 are still to go");
 assert.equal(answer.lines[0].handover.registered_phone, true);
+// 12 Nov 2026 (20261112150000): a hand-over through a paper QR keeps the person's mobile too.
+assert.equal(answer.lines[0].handover.phone, "9000000011", "the paper scan's hand-over carries the mobile");
+assert.deepEqual((await q("SELECT actor_phone FROM public.delivery_handovers WHERE actor_id = $1 ORDER BY id DESC LIMIT 1", [CLK_USER])).map((x) => x.actor_phone), ["9000000011"], "kept on the row");
 for (const [who, handover] of [[CLK_USER, true], [ADMIN, true], [P_CLK, false], [HBL_USER, false]]) {
   answer = await scan(slip1, handover, who, { zoho: ZOHO_PAID() });
   assert.equal(answer.result, "already_handed_over", `${who} ${handover}`);

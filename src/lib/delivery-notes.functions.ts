@@ -65,7 +65,7 @@ async function loadView(db: ReturnType<typeof serviceClient>, orderNo: string, z
         .select("id,kind,doc,slip_line,copy_no,gate_code,detail,actor_name,occurred_at")
         .eq("note_id", note.id).order("id", { ascending: false }).limit(200),
       db.from("delivery_handovers")
-        .select("id,slip_line,round,actor_name,actor_role,branch_name,device_registered,device_label,gate_code,gate_source,handed_over_at")
+        .select("id,slip_line,round,actor_name,actor_role,actor_phone,branch_name,device_registered,device_label,gate_code,gate_source,handed_over_at")
         .eq("note_id", note.id).order("slip_line").order("round"),
       db.from("delivery_handover_reopens")
         .select("id,handover_id,slip_line,reason,actor_name,reopened_at")
