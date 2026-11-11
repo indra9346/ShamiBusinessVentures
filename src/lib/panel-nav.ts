@@ -61,6 +61,7 @@ export const adminNav = [
   { label: "Pricing", to: "/admin/pricing", icon: Calculator },
   { label: "Rice Samples", to: "/admin/rice-samples", icon: FlaskConical },
   { label: "Channel Partners", to: "/admin/partners", icon: Handshake },
+  { label: "Partner Monthly Income", to: "/admin/partner-income", icon: Calculator },
   { label: "Partner Payouts", to: "/admin/partner-payouts", icon: HandCoins },
   { label: "Partner Report", to: "/admin/partner-report", icon: Trophy },
   { label: "Attendance", to: "/admin/attendance", icon: CalendarCheck },

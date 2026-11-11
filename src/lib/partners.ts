@@ -4,7 +4,7 @@
  * Kept free of app imports so the node tests can load it.
  */
 
-export type CommissionKind = "per_unit" | "percent";
+export type CommissionKind = "per_unit" | "percent" | "net_profit";
 export type CommissionStatus = "pending" | "earned" | "cancelled";
 
 /** Commission on one order line: rupees per unit, or a percentage of the line (excl. GST), to the paisa. */
@@ -20,9 +20,36 @@ export function commissionStatus(orderStatus: string, paymentStatus: string): Co
   return "pending";
 }
 
-/** "₹2.50 per unit" / "1.5% of price". */
+/** "₹2.50 per unit" / "1.5% of price" / "Monthly profit share" (a line on a godown paid by the month carries no amount of its own). */
 export function describeRate(kind: CommissionKind, rate: number) {
+  if (kind === "net_profit") return "Monthly profit share";
   return kind === "percent" ? `${rate}% of price` : `₹${rate.toLocaleString("en-IN", { minimumFractionDigits: rate % 1 ? 2 : 0, maximumFractionDigits: 2 })} per unit`;
+}
+
+export type OrderCommissionLine = {
+  order_no: string; placed_at: string; order_status: string; payment_status: string; customer_name: string; pin: string;
+  line_total: number; amount: number; paid_amount: number; due_amount: number; status: string;
+};
+export type OrderCommissions<T> = {
+  orderNo: string; placedAt: string; orderStatus: string; paymentStatus: string; customerName: string; pin: string;
+  sale: number; commission: number; paid: number; balance: number; status: string; lines: T[];
+};
+const paise = (n: number) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
+
+/** Commission lines as one row per order, newest order first. An order is cancelled only when all of its lines are. */
+export function commissionsByOrder<T extends OrderCommissionLine>(lines: T[]): OrderCommissions<T>[] {
+  const orders = new Map<string, T[]>();
+  for (const line of lines) orders.set(line.order_no, [...(orders.get(line.order_no) ?? []), line]);
+  return [...orders.entries()].map(([orderNo, rows]) => {
+    const live = rows.filter((row) => row.status !== "cancelled");
+    const sum = (pick: (row: T) => number) => paise(rows.reduce((total, row) => total + Number(pick(row)), 0));
+    return {
+      orderNo, placedAt: rows[0]!.placed_at, orderStatus: rows[0]!.order_status, paymentStatus: rows[0]!.payment_status,
+      customerName: rows[0]!.customer_name, pin: rows[0]!.pin, lines: rows,
+      sale: sum((row) => row.line_total), commission: sum((row) => row.amount), paid: sum((row) => row.paid_amount), balance: sum((row) => row.due_amount),
+      status: live.length ? (live.some((row) => row.status === "pending") ? "pending" : "earned") : "cancelled",
+    };
+  }).sort((a, b) => Date.parse(b.placedAt) - Date.parse(a.placedAt));
 }
 
 /** The first day of a month (India), as yyyy-mm-01. */

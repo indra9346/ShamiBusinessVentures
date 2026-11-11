@@ -7,6 +7,7 @@ import { FilterNote, Panel, scrollToSection, StatCard } from "@/components/panel
 import { CommissionLinesTable, PartnerLeaderboard, commissionTotals, usePartnerData } from "@/components/partners/PartnerWidgets";
 import { PartnerHistoryPanel } from "@/components/partners/PartnerHistory";
 import { PartnerSignatureField } from "@/components/panel/GodownSignatureField";
+import { CommissionMethod } from "@/components/partners/CommissionMethod";
 import { adminNav } from "@/lib/panel-nav";
 import { useApp } from "@/lib/store";
 import { useBranches } from "@/lib/branches";
@@ -19,6 +20,7 @@ import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 
 export const Route = createFileRoute("/admin/partners")({
@@ -131,6 +133,8 @@ function GodownPartnerCard({ godownId, godownName, partner, pastPartners, rules,
           {partner && <TargetEditor partnerId={partner.id} month={month} />}
         </div>
         <div className="min-w-0">
+          <h3 className="mb-2 text-xs font-bold uppercase tracking-wider text-slate">How the partner is paid</h3>
+          <CommissionMethod godownId={godownId} />
           <h3 className="mb-2 text-xs font-bold uppercase tracking-wider text-slate">Commission rates</h3>
           <RateEditor godownId={godownId} rules={rules} onChange={onChange} />
         </div>
@@ -329,6 +333,24 @@ function RateEditor({ godownId, rules, onChange }: { godownId: string; rules: Ru
     if (error) { toast.error("Could not remove the rate", { description: error.message }); return; }
     await onChange();
   };
+  const setEnabled = async (rule: Rule, enabled: boolean) => {
+    const { error } = await supabase.from("partner_commission_rules").update({ enabled, updated_at: new Date().toISOString() }).eq("id", rule.id);
+    if (error) { toast.error("Could not change the commission", { description: error.message }); return; }
+    toast.success(enabled ? "Commission on. It applies to orders placed from now on." : "Commission off. New orders of this product earn ₹0.");
+    await onChange();
+  };
+  // A product on the default rate has no line of its own yet: this gives it one, switched off, at the default's rate.
+  const turnOff = async () => {
+    const existing = rules.find((rule) => rule.product_id === draft.productId);
+    if (existing) { await setEnabled(existing, false); return; }
+    const fallback = rules.find((rule) => rule.product_id === null);
+    const { error } = await supabase.from("partner_commission_rules").insert({
+      branch_id: godownId, product_id: draft.productId, kind: fallback?.kind ?? "per_unit", value: Number(fallback?.value ?? 0), enabled: false, updated_at: new Date().toISOString(),
+    });
+    if (error) { toast.error("Could not change the commission", { description: error.message }); return; }
+    toast.success("Commission off. New orders of this product earn ₹0.");
+    await onChange();
+  };
   const nameOf = (id: string | null) => (id ? products.find((p) => p.id === id)?.name ?? id : "Default (all other products)");
   const sorted = [...rules].sort((a, b) => (a.product_id ? 1 : 0) - (b.product_id ? 1 : 0) || nameOf(a.product_id).localeCompare(nameOf(b.product_id)));
   return (
@@ -345,7 +367,8 @@ function RateEditor({ godownId, rules, onChange }: { godownId: string; rules: Ru
                 })()}
               </span>
               <span className="flex shrink-0 items-center gap-2">
-                <span className="font-semibold text-navy">{describeRate(rule.kind as CommissionKind, Number(rule.value))}</span>
+                {rule.enabled ? <span className="font-semibold text-navy">{describeRate(rule.kind as CommissionKind, Number(rule.value))}</span> : <span className="font-semibold text-slate">Commission off (₹0)</span>}
+                <Switch checked={rule.enabled} aria-label={`Commission on or off: ${nameOf(rule.product_id)}`} onCheckedChange={(on) => void setEnabled(rule, on)} />
                 <button type="button" aria-label="Remove rate" className="text-slate hover:text-danger" onClick={() => void remove(rule)}><Trash2 className="h-3.5 w-3.5" /></button>
               </span>
             </li>
@@ -374,7 +397,9 @@ function RateEditor({ godownId, rules, onChange }: { godownId: string; rules: Ru
         </div>
         <Button size="sm" className="bg-navy text-white hover:bg-navy/90" disabled={!draft.value} onClick={() => void save()}>Save rate</Button>
       </div>
+      {draft.productId && <Button size="sm" variant="outline" onClick={() => void turnOff()}>No commission on this product</Button>}
       <p className="text-[11px] text-slate">A product's own rate wins over the default. Each order line keeps the rate it was placed at.</p>
+      <p className="text-[11px] text-slate">Switch a line off and new orders of that product earn ₹0. Orders already placed do not change.</p>
       <p className="text-[11px] text-slate">Hidden products are listed too, so a rate can be ready before the product goes on the shop.</p>
     </div>
   );

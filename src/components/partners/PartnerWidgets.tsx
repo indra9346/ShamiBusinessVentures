@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
-import { Medal, Trophy } from "lucide-react";
+import { ChevronDown, Medal, Trophy } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
 import { inrPrecise } from "@/lib/data";
-import { describeRate, type CommissionKind } from "@/lib/partners";
+import { commissionsByOrder, describeRate, type CommissionKind } from "@/lib/partners";
 import { ResizableTable } from "@/hooks/use-column-resize";
 import { cn } from "@/lib/utils";
 
@@ -141,6 +141,55 @@ export function CommissionLinesTable({ lines, showPartner, partnerNames }: { lin
         </tbody>
       </ResizableTable>
     </div>
+  );
+}
+
+/** A partner's commissions, one row per order. Tapping an order opens the items and what each one earned. */
+export function CommissionOrders({ lines }: { lines: CommissionLine[] | null }) {
+  const [open, setOpen] = useState("");
+  if (!lines) return <p className="text-sm text-slate">Loading…</p>;
+  if (!lines.length) return <p className="py-6 text-center text-sm text-slate">No commissions in this month yet.</p>;
+  return (
+    <ul className="space-y-2">
+      {commissionsByOrder(lines).map((order) => {
+        const isOpen = open === order.orderNo;
+        return (
+          <li key={order.orderNo} className="rounded-lg border border-border text-sm">
+            <button type="button" aria-expanded={isOpen} onClick={() => setOpen(isOpen ? "" : order.orderNo)} className="flex w-full items-start justify-between gap-3 p-3 text-left">
+              <span className="min-w-0">
+                <span className="block break-all font-mono text-xs font-semibold text-navy">{order.orderNo}</span>
+                <span className="block text-xs text-slate">{new Date(order.placedAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })} · {order.customerName} · {order.pin || "—"}</span>
+                <span className="block text-xs text-slate">{order.orderStatus} · {order.paymentStatus}</span>
+                <span className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate">
+                  <CommissionStatusBadge status={order.status} />
+                  <span>{`${order.lines.length} item${order.lines.length === 1 ? "" : "s"} · Sale ${inrPrecise(order.sale)}`}</span>
+                </span>
+              </span>
+              <span className="flex shrink-0 items-center gap-1.5">
+                <span className="text-right"><span className="block tabular-nums font-bold text-navy">{inrPrecise(order.commission)}</span><span className="block text-[11px] text-slate">Commission</span></span>
+                <ChevronDown className={cn("h-4 w-4 text-slate transition-transform", isOpen && "rotate-180")} />
+              </span>
+            </button>
+            {isOpen && (
+              <ul className="divide-y divide-border/60 border-t border-border px-3 py-1">
+                {order.lines.map((line) => (
+                  <li key={line.order_item_id} className="py-2">
+                    <span className="flex items-baseline justify-between gap-3">
+                      <span className="min-w-0 break-words font-semibold text-charcoal">{line.product_name}</span>
+                      <span className="shrink-0 tabular-nums font-semibold text-navy">{inrPrecise(Number(line.amount))}</span>
+                    </span>
+                    <span className="block text-xs text-slate">{`Qty ${line.qty} · Sale (excl. GST) ${inrPrecise(Number(line.line_total))}`}</span>
+                    <span className="block text-xs text-slate">Rate: <span>{describeRate(line.kind as CommissionKind, Number(line.rate))}</span></span>
+                    <span className={cn("block text-xs text-slate", Number(line.due_amount) < 0 && "font-semibold text-red-700")}>{`Paid ${inrPrecise(Number(line.paid_amount))} · Balance ${inrPrecise(Number(line.due_amount))}`}</span>
+                    <span className="mt-1 block"><CommissionStatusBadge status={line.status} /></span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 
