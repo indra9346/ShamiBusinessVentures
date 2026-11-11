@@ -22,6 +22,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 export const Route = createFileRoute("/admin/partners")({
   head: () => ({ meta: [{ title: "Channel Partners | Grain Bazar Admin" }, { name: "robots", content: "noindex" }] }),
@@ -49,6 +50,7 @@ function AdminPartners() {
     setLineView(view);
     scrollToSection("all-commissions");
   };
+  const [adding, setAdding] = useState(false);
 
   const load = useCallback(async () => {
     const [p, r] = await Promise.all([
@@ -69,7 +71,10 @@ function AdminPartners() {
     <PanelLayout items={adminNav} tone="admin" title="Channel Partners" subtitle="Channel Partner Commission Platform: godown distributors, commissions and targets">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-slate">Partners sign in at <a className="font-semibold text-navy underline" href={PARTNER_LOGIN_URL} target="_blank" rel="noreferrer">{PARTNER_LOGIN_URL}</a></p>
-        <Link to="/admin/partner-payouts" className="inline-flex h-9 items-center gap-1.5 rounded-md bg-navy px-3 text-sm font-semibold text-white hover:bg-midnight"><HandCoins className="h-4 w-4" />Settle commissions</Link>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button type="button" className="h-9 bg-gold text-midnight hover:bg-gold/90" onClick={() => setAdding(true)}><UserPlus className="mr-1.5 h-4 w-4" />Add channel partner</Button>
+          <Link to="/admin/partner-payouts" className="inline-flex h-9 items-center gap-1.5 rounded-md bg-navy px-3 text-sm font-semibold text-white hover:bg-midnight"><HandCoins className="h-4 w-4" />Settle commissions</Link>
+        </div>
         <input type="month" value={month.slice(0, 7)} max={monthStart().slice(0, 7)} aria-label="Month"
           onChange={(event) => event.target.value && setMonth(`${event.target.value}-01`)}
           className="h-9 rounded-md border border-input bg-white px-2 text-sm" />
@@ -91,6 +96,7 @@ function AdminPartners() {
       </div>
 
       <div className="mt-6"><PartnerHistoryPanel refreshKey={historyKey} /></div>
+      <AddPartnerDialog open={adding} onOpenChange={setAdding} godowns={godowns} partners={partners ?? []} onChange={load} />
 
       <div className="mt-6 grid gap-6 lg:grid-cols-[360px_minmax(0,1fr)]">
         <Panel title={`Leaderboard · ${monthLabel(month)}`}><PartnerLeaderboard leaders={leaders} /></Panel>
@@ -108,12 +114,21 @@ function AdminPartners() {
 function GodownPartnerCard({ godownId, godownName, partner, pastPartners, rules, month, onChange }: {
   godownId: string; godownName: string; partner: Partner | null; pastPartners: Partner[]; rules: Rule[]; month: string; onChange: () => Promise<void>;
 }) {
+  // The login just created, shown once: kept here, because the form goes when the godown has its partner.
+  const [created, setCreated] = useState<PartnerLogin | null>(null);
   return (
+    <div id={`godown-partner-${godownId}`} className="scroll-mt-36">
     <Panel title={`${godownName}`}>
       <div className="grid gap-6 xl:grid-cols-2">
         <div className="min-w-0">
           <h3 className="mb-2 text-xs font-bold uppercase tracking-wider text-slate">Channel partner</h3>
-          {partner ? <PartnerAccount partner={partner} onChange={onChange} /> : <CreatePartnerForm godownId={godownId} godownName={godownName} onChange={onChange} />}
+          {/* Only beside the partner it was made for: gone once they are suspended (the form comes back) or changed. */}
+          {created && partner && partner.email.toLowerCase() === created.email && (
+            <div className="mb-3"><CredentialsBox email={created.email} password={created.password} godownName={godownName} /></div>
+          )}
+          {partner
+            ? <PartnerAccount partner={partner} onChange={async () => { setCreated(null); await onChange(); }} />
+            : <CreatePartnerForm godownId={godownId} godownName={godownName} onChange={onChange} onCreated={setCreated} />}
           {pastPartners.length > 0 && (
             <div className="mt-3 text-xs text-slate">
               Suspended: {pastPartners.map((p) => (
@@ -140,6 +155,60 @@ function GodownPartnerCard({ godownId, godownName, partner, pastPartners, rules,
         </div>
       </div>
     </Panel>
+    </div>
+  );
+}
+
+/**
+ * "Add channel partner" (owner, 11 Nov 2026): choose the godown, then create the partner's login there. A godown has
+ * one active partner at a time (the database's rule), so one that has a partner says who and how to change it.
+ */
+function AddPartnerDialog({ open, onOpenChange, godowns, partners, onChange }: {
+  open: boolean; onOpenChange: (open: boolean) => void; godowns: { id: string; name: string }[]; partners: Partner[]; onChange: () => Promise<void>;
+}) {
+  const activeAt = (godownId: string) => partners.find((p) => p.branch_id === godownId && p.status === "active") ?? null;
+  const [godownId, setGodownId] = useState("");
+  // The login just created, shown once, until the window closes.
+  const [created, setCreated] = useState<(PartnerLogin & { godownName: string }) | null>(null);
+  // Opens on the first godown without a partner.
+  useEffect(() => {
+    if (open) setGodownId((current) => current || (godowns.find((g) => !activeAt(g.id)) ?? godowns[0])?.id || "");
+    // activeAt reads partners, listed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, godowns, partners]);
+  const godown = godowns.find((g) => g.id === godownId) ?? null;
+  const current = godown ? activeAt(godown.id) : null;
+  return (
+    <Dialog open={open} onOpenChange={(next) => { onOpenChange(next); if (!next) { setGodownId(""); setCreated(null); } }}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
+        <DialogHeader>
+          <DialogTitle>Add channel partner</DialogTitle>
+          <DialogDescription>Choose the godown, then create the partner's login and share it with them.</DialogDescription>
+        </DialogHeader>
+        {created ? <CredentialsBox email={created.email} password={created.password} godownName={created.godownName} />
+          : !godowns.length ? <p className="text-sm text-slate">No godowns yet. Add a godown on the Branches page first.</p> : (
+          <div className="space-y-3">
+            <label className="grid gap-1 text-xs font-semibold text-slate">Godown
+              <select value={godownId} onChange={(event) => setGodownId(event.target.value)} className="h-9 rounded-md border border-input bg-white px-2 text-sm text-charcoal">
+                {godowns.map((g) => {
+                  const has = activeAt(g.id);
+                  return <option key={g.id} value={g.id}>{has ? `${g.name} (partner: ${has.name})` : `${g.name} (no partner)`}</option>;
+                })}
+              </select>
+            </label>
+            {godown && current ? (
+              <div className="space-y-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+                <p>{`${current.name} runs ${godown.name} now. A godown has one channel partner at a time: to give it to someone else, suspend ${current.name} on the godown's card first, then add the new partner here.`}</p>
+                <Button type="button" variant="outline" size="sm" onClick={() => { onOpenChange(false); window.setTimeout(() => scrollToSection(`godown-partner-${godown.id}`), 150); }}>Open the godown's card</Button>
+              </div>
+            ) : godown ? (
+              <CreatePartnerForm key={godown.id} godownId={godown.id} godownName={godown.name} onChange={onChange}
+                onCreated={(login) => setCreated({ ...login, godownName: godown.name })} />
+            ) : null}
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -154,7 +223,13 @@ async function setStatus(partnerId: string, status: "active" | "suspended", onCh
   }
 }
 
-function CreatePartnerForm({ godownId, godownName, onChange }: { godownId: string; godownName: string; onChange: () => Promise<void> }) {
+type PartnerLogin = { email: string; password: string };
+
+function CreatePartnerForm({ godownId, godownName, onChange, onCreated }: {
+  godownId: string; godownName: string; onChange: () => Promise<void>;
+  /** The new login, to keep on screen after the list reloads and this form is gone. */
+  onCreated?: (login: PartnerLogin) => void;
+}) {
   const [form, setForm] = useState({ name: "", email: "", phone: "", password: suggestPartnerPassword() });
   const [busy, setBusy] = useState(false);
   const [created, setCreated] = useState<{ email: string; password: string } | null>(null);
@@ -165,7 +240,9 @@ function CreatePartnerForm({ godownId, godownName, onChange }: { godownId: strin
     try {
       const { createChannelPartner } = await import("@/lib/partners.functions");
       await createChannelPartner({ data: { branchId: godownId, ...form } });
-      setCreated({ email: form.email.trim().toLowerCase(), password: form.password });
+      const login = { email: form.email.trim().toLowerCase(), password: form.password };
+      setCreated(login);
+      onCreated?.(login);
       toast.success(`Partner login created for ${godownName}`);
       await onChange();
     } catch (cause) {

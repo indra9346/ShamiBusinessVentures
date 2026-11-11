@@ -78,9 +78,9 @@ export type Database = {
         Relationships: []
       }
       zoho_contact_links: {
-        Row: { user_id: string; contact_type: string; zoho_contact_id: string; updated_at: string; last_polled_at: string | null; last_zoho_modified_at: string | null }
-        Insert: { user_id: string; contact_type: string; zoho_contact_id: string; updated_at?: string; last_polled_at?: string | null; last_zoho_modified_at?: string | null }
-        Update: { user_id?: string; contact_type?: string; zoho_contact_id?: string; updated_at?: string; last_polled_at?: string | null; last_zoho_modified_at?: string | null }
+        Row: { user_id: string; contact_type: string; zoho_contact_id: string; updated_at: string; last_polled_at: string | null; last_zoho_modified_at: string | null; zoho_contact_number: string | null; zoho_contact_number_checked_at: string | null }
+        Insert: { user_id: string; contact_type: string; zoho_contact_id: string; updated_at?: string; last_polled_at?: string | null; last_zoho_modified_at?: string | null; zoho_contact_number?: string | null; zoho_contact_number_checked_at?: string | null }
+        Update: { user_id?: string; contact_type?: string; zoho_contact_id?: string; updated_at?: string; last_polled_at?: string | null; last_zoho_modified_at?: string | null; zoho_contact_number?: string | null; zoho_contact_number_checked_at?: string | null }
         Relationships: []
       }
       zoho_item_links: {
@@ -625,6 +625,12 @@ export type Database = {
         Row: { id: string; branch_id: string; product_id: string | null; kind: string; value: number; enabled: boolean; updated_by: string | null; updated_at: string }
         Insert: { branch_id: string; kind: string; value: number; enabled?: boolean; id?: string; product_id?: string | null; updated_by?: string | null; updated_at?: string }
         Update: { id?: string; branch_id?: string; product_id?: string | null; kind?: string; value?: number; enabled?: boolean; updated_by?: string | null; updated_at?: string }
+        Relationships: []
+      }
+      panel_favourites: {
+        Row: { id: number; user_id: string; panel: string; item_key: string; label: string; to_path: string; find_text: string; position: number; created_at: string }
+        Insert: { user_id: string; panel: string; item_key: string; label: string; to_path: string; find_text?: string; position?: number; id?: never; created_at?: string }
+        Update: { user_id?: string; panel?: string; item_key?: string; label?: string; to_path?: string; find_text?: string; position?: number; created_at?: string }
         Relationships: []
       }
       ad_banners: {
@@ -1515,6 +1521,8 @@ export type Database = {
         Returns: { order_item_id: string; order_no: string; placed_at: string; order_status: string; payment_status: string; customer_name: string; pin: string; product_name: string; qty: number; line_total: number; kind: string; rate: number; amount: number; status: string; partner_id: string ; paid_amount: number; due_amount: number }[]
       }
       invoice_partner_signature: { Args: { _order_no: string }; Returns: string | null }
+      invoice_customer_number: { Args: { _order_no: string }; Returns: string | null }
+      zoho_contact_numbers: { Args: Record<PropertyKey, never>; Returns: { user_id: string; vendor_id: string | null; contact_type: string; contact_number: string }[] }
       partner_invoice_orders: {
         Args: { _from: string; _to: string }
         Returns: { order_no: string; placed_at: string; order_status: string; payment_status: string; customer_name: string; total: number; gst_amount: number; invoice_number: string | null }[]

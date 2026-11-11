@@ -45,6 +45,9 @@ import {
   zohoCustomerPaymentBody, zohoDepositAccountOptions, type DepositAccount, type DepositAccounts, type ZohoDepositAccountOption,
 } from "@/lib/deposit-accounts";
 import { ZOHO_COMMERCE_OFF_MESSAGE, ZOHO_COMMERCE_SETTING_KEY, zohoCommerceModeFrom, zohoOAuthScopes } from "@/lib/zoho-commerce-mode";
+import {
+  CONTACT_NUMBER_BATCH, EMPTY_CONTACT_NUMBER_FETCH, cleanContactNumber, contactNumberUpdate, zohoContactNumberOf, type ContactNumberFetch,
+} from "@/lib/zoho-contact-numbers";
 
 // ---------------------------------------------------------------- Zoho API call log
 // Every Zoho API call made from this file is noted with what it was for, and saved to
@@ -1481,6 +1484,8 @@ async function upsertZohoContact(
   let contactId = link?.zoho_contact_id ?? "";
   let zohoModifiedAt: string | null = null;
   let personError: string | null = null;
+  // The contact as Zoho sent it back, for its customer or vendor number.
+  let zohoContact: Record<string, unknown> | undefined;
   if (!contactId) {
     const found = await inventoryRequest<{ contacts?: Record<string, unknown>[] }>(region, organizationId, token, "contacts", "GET", undefined, { email, per_page: "200" });
     const exact = (found.contacts ?? []).filter((row) => str(row["contact_type"]) === contactType && str(row["email"]).toLowerCase() === email.toLowerCase());
@@ -1498,6 +1503,7 @@ async function upsertZohoContact(
     const created = await inventoryRequest<{ contact?: Record<string, unknown> }>(region, organizationId, token, "contacts", "POST", contact);
     contactId = str(created.contact?.["contact_id"]);
     zohoModifiedAt = str(created.contact?.["last_modified_time"]) || null;
+    zohoContact = created.contact;
     if (!contactId) throw new Error("Zoho created a contact but returned no contact ID");
   } else {
     // Never send contact_persons on update: Zoho treats a replaced list as deleting the existing
@@ -1506,6 +1512,7 @@ async function upsertZohoContact(
     const { contact_persons: _persons, ...contactFields } = contact;
     const updated = await inventoryRequest<{ contact?: Record<string, unknown> }>(region, organizationId, token, `contacts/${encodeURIComponent(contactId)}`, "PUT", contactFields);
     zohoModifiedAt = str(updated.contact?.["last_modified_time"]) || null;
+    zohoContact = updated.contact;
     try {
       await upsertPrimaryContactPerson(region, organizationId, token, contactId, person);
     } catch (cause) {
@@ -1514,9 +1521,34 @@ async function upsertZohoContact(
   }
   const { error: linkError } = await db.from("zoho_contact_links").upsert({ user_id: userId, contact_type: contactType, zoho_contact_id: contactId, updated_at: new Date().toISOString(), ...(zohoModifiedAt ? { last_zoho_modified_at: zohoModifiedAt } : {}) });
   if (linkError) throw new Error("Zoho contact synchronized, but its ID could not be saved in Grain Bazar");
+  await saveZohoContactNumber(db, userId, contactType, zohoContactNumberOf(zohoContact));
   if (personError) throw new NeedsReviewError(`Zoho contact ${contactId} is linked and updated, but its contact person could not be updated: ${personError}`);
   return contactId;
 }
+
+/**
+ * Keeps the customer or vendor number Zoho sent with a contact (see zoho-contact-numbers.ts); undefined (Zoho's reply
+ * had no number field) keeps what was there. Its own request, and a failure is ignored: before the 12 Nov 2026
+ * migration the column is not there, and the contact sync goes on exactly as before.
+ */
+async function saveZohoContactNumber(
+  db: Awaited<ReturnType<typeof dbAdmin>>,
+  userId: string,
+  contactType: "customer" | "vendor",
+  number: string | null | undefined,
+) {
+  if (number === undefined) return;
+  try {
+    await db.from("zoho_contact_links").update(contactNumberUpdate(number, new Date().toISOString()))
+      .eq("user_id", userId).eq("contact_type", contactType);
+  } catch {
+    // The number is read again with the contact's next check.
+  }
+}
+
+/** The database answer for a column it does not have: the customer and vendor number update is not applied yet. */
+const missingContactNumberColumn = (error: { code?: string; message?: string }) =>
+  error.code === "42703" || error.code === "PGRST204" || /zoho_contact_number/i.test(error.message ?? "");
 
 class NeedsReviewError extends Error {}
 
@@ -4528,6 +4560,88 @@ function zohoContactAddress(contact: Record<string, unknown>) {
   };
 }
 
+/**
+ * The customer and vendor numbers kept now, by "user id:contact type"; null when they cannot be read (before the 12 Nov
+ * 2026 migration the column is not there), and then the hourly check writes none.
+ */
+async function keptZohoContactNumbers(db: Awaited<ReturnType<typeof dbAdmin>>, userIds: string[]) {
+  if (!userIds.length) return null;
+  const { data, error } = await db.from("zoho_contact_links").select("user_id,contact_type,zoho_contact_number").in("user_id", [...new Set(userIds)]);
+  if (error) return null;
+  return new Map(((data ?? []) as { user_id: string; contact_type: string; zoho_contact_number: string | null }[])
+    .map((row) => [`${row.user_id}:${row.contact_type}`, cleanContactNumber(row.zoho_contact_number)]));
+}
+
+/**
+ * Admin > Zoho Commerce: "Fetch customer and vendor numbers from Zoho". Asks Zoho for the next linked contacts (those
+ * never asked first, then the ones asked longest ago), CONTACT_NUMBER_BATCH per press, three at a time, one GET each,
+ * all in the Zoho call log. Holds off while Zoho's daily-limit pause is on, and starts it if Zoho says the limit is
+ * reached. Nothing is written to Zoho. A contact Zoho can't read is marked asked too, so it never holds up the rest.
+ */
+export const fetchZohoContactNumbers = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }): Promise<ContactNumberFetch> => {
+    await ensureAdmin(context.supabase, context.userId);
+    const db = await dbAdmin();
+    const { data: budgetRow } = await db.from("settings").select("value").eq("key", ZOHO_API_BUDGET_SETTING).maybeSingle();
+    const pausedUntil = str(plainObject(budgetRow?.value)["pausedUntil"]);
+    if (zohoPaused(pausedUntil, Date.now())) return { ...EMPTY_CONTACT_NUMBER_FETCH, failed: [], pausedUntil };
+    const { data: links, error } = await db.from("zoho_contact_links")
+      .select("user_id,contact_type,zoho_contact_id,zoho_contact_number_checked_at")
+      .order("zoho_contact_number_checked_at", { ascending: true, nullsFirst: true })
+      .order("updated_at", { ascending: true })
+      .limit(CONTACT_NUMBER_BATCH);
+    if (error) {
+      if (missingContactNumberColumn(error)) return { ...EMPTY_CONTACT_NUMBER_FETCH, failed: [], needsMigration: true };
+      throw new Error("Could not read the Zoho contact links");
+    }
+    const result: ContactNumberFetch = { ...EMPTY_CONTACT_NUMBER_FETCH, failed: [] };
+    const batch = (links ?? []) as { user_id: string; contact_type: "customer" | "vendor"; zoho_contact_id: string }[];
+    if (batch.length) {
+      const { region, organizationId, token } = await zohoOrderContext(db);
+      zohoDailyLimitHit = false;
+      try {
+        await withZohoPurpose("Admin: customer and vendor numbers", () => runPool(batch, 3, async (link) => {
+          // The limit was reached: the rest wait for the next press after the pause.
+          if (zohoDailyLimitHit) return;
+          const checkedAt = new Date().toISOString();
+          try {
+            const response = await inventoryRequest<{ contact?: Record<string, unknown> }>(
+              region, organizationId, token, `contacts/${encodeURIComponent(link.zoho_contact_id)}`, "GET",
+            );
+            if (!response.contact) throw new Error("Zoho contact response did not include a contact");
+            const number = zohoContactNumberOf(response.contact);
+            const { error: saveError } = await db.from("zoho_contact_links").update(contactNumberUpdate(number, checkedAt))
+              .eq("user_id", link.user_id).eq("contact_type", link.contact_type);
+            if (saveError) throw new Error("The number could not be saved");
+            result.read += 1;
+            if (number === undefined) result.notSaid += 1;
+            else if (number) result.found += 1;
+            else result.empty += 1;
+          } catch {
+            if (zohoDailyLimitHit) return;
+            result.failed.push(link.zoho_contact_id);
+            await db.from("zoho_contact_links").update({ zoho_contact_number_checked_at: checkedAt })
+              .eq("user_id", link.user_id).eq("contact_type", link.contact_type);
+          }
+        }));
+      } finally {
+        await flushZohoCallLog();
+        if (zohoDailyLimitHit) await pauseZohoForDailyLimit(db);
+      }
+      if (zohoDailyLimitHit) {
+        const { data: paused } = await db.from("settings").select("value").eq("key", ZOHO_API_BUDGET_SETTING).maybeSingle();
+        result.pausedUntil = str(plainObject(paused?.value)["pausedUntil"]) || new Date().toISOString();
+      }
+    }
+    const [linked, numbered, notAsked] = await Promise.all([
+      db.from("zoho_contact_links").select("user_id", { count: "exact", head: true }),
+      db.from("zoho_contact_links").select("user_id", { count: "exact", head: true }).not("zoho_contact_number", "is", null),
+      db.from("zoho_contact_links").select("user_id", { count: "exact", head: true }).is("zoho_contact_number_checked_at", null),
+    ]);
+    return { ...result, linked: linked.count ?? 0, numbered: numbered.count ?? 0, remaining: notAsked.count ?? 0 };
+  });
+
 async function pollZohoContactChanges(
   db: Awaited<ReturnType<typeof dbAdmin>>,
   region: Region,
@@ -4541,6 +4655,7 @@ async function pollZohoContactChanges(
     .limit(limit);
   if (error) throw new Error("Could not load Zoho contact mappings for reconciliation");
   const result = { checked: 0, updated: 0, needsReview: 0, failed: 0 };
+  const keptNumbers = await keptZohoContactNumbers(db, ((links ?? []) as ZohoContactLink[]).map((link) => link.user_id));
   for (const link of (links ?? []) as ZohoContactLink[]) {
     result.checked += 1;
     let newestZohoModified = link.last_zoho_modified_at;
@@ -4550,6 +4665,11 @@ async function pollZohoContactChanges(
       );
       const contact = response.contact;
       if (!contact) throw new Error("Zoho contact response did not include a contact");
+      // The customer or vendor number comes with every check, at no extra call; written only when it changed.
+      const number = zohoContactNumberOf(contact);
+      if (keptNumbers && number !== undefined && keptNumbers.get(`${link.user_id}:${link.contact_type}`) !== number) {
+        await saveZohoContactNumber(db, link.user_id, link.contact_type, number);
+      }
       const zohoModifiedAt = str(contact["last_modified_time"]);
       const zohoModifiedMs = Date.parse(zohoModifiedAt);
       const previousZohoModifiedMs = Date.parse(link.last_zoho_modified_at ?? "");

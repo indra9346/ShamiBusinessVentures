@@ -46,6 +46,7 @@ import {
 } from "@/components/ui/dialog";
 import { downloadCSV } from "@/lib/export-utils";
 import { InvoicePreviewButton } from "@/components/site/InvoicePreviewDialog";
+import { useZohoContactNumbers } from "@/hooks/use-zoho-contact-numbers";
 
 export const Route = createFileRoute("/admin/orders")({
   validateSearch: orderListSearch,
@@ -69,7 +70,10 @@ const paymentMethods = ["UPI", "NEFT", "RTGS", "Credit Card", "Debit Card", "Net
 
 function AdminOrders() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
-  const { orders, customers, products, placeOrder, updateOrderStatus } = useApp();
+  const { orders, customers, products, placeOrder, updateOrderStatus, user } = useApp();
+  // Zoho's customer number of each order's customer, when Zoho has given one.
+  const contactNumbers = useZohoContactNumbers(user?.id);
+  const customerNumberOf = (customerId: string) => (customerId ? contactNumbers.customers.get(customerId) ?? "" : "");
   const routeSearch = Route.useSearch();
   const navigate = Route.useNavigate();
   // The router keeps values validateSearch dropped, so only a clean range is used.
@@ -284,7 +288,8 @@ function AdminOrders() {
         !s ||
         o.id.toLowerCase().includes(s) ||
         o.customer.toLowerCase().includes(s) ||
-        o.phone.toLowerCase().includes(s);
+        o.phone.toLowerCase().includes(s) ||
+        (o.customerId ? contactNumbers.customers.get(o.customerId) ?? "" : "").toLowerCase().includes(s);
       const matchesStatus = matchesOrderStatus(o.status, status);
       const matchesPayment = payment === "all" || o.method === payment;
       return matchesQ && matchesStatus && matchesPayment && inOrderRange(o, range.from, range.to);
@@ -297,7 +302,7 @@ function AdminOrders() {
       return 0;
     });
     return list;
-  }, [orders, q, status, payment, sort, range.from, range.to]);
+  }, [orders, contactNumbers, q, status, payment, sort, range.from, range.to]);
 
   if (pathname !== "/admin/orders" && pathname !== "/admin/orders/") {
     return <Outlet />;
@@ -320,6 +325,7 @@ function AdminOrders() {
         "Order ID",
         "Date",
         "Customer",
+        "Customer No.",
         "Phone",
         "Email",
         "Vendors",
@@ -337,6 +343,7 @@ function AdminOrders() {
           o.id,
           o.date,
           o.customer,
+          customerNumberOf(o.customerId),
           o.phone,
           o.email,
           vendorNames,
@@ -402,7 +409,7 @@ function AdminOrders() {
               {zohoSync === "linking" ? "Turning on…" : "Instant Zoho updates"}
             </Button>
             <Input
-              placeholder="Search order, customer or phone"
+              placeholder="Search order, customer, customer no. or phone"
               value={q}
               onChange={(e) => {
                 setQ(e.target.value);
@@ -526,6 +533,11 @@ function AdminOrders() {
               o.date,
               <div>
                 <p className="font-medium text-navy">{o.customer}</p>
+                {customerNumberOf(o.customerId) && (
+                  <p className="text-xs text-slate">
+                    <span>Customer No.</span> <span data-no-translate className="font-mono font-semibold text-navy">{customerNumberOf(o.customerId)}</span>
+                  </p>
+                )}
                 <p className="text-xs text-slate">{o.phone}</p>
               </div>,
               <span className="text-xs">

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronDown, Medal, Trophy } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
@@ -8,6 +8,8 @@ import { ResizableTable } from "@/hooks/use-column-resize";
 import { cn } from "@/lib/utils";
 import { orderToneClass } from "@/lib/order-status-tone";
 import { StatusBadge } from "@/components/panel/widgets";
+import { ListFilters } from "@/components/panel/ListFilters";
+import { ORDER_FILTERS, filterCounts, matchesOrderFilter, matchesSearch } from "@/lib/list-search";
 
 export type LeaderRow = Database["public"]["Functions"]["partner_leaderboard"]["Returns"][number];
 export type CommissionLine = Database["public"]["Functions"]["partner_commission_lines"]["Returns"][number];
@@ -153,11 +155,22 @@ export function CommissionLinesTable({ lines, showPartner, partnerNames }: { lin
 /** A partner's commissions, one row per order. Tapping an order opens the items and what each one earned. */
 export function CommissionOrders({ lines }: { lines: CommissionLine[] | null }) {
   const [open, setOpen] = useState("");
+  // Search and order-status filter (owner, 11 Nov 2026): order number, customer, PIN code or product.
+  const [query, setQuery] = useState("");
+  const [status, setStatus] = useState("all");
+  const orders = useMemo(() => (lines ? commissionsByOrder(lines) : []), [lines]);
+  const found = useMemo(() => orders.filter((order) => matchesSearch([order.orderNo, order.customerName, order.pin, order.orderStatus, ...order.lines.map((line) => line.product_name)], query)), [orders, query]);
+  const shownOrders = useMemo(() => found.filter((order) => matchesOrderFilter(order.orderStatus, status)), [found, status]);
+  const counts = useMemo(() => filterCounts(found, ORDER_FILTERS.map((item) => item.key), (order, key) => matchesOrderFilter(order.orderStatus, key)), [found]);
   if (!lines) return <p className="text-sm text-slate">Loading…</p>;
   if (!lines.length) return <p className="py-6 text-center text-sm text-slate">No commissions in this month yet.</p>;
   return (
+    <>
+    <ListFilters query={query} onQuery={setQuery} placeholder="Search order no., customer, PIN code or product" shown={shownOrders.length} total={orders.length}
+      groups={[{ label: "Order status", choices: ORDER_FILTERS, value: status, onChange: setStatus, counts }]} />
+    {!shownOrders.length && <p className="py-6 text-center text-sm text-slate">No orders match. Clear the search or pick another filter.</p>}
     <ul className="space-y-2">
-      {commissionsByOrder(lines).map((order) => {
+      {shownOrders.map((order) => {
         const isOpen = open === order.orderNo;
         return (
           // Each order's tile tinted by its status: waiting yellow, confirmed green, cancelled red (11 Nov 2026).
@@ -197,6 +210,7 @@ export function CommissionOrders({ lines }: { lines: CommissionLine[] | null }) 
         );
       })}
     </ul>
+    </>
   );
 }
 

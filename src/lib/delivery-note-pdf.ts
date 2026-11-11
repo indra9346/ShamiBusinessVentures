@@ -9,6 +9,9 @@
  * 12 Nov 2026 (owner, 11 Nov): the one QR is now on the invoice. A released note's papers (`release`) carry no QR: they
  * hand nothing over, so a copy is just a copy, numbered, with who printed it. The GB watermark is a little darker and
  * drawn last on each page (before the footer), so the table's filled rows can't hide it.
+ *
+ * 12 Nov 2026 (owner): the customer's number in Zoho Books ("Customer No.") on the note and on each slip. It is not in
+ * the note's frozen snapshot: whoever prints reads it now and hands it in (customerNumber), so old notes stay as they were.
  */
 import type { jsPDF as JsPdf } from "jspdf";
 import { encode } from "uqr";
@@ -20,6 +23,7 @@ import {
   paperKindWords, paperLink, paperStamp, qrCaption, releasedFact, releasedPaperWarnings, roleWords,
   type PaperHandover, type PaperPrint, type ReleasePrint,
 } from "./delivery-papers.ts";
+import { CONTACT_NUMBER_LABELS, cleanContactNumber, contactNumberLine } from "./zoho-contact-numbers.ts";
 
 type Rgb = [number, number, number];
 const NAVY: Rgb = [32, 72, 58];
@@ -64,6 +68,8 @@ export type DeliveryPdfInput = {
   origin: string;
   /** Papers of a released note: no QR codes on them. */
   release?: ReleaseLabel | undefined;
+  /** The customer's number in Zoho Books, read when printing (not part of the note's snapshot); none = no line. */
+  customerNumber?: string | null | undefined;
 };
 export type DeliveryPdfDeps = { jspdf: typeof import("jspdf"); logo: string | null; textImage: TextImageRenderer | null };
 
@@ -84,6 +90,7 @@ export function releasedPdfInput(print: ReleasePrint, options: {
   handovers: Record<string, PaperHandover | null | undefined>;
   origin: string;
   badges?: { note: string; slip: string };
+  customerNumber?: string | null | undefined;
 }): DeliveryPdfInput {
   const note = print.note;
   const lines = slipPages(note.snapshot).map((slip) => slip.slip);
@@ -96,6 +103,7 @@ export function releasedPdfInput(print: ReleasePrint, options: {
     note, state: gate, selection: options.selection,
     record: { printedAt: print.printed_at, noteCode: null, slipCodes: {}, notePaper: null, slipPapers: {} },
     noteWarnings, slipWarnings, origin: options.origin,
+    ...(cleanContactNumber(options.customerNumber) ? { customerNumber: cleanContactNumber(options.customerNumber) } : {}),
     release: {
       noteBadge: options.badges?.note ?? "RELEASED",
       slipBadge: options.badges?.slip ?? "RELEASED",
@@ -391,6 +399,7 @@ export function buildDeliveryNotePdf(input: DeliveryPdfInput, deps: DeliveryPdfD
   const printedText = input.record.printedAt ? istDateTime(input.record.printedAt) : "";
   const pickup = isPickup(snapshot);
   const customerName = snapshot.customer.business_name || snapshot.customer.name;
+  const customerNumber = cleanContactNumber(input.customerNumber);
   const allSlips = slipPages(snapshot);
 
   // ---- The delivery note ----
@@ -436,6 +445,7 @@ export function buildDeliveryNotePdf(input: DeliveryPdfInput, deps: DeliveryPdfD
     const left = card(M, y, half, pickup ? "Customer (collects at the godown)" : "Customer", [
       { text: customerName, bold: true },
       ...(snapshot.customer.business_name && snapshot.customer.name ? [{ text: snapshot.customer.name }] : []),
+      ...(customerNumber ? [{ text: contactNumberLine("customer", customerNumber), bold: true }] : []),
       ...(snapshot.customer.gstin ? [{ text: `GSTIN ${snapshot.customer.gstin}` }] : []),
       ...(snapshot.customer.phone ? [{ text: `Phone ${snapshot.customer.phone}` }] : []),
       ...(pickup ? customerLines.map((text) => ({ text })) : []),
@@ -556,6 +566,7 @@ export function buildDeliveryNotePdf(input: DeliveryPdfInput, deps: DeliveryPdfD
       ["Order no.", note.order_no, true],
       ["Invoice no.", note.invoice_number],
       ["Customer", customerName],
+      ...(customerNumber ? [[CONTACT_NUMBER_LABELS.customer, customerNumber, true]] as [string, string, boolean?][] : []),
       ["Godown", snapshot.godown.name ?? ""],
       ["Delivery", deliveryMethodLabel(snapshot.shipping_method)],
       ...(release

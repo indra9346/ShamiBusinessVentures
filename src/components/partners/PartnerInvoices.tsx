@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { FileText, PenLine, RefreshCw } from "lucide-react";
 import { Panel } from "@/components/panel/widgets";
+import { ListFilters } from "@/components/panel/ListFilters";
 import { InvoicePreviewDialog } from "@/components/site/InvoicePreviewDialog";
 import { useSignaturePreview } from "@/components/panel/GodownSignatureField";
 import { supabase } from "@/integrations/supabase/client";
@@ -12,6 +13,7 @@ import { partnerInvoiceOrder, partnerInvoiceRows, partnerInvoiceStage, partnerIn
 import { INVOICE_STAGE_WORDS } from "@/lib/invoice-visibility";
 import { orderToneClass } from "@/lib/order-status-tone";
 import { cn } from "@/lib/utils";
+import { ORDER_FILTERS, PAYMENT_FILTERS, filterCounts, matchesOrderFilter, matchesPaymentFilter, matchesSearch } from "@/lib/list-search";
 
 const addDays = (date: string, days: number) => new Date(Date.parse(`${date}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
 const monthStartOf = (date: string) => `${date.slice(0, 8)}01`;
@@ -31,6 +33,14 @@ export function PartnerInvoices({ signaturePath }: { signaturePath: string | nul
   const [opening, setOpening] = useState("");
   const [shown, setShown] = useState<{ order: Order; facts: InvoiceFacts } | null>(null);
   const [signature] = useSignaturePreview(signaturePath);
+  // Search and filters (owner, 11 Nov 2026): order number, invoice number or customer; order status; payment.
+  const [query, setQuery] = useState("");
+  const [status, setStatus] = useState("all");
+  const [payment, setPayment] = useState("all");
+  const found = useMemo(() => (rows ?? []).filter((row) => matchesSearch([row.order_no, row.invoice_number, row.customer_name, row.order_status, paymentLabel(row.payment_status)], query)), [rows, query]);
+  const shownRows = useMemo(() => found.filter((row) => matchesOrderFilter(row.order_status, status) && matchesPaymentFilter(row.payment_status, payment)), [found, status, payment]);
+  const statusCounts = useMemo(() => filterCounts(found.filter((row) => matchesPaymentFilter(row.payment_status, payment)), ORDER_FILTERS.map((item) => item.key), (row, key) => matchesOrderFilter(row.order_status, key)), [found, payment]);
+  const paymentCounts = useMemo(() => filterCounts(found.filter((row) => matchesOrderFilter(row.order_status, status)), PAYMENT_FILTERS.map((item) => item.key), (row, key) => matchesPaymentFilter(row.payment_status, key)), [found, status]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -91,11 +101,19 @@ export function PartnerInvoices({ signaturePath }: { signaturePath: string | nul
       </div>
       <p className="mb-3 text-xs text-slate">Orders of your godown placed while you run it. The customer gets the same copy, with the same delivery QR, once the order is paid and confirmed.</p>
 
+      {rows !== null && rows.length > 0 && (
+        <ListFilters query={query} onQuery={setQuery} placeholder="Search order no., invoice no. or customer" shown={shownRows.length} total={rows.length}
+          groups={[
+            { label: "Order status", choices: ORDER_FILTERS, value: status, onChange: setStatus, counts: statusCounts },
+            { label: "Payment", choices: PAYMENT_FILTERS, value: payment, onChange: setPayment, counts: paymentCounts },
+          ]} />
+      )}
       {rows === null ? <p className="text-sm text-slate">Loading…</p>
         : !rows.length ? <p className="py-6 text-center text-sm text-slate">No orders in this period.</p>
+        : !shownRows.length ? <p className="py-6 text-center text-sm text-slate">No orders match. Clear the search or pick another filter.</p>
         : (
           <ul className="space-y-2">
-            {rows.map((row) => (
+            {shownRows.map((row) => (
               // Tinted by the order's status, as in every portal: pending yellow, confirmed green, cancelled red.
               <li key={row.order_no} className={cn("flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-card p-3", orderToneClass(row.order_status, "tile"))}>
                 <div className="min-w-0">

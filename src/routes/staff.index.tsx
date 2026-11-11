@@ -5,6 +5,7 @@ import { AlertTriangle, Camera, CalendarDays, CheckCircle2, Clock, LogIn, LogOut
 import { LogoMark } from "@/components/brand/Logo";
 import { ReleasedDeliveryNotes } from "@/components/panel/DeliveryNotePanel";
 import { LanguageSwitcher } from "@/components/site/LanguageSwitcher";
+import { FavouritesBar, PanelSearch } from "@/components/panel/PanelSearch";
 import { AttendanceStatusBadge, DecisionChips, RuleList } from "@/components/attendance/AttendanceBits";
 import { SelfieCamera } from "@/components/attendance/SelfieCamera";
 import { StaffStockCount } from "@/components/attendance/StaffStockCount";
@@ -166,6 +167,7 @@ function StaffHome() {
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-1">
+            <PanelSearch panel="staff" compact />
             <LanguageSwitcher compact />
             <button type="button" aria-label="Sign out" onClick={() => void signOut()}
               className="grid h-9 w-9 place-items-center rounded-md border border-border text-navy hover:border-gold hover:text-gold">
@@ -176,6 +178,7 @@ function StaffHome() {
       </header>
 
       <main className="mx-auto max-w-md space-y-4 px-4 py-4">
+        <FavouritesBar panel="staff" />
         {deviceChecked && !deviceOk && <DeviceWarning device={device} godownName={godown?.name ?? me.branch_id} />}
         {problem && <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{problem}</p>}
 

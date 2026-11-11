@@ -10,6 +10,7 @@ import {
   PAPER_CODE, type DeliveryHandoverRow, type DeliveryPaperRow, type DeliveryReopenRow, type DeliveryScanRow, type InvoiceScan, type PaperHandover,
   type PaperPrint, type PaperScan, type ReleasePrint,
 } from "@/lib/delivery-papers";
+import { cleanContactNumber } from "@/lib/zoho-contact-numbers";
 
 /*
  * Delivery notes, admin only, and the godown's QR scans (admins, the godown in-charge, godown staff and channel
@@ -90,6 +91,7 @@ async function loadView(db: ReturnType<typeof serviceClient>, orderNo: string, z
     papers = (paperRead.data ?? []) as DeliveryPaperRow[];
     scans = (scanRead.data ?? []) as DeliveryScanRow[];
   }
+  const customerNumber = note ? await customerNumberOfOrder(db, orderNo) : null;
   return {
     checkedAt: new Date().toISOString(),
     fresh: zoho !== null,
@@ -101,7 +103,25 @@ async function loadView(db: ReturnType<typeof serviceClient>, orderNo: string, z
     papers,
     scans,
     qrReady,
+    customerNumber,
   };
+}
+
+/**
+ * The order's customer's number in Zoho Books, for the note and slips (12 Nov 2026). Read when the papers are shown or
+ * printed, never put into the note's frozen snapshot. Its own request, and a failure is no number: before the 12 Nov
+ * migration the column is not there, and the papers print as before.
+ */
+async function customerNumberOfOrder(db: ReturnType<typeof serviceClient>, orderNo: string): Promise<string | null> {
+  try {
+    const { data: order } = await db.from("orders").select("user_id").eq("order_no", orderNo).maybeSingle();
+    if (!order?.user_id) return null;
+    const { data, error } = await db.from("zoho_contact_links").select("zoho_contact_number")
+      .eq("user_id", order.user_id).eq("contact_type", "customer").maybeSingle();
+    return error ? null : cleanContactNumber(data?.zoho_contact_number);
+  } catch {
+    return null;
+  }
 }
 
 /** PostgREST's answer for a table that isn't there: the QR migration hasn't been applied. */
@@ -323,6 +343,8 @@ export const scanDeliveryPaper = createServerFn({ method: "POST" })
       });
       if (error || !result) throw new Error(error?.message ?? "Could not check the invoice");
       scan = result as unknown as InvoiceScan;
+      // A print: the papers carry the customer's number in Zoho Books, read now (the note's snapshot has none).
+      if (scan.result === "printed" && scan.print) scan = { ...scan, customer_number: await customerNumberOfOrder(db, orderNo) };
     } else {
       if (action === "print_note" || action === "print_slips") throw new Error("Only the QR on a customer's invoice prints the released delivery note and slips.");
       const handover = action === "handover";

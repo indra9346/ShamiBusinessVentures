@@ -15,6 +15,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { downloadCSV } from "@/lib/export-utils";
 import { supabase } from "@/integrations/supabase/client";
 import { MarketplaceSwitch } from "@/components/panel/MarketplaceSwitch";
+import { useZohoContactNumbers } from "@/hooks/use-zoho-contact-numbers";
+import { vendorNumberOf } from "@/lib/zoho-contact-numbers";
 import { Textarea } from "@/components/ui/textarea";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
@@ -46,7 +48,9 @@ function AdminVendors() {
 }
 
 function AdminVendorsPanel() {
-  const { vendors, setVendorStatus, products, orders, reviews } = useApp();
+  const { vendors, setVendorStatus, products, orders, reviews, user } = useApp();
+  // Zoho's vendor number of each vendor, when Zoho has given one.
+  const numbers = useZohoContactNumbers(user?.id);
   const routeSearch = Route.useSearch();
   const [applications, setApplications] = useState<Array<{ id: string; applicant_id: string; business_name: string; owner_name: string; email: string; phone: string; gstin: string; city: string; address: string; status: string; admin_notes: string | null; created_at: string }>>([]);
   const [applicationNotes, setApplicationNotes] = useState<Record<string, string>>({});
@@ -125,7 +129,8 @@ function AdminVendorsPanel() {
   const filtered = useMemo(() => {
     let list = enrichedVendors.filter((v) => {
       const s = q.trim().toLowerCase();
-      const matchesQ = !s || v.business.toLowerCase().includes(s) || v.owner.toLowerCase().includes(s) || v.email.toLowerCase().includes(s);
+      const matchesQ = !s || v.business.toLowerCase().includes(s) || v.owner.toLowerCase().includes(s) || v.email.toLowerCase().includes(s)
+        || (vendorNumberOf(numbers, v.id) ?? "").toLowerCase().includes(s);
       return matchesQ && matchesVendorStatus(v.status, status);
     });
     list = [...list].sort((a, b) => {
@@ -135,7 +140,7 @@ function AdminVendorsPanel() {
       return 0;
     });
     return list;
-  }, [enrichedVendors, q, status, sort]);
+  }, [enrichedVendors, numbers, q, status, sort]);
 
   const pages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const pageSafe = Math.min(page, pages);
@@ -148,9 +153,10 @@ function AdminVendorsPanel() {
   const handleExportVendors = () => {
     downloadCSV(
       "Vendors_List",
-      ["Vendor ID", "Business Name", "Owner", "Email", "Phone", "City", "GSTIN", "Products Count", "Orders Count", "Sales (INR)", "Commission Rate", "Rating", "Status", "Joined Date"],
+      ["Vendor ID", "Vendor No.", "Business Name", "Owner", "Email", "Phone", "City", "GSTIN", "Products Count", "Orders Count", "Sales (INR)", "Commission Rate", "Rating", "Status", "Joined Date"],
       filtered.map((v) => [
         v.id,
+        vendorNumberOf(numbers, v.id) ?? "",
         v.business,
         v.owner,
         v.email,
@@ -209,7 +215,7 @@ function AdminVendorsPanel() {
             >
               <Download className="mr-1.5 h-3.5 w-3.5" /> Export CSV
             </Button>
-            <Input placeholder="Search business, owner, email" value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} className="h-9 w-56" />
+            <Input placeholder="Search business, owner, email, vendor no." value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} className="h-9 w-56" />
             <Select value={status} onValueChange={(v) => { setStatus(v); setPage(1); }}>
               <SelectTrigger className="h-9 w-36"><SelectValue placeholder="Status" /></SelectTrigger>
               <SelectContent>
@@ -242,7 +248,14 @@ function AdminVendorsPanel() {
               <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-navy/10 text-xs font-bold text-navy">
                 {v.business.split(" ").map((w) => w[0]).slice(0, 2).join("")}
               </span>
-              <span className="font-medium text-navy">{v.business}</span>
+              <div className="min-w-0">
+                <span className="font-medium text-navy">{v.business}</span>
+                {vendorNumberOf(numbers, v.id) && (
+                  <p className="text-xs text-slate">
+                    <span>Vendor No.</span> <span data-no-translate className="font-mono font-semibold text-navy">{vendorNumberOf(numbers, v.id)}</span>
+                  </p>
+                )}
+              </div>
             </div>,
             v.owner,
             <div><p className="text-charcoal">{v.email}</p><p className="text-xs text-slate">{v.phone}</p></div>,

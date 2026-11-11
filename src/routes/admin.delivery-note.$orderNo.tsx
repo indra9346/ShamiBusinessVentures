@@ -188,7 +188,7 @@ function DeliveryNotePrintPage() {
       }
       const papers = papersState(next);
       const { pdf, fileName } = buildDeliveryNotePdf(
-        releasedPdfInput(print, { gate: next.state, selection, handovers: papers.handovers, origin: window.location.origin }),
+        releasedPdfInput(print, { gate: next.state, selection, handovers: papers.handovers, origin: window.location.origin, customerNumber: next.customerNumber ?? null }),
         { jspdf: pdfKit![0], logo: pdfKit![1], textImage: canvasTextImage },
       );
       pdf.save(fileName);
@@ -284,9 +284,9 @@ function DeliveryNotePrintPage() {
 
       {note && state && (
         <div className="dn-docs" data-no-translate>
-          <NoteSheet note={note} state={state} warnings={noteWarnings} paper={paper} slipCount={slips.length} />
+          <NoteSheet note={note} state={state} warnings={noteWarnings} paper={paper} slipCount={slips.length} customerNumber={view?.customerNumber ?? null} />
           {slips.map((slip) => (
-            <SlipSheet key={slip.slip} slip={slip} note={note} paper={paper} warnings={slipWarnings[String(slip.slip)] ?? warnings} />
+            <SlipSheet key={slip.slip} slip={slip} note={note} paper={paper} warnings={slipWarnings[String(slip.slip)] ?? warnings} customerNumber={view?.customerNumber ?? null} />
           ))}
         </div>
       )}
@@ -396,7 +396,8 @@ function SheetFooter() {
   );
 }
 
-function NoteSheet({ note, state, warnings, paper, slipCount }: { note: DeliveryNote; state: DeliveryGate; warnings: string[]; paper: Paper; slipCount: number }) {
+/** customerNumber: the customer's number in Zoho Books, read with the view (not part of the note's snapshot). */
+function NoteSheet({ note, state, warnings, paper, slipCount, customerNumber }: { note: DeliveryNote; state: DeliveryGate; warnings: string[]; paper: Paper; slipCount: number; customerNumber: string | null }) {
   const { snapshot } = note;
   const pickup = isPickup(snapshot);
   const godownLines = addressLines(snapshot.godown);
@@ -425,6 +426,7 @@ function NoteSheet({ note, state, warnings, paper, slipCount }: { note: Delivery
           <Card heading={pickup ? "Customer (collects at the godown)" : "Customer"}>
             <p className="font-bold">{snapshot.customer.business_name || snapshot.customer.name}</p>
             {snapshot.customer.business_name && snapshot.customer.name && <p>{snapshot.customer.name}</p>}
+            {customerNumber && <p className="font-semibold"><span>Customer No.</span> <span data-no-translate>{customerNumber}</span></p>}
             {snapshot.customer.gstin && <p>GSTIN {snapshot.customer.gstin}</p>}
             {snapshot.customer.phone && <p>Phone {snapshot.customer.phone}</p>}
             {pickup && customerLines.map((line) => <p key={line} className="break-words">{line}</p>)}
@@ -499,7 +501,7 @@ function NoteSheet({ note, state, warnings, paper, slipCount }: { note: Delivery
   );
 }
 
-function SlipSheet({ slip, note, warnings, paper }: { slip: SlipPage; note: DeliveryNote; warnings: string[]; paper: Paper }) {
+function SlipSheet({ slip, note, warnings, paper, customerNumber }: { slip: SlipPage; note: DeliveryNote; warnings: string[]; paper: Paper; customerNumber: string | null }) {
   const { snapshot } = note;
   const inPrint = paper.selection.slips.includes(slip.slip);
   return (
@@ -529,6 +531,7 @@ function SlipSheet({ slip, note, warnings, paper }: { slip: SlipPage; note: Deli
           <Fact label="Order no." value={note.order_no} strong />
           <Fact label="Invoice no." value={note.invoice_number} />
           <Fact label="Customer" value={snapshot.customer.business_name || snapshot.customer.name} />
+          {customerNumber && <Fact label="Customer No." value={customerNumber} strong />}
           <Fact label="Godown" value={snapshot.godown.name ?? ""} />
           <Fact label="Delivery" value={deliveryMethodLabel(snapshot.shipping_method)} />
           <Fact label="Released" value={releasedFact({ generated_at: note.generated_at, generated_how: howOf(note), generated_by_name: note.generated_by_name })} />

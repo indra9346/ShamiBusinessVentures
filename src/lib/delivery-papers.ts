@@ -420,6 +420,8 @@ export type InvoiceScan = {
   order_status_before?: string | null;
   print?: ReleasePrint | null;
   gate?: PaperScan["gate"];
+  /** With a print: the customer's number in Zoho Books, read by the website now (not part of the note's snapshot). */
+  customer_number?: string | null;
 };
 
 /** The answer for a QR on an invoice, as against a printed delivery paper's. */
