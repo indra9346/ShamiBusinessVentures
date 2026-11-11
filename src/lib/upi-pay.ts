@@ -28,6 +28,10 @@ export type UpiSubmission = {
   status: UpiSubmissionStatus;
   reviewedAt?: string;
   note?: string;
+  /** Sent after the checkout ended without payment ("paid after the time ran out"). */
+  late?: boolean;
+  /** Who sent it: the customer, the godown's channel partner, or an admin. */
+  sentByRole?: "customer" | "partner" | "admin";
 };
 
 /** A UPI ID: handle@bank (letters, digits, dot, dash, underscore before @). */

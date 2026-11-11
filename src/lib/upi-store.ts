@@ -51,11 +51,13 @@ export const isMissingInDatabase = (error: { code?: string; message?: string } |
 
 type SubmissionRow = {
   order_no: string; amount: number | string; utr: string; customer_name: string; submitted_at: string;
-  status: string; reviewed_at: string | null; note: string | null;
+  status: string; reviewed_at: string | null; note: string | null; late?: boolean | null; sent_by_role?: string | null;
 };
 const fromRow = (row: SubmissionRow): UpiSubmission => ({
   orderNo: row.order_no, amount: Number(row.amount), utr: row.utr, customer: row.customer_name, submittedAt: row.submitted_at,
   status: row.status as UpiSubmission["status"], ...(row.reviewed_at ? { reviewedAt: row.reviewed_at } : {}), ...(row.note ? { note: row.note } : {}),
+  ...(row.late ? { late: true } : {}),
+  ...(row.sent_by_role === "partner" || row.sent_by_role === "admin" ? { sentByRole: row.sent_by_role } : {}),
 });
 
 export async function loadUpiSettings(): Promise<UpiSettings> {
@@ -150,7 +152,7 @@ export async function loadBankAudit(): Promise<BankAuditRow[]> {
 export async function loadUpiSubmissions(): Promise<UpiSubmission[]> {
   if (STATIC_DATA_MODE) return readJson<UpiSubmission[]>(DEMO_SUBMISSIONS, []);
   const { data, error } = await supabase.from("upi_payment_submissions")
-    .select("order_no,amount,utr,customer_name,submitted_at,status,reviewed_at,note")
+    .select("order_no,amount,utr,customer_name,submitted_at,status,reviewed_at,note,late,sent_by_role")
     .order("submitted_at", { ascending: false }).limit(500);
   if (error) throw new Error(error.message);
   return (data ?? []).map(fromRow);
@@ -234,6 +236,43 @@ export async function deleteUtrRecord(orderNo: string, reason: string) {
   const { error } = await supabase.rpc("admin_delete_utr", { _order_no: orderNo, _reason: reason.trim() });
   if (error) throw new Error(error.message);
   changed();
+}
+
+/**
+ * A UTR for a checkout still waiting for payment, or one that ended without payment within 15 days, from the customer,
+ * the godown's channel partner or an admin (submit_utr_for_order). It waits for an admin's check; nothing is confirmed.
+ */
+export async function sendUtrForOrder(orderNo: string, utr: string, method?: string) {
+  const { data, error } = await supabase.rpc("submit_utr_for_order", { _order_no: orderNo, _utr: utr, ...(method ? { _method: method } : {}) });
+  if (error) throw new Error(error.message);
+  changed();
+  return data as { order_no: string; utr: string; late: boolean };
+}
+
+/** Admin: the money for a checkout that ended without payment is in the bank. Takes its stock again and places it. */
+export async function placeEndedCheckout(orderNo: string, utr: string | null, method: string | null, checkedAgainst: string) {
+  const { error } = await supabase.rpc("admin_place_ended_checkout", {
+    _order_no: orderNo, _utr: utr, _method: method, _checked_against: checkedAgainst,
+  });
+  if (error) throw new Error(error.message);
+  changed();
+}
+
+export type PartnerCheckout = {
+  orderNo: string; status: string; total: number; method: string; placedAt: string; holdUntil: string | null;
+  customer: string; items: string; utr: string | null; utrStatus: string | null; utrLate: boolean; utrSentBy: string | null;
+};
+/** A channel partner: their godown's checkouts waiting for payment, or ended in the last 15 days. */
+export async function loadPartnerCheckouts(): Promise<PartnerCheckout[]> {
+  if (STATIC_DATA_MODE) return [];
+  const { data, error } = await supabase.rpc("partner_payment_checkouts");
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as Array<Record<string, unknown>>).map((row) => ({
+    orderNo: String(row["order_no"]), status: String(row["status"]), total: Number(row["total"]), method: String(row["method"] ?? "UPI"),
+    placedAt: String(row["placed_at"]), holdUntil: (row["hold_until"] as string | null) ?? null, customer: String(row["customer"] ?? ""),
+    items: String(row["items"] ?? ""), utr: (row["utr"] as string | null) ?? null, utrStatus: (row["utr_status"] as string | null) ?? null,
+    utrLate: Boolean(row["utr_late"]), utrSentBy: (row["utr_sent_by"] as string | null) ?? null,
+  }));
 }
 
 /** Tell every open payments list to read again (after an order with UTRs was deleted elsewhere). */

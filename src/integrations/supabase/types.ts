@@ -664,7 +664,7 @@ export type Database = {
         Relationships: []
       }
       upi_payment_submissions: {
-        Row: { id: string; order_id: string; order_no: string; user_id: string | null; customer_name: string; amount: number; utr: string; status: string; note: string | null; submitted_at: string; reviewed_at: string | null; reviewed_by: string | null }
+        Row: { late: boolean; sent_by: string | null; sent_by_role: string; id: string; order_id: string; order_no: string; user_id: string | null; customer_name: string; amount: number; utr: string; status: string; note: string | null; submitted_at: string; reviewed_at: string | null; reviewed_by: string | null }
         Insert: never
         Update: never
         Relationships: []
@@ -1442,6 +1442,9 @@ export type Database = {
       admin_end_payment_hold: { Args: { _order_no: string; _reason?: string }; Returns: boolean }
       admin_cancel_order: { Args: { _order_no: string; _reason: string; _goods_back?: boolean | null; _refund?: Json | null }; Returns: Json }
       admin_delete_utr: { Args: { _order_no: string; _reason: string }; Returns: Json }
+      submit_utr_for_order: { Args: { _order_no: string; _utr: string; _method?: string | null }; Returns: Json }
+      admin_place_ended_checkout: { Args: { _order_no: string; _utr?: string | null; _method?: string | null; _checked_against?: string | null }; Returns: Json }
+      partner_payment_checkouts: { Args: Record<string, never>; Returns: { order_no: string; status: string; total: number; method: string; placed_at: string; hold_until: string | null; customer: string; items: string; utr: string | null; utr_status: string | null; utr_late: boolean; utr_sent_by: string | null }[] }
       order_delete_with_payments_check: { Args: { _order_no: string }; Returns: Json }
       complete_follow_up_task: { Args: { _id: string; _note?: string }; Returns: Json }
       admin_reject_utr_and_end_checkout: { Args: { _order_no: string; _note: string; _expected_utr?: string | null }; Returns: boolean }

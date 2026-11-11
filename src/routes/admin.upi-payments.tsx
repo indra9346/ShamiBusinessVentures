@@ -14,13 +14,14 @@ import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { DEFAULT_UPI_SETTINGS, isValidVpa, settingsProblem, upiPaymentUri, type UpiSettings } from "@/lib/upi-pay";
 import { RejectUtrDialog, type RejectChoice } from "@/components/panel/RejectUtrDialog";
 import { isBankMethod } from "@/lib/payment-rules";
-import { loadBankAudit, loadBankSettings, loadUpiAudit, markUtrRefunded, rejectUtrAndEndCheckout, reopenBankCredit, reviewUpiPayment, saveBankDetails, saveUpiSettings, settleBankCredit, useUpiPayments, type BankAuditRow, type BankCredit, type UpiAuditRow, type CreditWithoutUtr } from "@/lib/upi-store";
+import { loadBankAudit, loadBankSettings, loadUpiAudit, markUtrRefunded, placeEndedCheckout, rejectUtrAndEndCheckout, reopenBankCredit, reviewUpiPayment, saveBankDetails, saveUpiSettings, settleBankCredit, useUpiPayments, type BankAuditRow, type BankCredit, type UpiAuditRow, type CreditWithoutUtr } from "@/lib/upi-store";
 import { parseBankCredit, parseCreditWithoutReference } from "@/lib/bank-alert";
 import { CreditHint, CreditsWithoutUtrPanel } from "@/components/panel/CreditsWithoutUtr";
 import { SameUtrBadge, UtrChecksPanel, useUtrChecks } from "@/components/panel/UtrChecksPanel";
 import { AWAITING_PAYMENT, clockText, holdSecondsLeft } from "@/lib/payment-hold";
 import { CustomersPayingNow } from "@/components/panel/CustomersPayingNow";
 import { DeleteUtrDialog } from "@/components/panel/DeleteUtrDialog";
+import { BankStatementPanel } from "@/components/panel/BankStatementPanel";
 import { ResizableTable } from "@/hooks/use-column-resize";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -93,9 +94,10 @@ function AdminUpiPayments() {
     }
   };
 
-  const [confirming, setConfirming] = useState<{ orderNo: string; amount: number; utr: string } | null>(null);
+  // late: sent after the checkout ended, so confirming places it again (admin_place_ended_checkout).
+  const [confirming, setConfirming] = useState<{ orderNo: string; amount: number; utr: string; late?: boolean } | null>(null);
   const [deletingUtr, setDeletingUtr] = useState<{ orderNo: string; utr: string; note: string | null } | null>(null);
-  const confirm = async (orderNo: string, amount: number, utr: string, checkedAgainst: string, remark: string) => {
+  const confirm = async (orderNo: string, amount: number, utr: string, checkedAgainst: string, remark: string, late = false) => {
     setConfirming(null);
     setBusy(orderNo);
     try {
@@ -106,7 +108,11 @@ function AdminUpiPayments() {
       }
       // Live: one database step records the payment for this UTR and closes it.
       // What the admin compared it with stays on the record, shown under Checked payments.
-      await reviewUpiPayment(orderNo, "confirmed", utr, [`Checked against ${checkedAgainst}`, user?.name ? `by ${user.name}` : "", remark.trim()].filter(Boolean).join(" ").slice(0, 200));
+      const checkedNote = [`Checked against ${checkedAgainst}`, user?.name ? `by ${user.name}` : "", remark.trim()].filter(Boolean).join(" ").slice(0, 200);
+      if (late) {
+        await placeEndedCheckout(orderNo, utr, null, checkedNote);
+        void refreshHeldCheckouts([orderNo]);
+      } else await reviewUpiPayment(orderNo, "confirmed", utr, checkedNote);
       pushOrderToZohoInBackground(orderNo);
       toast.success(`${orderNo} marked paid`, { description: `UTR ${utr}` });
     } catch (cause) {
@@ -213,6 +219,8 @@ function AdminUpiPayments() {
                       {hold ? <span className="text-navy">{s.orderNo}</span> : <Link to="/admin/orders/$id" params={{ id: s.orderNo }} className="text-navy hover:text-gold">{s.orderNo}</Link>}
                       {hold && <span className="mt-0.5 block font-sans text-[11px] text-slate">{hold.lines.map((line) => `${line.name ?? line.productId} × ${line.qty}`).join(", ")}</span>}
                       {hold?.holdUntil && <span className="mt-0.5 block font-sans text-[11px] font-semibold text-amber-800">{`Stock held until ${istTime(new Date(Date.parse(hold.holdUntil) + 86_400_000).toISOString())}`}</span>}
+                      {s.late && <span className="mt-0.5 block font-sans text-[11px] font-semibold text-red-700">Paid after the checkout ended: confirming places the order again if the stock is there</span>}
+                      {s.sentByRole === "partner" && <span className="mt-0.5 block font-sans text-[11px] font-semibold text-sky-800">Sent by the godown's channel partner</span>}
                     </td>
                     <td className="px-2 py-2">{s.customer || "—"}</td>
                     <td className="px-2 py-2 text-right font-semibold tabular-nums">{inrPrecise(s.amount)}</td>
@@ -220,7 +228,7 @@ function AdminUpiPayments() {
                     <td className="px-2 py-2 font-mono tracking-wider">{s.utr}</td>
                     <td className="px-2 py-2">
                       <div className="flex gap-2">
-                        <Button size="sm" className="bg-emerald-600 text-white hover:bg-emerald-700" disabled={busy === s.orderNo} onClick={() => setConfirming({ orderNo: s.orderNo, amount: s.amount, utr: s.utr })}>Confirm paid</Button>
+                        <Button size="sm" className="bg-emerald-600 text-white hover:bg-emerald-700" disabled={busy === s.orderNo} onClick={() => setConfirming({ orderNo: s.orderNo, amount: s.amount, utr: s.utr, late: Boolean(s.late) })}>{s.late ? "Confirm & place order" : "Confirm paid"}</Button>
                         <Button size="sm" variant="outline" className="text-danger" disabled={busy === s.orderNo} onClick={() => reject(s.orderNo, s.utr)}>Reject</Button>
                       </div>
                       <CreditHint payment={s} credits={creditsWithoutUtr} />
@@ -236,6 +244,8 @@ function AdminUpiPayments() {
       </Panel>
       </div>
 
+      {!STATIC_DATA_MODE && <BankStatementPanel submissions={submissions} />}
+
       <CreditsWithoutUtrPanel credits={creditsWithoutUtr} submissions={submissions} checkouts={paymentHolds} />
 
       <Panel title="Waiting for payment (not orders yet)" className="mb-6">
@@ -245,7 +255,7 @@ function AdminUpiPayments() {
 
       <Panel title="Ended without payment" className="mb-6">
         <p className="mb-3 text-xs text-slate">Checkouts whose payment window ran out, or that were ended. They are not orders and owe nothing. Delete one only when it is no longer wanted.</p>
-        <EndedCheckouts />
+        <EndedCheckouts submissions={submissions} />
       </Panel>
 
       <BankAlertsPanel credits={credits} creditsWithoutUtr={creditsWithoutUtr} checkingOrders={waiting.map((row) => row.orderNo)} onDemoMatch={(amount) => {
@@ -359,7 +369,7 @@ function AdminUpiPayments() {
         </div>
       )}
       {deletingUtr && <DeleteUtrDialog {...deletingUtr} onClose={() => setDeletingUtr(null)} />}
-      {confirming && <ConfirmPaidDialog {...confirming} onClose={() => setConfirming(null)} onConfirm={(checkedAgainst, remark) => void confirm(confirming.orderNo, confirming.amount, confirming.utr, checkedAgainst, remark)} />}
+      {confirming && <ConfirmPaidDialog {...confirming} onClose={() => setConfirming(null)} onConfirm={(checkedAgainst, remark) => void confirm(confirming.orderNo, confirming.amount, confirming.utr, checkedAgainst, remark, Boolean(confirming.late))} />}
     </PanelLayout>
   );
 }
@@ -636,7 +646,7 @@ function BankAlertsPanel({ credits, creditsWithoutUtr = [], checkingOrders, onDe
 }
 
 /** Payment confirmation is by hand for now: the admin says what they compared the UTR with, and that stays on the record. */
-function ConfirmPaidDialog({ orderNo, amount, utr, onClose, onConfirm }: { orderNo: string; amount: number; utr: string; onClose: () => void; onConfirm: (checkedAgainst: string, remark: string) => void }) {
+function ConfirmPaidDialog({ orderNo, amount, utr, late = false, onClose, onConfirm }: { orderNo: string; amount: number; utr: string; late?: boolean | undefined; onClose: () => void; onConfirm: (checkedAgainst: string, remark: string) => void }) {
   const [checkedAgainst, setCheckedAgainst] = useState("");
   const [remark, setRemark] = useState("");
   return (
@@ -645,6 +655,7 @@ function ConfirmPaidDialog({ orderNo, amount, utr, onClose, onConfirm }: { order
         <DialogHeader>
           <DialogTitle>{`Confirm ${inrPrecise(amount)} for ${orderNo}?`}</DialogTitle>
           <DialogDescription>{`Only confirm after you see a credit with UTR ${utr} for this amount.`}</DialogDescription>
+          {late && <p className="text-sm font-semibold text-amber-800">This checkout ended before the payment was sent. Confirming takes its stock again at its godown and places the order.</p>}
         </DialogHeader>
         <div className="grid gap-2">
           <p className="text-xs font-semibold text-slate">Checked against</p>
@@ -658,7 +669,7 @@ function ConfirmPaidDialog({ orderNo, amount, utr, onClose, onConfirm }: { order
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Cancel</Button>
-          <Button className="bg-emerald-600 text-white hover:bg-emerald-700" disabled={!checkedAgainst} onClick={() => onConfirm(checkedAgainst, remark)}>Confirm paid</Button>
+          <Button className="bg-emerald-600 text-white hover:bg-emerald-700" disabled={!checkedAgainst} onClick={() => onConfirm(checkedAgainst, remark)}>{late ? "Confirm & place order" : "Confirm paid"}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

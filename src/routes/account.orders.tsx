@@ -23,11 +23,13 @@ import {
 import { Button } from "@/components/ui/button";
 import { showCartNotification } from "@/components/site/CartFloatingNotification";
 import { orderBelongsToUser } from "@/lib/account-identity";
-import { UNCHECKED_UTR_NOTE, isBankMethod } from "@/lib/payment-rules";
+import { REFUNDED_UTR_NOTE, REUSED_UTR_NOTE, UNCHECKED_UTR_NOTE, isBankMethod } from "@/lib/payment-rules";
 import { useUpiPayments } from "@/lib/upi-store";
 import { supabase } from "@/integrations/supabase/client";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { ReorderButton } from "@/components/site/ReorderButton";
+import { SendUtrForm, UpiIdPay, UpiUtrForm } from "@/components/site/UpiIdPay";
+import { BankUtrForm } from "@/components/site/BankTransferPay";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -64,10 +66,10 @@ function AccountOrders() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const routeSearch = Route.useSearch();
   const navigate = Route.useNavigate();
-  const { user, orders, updateOrderStatus, addToCart, paymentHolds, products } = useApp();
+  const { user, orders, updateOrderStatus, addToCart, paymentHolds, products, refreshHeldCheckouts } = useApp();
   const unpaid = paymentHolds.filter((hold) => hold.status === AWAITING_PAYMENT);
   const now = useServerNow();
-  const { submissions } = useUpiPayments();
+  const { submissions, settings: upiSettings } = useUpiPayments();
   // A checkout whose time is up ends now (stock back, Reorder on offer), not at the next scheduled sweep.
   const anyOver = unpaid.some((hold) => holdSecondsLeft(hold.holdUntil, now) === 0 && !submissions.some((item) => item.orderNo === hold.orderNo && item.status === "submitted"));
   const lastSweep = useRef(0);
@@ -184,6 +186,18 @@ function AccountOrders() {
                     <p className="font-bold">{state.title}</p>
                     <p className="mt-0.5">{state.text}</p>
                   </div>
+                  {/* Added 11 Nov 2026 (owner): pay by our UPI ID from any UPI app and send the UTR right here. */}
+                  {!utrSent && !moneyCame && left > 0 && (
+                    <div className="mt-3 space-y-3">
+                      {!byBank && upiSettings?.vpa && (
+                        <UpiIdPay orderNo={hold.orderNo} vpa={upiSettings.vpa} payeeName={upiSettings.payeeName} amount={hold.amount}
+                          onKept={() => void refreshHeldCheckouts([hold.orderNo])} />
+                      )}
+                      {byBank
+                        ? <BankUtrForm orderNo={hold.orderNo} amount={hold.amount} method={hold.method ?? "NEFT"} customer={user?.name ?? ""} submission={submissions.find((item) => item.orderNo === hold.orderNo)} />
+                        : <UpiUtrForm orderNo={hold.orderNo} amount={hold.amount} customer={user?.name ?? ""} submission={submissions.find((item) => item.orderNo === hold.orderNo)} />}
+                    </div>
+                  )}
                   <div className="mt-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
                     <p className="text-[11px] text-slate">{`Order no. ${hold.orderNo}`}</p>
                     <div className="flex flex-wrap items-center gap-3">
@@ -207,11 +221,27 @@ function AccountOrders() {
                   <Link to="/account/orders/$id" params={{ id: hold.orderNo }} search={true} className="font-semibold text-navy hover:text-gold">{hold.orderNo}</Link>
                   <p className="text-xs text-slate">{inrPrecise(hold.amount)}</p>
                   <CheckoutItems lines={hold.lines} products={products} max={2} className="mt-1.5" />
+                  {(() => {
+                    // Added 12 Nov 2026 (owner): paid after the time ran out, or offline: send the UTR for an admin to check.
+                    const sent = submissions.find((item) => item.orderNo === hold.orderNo);
+                    if (sent?.status === "submitted") return <p className="mt-1 text-xs font-semibold text-sky-800">{`Checking UTR ${sent.utr} with our bank. If the money came, we place this order and tell you.`}</p>;
+                    const settled = sent && (sent.note === REFUNDED_UTR_NOTE || REUSED_UTR_NOTE.test(sent.note ?? "") || sent.note === UNCHECKED_UTR_NOTE);
+                    const recent = Date.now() - Date.parse(hold.createdAt) < 15 * 86_400_000;
+                    if (settled || !recent || hold.moneySeenAt) return null;
+                    return (
+                      <details className="mt-2">
+                        <summary className="cursor-pointer text-xs font-semibold text-gold">Paid already? Send the UTR</summary>
+                        <SendUtrForm className="mt-2" orderNo={hold.orderNo} defaultMethod={hold.method ?? "UPI"} title="Paid already? Send the UTR"
+                          help="If you paid after the time ran out, send the UTR from your UPI app or bank. We check it with our bank, and if the money came we place this order and tell you." />
+                      </details>
+                    );
+                  })()}
                   {submissions.some((item) => item.orderNo === hold.orderNo && item.status === "rejected" && item.note === UNCHECKED_UTR_NOTE) && (
                     <p className="mt-0.5 text-xs font-semibold text-amber-800">{`Do not pay again: send UTR ${submissions.find((item) => item.orderNo === hold.orderNo)?.utr} on the reorder, or call us.`}</p>
                   )}
                 </div>
-                <ReorderButton lines={hold.lines} />
+                {/* While a UTR sent after the time ran out is being checked, a reorder would ask them to pay twice. */}
+                {!submissions.some((item) => item.orderNo === hold.orderNo && item.status === "submitted") && <ReorderButton lines={hold.lines} />}
               </li>
             ))}
           </ul>

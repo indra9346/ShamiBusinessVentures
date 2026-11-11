@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { renderSVG } from "uqr";
 import { toast } from "sonner";
-import { CheckCircle2, Clock, Copy, ShieldCheck, XCircle } from "lucide-react";
+import { CheckCircle2, Clock, ShieldCheck, XCircle } from "lucide-react";
 import { inrPrecise } from "@/lib/data";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { normaliseUtr, settingsProblem, upiPaymentUri, utrProblem, type UpiSettings } from "@/lib/upi-pay";
 import { UpiAppButtons } from "@/components/site/UpiAppButtons";
+import { UpiIdPay } from "@/components/site/UpiIdPay";
 import { payPanelId } from "@/lib/upi-return";
 import { BankTransferDetails, BankUtrForm } from "@/components/site/BankTransferPay";
 import { allowedMethods, isBankMethod } from "@/lib/payment-rules";
@@ -140,10 +141,7 @@ export function UpiPayPanel({ settings, orderNo, amount, customer }: { settings:
               <li>Copy the 12-digit <span className="font-semibold">UTR / UPI Ref. No.</span> from the payment receipt and enter it here.</li>
             </ol>
             <UpiAppButtons uri={uri} returnTo={payPanelId(orderNo)} />
-            <button type="button" onClick={() => { void navigator.clipboard?.writeText(settings.vpa); toast.success("UPI ID copied"); }}
-              className="inline-flex items-center gap-1 text-xs font-semibold text-gold hover:underline">
-              <Copy className="h-3.5 w-3.5" /> UPI ID: {settings.vpa}
-            </button>
+            <UpiIdPay orderNo={orderNo} vpa={settings.vpa} payeeName={settings.payeeName} amount={amount} keepCheckout={false} />
           </div>
         </div>
       )}
