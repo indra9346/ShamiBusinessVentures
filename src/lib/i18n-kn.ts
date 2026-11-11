@@ -5806,6 +5806,18 @@ export const kn: Record<string, string> = {
   "This order has a return, so it stays.": "ಈ ಆರ್ಡರ್‌ಗೆ ರಿಟರ್ನ್ ಇದೆ, ಆದ್ದರಿಂದ ಇದು ಉಳಿಯುತ್ತದೆ.",
   "Zoho Books invoice {0} stays in Zoho. Void it there as well if it should not count.": "Zoho Books ಇನ್‌ವಾಯ್ಸ್ {0} Zoho ನಲ್ಲೇ ಉಳಿಯುತ್ತದೆ. ಅದು ಎಣಿಕೆಗೆ ಬರಬಾರದಿದ್ದರೆ ಅಲ್ಲಿಯೂ void ಮಾಡಿ.",
   "Balance due (order cancelled)": "ಬಾಕಿ (ಆರ್ಡರ್ ರದ್ದಾಗಿದೆ)",
+  // 11 Nov 2026: pay by our UPI ID from any UPI app
+  "Or pay from your UPI app by our UPI ID": "ಅಥವಾ ನಮ್ಮ UPI ID ಗೆ ನಿಮ್ಮ UPI ಆ್ಯಪ್‌ನಿಂದ ಪಾವತಿಸಿ",
+  "Use this if the QR or the app button does not work for you.": "QR ಅಥವಾ ಆ್ಯಪ್ ಬಟನ್ ಕೆಲಸ ಮಾಡದಿದ್ದರೆ ಇದನ್ನು ಬಳಸಿ.",
+  "Copy our UPI ID:": "ನಮ್ಮ UPI ID ನಕಲಿಸಿ:",
+  "Copy UPI ID": "UPI ID ನಕಲಿಸಿ",
+  "Open any UPI app (Google Pay, PhonePe, Paytm, BHIM…), choose Pay to UPI ID and paste it. Check that the name shows {0}.": "ಯಾವುದೇ UPI ಆ್ಯಪ್ ತೆರೆಯಿರಿ (Google Pay, PhonePe, Paytm, BHIM…), 'UPI ID ಗೆ ಪಾವತಿಸಿ' ಆಯ್ಕೆಮಾಡಿ ಅದನ್ನು ಅಂಟಿಸಿ. ಹೆಸರು {0} ಎಂದು ತೋರಿಸುತ್ತಿದೆಯೇ ಪರಿಶೀಲಿಸಿ.",
+  "Pay exactly this amount:": "ನಿಖರವಾಗಿ ಈ ಮೊತ್ತ ಪಾವತಿಸಿ:",
+  "Copy amount": "ಮೊತ್ತ ನಕಲಿಸಿ",
+  "Come back here and enter the 12-digit UPI Ref No. (UTR) from the receipt below.": "ಇಲ್ಲಿಗೆ ಮರಳಿ ಬಂದು ರಸೀದಿಯಲ್ಲಿರುವ 12 ಅಂಕಿಯ UPI Ref No. (UTR) ಅನ್ನು ಕೆಳಗೆ ನಮೂದಿಸಿ.",
+  "If your UPI app says the payment failed or was declined, no money was taken. Try paying this way, or with another UPI app.": "ಪಾವತಿ ವಿಫಲವಾಗಿದೆ ಅಥವಾ ತಿರಸ್ಕರಿಸಲಾಗಿದೆ ಎಂದು ನಿಮ್ಮ UPI ಆ್ಯಪ್ ಹೇಳಿದರೆ, ಯಾವುದೇ ಹಣ ಕಡಿತವಾಗಿಲ್ಲ. ಈ ರೀತಿ ಅಥವಾ ಬೇರೆ UPI ಆ್ಯಪ್‌ನಿಂದ ಪಾವತಿಸಲು ಪ್ರಯತ್ನಿಸಿ.",
+  "Amount copied": "ಮೊತ್ತ ನಕಲಿಸಲಾಗಿದೆ",
+  "Could not copy. Please type it in your UPI app.": "ನಕಲಿಸಲು ಆಗಲಿಲ್ಲ. ದಯವಿಟ್ಟು ನಿಮ್ಮ UPI ಆ್ಯಪ್‌ನಲ್ಲಿ ಟೈಪ್ ಮಾಡಿ.",
 };
 
 /** Word-level fallbacks for text that isn't in the dictionary (product names, specs from the database). */

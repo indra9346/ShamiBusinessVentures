@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { renderSVG } from "uqr";
-import { toast } from "sonner";
-import { CheckCircle2, Clock, Copy, Loader2, ShieldCheck, XCircle } from "lucide-react";
+import { CheckCircle2, Clock, Loader2, ShieldCheck, XCircle } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { inrPrecise } from "@/lib/data";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
@@ -9,14 +8,15 @@ import { AWAITING_PAYMENT, clockText, holdSecondsLeft, holdView, type PaymentHol
 import { serverNow, useServerNow } from "@/lib/server-clock";
 import { useApp } from "@/lib/store";
 import { CancelCheckoutButton } from "@/components/site/CancelCheckoutButton";
-import { normaliseUtr, upiPaymentUri, utrFromText, utrProblem, type UpiSettings } from "@/lib/upi-pay";
+import { upiPaymentUri, type UpiSettings } from "@/lib/upi-pay";
 import { GST_BILL_PAY_NOTE } from "@/lib/gstin";
 import { UpiAppButtons } from "@/components/site/UpiAppButtons";
 import { PAY_RETURNED_EVENT, payPanelId } from "@/lib/upi-return";
 import { BankTransferDetails, BankUtrForm } from "@/components/site/BankTransferPay";
 import { ReorderButton } from "@/components/site/ReorderButton";
 import { isBankMethod, lapsedTransfer, REFUNDED_UTR_NOTE, REUSED_UTR_NOTE, UNCHECKED_UTR_NOTE } from "@/lib/payment-rules";
-import { submitUpiPayment, useBankDetails, useUpiPayments } from "@/lib/upi-store";
+import { useBankDetails, useUpiPayments } from "@/lib/upi-store";
+import { UpiIdPay, UpiUtrForm } from "@/components/site/UpiIdPay";
 import { cn } from "@/lib/utils";
 
 /**
@@ -38,9 +38,6 @@ export function HeldCheckoutPay({ settings, orderNo, amount, holdUntil, customer
   const [liveStatus, setLiveStatus] = useState<{ status: string; outcome: string | null; holdUntil: string | null; moneySeenAt: string | null; gstBillTo: string | null; gstin: string | null } | null>(null);
   // The database decides when the hold ends, so the countdown runs on the server's clock.
   const now = useServerNow();
-  const [utr, setUtr] = useState("");
-  const [error, setError] = useState("");
-  const [sending, setSending] = useState(false);
   const method = methodProp ?? storeHold?.method ?? "UPI";
   const byBank = isBankMethod(method);
   const { details: bankDetails, loaded: bankLoaded, failed: bankFailed } = useBankDetails(byBank);
@@ -125,23 +122,6 @@ export function HeldCheckoutPay({ settings, orderNo, amount, holdUntil, customer
 
   const uri = useMemo(() => (settings && !byBank ? upiPaymentUri(settings, amount, orderNo) : ""), [settings, byBank, amount, orderNo]);
   const qrSvg = useMemo(() => (uri ? renderSVG(uri, { border: 2, ecc: "M" }) : ""), [uri]);
-
-  const sendUtr = async () => {
-    // Typed or pasted with words around it: the UTR is picked out when it is certain.
-    const typed = utrFromText(utr) ?? utr;
-    const problem = utrProblem(typed);
-    if (problem) { setError(problem); return; }
-    setSending(true);
-    try {
-      await submitUpiPayment({ orderNo, amount, utr: normaliseUtr(typed), customer });
-      setError("");
-      toast.success("UTR sent", { description: "Your order is placed as soon as our team confirms this payment." });
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not send the UTR");
-    } finally {
-      setSending(false);
-    }
-  };
 
   if (view === "confirmed") {
     return (
@@ -276,10 +256,10 @@ export function HeldCheckoutPay({ settings, orderNo, amount, holdUntil, customer
                 <li>Come back here and enter the 12-digit UPI Ref No. (UTR) from the payment receipt. Our team confirms it with our bank and your order is placed.</li>
               </ol>
               <UpiAppButtons uri={uri} returnTo={payPanelId(orderNo)} />
-              <button type="button" onClick={() => { void navigator.clipboard?.writeText(settings?.vpa ?? ""); toast.success("UPI ID copied"); }}
-                className="inline-flex items-center gap-1 text-xs font-semibold text-gold hover:underline">
-                <Copy className="h-3.5 w-3.5" /> UPI ID: {settings?.vpa}
-              </button>
+              {settings?.vpa && (
+                <UpiIdPay orderNo={orderNo} vpa={settings.vpa} payeeName={settings.payeeName} amount={amount}
+                  onKept={(until) => setLiveStatus((current) => (current ? { ...current, holdUntil: until } : current))} />
+              )}
               {!backFromApp && <p className="flex items-center gap-2 text-xs font-semibold text-slate"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Waiting for your payment…</p>}
             </div>
           </div>
@@ -291,24 +271,7 @@ export function HeldCheckoutPay({ settings, orderNo, amount, holdUntil, customer
                 <p className="mt-0.5">It is the 12-digit number on the receipt in your UPI app (UPI Ref No., UPI transaction ID or UTR). Your order is kept for you while you enter it.</p>
               </div>
             )}
-            {submission?.status === "rejected" && (
-              <p className="mb-2 flex items-start gap-2 rounded-md bg-red-50 p-2 text-xs text-red-800">
-                <XCircle className="mt-0.5 h-4 w-4 shrink-0" /> UTR {submission.utr} could not be matched{submission.note ? `: ${submission.note}` : ""}.
-              </p>
-            )}
-            <label className="block text-xs font-semibold text-charcoal" htmlFor={`utr-${orderNo}`}>Paid? Enter the 12-digit UPI Ref No. (UTR) from your UPI app</label>
-            <div className="mt-1.5 flex flex-wrap gap-2">
-              <input id={`utr-${orderNo}`} inputMode="numeric" autoComplete="off" maxLength={300} placeholder="e.g. 612345678901" value={utr}
-                onChange={(e) => { setUtr(e.target.value); setError(""); }}
-                // The whole "Share receipt" text of PhonePe, Google Pay or Paytm can be pasted: the UTR is picked out of it.
-                onPaste={(e) => {
-                  const found = utrFromText(e.clipboardData.getData("text"));
-                  if (found) { e.preventDefault(); setUtr(found); setError(""); }
-                }}
-                className="h-10 min-w-0 flex-1 rounded-md border border-input bg-white px-3 font-mono text-sm tracking-wider" />
-              <button type="button" disabled={sending} onClick={() => void sendUtr()} className="h-10 rounded-md bg-navy px-4 text-sm font-semibold text-white hover:bg-midnight disabled:opacity-60">{sending ? "Sending…" : "Send UTR"}</button>
-            </div>
-            {error && <p className="mt-1.5 text-xs font-semibold text-danger">{error}</p>}
+            <UpiUtrForm orderNo={orderNo} amount={amount} customer={customer} submission={submission} />
             <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
               {submission?.status !== "submitted" && <CancelCheckoutButton orderNo={orderNo} byBank={byBank} />}
               {STATIC_DATA_MODE && (
