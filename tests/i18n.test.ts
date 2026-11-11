@@ -5,6 +5,7 @@ import { kn } from "../src/lib/i18n-kn.ts";
 import { productDescription } from "../src/lib/seo.ts";
 import { DEFAULT_RULES, MARK_WORDS, REGISTER_LEGEND, leaveProblem, ruleLines, rulesProblem } from "../src/lib/attendance.ts";
 import { availableParts, availableText, bagCountText, parseAvailable } from "../src/lib/rice-samples.ts";
+import { privacyPolicySections, privacyPolicyText } from "../src/lib/privacy-policy.ts";
 
 await loadKannada();
 
@@ -141,4 +142,18 @@ test("a rice sample's available quantity reads in Kannada, in bags or quintals",
   }
   const noWeight = parseAvailable({ unit: "bags", quantity: "200", bagKg: "" });
   assert.ok(!noWeight.ok && translateText(noWeight.message, "kn") !== noWeight.message);
+});
+
+test("every sentence of the privacy policy reads in Kannada", () => {
+  for (const text of privacyPolicyText()) {
+    assert.ok(kn[text], `no Kannada for "${text}"`);
+    assert.equal(translateText(text, "kn"), kn[text]);
+  }
+});
+
+test("the privacy policy mentions Google Analytics only when the tag can run", () => {
+  const wording = (analyticsOn: boolean) => JSON.stringify(privacyPolicySections(analyticsOn));
+  assert.doesNotMatch(wording(false), /analytics|_ga\b|opt-out/i);
+  assert.match(wording(true), /Google Analytics/);
+  assert.match(wording(true), /cookies/);
 });

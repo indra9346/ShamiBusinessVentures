@@ -15,6 +15,7 @@ const STATIC_PAGES: SitemapEntry[] = [
   { path: "/categories", changefreq: "weekly", priority: 0.8 },
   { path: "/about", changefreq: "monthly", priority: 0.5 },
   { path: "/contact", changefreq: "monthly", priority: 0.5 },
+  { path: "/privacy", changefreq: "monthly", priority: 0.3 },
 ];
 
 export const Route = createFileRoute("/sitemap.xml")({
