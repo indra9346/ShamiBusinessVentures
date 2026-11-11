@@ -1,8 +1,9 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { AlertTriangle, Camera, CalendarDays, CheckCircle2, Clock, LogIn, LogOut, MapPin, RefreshCw, ScanLine, Send, Smartphone } from "lucide-react";
+import { AlertTriangle, Camera, CalendarDays, CheckCircle2, Clock, LogIn, LogOut, MapPin, RefreshCw, ScanLine, Send, ShieldCheck, Smartphone } from "lucide-react";
 import { LogoMark } from "@/components/brand/Logo";
+import { ReleasedDeliveryNotes } from "@/components/panel/DeliveryNotePanel";
 import { LanguageSwitcher } from "@/components/site/LanguageSwitcher";
 import { AttendanceStatusBadge, DecisionChips, RuleList } from "@/components/attendance/AttendanceBits";
 import { SelfieCamera } from "@/components/attendance/SelfieCamera";
@@ -160,6 +161,8 @@ function StaffHome() {
             <div className="min-w-0">
               <p className="truncate text-sm font-extrabold text-navy">{me.name}</p>
               <p className="truncate text-xs text-slate">{godown?.name ?? me.branch_id}{me.designation ? ` · ${me.designation}` : ""}</p>
+              {/* 12 Nov 2026: the admin marks the godown in-charge, who hands goods over on the invoice QR. */}
+              {me.is_incharge && <p className="flex items-center gap-1 text-[11px] font-bold text-navy"><ShieldCheck className="h-3 w-3" /> Godown in-charge</p>}
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-1">
@@ -192,10 +195,15 @@ function StaffHome() {
         <Link to="/slip" className="flex items-center gap-3 rounded-2xl border-2 border-navy bg-card p-4 shadow-sm hover:border-gold">
           <ScanLine className="h-8 w-8 shrink-0 text-navy" />
           <span className="min-w-0">
-            <span className="block text-sm font-extrabold text-navy">Hand over goods: scan the slip</span>
-            <span className="block text-xs text-slate">Scan the QR on a delivery slip or note. Give the goods only when the screen turns green.</span>
+            <span className="block text-sm font-extrabold text-navy">Scan the QR on the customer's invoice</span>
+            <span className="block text-xs text-slate">
+              {me.is_incharge
+                ? "You are the godown in-charge: print the delivery note and slips, and hand over the goods. Give them only when the screen turns green."
+                : "See the released delivery note and the items, and print the slips. Give the goods only when the screen turns green."}
+            </span>
           </span>
         </Link>
+        <ReleasedDeliveryNotes />
 
         <LeaveCard leaves={leaves} today={today} rules={rulesToday} versions={versions} holidays={holidays} onChange={() => load(me)} />
 

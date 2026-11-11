@@ -17,7 +17,7 @@ export type PolicySection = {
 };
 
 export const POLICY_TITLE = "Privacy Policy";
-export const POLICY_UPDATED = "Last updated: 11 November 2026";
+export const POLICY_UPDATED = "Last updated: 12 November 2026";
 export const POLICY_INTRO =
   "This page explains what information Grain Bazar collects when you use grainbazar.com, why we collect it, who it goes to, and the choices you have.";
 
@@ -92,7 +92,10 @@ const WHO_CAN_SEE_IT: PolicySection = {
       lead: "Godown partners and vendors",
       text: "The channel partner who runs the godown handling your order can see your name, PIN code, what you bought and the amounts, and can open that order's invoice, which shows your contact details, delivery address, any GSTIN and the payment. A vendor whose goods are in your order can open that order, including your contact details and delivery address.",
     },
-    { lead: "At handover", text: "When a delivery slip is scanned, the godown staff or channel partner handing over the goods see the order number, the customer's name and the items." },
+    {
+      lead: "At handover",
+      text: "Your invoice carries a delivery QR. When the godown's in-charge, staff or channel partner scans it, they see the order number, your name, the last 4 digits of your phone number and the items, and the same shows in their list of released orders. The in-charge, and anyone head office allows to print the delivery note, also sees your full phone number, GSTIN and address, which are printed on it. The last 4 digits help them check who is collecting, so keep your invoice to yourself.",
+    },
     {
       lead: "Supabase",
       text: "Our database, sign-in system and file storage. Your account, addresses, orders and enquiries are stored there, on servers in Japan.",
@@ -177,7 +180,10 @@ const PEOPLE_WHO_WORK_WITH_US: PolicySection = {
       text: "Your business details, and the GST certificate, PAN card and bank account proof you upload for verification, which are kept in private storage.",
     },
     { lead: "Channel partners", text: "Your contact details, your godown, its sales, your commission and payouts, and the signature you give us for your godown's invoices." },
-    { lead: "Delivery handovers", text: "When you scan a delivery paper, we keep who scanned it, when, at which godown, on which phone, which paper and which items." },
+    {
+      lead: "Delivery handovers",
+      text: "When you scan the QR on a customer's invoice, or a delivery paper printed earlier, we keep who scanned it, when, at which godown, on which phone, which order, what was printed and which items were handed over. If head office makes you the godown in-charge, we keep who did it and when.",
+    },
   ],
 };
 

@@ -11,6 +11,8 @@ import { DeleteOrderDialog } from "@/components/panel/DeleteOrderDialog";
 import { RecordLatePaymentDialog } from "@/components/panel/RecordLatePaymentDialog";
 import type { UpiSubmission } from "@/lib/upi-pay";
 import { DeleteOrderRecordDialog } from "@/components/panel/DeleteOrderRecord";
+import { orderToneClass } from "@/lib/order-status-tone";
+import { cn } from "@/lib/utils";
 
 const when = (iso: string) => new Date(iso).toLocaleString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit", timeZone: "Asia/Kolkata" });
 
@@ -53,7 +55,7 @@ export function EndedCheckouts({ compact = false, submissions = [] }: { compact?
   if (compact) {
     if (ended.length === 0) return null;
     return (
-      <p className="mb-4 rounded-md border border-border bg-ivory px-3 py-2 text-sm text-slate">
+      <p className={cn("mb-4 rounded-md border px-3 py-2 text-sm text-slate", orderToneClass(PAYMENT_EXPIRED, "tile"))}>
         <Link to="/admin/upi-payments" hash="ended-checkouts" className="font-semibold text-navy hover:text-gold">
           {ended.length === 1 ? "1 checkout ended without payment" : `${ended.length} checkouts ended without payment`}
         </Link>
@@ -68,7 +70,8 @@ export function EndedCheckouts({ compact = false, submissions = [] }: { compact?
       ) : (
         <ul className="divide-y divide-border">
           {ended.map((hold) => (
-            <li key={hold.orderNo} className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 py-2 text-sm">
+            // Red like every order that ended without going ahead (the order colours, 11 Nov 2026).
+            <li key={hold.orderNo} className={cn("flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-2 py-2 text-sm", orderToneClass(hold.status, "row"))}>
               <span className="min-w-0">
                 <span className="font-semibold text-navy">{(hold.customer || "Customer").slice(0, 60)}</span>
                 <span className="ml-2 break-all font-mono text-xs text-slate">{hold.orderNo}</span>
@@ -76,7 +79,7 @@ export function EndedCheckouts({ compact = false, submissions = [] }: { compact?
                 <span className="mt-0.5 block text-xs text-slate"><span>{when(hold.createdAt)}</span><span className="mx-1">·</span><span>{endedOutcomeLabel(hold.outcome)}</span></span>
               </span>
               <span className="font-semibold tabular-nums text-navy">{inrPrecise(hold.amount)}</span>
-              <span className="rounded bg-red-50 px-2 py-0.5 text-xs font-semibold text-red-700">{closedPaymentLabel(PAYMENT_EXPIRED)}</span>
+              <span className={cn("rounded border px-2 py-0.5 text-xs font-semibold", orderToneClass(PAYMENT_EXPIRED, "badge"))}>{closedPaymentLabel(PAYMENT_EXPIRED)}</span>
               {(() => {
                 const sent = submissions.find((item) => item.orderNo === hold.orderNo);
                 if (sent?.status === "submitted") return <span className="text-[11px] font-semibold text-sky-800">{`UTR ${sent.utr} sent: check it under Payments to check`}</span>;

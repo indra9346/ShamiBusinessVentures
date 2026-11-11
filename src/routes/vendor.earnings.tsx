@@ -8,6 +8,7 @@ import { DataTable, FilterNote, Panel, scrollToSection, StatCard, StatusBadge } 
 import { vendorNav } from "@/lib/panel-nav";
 import { compactInr, getOrderItemTotal, inr } from "@/lib/data";
 import { useApp, useVendorScope } from "@/lib/store";
+import { orderToneClass } from "@/lib/order-status-tone";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -112,6 +113,8 @@ function VendorEarnings() {
     .reduce((sum, order) => sum + order.items.filter((item) => item.vendorId === vendorId).reduce((value, item) => value + getOrderItemTotal(item), 0) * (1 - commission / 100), 0),
   [orders, vendorId, commission]);
   const availableEarnings = reservedPayouts === null ? null : Math.floor(Math.max(0, settledNetEarnings - reservedPayouts) * 100) / 100;
+  // Transactions: every order, or only the paid ones the revenue cards add up.
+  const shownOrders = paidOnly ? vendorOrders.filter((o) => o.payment === "Paid" && o.status !== "Cancelled") : vendorOrders;
 
   return (
     <PanelLayout items={vendorNav} tone="vendor" title="Earnings" subtitle="Revenue, commission and settlement summary">
@@ -156,7 +159,9 @@ function VendorEarnings() {
         {paidOnly && <FilterNote label="Paid Revenue" onClear={() => setPaidOnly(false)} />}
         <DataTable
           columns={["Order", "Date", "Customer", "Amount", "Payment", "Status"]}
-          rows={(paidOnly ? vendorOrders.filter((o) => o.payment === "Paid" && o.status !== "Cancelled") : vendorOrders).map((o) => {
+          // Each row tinted by its order status: waiting yellow, confirmed green, cancelled red.
+          rowClassNames={shownOrders.map((o) => orderToneClass(o.status, "row"))}
+          rows={shownOrders.map((o) => {
             const amt = o.items.filter((i) => i.vendorId === vendorId).reduce((t, i) => t + getOrderItemTotal(i), 0);
             return [
               <span className="font-semibold text-navy">{o.id}</span>,

@@ -22,6 +22,7 @@ import { adminNav } from "@/lib/panel-nav";
 import { inr, orderStages, type OrderStatus } from "@/lib/data";
 import { allowedMethods } from "@/lib/payment-rules";
 import { inOrderRange, matchesOrderStatus, OPEN_ORDERS, orderListSearch, orderStatusFilter } from "@/lib/panel-filters";
+import { orderToneClass } from "@/lib/order-status-tone";
 import { useApp, type Address } from "@/lib/store";
 import { supabase } from "@/integrations/supabase/client";
 import { godownOfferOf, orderGodownFor, useBranches } from "@/lib/branches";
@@ -493,6 +494,8 @@ function AdminOrders() {
             "Total",
             "Actions",
           ]}
+          // Each row tinted by its order status: waiting yellow, confirmed green, cancelled red.
+          rowClassNames={rows.map((o) => orderToneClass(o.status, "row"))}
           rows={rows.map((o) => {
             const vendorSet = Array.from(new Set(o.items.map((i) => i.vendor)));
             return [

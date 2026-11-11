@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
-  AlertTriangle, CalendarCheck, Camera, Check, Clock, Copy, Download, FileSpreadsheet, KeyRound, MapPin, RefreshCw, Smartphone,
+  AlertTriangle, CalendarCheck, Camera, Check, Clock, Copy, Download, FileSpreadsheet, KeyRound, MapPin, RefreshCw, ShieldCheck, Smartphone,
   Trash2, UserCheck, UserPlus, Users, X,
 } from "lucide-react";
 import { FilterNote, Panel, scrollToSection, StatCard } from "@/components/panel/widgets";
@@ -260,7 +260,7 @@ function TodayBoard({ godown, employees, desk, onLeaveToday, onOpen, viewer, onl
                 const schedule = day ? scheduleFor(day, desk.versions, desk.todayPhotos, now) : null;
                 return (
                   <tr key={employee.id} className="border-b border-border/60 align-top last:border-0">
-                    <td className="py-2 pr-3"><p className="font-semibold text-charcoal">{employee.name}</p><p className="text-xs text-slate">{employee.designation || employee.phone}</p></td>
+                    <td className="py-2 pr-3"><p className="font-semibold text-charcoal">{employee.name}{employee.is_incharge && <InchargeBadge />}</p><p className="text-xs text-slate">{employee.designation || employee.phone}</p></td>
                     <td className="py-2 pr-3">{day ? (
                       <span className="flex items-start gap-2"><SelfieThumb url={desk.selfies[day.id]?.in} onClick={() => onOpen(day)} />
                         <span>{indiaTime(day.check_in_at)}{day.late_minutes > 0 && <span className="block text-xs font-semibold text-amber-800">{lateText(day.late_minutes)}</span>}
@@ -530,13 +530,29 @@ function Reports({ desk }: { desk: Desk }) {
   );
 }
 
+/** The godown in-charge (12 Nov 2026): a godown employee the admin marked, who scans the invoice QR and hands goods over. */
+function InchargeBadge() {
+  return <span className="ml-1.5 inline-flex items-center gap-0.5 rounded-full bg-navy/10 px-2 py-0.5 align-middle text-[11px] font-bold text-navy"><ShieldCheck className="h-3 w-3" /> In-charge</span>;
+}
+
 function EmployeesPanel({ viewer, desk }: { viewer: Viewer; desk: Desk }) {
   const godownName = (id: string) => desk.godowns.find((godown) => godown.id === id)?.name ?? id;
   const [passwordFor, setPasswordFor] = useState<Employee | null>(null);
+  const [inchargeBusy, setInchargeBusy] = useState("");
   const setStatus = async (employee: Employee, status: "active" | "inactive") => {
     const { error } = await supabase.from("staff_employees").update({ status, updated_at: new Date().toISOString() }).eq("id", employee.id);
     if (error) { toast.error("Could not update the employee", { description: error.message }); return; }
     toast.success(status === "inactive" ? `${employee.name} deactivated: they can no longer sign in` : `${employee.name} reactivated`);
+    await desk.load();
+  };
+  // Owner, 11 Nov 2026: the in-charge is a godown employee with their own login, not the channel partner. A godown may
+  // have more than one (shifts); the database records who set it and when.
+  const setIncharge = async (employee: Employee, on: boolean) => {
+    setInchargeBusy(employee.id);
+    const { error } = await supabase.rpc("admin_set_staff_incharge", { _employee_id: employee.id, _on: on });
+    setInchargeBusy("");
+    if (error) { toast.error("Could not change the in-charge", { description: error.message }); return; }
+    toast.success(on ? `${employee.name} is now the in-charge of ${godownName(employee.branch_id)}` : `${employee.name} is no longer an in-charge`);
     await desk.load();
   };
 
@@ -547,6 +563,10 @@ function EmployeesPanel({ viewer, desk }: { viewer: Viewer; desk: Desk }) {
       )}
       <Panel title={`Employees (${desk.employees.length})`}>
         {viewer === "admin" && <p className="mb-3 text-xs text-slate">Staff records can't be edited once created. You can reset a password or deactivate someone who has left.</p>}
+        <div className="mb-3 rounded-md border border-navy/20 bg-navy/5 px-3 py-2 text-xs text-charcoal">
+          <p className="flex items-center gap-1.5 font-bold text-navy"><ShieldCheck className="h-3.5 w-3.5" /> Godown in-charge</p>
+          <p className="mt-0.5">The in-charge scans the QR on the customer's invoice, sees that the delivery note is released, prints the note and slips, and hands the goods over. Other staff and the channel partner may only do what is switched on in Delivery Notes &gt; Delivery QR rules.</p>
+        </div>
         {desk.employees.length === 0 ? <p className="text-sm text-slate">No employees yet.</p> : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[680px] text-sm">
@@ -556,7 +576,7 @@ function EmployeesPanel({ viewer, desk }: { viewer: Viewer; desk: Desk }) {
               <tbody>
                 {desk.employees.map((employee) => (
                   <tr key={employee.id} className="border-b border-border/60 last:border-0">
-                    <td className="py-2 pr-3"><p className="font-semibold text-charcoal">{employee.name}</p><p className="text-xs text-slate">{employee.designation}</p></td>
+                    <td className="py-2 pr-3"><p className="font-semibold text-charcoal">{employee.name}{employee.is_incharge && <InchargeBadge />}</p><p className="text-xs text-slate">{employee.designation}</p></td>
                     <td className="py-2 pr-3 tabular-nums">{employee.phone}</td>
                     <td className="py-2 pr-3">{godownName(employee.branch_id)}</td>
                     <td className="py-2 pr-3 text-xs text-slate">{new Date(`${employee.joined_on}T00:00:00`).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}</td>
@@ -566,6 +586,12 @@ function EmployeesPanel({ viewer, desk }: { viewer: Viewer; desk: Desk }) {
                     </td>
                     {viewer === "admin" && (
                       <td className="py-2 text-right">
+                        {(employee.status === "active" || employee.is_incharge) && (
+                          <button type="button" disabled={inchargeBusy === employee.id} onClick={() => void setIncharge(employee, !employee.is_incharge)}
+                            className={cn("mr-3 inline-flex items-center gap-1 text-xs font-semibold hover:underline disabled:opacity-50", employee.is_incharge ? "text-red-700" : "text-navy")}>
+                            <ShieldCheck className="h-3.5 w-3.5" /> {employee.is_incharge ? "Remove in-charge" : "Make in-charge"}
+                          </button>
+                        )}
                         <button type="button" onClick={() => setPasswordFor(employee)} className="mr-3 inline-flex items-center gap-1 text-xs font-semibold text-navy hover:underline"><KeyRound className="h-3.5 w-3.5" /> {employee.login_email ? "Reset password" : "Set password"}</button>
                         <button type="button" onClick={() => void setStatus(employee, employee.status === "active" ? "inactive" : "active")}
                           className={cn("text-xs font-semibold hover:underline", employee.status === "active" ? "text-red-700" : "text-emerald-700")}>

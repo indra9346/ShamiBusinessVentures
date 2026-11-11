@@ -556,8 +556,8 @@ export type Database = {
         Relationships: []
       }
       staff_employees: {
-        Row: { id: string; user_id: string; branch_id: string; name: string; phone: string; designation: string; status: string; joined_on: string; created_by: string | null; created_at: string; updated_at: string; login_email: string | null }
-        Insert: { user_id: string; branch_id: string; name: string; phone: string; id?: string; designation?: string; status?: string; joined_on?: string; created_by?: string | null; created_at?: string; updated_at?: string; login_email?: string | null }
+        Row: { id: string; user_id: string; branch_id: string; name: string; phone: string; designation: string; status: string; joined_on: string; created_by: string | null; created_at: string; updated_at: string; login_email: string | null; is_incharge: boolean; incharge_set_at: string | null; incharge_set_by: string }
+        Insert: { user_id: string; branch_id: string; name: string; phone: string; id?: string; designation?: string; status?: string; joined_on?: string; created_by?: string | null; created_at?: string; updated_at?: string; login_email?: string | null; is_incharge?: boolean; incharge_set_at?: string | null; incharge_set_by?: string }
         Update: { id?: string; user_id?: string; branch_id?: string; name?: string; phone?: string; designation?: string; status?: string; joined_on?: string; created_by?: string | null; created_at?: string; updated_at?: string; login_email?: string | null }
         Relationships: []
       }
@@ -744,7 +744,7 @@ export type Database = {
         ]
       }
       delivery_notes: {
-        Row: { id: string; seq: number; note_no: string; order_id: string; order_no: string; zoho_invoice_id: string; invoice_number: string; invoice_total: number; order_total: number; paid_amount: number; snapshot: Json; generated_at: string; generated_by: string; generated_by_name: string }
+        Row: { id: string; seq: number; note_no: string; order_id: string; order_no: string; zoho_invoice_id: string; invoice_number: string; invoice_total: number; order_total: number; paid_amount: number; snapshot: Json; generated_at: string; generated_by: string; generated_by_name: string; generated_how: string }
         Insert: { id?: string; seq: number; note_no: string; order_id: string; order_no: string; zoho_invoice_id: string; invoice_number: string; invoice_total: number; order_total: number; paid_amount: number; snapshot: Json; generated_at?: string; generated_by: string; generated_by_name: string }
         Update: Record<string, never>
         Relationships: []
@@ -1444,6 +1444,17 @@ export type Database = {
       admin_delete_utr: { Args: { _order_no: string; _reason: string }; Returns: Json }
       submit_utr_for_order: { Args: { _order_no: string; _utr: string; _method?: string | null }; Returns: Json }
       admin_place_ended_checkout: { Args: { _order_no: string; _utr?: string | null; _method?: string | null; _checked_against?: string | null }; Returns: Json }
+      admin_set_staff_incharge: { Args: { _employee_id: string; _on: boolean }; Returns: Json }
+      delivery_qr_rules: { Args: Record<string, never>; Returns: Json }
+      admin_set_delivery_qr_rules: { Args: { _rules: Json }; Returns: Json }
+      invoice_delivery_code: { Args: { _order_no: string }; Returns: Json }
+      admin_replace_invoice_delivery_code: { Args: { _order_no: string; _reason: string }; Returns: Json }
+      delivery_invoice_order_no: { Args: { _code: string }; Returns: string | null }
+      issue_delivery_note_auto: { Args: { _order_no: string; _zoho: Json; _actor?: string | null; _how?: string }; Returns: Json }
+      delivery_invoice_scan: { Args: { _code: string; _action: string; _zoho: Json | null; _actor: string; _lines?: number[] | null; _device?: string | null }; Returns: Json }
+      delivery_admin_release_print: { Args: { _order_no: string; _note: boolean; _slip_lines: number[]; _zoho: Json | null; _actor: string }; Returns: Json }
+      godown_released_notes: { Args: Record<string, never>; Returns: { note_no: string; order_no: string; customer: string; items: number; to_go: number; released_at: string; released_how: string; delivered: boolean; godown: string }[] }
+      my_delivery_role: { Args: Record<string, never>; Returns: Json }
       partner_payment_checkouts: { Args: Record<string, never>; Returns: { order_no: string; status: string; total: number; method: string; placed_at: string; hold_until: string | null; customer: string; items: string; utr: string | null; utr_status: string | null; utr_late: boolean; utr_sent_by: string | null }[] }
       order_delete_with_payments_check: { Args: { _order_no: string }; Returns: Json }
       complete_follow_up_task: { Args: { _id: string; _note?: string }; Returns: Json }

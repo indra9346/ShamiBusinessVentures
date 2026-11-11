@@ -9,8 +9,14 @@
  * only put the database's answer into words, and read a scanned QR.
  *
  * The Kannada was written for this screen and still needs a native speaker's check.
+ *
+ * 12 Nov 2026 (owner, 11 Nov): no separate delivery paper any more. One QR is printed on the customer's invoice; the
+ * delivery note is released automatically once the payment is confirmed in full; the godown in-charge scans the
+ * invoice QR, prints the released note and slips (no QR on them) and hands the goods over. The database's answer for
+ * that scan is public.delivery_invoice_scan (supabase/migrations/20261112120000_invoice_delivery_qr.sql); its words
+ * are invoiceScanWords below. Papers printed before then keep their QR and scanWords.
  */
-import { istDateTime, paperWarnings, type DeliveryGate, type DeliveryGateCode } from "./delivery-notes.ts";
+import { istDateTime, paperWarnings, type DeliveryGate, type DeliveryGateCode, type DeliveryNoteSnapshot } from "./delivery-notes.ts";
 
 /** A paper's code: 22 characters of URL-safe base64 (16 random bytes). */
 export const PAPER_CODE = /^[A-Za-z0-9_-]{22}$/;
@@ -67,7 +73,8 @@ const bi = (en: string, kn: string): Bi => ({ en, kn });
 export type PaperScanResult =
   | "unknown" | "ready" | "handed_over" | "already_handed_over" | "partly_handed_over" | "duplicate" | "replaced" | "order_problem" | "other_godown";
 
-export type ScannerRole = "admin" | "staff" | "partner";
+/** incharge: a godown employee the admin marked as the godown in-charge (12 Nov 2026). */
+export type ScannerRole = "admin" | "incharge" | "staff" | "partner";
 export type PaperKind = "original" | "duplicate" | "replacement";
 
 export type PaperHandover = { at: string; by: string; role: ScannerRole; godown: string; registered_phone?: boolean; round?: number };
@@ -117,10 +124,20 @@ export type ScanWords = { tone: ScanTone; headline: Bi; lines: Bi[] };
 
 export const ROLE_WORDS: Record<ScannerRole, Bi> = {
   admin: bi("office", "ಕಚೇರಿ"),
+  incharge: bi("godown in-charge", "ಗೋದಾಮು ಉಸ್ತುವಾರಿ"),
   staff: bi("staff", "ಸಿಬ್ಬಂದಿ"),
   partner: bi("channel partner", "ಚಾನೆಲ್ ಪಾಲುದಾರ"),
 };
 export const roleWords = (role: string): Bi => ROLE_WORDS[role as ScannerRole] ?? bi(role, role);
+
+/** Who is signed in, as the top of the scan screen and the staff app say it. */
+export const ROLE_TITLES: Record<ScannerRole, Bi> = {
+  admin: bi("Admin", "ನಿರ್ವಾಹಕರು"),
+  incharge: bi("Godown in-charge", "ಗೋದಾಮು ಉಸ್ತುವಾರಿ"),
+  staff: bi("Godown staff", "ಗೋದಾಮು ಸಿಬ್ಬಂದಿ"),
+  partner: bi("Channel partner", "ಚಾನೆಲ್ ಪಾಲುದಾರ"),
+};
+export const roleTitle = (role: string): Bi => ROLE_TITLES[role as ScannerRole] ?? bi(role, role);
 export const phoneWords = (registered: boolean): Bi =>
   (registered ? bi("godown's registered phone", "ಗೋದಾಮಿನ ನೋಂದಾಯಿತ ಫೋನ್") : bi("own phone", "ಸ್ವಂತ ಫೋನ್"));
 
@@ -334,6 +351,300 @@ export function scannedTextWords(problem: Exclude<ScannedText, { code: string }>
     };
 }
 
+// ---------------------------------------------------------------- the QR on the invoice (12 Nov 2026)
+
+export type InvoiceScanAction = "check" | "handover" | "print_note" | "print_slips";
+export type InvoiceScanResult =
+  | "replaced" | "other_godown" | "not_released" | "order_problem" | "not_allowed"
+  | "already_handed_over" | "partly_handed_over" | "released" | "printed" | "handed_over";
+/** How a delivery note came to be: an admin's press, automatically when the payment was confirmed, or the in-charge's scan. */
+export type ReleasedHow = "admin" | "auto" | "scan";
+
+/** A released note's papers as printed (no QR on them): the copies recorded and what the paper shows. */
+export type ReleasePrint = {
+  printed_at: string;
+  note_copy: number | null;
+  slip_copies: Record<string, number>;
+  printed_by: string;
+  printed_role: ScannerRole;
+  note: {
+    note_no: string; order_no: string; invoice_number: string; snapshot: DeliveryNoteSnapshot;
+    generated_at: string; generated_by_name: string; generated_how: ReleasedHow | string;
+  };
+};
+
+/** What the database answered for one scan of an invoice's QR (public.delivery_invoice_scan). */
+export type InvoiceScan = {
+  kind: "invoice";
+  result: InvoiceScanResult;
+  action: InvoiceScanAction;
+  scan_id: number;
+  scanned_at: string;
+  by: string;
+  role: ScannerRole;
+  /** The scanner's godown, and the order's; the scanner's is empty for an administrator. */
+  godown: string;
+  order_godown: string;
+  device?: { registered: boolean; label: string };
+  /** What this person may do now (the in-charge and admins everything; staff and the partner what the admin allows). */
+  can?: { print_note: boolean; print_slips: boolean; handover: boolean };
+  invoice: {
+    order_no: string; generation: number;
+    /** Only for a QR an administrator replaced. */
+    revoked_at?: string | null; revoked_by?: string | null; revoke_reason?: string | null; live_generation?: number | null;
+  };
+  /** This scan (the in-charge's or an admin's) released the note just now. */
+  released_now?: boolean;
+  note?: {
+    note_no: string; order_no: string; invoice_number: string; customer: string;
+    /** The last four digits of the customer's phone, to check who collects. */
+    phone_end: string;
+    godown: string; shipping_method: string; generated_at: string; generated_how: ReleasedHow | string; generated_by_name: string;
+  } | null;
+  lines?: PaperScanLine[];
+  asked?: number[];
+  handed_now?: number[];
+  order_delivered?: boolean;
+  order_status_before?: string | null;
+  print?: ReleasePrint | null;
+  gate?: PaperScan["gate"];
+};
+
+/** The answer for a QR on an invoice, as against a printed delivery paper's. */
+export const isInvoiceScan = (scan: unknown): scan is InvoiceScan =>
+  typeof scan === "object" && scan !== null && (scan as { kind?: unknown }).kind === "invoice";
+
+/** A customer who opens their own invoice's QR: where to take it. */
+export const CUSTOMER_SCAN_WORDS = bi("Show this QR at the godown counter; the godown in-charge scans it.", "ಈ QR ಅನ್ನು ಗೋದಾಮಿನ ಕೌಂಟರ್‌ನಲ್ಲಿ ತೋರಿಸಿ; ಗೋದಾಮು ಉಸ್ತುವಾರಿ ಅದನ್ನು ಸ್ಕ್ಯಾನ್ ಮಾಡುತ್ತಾರೆ.");
+
+/** "Released automatically when the payment was confirmed, 11 Nov 2026, 10:32:15 AM IST." */
+export function releasedWords(note: { generated_at: string; generated_how?: string | null; generated_by_name?: string | null }): Bi {
+  const when = istDateTime(note.generated_at);
+  const who = note.generated_by_name || "the office";
+  if (note.generated_how === "auto") {
+    return bi(`Released automatically when the payment was confirmed, ${when}.`, `ಪಾವತಿ ದೃಢಪಟ್ಟಾಗ ಸ್ವಯಂಚಾಲಿತವಾಗಿ ಬಿಡುಗಡೆಯಾಗಿದೆ, ${when}.`);
+  }
+  if (note.generated_how === "scan") {
+    return bi(`Released ${when} by ${who}'s scan of the invoice QR.`, `${when} ರಂದು ${who} ಇನ್‌ವಾಯ್ಸ್ QR ಸ್ಕ್ಯಾನ್ ಮಾಡಿ ಬಿಡುಗಡೆ ಮಾಡಿದ್ದಾರೆ.`);
+  }
+  return bi(`Released ${when} by ${who} (office).`, `${when} ರಂದು ${who} (ಕಚೇರಿ) ಬಿಡುಗಡೆ ಮಾಡಿದ್ದಾರೆ.`);
+}
+
+/** The short form for a list: "Automatically (payment confirmed)". */
+export function releasedHowLabel(how: string | null | undefined, by?: string | null): Bi {
+  if (how === "auto") return bi("Automatically (payment confirmed)", "ಸ್ವಯಂಚಾಲಿತವಾಗಿ (ಪಾವತಿ ದೃಢಪಟ್ಟಾಗ)");
+  if (how === "scan") return bi(`By ${by || "the godown in-charge"}'s scan`, `${by || "ಗೋದಾಮು ಉಸ್ತುವಾರಿ"} ಸ್ಕ್ಯಾನ್ ಮೂಲಕ`);
+  return bi(`By ${by || "the office"}`, `${by || "ಕಚೇರಿ"} ಅವರಿಂದ`);
+}
+
+/** The paper's "Released" line: "11 Nov 2026, 10:32:15 AM IST, automatically when the payment was confirmed". */
+export function releasedFact(note: { generated_at: string; generated_how?: string | null; generated_by_name?: string | null }) {
+  const when = istDateTime(note.generated_at);
+  if (note.generated_how === "auto") return `${when}, automatically when the payment was confirmed`;
+  if (note.generated_how === "scan") return `${when} by ${note.generated_by_name || "the godown in-charge"} (scan of the invoice QR)`;
+  return `${when} by ${note.generated_by_name || "the office"}`;
+}
+
+/**
+ * The papers' warnings: the payment check's, and the items already handed over (the note names them; each such slip
+ * says it went). The same for the office's print, the godown's print and the PDF.
+ */
+export function releasedPaperWarnings(warnings: string[], lines: number[], handovers: Record<string, PaperHandover | null | undefined>) {
+  const handed = lines.filter((line) => handovers[String(line)]);
+  const noteWarnings = handed.length === 0 ? warnings : [...warnings, handed.length === lines.length
+    ? "ALL ITEMS ALREADY HANDED OVER. FOR RECORDS ONLY. DO NOT DELIVER AGAIN."
+    : `ITEM${handed.length === 1 ? "" : "S"} ${handed.join(", ")} ALREADY HANDED OVER. DELIVER ONLY THE REST.`];
+  const slipWarnings: Record<string, string[]> = Object.fromEntries(lines.map((line) => [String(line),
+    handovers[String(line)] ? [...warnings, handedOverWarning(handovers[String(line)])] : warnings]));
+  return { noteWarnings, slipWarnings };
+}
+
+const plural = (count: number) => (count === 1 ? "" : "s");
+
+/** "Handing over goods" / "Printing the delivery note" / "Printing slips", for a refusal. */
+function actionWords(action: InvoiceScanAction): Bi {
+  if (action === "print_note") return bi("Printing the delivery note", "ಡೆಲಿವರಿ ನೋಟ್ ಮುದ್ರಿಸುವುದು");
+  if (action === "print_slips") return bi("Printing delivery slips", "ಡೆಲಿವರಿ ಸ್ಲಿಪ್ ಮುದ್ರಿಸುವುದು");
+  if (action === "handover") return bi("Handing over goods", "ಸರಕು ಹಸ್ತಾಂತರಿಸುವುದು");
+  return bi("Checking", "ಪರಿಶೀಲನೆ");
+}
+
+/** What a print from the scan recorded: the note's copy number and each slip's. */
+function printedLines(scan: InvoiceScan, me: Bi): Bi[] {
+  const print = scan.print;
+  if (!print) return [];
+  const when = istDateTime(print.printed_at);
+  const out: Bi[] = [];
+  const note = print.note.note_no;
+  if (print.note_copy) {
+    out.push(bi(`Delivery note ${note}: copy ${print.note_copy}, recorded ${when} by ${me.en}.`,
+      `ಡೆಲಿವರಿ ನೋಟ್ ${note}: ಪ್ರತಿ ${print.note_copy}, ${when} ರಂದು ${me.kn} ಅವರಿಂದ ದಾಖಲಾಗಿದೆ.`));
+  }
+  const slips = Object.entries(print.slip_copies ?? {}).map(([line, copy]) => ({ line: Number(line), copy })).sort((a, b) => a.line - b.line);
+  if (slips.length) {
+    out.push(bi(`Slip${plural(slips.length)} ${slips.map((slip) => `${slip.line} (copy ${slip.copy})`).join(", ")}: recorded ${when} by ${me.en}.`,
+      `ಸ್ಲಿಪ್ ${slips.map((slip) => `${slip.line} (ಪ್ರತಿ ${slip.copy})`).join(", ")}: ${when} ರಂದು ${me.kn} ಅವರಿಂದ ದಾಖಲಾಗಿದೆ.`));
+  }
+  return out;
+}
+
+const NOT_HERE = bi("Do not hand over these goods here. Ask the office.", "ಈ ಸರಕುಗಳನ್ನು ಇಲ್ಲಿ ಹಸ್ತಾಂತರಿಸಬೇಡಿ. ಕಚೇರಿಯನ್ನು ಕೇಳಿ.");
+const ONLY_GREEN = bi("Tick the items being handed over, then press the button. Give the goods only when the screen turns green.",
+  "ಹಸ್ತಾಂತರಿಸುವ ಸರಕುಗಳನ್ನು ಗುರುತಿಸಿ, ನಂತರ ಬಟನ್ ಒತ್ತಿ. ಪರದೆ ಹಸಿರಾದಾಗ ಮಾತ್ರ ಸರಕು ಕೊಡಿ.");
+const LAST_READING = bi("Zoho Books could not be read just now, so the payment was checked on the website's last reading.",
+  "ಈಗ Zoho Books ಓದಲು ಆಗಲಿಲ್ಲ, ಹಾಗಾಗಿ ವೆಬ್‌ಸೈಟ್‌ನ ಕೊನೆಯ ಮಾಹಿತಿಯಿಂದ ಪಾವತಿ ಪರಿಶೀಲಿಸಲಾಗಿದೆ.");
+
+/**
+ * The database's answer for a scan of an invoice's QR, as the scan screen says it. Only a recorded handover is green;
+ * released and printed are blue ("ready"): nothing goes until the screen turns green.
+ */
+export function invoiceScanWords(scan: InvoiceScan): ScanWords {
+  const note = scan.note?.note_no ?? scan.print?.note.note_no ?? "";
+  const order = scan.invoice?.order_no || scan.note?.order_no || "";
+  const me = personWords(scan.by, scan.role, scan.godown, scan.device?.registered);
+  const toGo = (scan.lines ?? []).filter((line) => !line.handover).map((line) => line.line);
+  const stillToGo = toGo.length
+    ? [bi(`Still to go: item${plural(toGo.length)} ${toGo.join(", ")}.`, `ಇನ್ನೂ ಕೊಡಬೇಕಾದವು: ಸರಕು ${toGo.join(", ")}.`)] : [];
+  const mayHandOver = Boolean(scan.can?.handover);
+  const handoverHint = toGo.length === 0 ? [] : mayHandOver ? [ONLY_GREEN]
+    : [bi("Handing over is not switched on for you. The godown in-charge hands these goods over.", "ನಿಮಗೆ ಹಸ್ತಾಂತರಿಸಲು ಅನುಮತಿ ಇಲ್ಲ. ಗೋದಾಮು ಉಸ್ತುವಾರಿ ಈ ಸರಕುಗಳನ್ನು ಹಸ್ತಾಂತರಿಸುತ್ತಾರೆ.")];
+  switch (scan.result) {
+    case "handed_over": {
+      const now = scan.handed_now ?? [];
+      const earlier = (scan.lines ?? []).filter((line) => line.handover && !now.includes(line.line));
+      const when = istDateTime(scan.scanned_at);
+      return {
+        tone: "green",
+        headline: bi("Hand over the goods", "ಸರಕು ಹಸ್ತಾಂತರಿಸಿ"),
+        lines: [
+          bi(`Give only item${plural(now.length)} ${now.join(", ")} now. Recorded ${when} by ${me.en}.`, `ಈಗ ಸರಕು ${now.join(", ")} ಮಾತ್ರ ಕೊಡಿ. ${when} ರಂದು ${me.kn} ಅವರಿಂದ ದಾಖಲಾಗಿದೆ.`),
+          ...handoverLines(earlier, true).map((line) => bi(`Before this: ${line.en}`, `ಇದಕ್ಕೂ ಮೊದಲು: ${line.kn}`)),
+          ...stillToGo,
+          bi("These items can't be handed over again on this invoice.", "ಈ ಇನ್‌ವಾಯ್ಸ್‌ನಿಂದ ಈ ಸರಕುಗಳನ್ನು ಮತ್ತೆ ಹಸ್ತಾಂತರಿಸಲಾಗದು."),
+          ...(scan.order_delivered ? [bi(`Everything on ${note} is handed over: the order is now marked Delivered.`, `${note} ರ ಎಲ್ಲಾ ಸರಕು ಹಸ್ತಾಂತರವಾಗಿದೆ: ಆರ್ಡರ್ ಈಗ 'ತಲುಪಿಸಲಾಗಿದೆ' ಎಂದು ಗುರುತಾಗಿದೆ.`)] : []),
+          ...(scan.gate?.source === "last_reading" ? [LAST_READING] : []),
+        ],
+      };
+    }
+    case "released":
+      return {
+        tone: "ready",
+        headline: bi("Delivery note released · not handed over yet", "ಡೆಲಿವರಿ ನೋಟ್ ಬಿಡುಗಡೆಯಾಗಿದೆ · ಇನ್ನೂ ಹಸ್ತಾಂತರಿಸಿಲ್ಲ"),
+        lines: [
+          bi(`Delivery note ${note} for order ${order}. Paid in full.`, `ಆರ್ಡರ್ ${order} ರ ಡೆಲಿವರಿ ನೋಟ್ ${note}. ಪೂರ್ಣ ಪಾವತಿಯಾಗಿದೆ.`),
+          scan.released_now
+            ? bi("Released just now by your scan: Zoho Books shows the invoice paid in full.", "ನಿಮ್ಮ ಸ್ಕ್ಯಾನ್‌ನಿಂದ ಈಗಷ್ಟೇ ಬಿಡುಗಡೆಯಾಗಿದೆ: Zoho Books ಪ್ರಕಾರ ಇನ್‌ವಾಯ್ಸ್ ಪೂರ್ಣ ಪಾವತಿಯಾಗಿದೆ.")
+            : scan.note ? releasedWords(scan.note) : bi("Released.", "ಬಿಡುಗಡೆಯಾಗಿದೆ."),
+          ...handoverLines(scan.lines, true),
+          ...handoverHint,
+        ],
+      };
+    case "printed":
+      return {
+        tone: "ready",
+        headline: bi("Printed · copies recorded", "ಮುದ್ರಿಸಲಾಗಿದೆ · ಪ್ರತಿಗಳು ದಾಖಲಾಗಿವೆ"),
+        lines: [
+          ...printedLines(scan, me),
+          bi("Printing does not hand anything over. Give goods only after the screen turns green.", "ಮುದ್ರಣದಿಂದ ಹಸ್ತಾಂತರ ಆಗುವುದಿಲ್ಲ. ಪರದೆ ಹಸಿರಾದ ನಂತರ ಮಾತ್ರ ಸರಕು ಕೊಡಿ."),
+          ...handoverLines(scan.lines, true),
+          ...handoverHint,
+        ],
+      };
+    case "not_released": {
+      const gate = scan.gate;
+      const paidButWaiting = !gate || gate.code === "paid";
+      return {
+        tone: "amber",
+        headline: bi("Delivery note not released yet", "ಡೆಲಿವರಿ ನೋಟ್ ಇನ್ನೂ ಬಿಡುಗಡೆಯಾಗಿಲ್ಲ"),
+        lines: [
+          bi(`Order ${order}: the delivery note is released only once the payment is confirmed in full and Zoho Books has the paid invoice.`,
+            `ಆರ್ಡರ್ ${order}: ಪಾವತಿ ಪೂರ್ಣವಾಗಿ ದೃಢಪಟ್ಟು Zoho Books ನಲ್ಲಿ ಪಾವತಿಯಾದ ಇನ್‌ವಾಯ್ಸ್ ಇದ್ದಾಗ ಮಾತ್ರ ಡೆಲಿವರಿ ನೋಟ್ ಬಿಡುಗಡೆಯಾಗುತ್ತದೆ.`),
+          ...(gate && !paidButWaiting ? gateWarnings(gate) : []),
+          ...(paidButWaiting && (scan.role === "staff" || scan.role === "partner")
+            ? [bi("The godown in-charge's scan or the office releases it.", "ಗೋದಾಮು ಉಸ್ತುವಾರಿ ಸ್ಕ್ಯಾನ್ ಅಥವಾ ಕಚೇರಿ ಇದನ್ನು ಬಿಡುಗಡೆ ಮಾಡುತ್ತದೆ.")] : []),
+          ...(paidButWaiting && gate?.source === "last_reading" && (scan.role === "incharge" || scan.role === "admin")
+            ? [bi("Zoho Books could not be read just now. Scan again in a minute.", "ಈಗ Zoho Books ಓದಲು ಆಗಲಿಲ್ಲ. ಒಂದು ನಿಮಿಷದ ನಂತರ ಮತ್ತೆ ಸ್ಕ್ಯಾನ್ ಮಾಡಿ.")] : []),
+          bi("Do not hand over. Ask the office.", "ಹಸ್ತಾಂತರಿಸಬೇಡಿ. ಕಚೇರಿಯನ್ನು ಕೇಳಿ."),
+        ],
+      };
+    }
+    case "order_problem": {
+      const gate = scan.gate;
+      const red = Boolean(gate?.zoho_void) || RED_GATES.includes(gate?.code as DeliveryGateCode);
+      return {
+        tone: red ? "red" : "amber",
+        headline: bi("Do not hand over", "ಹಸ್ತಾಂತರಿಸಬೇಡಿ"),
+        lines: [...(gate ? gateWarnings(gate) : []), bi("Tell the office. Nothing was recorded.", "ಕಚೇರಿಗೆ ತಿಳಿಸಿ. ಏನೂ ದಾಖಲಾಗಿಲ್ಲ.")],
+      };
+    }
+    case "not_allowed": {
+      const what = actionWords(scan.action);
+      const role = roleWords(scan.role);
+      return {
+        tone: "amber",
+        headline: bi("Not allowed for you · nothing recorded", "ನಿಮಗೆ ಅನುಮತಿ ಇಲ್ಲ · ಏನೂ ದಾಖಲಾಗಿಲ್ಲ"),
+        lines: [
+          bi(`${what.en} is switched off for the ${role.en}.`, `${role.kn} ಅವರಿಗೆ ${what.kn} ಅನುಮತಿ ಇಲ್ಲ.`),
+          bi("The godown in-charge or the office can do it. The admin sets this in Delivery QR rules.", "ಗೋದಾಮು ಉಸ್ತುವಾರಿ ಅಥವಾ ಕಚೇರಿ ಇದನ್ನು ಮಾಡಬಹುದು. ನಿರ್ವಾಹಕರು ಇದನ್ನು ಡೆಲಿವರಿ QR ನಿಯಮಗಳಲ್ಲಿ ಬದಲಿಸುತ್ತಾರೆ."),
+        ],
+      };
+    }
+    case "already_handed_over":
+      return {
+        tone: "red",
+        headline: bi("Already handed over · do not give again", "ಈಗಾಗಲೇ ಹಸ್ತಾಂತರಿಸಲಾಗಿದೆ · ಮತ್ತೆ ಕೊಡಬೇಡಿ"),
+        lines: [
+          ...handoverLines(scan.lines, true),
+          ...(scan.lines?.some((line) => line.handover?.by === scan.by)
+            ? [bi("You recorded this handover yourself. If you gave the goods then, there is nothing more to do: do not give them again.", "ಈ ಹಸ್ತಾಂತರವನ್ನು ನೀವೇ ದಾಖಲಿಸಿದ್ದೀರಿ. ಆಗ ಸರಕು ಕೊಟ್ಟಿದ್ದರೆ ಇನ್ನೇನೂ ಮಾಡಬೇಕಿಲ್ಲ: ಮತ್ತೆ ಕೊಡಬೇಡಿ.")] : []),
+          bi("If goods are asked for again on this invoice, tell the office.", "ಈ ಇನ್‌ವಾಯ್ಸ್ ಮೇಲೆ ಮತ್ತೆ ಸರಕು ಕೇಳಿದರೆ ಕಚೇರಿಗೆ ತಿಳಿಸಿ."),
+        ],
+      };
+    case "partly_handed_over": {
+      const gone = (scan.lines ?? []).filter((line) => line.handover && (scan.asked ?? []).includes(line.line));
+      return {
+        tone: "amber",
+        headline: bi("Ticked items already went · nothing recorded", "ಗುರುತಿಸಿದ ಸರಕು ಈಗಾಗಲೇ ಹೋಗಿದೆ · ಏನೂ ದಾಖಲಾಗಿಲ್ಲ"),
+        lines: [
+          ...handoverLines(gone, true),
+          bi("Nothing was recorded. Do not hand those over. Check the list below and tick again.", "ಏನೂ ದಾಖಲಾಗಿಲ್ಲ. ಅವುಗಳನ್ನು ಕೊಡಬೇಡಿ. ಕೆಳಗಿನ ಪಟ್ಟಿ ನೋಡಿ ಮತ್ತೆ ಗುರುತಿಸಿ."),
+        ],
+      };
+    }
+    case "replaced": {
+      const when = scan.invoice.revoked_at ? istDateTime(scan.invoice.revoked_at) : "";
+      const by = scan.invoice.revoked_by || "the office";
+      const reason = scan.invoice.revoke_reason ? `: ${scan.invoice.revoke_reason}` : "";
+      return {
+        tone: "red",
+        headline: bi("Old invoice QR · replaced", "ಹಳೆಯ ಇನ್‌ವಾಯ್ಸ್ QR · ಬದಲಾಗಿದೆ"),
+        lines: [
+          bi(`This QR on the invoice of order ${order} was replaced ${when} by ${by}${reason}. It no longer works.`,
+            `ಆರ್ಡರ್ ${order} ರ ಇನ್‌ವಾಯ್ಸ್‌ನ ಈ QR ಅನ್ನು ${when} ರಂದು ${by} ಬದಲಿಸಿದ್ದಾರೆ${reason}. ಇದು ಈಗ ಕೆಲಸ ಮಾಡುವುದಿಲ್ಲ.`),
+          bi("Do not hand over. The customer downloads the invoice again from their orders on grainbazar.com; scan the QR on that one.",
+            "ಹಸ್ತಾಂತರಿಸಬೇಡಿ. ಗ್ರಾಹಕರು grainbazar.com ನ ತಮ್ಮ ಆರ್ಡರ್‌ಗಳಿಂದ ಇನ್‌ವಾಯ್ಸ್ ಮತ್ತೆ ಡೌನ್‌ಲೋಡ್ ಮಾಡುತ್ತಾರೆ; ಅದರ QR ಸ್ಕ್ಯಾನ್ ಮಾಡಿ."),
+        ],
+      };
+    }
+    case "other_godown":
+      return {
+        tone: "amber",
+        headline: bi("Another godown's order", "ಬೇರೆ ಗೋದಾಮಿನ ಆರ್ಡರ್"),
+        lines: [
+          bi(`Order ${order} is for ${scan.order_godown || "another godown"}. You are signed in at ${scan.godown || "a different godown"}.`,
+            `ಆರ್ಡರ್ ${order} ${scan.order_godown || "ಬೇರೆ ಗೋದಾಮು"} ಗೆ ಸೇರಿದ್ದು. ನೀವು ${scan.godown || "ಬೇರೆ ಗೋದಾಮು"} ನಲ್ಲಿ ಸೈನ್ ಇನ್ ಆಗಿದ್ದೀರಿ.`),
+          NOT_HERE,
+        ],
+      };
+    default:
+      return {
+        tone: "red",
+        headline: bi("Not checked · do not hand over", "ಪರಿಶೀಲನೆ ಆಗಿಲ್ಲ · ಹಸ್ತಾಂತರಿಸಬೇಡಿ"),
+        lines: [bi("The system gave an answer this screen doesn't know. Ask the office.", "ಈ ಪರದೆಗೆ ತಿಳಿಯದ ಉತ್ತರ ಬಂದಿದೆ. ಕಚೇರಿಯನ್ನು ಕೇಳಿ."), KEEP_AND_TELL],
+      };
+  }
+}
+
 /** The printed paper's own label and, for a duplicate or replacement, the big stamp. */
 export type PaperPrint = {
   kind: PaperKind;
@@ -397,9 +708,10 @@ export type DeliveryScanRow = {
   note_no?: string | null; order_no?: string | null;
 };
 
-/** "Slip 2, duplicate copy 1" / "Note, original" / "Unknown code 1a2b3c" for the history. */
+/** "Slip 2, duplicate copy 1" / "Note, original" / "Invoice QR" / "Unknown code 1a2b3c" for the history. */
 export function scannedPaperLabel(row: Pick<DeliveryScanRow, "doc" | "slip_line" | "paper_kind" | "duplicate_no" | "code_hint">) {
   if (!row.doc) return `Unknown code ${row.code_hint.slice(0, 6)}`;
+  if (row.doc === "invoice") return "Invoice QR";
   return `${row.doc === "note" ? "Note" : `Slip ${row.slip_line}`}, ${paperKindWords(row.paper_kind, row.duplicate_no).en.toLowerCase()}`;
 }
 
@@ -407,17 +719,22 @@ export function scannedPaperLabel(row: Pick<DeliveryScanRow, "doc" | "slip_line"
 export const scannerLabel = (row: Pick<DeliveryScanRow, "actor_name" | "actor_role" | "branch_name" | "device_registered" | "device_label">) =>
   `${personWords(row.actor_name, row.actor_role, row.branch_name, row.device_registered).en.replace(/\)$/, "")}${row.device_registered && row.device_label ? `: ${row.device_label}` : ""})`;
 
-/** Plain words for a kept scan, for the admin's history. */
-export const SCAN_RESULT_LABELS: Record<PaperScanResult, string> = {
+/** Plain words for a kept scan, for the admin's history. "replaced" covers a replaced original and a replaced invoice QR. */
+export const SCAN_RESULT_LABELS: Record<PaperScanResult | InvoiceScanResult, string> = {
   handed_over: "Handed over",
   ready: "Checked: genuine, not handed over",
+  released: "Checked: note released, items to go",
+  printed: "Printed from a scan",
   already_handed_over: "Refused: already handed over",
   partly_handed_over: "Refused: ticked items already went",
   duplicate: "Refused: duplicate copy",
-  replaced: "Refused: replaced original",
+  replaced: "Refused: replaced QR",
   order_problem: "Refused: order problem",
   other_godown: "Refused: another godown",
+  not_released: "Refused: note not released yet",
+  not_allowed: "Refused: not allowed for this person",
   unknown: "Refused: unknown code",
 };
-export const scanResultLabel = (result: string) => SCAN_RESULT_LABELS[result as PaperScanResult] ?? result;
-export const scanIsRefusal = (result: string) => result !== "ready" && result !== "handed_over";
+export const scanResultLabel = (result: string) => SCAN_RESULT_LABELS[result as PaperScanResult | InvoiceScanResult] ?? result;
+/** A scan that gave nothing: anything but a check that found goods to go, a print, or a handover. */
+export const scanIsRefusal = (result: string) => !["ready", "released", "printed", "handed_over"].includes(result);

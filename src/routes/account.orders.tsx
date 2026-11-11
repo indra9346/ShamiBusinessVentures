@@ -1,11 +1,15 @@
 import { createFileRoute, Link, Outlet, useRouterState } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Package } from "lucide-react";
+import { FileCheck2, Package } from "lucide-react";
 import { toast } from "sonner";
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { CancelCheckoutButton } from "@/components/site/CancelCheckoutButton";
 import { CheckoutItems } from "@/components/site/CheckoutItems";
-import { DataTable, FilterNote, Panel, scrollToSection, StatCard, StatusBadge } from "@/components/panel/widgets";
+import { FilterNote, Panel, scrollToSection, StatCard, StatusBadge } from "@/components/panel/widgets";
+import { ResizableTable } from "@/hooks/use-column-resize";
+import { cn } from "@/lib/utils";
+import { orderToneClass, TONE_CLASSES } from "@/lib/order-status-tone";
+import { customerInvoiceVisible } from "@/lib/invoice-visibility";
 import { Pager } from "@/components/panel/pager";
 import { accountNav } from "@/lib/account-nav";
 import { canCancelOrder, inr, inrPrecise, orderStages, type OrderStatus } from "@/lib/data";
@@ -174,7 +178,8 @@ function AccountOrders() {
                     ? { tone: "bg-amber-50 text-amber-950", title: "Waiting for your bank transfer", text: `Transfer ${inrPrecise(hold.amount)} by ${hold.method ?? "NEFT"}, then enter the UTR within ${clockText(left)}.` }
                     : { tone: "bg-amber-50 text-amber-950", title: "Waiting for your payment", text: `Pay ${inrPrecise(hold.amount)} by UPI within ${clockText(left)}.` };
               return (
-                <li key={hold.orderNo} className="rounded-lg border border-border bg-white p-3 sm:p-4">
+                // Not paid yet: yellow, like every pending order (owner, 11 Nov 2026).
+                <li key={hold.orderNo} className={cn("rounded-lg border p-3 sm:p-4", TONE_CLASSES.pending.tile)}>
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <CheckoutItems lines={hold.lines} products={products} className="min-w-0 flex-1" />
                     <div className="text-right">
@@ -214,9 +219,10 @@ function AccountOrders() {
       {notPlaced.length > 0 && (
         <Panel title="Not placed" className="mb-6">
           <p className="mb-3 text-sm text-slate">These were not paid, so they were not placed and you owe nothing (unless a line below says otherwise). Tap Reorder to buy the same items again at today's price.</p>
-          <ul className="divide-y divide-border">
+          <ul className="space-y-2">
             {notPlaced.map((hold) => (
-              <li key={hold.orderNo} className="flex flex-wrap items-center justify-between gap-3 py-2.5">
+              // Never placed: red, like a cancelled order.
+              <li key={hold.orderNo} className={cn("flex flex-wrap items-center justify-between gap-3 rounded-lg border px-3 py-2.5", TONE_CLASSES.closed.tile)}>
                 <div className="min-w-0">
                   <Link to="/account/orders/$id" params={{ id: hold.orderNo }} search={true} className="font-semibold text-navy hover:text-gold">{hold.orderNo}</Link>
                   <p className="text-xs text-slate">{inrPrecise(hold.amount)}</p>
@@ -315,78 +321,107 @@ function AccountOrders() {
               Browse products
             </Link>
           </div>
+        ) : rows.length === 0 ? (
+          <div className="grid place-items-center gap-2 py-14 text-center">
+            <p className="text-sm font-semibold text-navy">No records found</p>
+            <p className="text-xs text-slate">No orders match this search or filter.</p>
+          </div>
         ) : (
-          <DataTable
-            columns={["Order", "Date", "Items", "Amount", "Payment", "Status", "Actions"]}
-            rows={rows.map((o) => [
-              <Link
-                to="/account/orders/$id"
-                search={true}
-                params={{ id: o.id }}
-                className="font-semibold text-navy hover:text-gold"
-              >
-                {o.id}
-              </Link>,
-              o.date,
-              `${o.items.length} item${o.items.length > 1 ? "s" : ""}`,
-              inr(o.amount),
-              <StatusBadge status={o.payment} />,
-              <StatusBadge status={o.status} />,
-              <div className="flex flex-wrap items-center gap-1.5">
-                <Link to="/account/orders/$id" params={{ id: o.id }} search={true}>
-                  <Button variant="outline" size="sm">
-                    View
-                  </Button>
-                </Link>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    o.items.forEach((it) => addToCart(it.product.id, it.qty));
-                    showCartNotification("Added to cart", `${o.items.length} item(s) from ${o.id}`);
-                  }}
-                >
-                  Reorder
-                </Button>
-                <AlertDialog>
-                  <AlertDialogTrigger asChild>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={!canCancelOrder(o, "customer")}
-                      title={!canCancelOrder(o, "customer") && ((o.paidAmount ?? 0) > 0 || o.payment === "Paid" || o.payment === "Partially Paid")
-                        ? "A verified refund must be completed before cancellation."
-                        : undefined}
-                    >
-                      Cancel
-                    </Button>
-                  </AlertDialogTrigger>
-                  <AlertDialogContent>
-                    <AlertDialogHeader>
-                      <AlertDialogTitle>Cancel order {o.id}?</AlertDialogTitle>
-                      <AlertDialogDescription>
-                        {canCancelOrder(o, "customer")
-                          ? "This will mark the order as cancelled and restore its available inventory."
-                          : o.vendorStatuses?.some((fulfillment) => !["Placed", "Payment Confirmed", "Cancelled"].includes(fulfillment.status))
-                            ? "A vendor has started fulfilment. Contact support if you need help cancelling this order."
-                            : "Paid orders cannot be cancelled until a verified refund is completed. Contact support if you need help."}
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel>Back</AlertDialogCancel>
-                      <AlertDialogAction
-                        onClick={async () => {
-                          if (await updateOrderStatus(o.id, "Cancelled" as OrderStatus)) toast.success(`Order ${o.id} cancelled`);
-                        }}
+          // Each row tinted by its status (owner, 11 Nov 2026): pending yellow, confirmed green, cancelled red.
+          <div className="overflow-x-auto">
+            <ResizableTable tableId="account-orders" className="w-full text-sm" style={{ minWidth: 640 }}>
+              <thead>
+                <tr className="border-b border-border text-left">
+                  {["Order", "Date", "Items", "Amount", "Payment", "Status", "Actions"].map((column) => (
+                    <th key={column} className="px-3 py-3 text-[11px] font-bold tracking-wider text-slate uppercase">{column}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((o) => (
+                  <tr key={o.id} className={cn("border-b border-border/70 transition-colors last:border-0", orderToneClass(o.status, "row") || "hover:bg-ivory")}>
+                    <td className="px-3 py-3.5 align-middle text-charcoal">
+                      <Link
+                        to="/account/orders/$id"
+                        search={true}
+                        params={{ id: o.id }}
+                        className="font-semibold text-navy hover:text-gold"
                       >
-                        Confirm Cancel
-                      </AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
-              </div>,
-            ])}
-          />
+                        {o.id}
+                      </Link>
+                      {/* Paid and confirmed: the invoice and its delivery QR are on the order's page. */}
+                      {customerInvoiceVisible({ orderStatus: o.status, payment: o.payment }) && (
+                        <Link to="/account/orders/$id" params={{ id: o.id }} search={true}
+                          className={cn("mt-1 flex w-fit items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold", TONE_CLASSES.confirmed.badge)}>
+                          <FileCheck2 className="h-3 w-3" />Invoice &amp; QR
+                        </Link>
+                      )}
+                    </td>
+                    <td className="px-3 py-3.5 align-middle text-charcoal">{o.date}</td>
+                    <td className="px-3 py-3.5 align-middle text-charcoal">{`${o.items.length} item${o.items.length > 1 ? "s" : ""}`}</td>
+                    <td className="px-3 py-3.5 align-middle text-charcoal">{inr(o.amount)}</td>
+                    <td className="px-3 py-3.5 align-middle text-charcoal"><StatusBadge status={o.payment} /></td>
+                    <td className="px-3 py-3.5 align-middle text-charcoal"><StatusBadge status={o.status} /></td>
+                    <td className="px-3 py-3.5 align-middle text-charcoal">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <Link to="/account/orders/$id" params={{ id: o.id }} search={true}>
+                          <Button variant="outline" size="sm">
+                            View
+                          </Button>
+                        </Link>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            o.items.forEach((it) => addToCart(it.product.id, it.qty));
+                            showCartNotification("Added to cart", `${o.items.length} item(s) from ${o.id}`);
+                          }}
+                        >
+                          Reorder
+                        </Button>
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              disabled={!canCancelOrder(o, "customer")}
+                              title={!canCancelOrder(o, "customer") && ((o.paidAmount ?? 0) > 0 || o.payment === "Paid" || o.payment === "Partially Paid")
+                                ? "A verified refund must be completed before cancellation."
+                                : undefined}
+                            >
+                              Cancel
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>Cancel order {o.id}?</AlertDialogTitle>
+                              <AlertDialogDescription>
+                                {canCancelOrder(o, "customer")
+                                  ? "This will mark the order as cancelled and restore its available inventory."
+                                  : o.vendorStatuses?.some((fulfillment) => !["Placed", "Payment Confirmed", "Cancelled"].includes(fulfillment.status))
+                                    ? "A vendor has started fulfilment. Contact support if you need help cancelling this order."
+                                    : "Paid orders cannot be cancelled until a verified refund is completed. Contact support if you need help."}
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>Back</AlertDialogCancel>
+                              <AlertDialogAction
+                                onClick={async () => {
+                                  if (await updateOrderStatus(o.id, "Cancelled" as OrderStatus)) toast.success(`Order ${o.id} cancelled`);
+                                }}
+                              >
+                                Confirm Cancel
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </ResizableTable>
+          </div>
         )}
         {myOrders.length > 0 && (
           <Pager page={pageSafe} pages={pages} onPage={setPage} total={filtered.length} />

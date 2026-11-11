@@ -1,4 +1,5 @@
 import { paymentClosed } from "@/lib/order-payment-state";
+import { orderToneClass, paymentToneClass } from "@/lib/order-status-tone";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -300,6 +301,8 @@ function AdminCustomerDetail() {
             <Panel>
               <DataTable
                 columns={["Order", "Date", "Items", "Total", "Paid", "Pending", "Status"]}
+                // Each row tinted by its order status: waiting yellow, confirmed green, cancelled red.
+                rowClassNames={custOrders.map((o) => orderToneClass(o.status, "row"))}
                 rows={custOrders.map((o) => [
                   <Link
                     to="/admin/orders/$id"
@@ -330,6 +333,8 @@ function AdminCustomerDetail() {
             <Panel>
               <DataTable
                 columns={["Order", "Txn", "Method", "Amount", "Status"]}
+                // Here the status is the payment's, so the tint follows it: paid green, refunded or failed red.
+                rowClassNames={custOrders.map((o) => paymentToneClass(o.payment, "row"))}
                 rows={custOrders.map((o) => [
                   o.id,
                   o.txn,

@@ -2,7 +2,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import * as jspdf from "jspdf";
-import { buildDeliveryNotePdf, deliveryPdfFileName, pdfSafe, type DeliveryPdfInput, type TextImageRenderer } from "../src/lib/delivery-note-pdf.ts";
+import {
+  buildDeliveryNotePdf, deliveryPdfFileName, pdfSafe, releasedPdfInput, WATERMARK_OPACITY, type DeliveryPdfInput, type TextImageRenderer,
+} from "../src/lib/delivery-note-pdf.ts";
+import type { ReleasePrint } from "../src/lib/delivery-papers.ts";
 import { kn } from "../src/lib/i18n-kn.ts";
 
 // 11 Nov 2026, the owner: a duplicate copy went to the godown and was refused, and the admin "not able to get the
@@ -78,25 +81,70 @@ test("file names and the characters the PDF fonts can't draw", () => {
   assert.equal(pdfSafe("A — B ‘x’ ₹130…"), "A - B 'x' Rs 130...");
 });
 
-test("the print page: Print and Download, and the original again in plain sight", () => {
+// 12 Nov 2026 (owner, 11 Nov): the papers of a released note, printed from the godown's scan of the invoice QR or by
+// the office, carry no QR of their own.
+const releasePrint = (note = sample(3)): ReleasePrint => ({
+  printed_at: "2026-11-12T05:00:00Z", note_copy: 2, slip_copies: { "1": 1, "3": 4 }, printed_by: "Ravi", printed_role: "incharge",
+  note: {
+    note_no: note.note_no, order_no: note.order_no, invoice_number: note.invoice_number, snapshot: note.snapshot,
+    generated_at: "2026-11-12T04:00:00Z", generated_by_name: "Automatic (payment confirmed)", generated_how: "auto",
+  },
+});
+
+test("a released note's papers: no QR code, RELEASED, the copy and who printed it, how it was released", () => {
+  const released = releasedPdfInput(releasePrint(), { gate: { code: "paid" }, selection: { note: true, slips: [1, 3] }, handovers: {}, origin: "https://grainbazar.com" });
+  assert.equal(released.record.noteCode, null);
+  const { pdf, fileName } = buildDeliveryNotePdf(released, { jspdf, logo: null, textImage: null });
+  assert.equal(pdf.getNumberOfPages(), 3);
+  const out = text(pdf);
+  for (const words of ["RELEASED", "Delivery note \\(released\\) | Copy 2", "Delivery slip 3 of 3 | Copy 4", "Copy 2 by Ravi \\(godown in-charge\\)", "automatically",
+    "Goods are handed over only when the godown scans the QR on the customer's invoice."]) assert.ok(out.includes(words), words);
+  for (const gone of ["ORIGINAL", "DUPLICATE", "Godown: scan before handing over", "QR code of the original"]) assert.ok(!out.includes(gone), gone);
+  assert.equal(fileName, "DN-000001_CLK-577522-071126-164455_note-and-slips_released.pdf");
+});
+
+test("released papers warn of a payment problem and of the items already handed over", () => {
+  const handover = { at: "2026-11-12T06:00:00Z", by: "Ravi", role: "incharge" as const, godown: "Challakere Godown" };
+  const released = releasedPdfInput(releasePrint(), { gate: { code: "cancelled" }, selection: { note: true, slips: [1] }, handovers: { "1": handover, "2": null }, origin: "" });
+  assert.deepEqual(released.noteWarnings, ["ORDER CANCELLED. DO NOT DELIVER.", "ITEM 1 ALREADY HANDED OVER. DELIVER ONLY THE REST."]);
+  assert.match(released.slipWarnings["1"]!.at(-1)!, /^ALREADY HANDED OVER 12 NOV 2026, 11:30:00 AM IST BY RAVI\./);
+  assert.deepEqual(released.slipWarnings["2"], ["ORDER CANCELLED. DO NOT DELIVER."]);
+  const all = releasedPdfInput(releasePrint(sample(1)), { gate: { code: "paid" }, selection: { note: true, slips: [] }, handovers: { "1": handover }, origin: "" });
+  assert.deepEqual(all.noteWarnings, ["ALL ITEMS ALREADY HANDED OVER. FOR RECORDS ONLY. DO NOT DELIVER AGAIN."]);
+});
+
+test("the GB watermark is a little darker and drawn over each page's content, before the footer", () => {
+  assert.ok(WATERMARK_OPACITY > 0.06 && WATERMARK_OPACITY <= 0.1, String(WATERMARK_OPACITY));
+  const { pdf } = buildDeliveryNotePdf(input(sample(3), "original", [1]), { jspdf, logo: PNG, textImage: null });
+  assert.ok(Buffer.from(pdf.output("arraybuffer")).toString("latin1").includes(`/ca ${WATERMARK_OPACITY}`));
+  const pages = (pdf.internal as unknown as { pages: (string[] | undefined)[] }).pages;
+  for (let page = 1; page <= pdf.getNumberOfPages(); page += 1) {
+    const commands = pages[page]!.join("\n");
+    const mark = commands.lastIndexOf(" Do");
+    assert.ok(mark > commands.lastIndexOf("Name, signature, date and time"), `page ${page}: the watermark comes after the content`);
+    assert.ok(mark < commands.indexOf("Page 1 of 1"), `page ${page}: and before the footer`);
+  }
+});
+
+test("the office's print page prints the released papers: no QR, no original or duplicate, the GB watermark", () => {
+  // 12 Nov 2026 (owner, 11 Nov): the one QR is on the invoice; the office prints the released note and slips.
   const page = readFileSync("src/routes/admin.delivery-note.$orderNo.tsx", "utf8");
   assert.match(page, /press\(pickSelection\(pick, allSlips\), "print"\)/);
   assert.match(page, /press\(pickSelection\(pick, allSlips\), "download"\)/);
-  assert.match(page, /press\(keySelection\(chosenReplace\), "print", reason\.trim\(\)\)/);
-  assert.match(page, /press\(keySelection\(chosenReplace\), "download", reason\.trim\(\)\)/);
-  assert.match(page, /Need the original again\?/);
-  assert.doesNotMatch(page, /setReplacing\(true\)/, "no longer hidden behind a small link");
-  assert.match(page, /buildDeliveryNotePdf\(/);
-  assert.match(page, /<Watermark print=\{print\} \/>/);
+  assert.match(page, /printReleasedPapers\(\{ data: \{ orderNo, note: selection\.note, slipLines: selection\.slips \} \}\)/);
+  assert.match(page, /buildDeliveryNotePdf\(\s*releasedPdfInput\(print,/);
+  assert.match(page, /<Watermark \/>/);
+  assert.match(page, /opacity-\[0\.09\]/, "a little darker than the first papers' 6%");
+  assert.match(page, /z-20[^"]*mix-blend-multiply/, "laid over the content, so filled rows can't hide it");
+  for (const gone of [/Need the original again\?/, /recordDeliveryPrint/, /renderSVG/, /paperLink/, /replacement original/i, /Duplicate copy/]) assert.doesNotMatch(page, gone);
   const panel = readFileSync("src/components/panel/DeliveryNotePanel.tsx", "utf8");
   assert.match(panel, /Print or download/);
+  assert.doesNotMatch(panel, /Need the original again\?/);
 });
 
-test("every new line has its Kannada", () => {
+test("every line the print page still shows has its Kannada", () => {
   for (const key of [
-    "What to print or download", "Note only", "All slips only", "Download PDF", "Making the PDF…", "Need the original again?",
-    "Print replacement original", "Download replacement original", "Downloaded {0}", "The copy was recorded but the PDF could not be made",
-    "Print or download", "not printed yet: the next print or download is the original", "original made {0} by {1}", "{0} duplicate copies",
-    "Reason, for example: duplicate sent to the godown by mistake",
+    "What to print or download", "Note only", "All slips only", "Download PDF", "Making the PDF…", "Downloaded {0}",
+    "The copy was recorded but the PDF could not be made", "Print or download",
   ]) assert.ok(kn[key], key);
 });

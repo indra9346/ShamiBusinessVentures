@@ -14,6 +14,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { orderTone, orderToneClass } from "@/lib/order-status-tone";
 import { orderBelongsToUser } from "@/lib/account-identity";
 import { usePickupSettings } from "@/lib/pickup-points";
 import { PickupPointCard } from "@/components/site/PickupPointCard";
@@ -85,33 +86,44 @@ function AccountTrack() {
             </div>
 
             {order.status === "Cancelled" ? (
-              <p className="text-sm text-danger">
+              <p className={cn("rounded-md border px-3 py-2 text-sm text-danger", orderToneClass(order.status, "tile"))}>
                 This order was cancelled and is no longer being tracked.
               </p>
             ) : (
               <ol className="space-y-4">
-                {orderStages.map((s, i) => (
-                  <li key={s} className="flex gap-3">
-                    {i <= currentIdx ? (
-                      <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-gold" />
-                    ) : (
-                      <Circle className="mt-0.5 h-4 w-4 shrink-0 text-border" />
-                    )}
-                    <div className="min-w-0">
-                      <p
-                        className={cn(
-                          "text-sm font-semibold",
-                          i <= currentIdx ? "text-navy" : "text-slate",
-                        )}
-                      >
-                        {s}
-                      </p>
-                      <p className="text-xs text-slate">
-                        {i <= currentIdx ? order.date : "Pending"}
-                      </p>
-                    </div>
-                  </li>
-                ))}
+                {orderStages.map((s, i) => {
+                  // The order colours: done stages green; the stage it is at sits on its status's tint, and stays
+                  // yellow while the order still waits for payment or the office (Placed).
+                  const waiting = i === currentIdx && orderTone(order.status) === "pending";
+                  return (
+                    <li
+                      key={s}
+                      className={cn(
+                        "flex gap-3",
+                        i === currentIdx && cn("-mx-2 rounded-md border px-2 py-1.5", orderToneClass(order.status, "tile")),
+                      )}
+                    >
+                      {i <= currentIdx ? (
+                        <CheckCircle2 className={cn("mt-0.5 h-4 w-4 shrink-0", waiting ? "text-yellow-600" : "text-emerald-600")} />
+                      ) : (
+                        <Circle className="mt-0.5 h-4 w-4 shrink-0 text-border" />
+                      )}
+                      <div className="min-w-0">
+                        <p
+                          className={cn(
+                            "text-sm font-semibold",
+                            i <= currentIdx ? "text-navy" : "text-slate",
+                          )}
+                        >
+                          {s}
+                        </p>
+                        <p className="text-xs text-slate">
+                          {i <= currentIdx ? order.date : "Pending"}
+                        </p>
+                      </div>
+                    </li>
+                  );
+                })}
               </ol>
             )}
 

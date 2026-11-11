@@ -11,6 +11,7 @@ import { useApp, useVendorScope } from "@/lib/store";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { matchesOrderStatus, OPEN_ORDERS, orderStatusFilter } from "@/lib/panel-filters";
+import { orderToneClass } from "@/lib/order-status-tone";
 
 export const Route = createFileRoute("/vendor/orders")({
   validateSearch: (search: Record<string, unknown>) => ({
@@ -160,6 +161,8 @@ function VendorOrdersPanel() {
         )}
         <DataTable
           columns={["Order ID", "Date", "Customer", "Items", "Subtotal", "Payment", "Status", "Actions"]}
+          // Each row tinted by its order status: waiting yellow, confirmed green, cancelled red.
+          rowClassNames={rows.map(({ order: o }) => orderToneClass(o.status, "row"))}
           rows={rows.map(({ order: o, items, amount }) => [
             <Link to="/vendor/orders/$id" params={{ id: o.id }} search={true} className="font-semibold text-navy hover:text-gold">
               {o.id}

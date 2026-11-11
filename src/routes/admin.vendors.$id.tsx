@@ -7,6 +7,7 @@ import { DataTable, FilterNote, Panel, scrollToSection, StatCard, StatusBadge } 
 import { adminNav } from "@/lib/panel-nav";
 import { getVendorPaidSales, inr, vendorSaleCounts } from "@/lib/data";
 import { useApp } from "@/lib/store";
+import { orderToneClass } from "@/lib/order-status-tone";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
@@ -118,6 +119,8 @@ function AdminVendorDetail() {
 
   const vProducts = products.filter((p) => p.vendorId === vendor.id);
   const vOrders = orders.filter((o) => o.items.some((it) => it.vendorId === vendor.id));
+  // The orders tab: all of them, or only the paid sales the Total Sales card counts.
+  const shownOrders = paidOnly ? vOrders.filter((o) => vendorSaleCounts(o, vendor.id)) : vOrders;
   const vReviews = reviews.filter((r) => r.vendorId === vendor.id && r.status === "Published");
   const vPayouts = payoutRows;
   const vendorSales = getVendorPaidSales(vOrders, vendor.id);
@@ -232,7 +235,9 @@ function AdminVendorDetail() {
               {paidOnly && <FilterNote label="Total Sales" onClear={() => setPaidOnly(false)} />}
               <DataTable
                 columns={["Order", "Date", "Customer", "Amount", "Status"]}
-                rows={(paidOnly ? vOrders.filter((o) => vendorSaleCounts(o, vendor.id)) : vOrders).map((o) => [
+                // Each row tinted by its order status: waiting yellow, confirmed green, cancelled red.
+                rowClassNames={shownOrders.map((o) => orderToneClass(o.status, "row"))}
+                rows={shownOrders.map((o) => [
                   <Link to="/admin/orders/$id" params={{ id: o.id }} className="font-semibold text-navy hover:text-gold">{o.id}</Link>,
                   o.date, o.customer, inr(o.amount), <StatusBadge status={o.status} />,
                 ])}

@@ -20,6 +20,7 @@ import { resizedImage } from "@/lib/image-url";
 import { orderBelongsToUser } from "@/lib/account-identity";
 import { notificationBelongsToUser } from "@/lib/account-identity";
 import { OPEN_ORDERS } from "@/lib/panel-filters";
+import { orderTone, orderToneClass } from "@/lib/order-status-tone";
 
 export const Route = createFileRoute("/account")({
   head: () => ({
@@ -131,6 +132,8 @@ function Account() {
           ) : (
             <DataTable
               columns={["Order", "Date", "Items", "Amount", "Payment", "Status", "Actions"]}
+              // Each row tinted by its status: waiting yellow, confirmed green, cancelled or expired red.
+              rowClassNames={ordersList.slice(0, 6).map((o) => orderToneClass(o.status, "row"))}
               rows={ordersList.slice(0, 6).map((o) => [
                 <span className="font-semibold text-navy">{o.id}</span>,
                 o.date,
@@ -160,11 +163,15 @@ function Account() {
             <ol className="space-y-4">
               {orderStages.map((s, i) => (
                 <li key={s} className="flex gap-3">
+                  {/* The order colours: done stages green; the stage it is at is yellow while it still waits for
+                      payment or the office (Placed), the rest grey. */}
                   <span
                     className={
-                      i <= stageIndex
-                        ? "mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-gold"
-                        : "mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-border"
+                      i < stageIndex || (i === stageIndex && orderTone(active.status) !== "pending")
+                        ? "mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-emerald-600"
+                        : i === stageIndex
+                          ? "mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-yellow-400"
+                          : "mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-border"
                     }
                   />
                   <div className="min-w-0">

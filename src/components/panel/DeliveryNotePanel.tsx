@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { AlertTriangle, CheckCircle2, Clock, FileCheck2, Printer, RefreshCw } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clock, FileCheck2, Printer, QrCode, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { Panel } from "@/components/panel/widgets";
 import { Button } from "@/components/ui/button";
+import { supabase } from "@/integrations/supabase/client";
 import { inrPrecise } from "@/lib/data";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
-import { copyLabel, gateWords, istDateTime, paperWarnings, type DeliveryNoteEvent, type DeliveryNoteView } from "@/lib/delivery-notes";
+import { copyLabel, gateWords, istDateTime, paperWarnings, type DeliveryNote, type DeliveryNoteEvent, type DeliveryNoteView } from "@/lib/delivery-notes";
 import { generateDeliveryNote, getDeliveryNote, reopenDeliveryHandover, setDeliveryStop } from "@/lib/delivery-notes.functions";
-import { paperKindWords, scanIsRefusal, scannedPaperLabel, scannerLabel, scanResultLabel, type DeliveryPaperRow } from "@/lib/delivery-papers";
+import { paperKindWords, releasedHowLabel, releasedWords, scanIsRefusal, scannedPaperLabel, scannerLabel, scanResultLabel, type DeliveryPaperRow } from "@/lib/delivery-papers";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
@@ -18,16 +19,25 @@ const TONES = {
   stop: "border-red-200 bg-red-50 text-red-900",
 };
 
+/** How the note came to be ('admin', 'auto' or 'scan'): kept on the note since 12 Nov 2026. */
+const howOf = (note: DeliveryNote) => (note as DeliveryNote & { generated_how?: string }).generated_how ?? "admin";
+
 function eventText(event: DeliveryNoteEvent, papers: Map<number, DeliveryPaperRow>) {
   const who = event.actor_name ? ` by ${event.actor_name}` : "";
-  if (event.kind === "generated") return `Generated${who}`;
+  if (event.kind === "generated") {
+    // Released automatically or by the in-charge's scan (12 Nov 2026): the history says how. An admin's press says who.
+    if (!event.detail) return `Generated${who}`;
+    return /^Automatic/.test(event.actor_name) || !event.actor_name ? event.detail : `${event.detail} (${event.actor_name})`;
+  }
   if (event.kind === "printed") {
     const what = event.doc === "note" ? "Note" : `Slip ${event.slip_line}`;
     const warned = event.gate_code && event.gate_code !== "paid" ? " (printed with a warning)" : "";
-    // A print made with a QR is labelled by its paper: original, duplicate copy n or replacement original.
+    // A print made with a QR is labelled by its paper: original, duplicate copy n or replacement original. A released
+    // note's paper (no QR, 12 Nov 2026) is just its copy number, with who printed it.
     const paper = papers.get(event.id);
-    const label = paper ? paperKindWords(paper.kind, paper.duplicate_no).en : copyLabel(event.copy_no);
-    return `${what} printed${who}: ${label}${paper?.reason ? ` (${paper.reason})` : ""}${warned}`;
+    if (paper) return `${what} printed${who}: ${paperKindWords(paper.kind, paper.duplicate_no).en}${paper.reason ? ` (${paper.reason})` : ""}${warned}`;
+    if (/^Printed by the /.test(event.detail)) return `${what} printed${who}: copy ${event.copy_no ?? ""} (${event.detail.replace(/^Printed by the /, "")})${warned}`;
+    return `${what} printed${who}: ${copyLabel(event.copy_no)}${warned}`;
   }
   if (event.kind === "invoice_changed") return `Zoho invoice changed: ${event.detail}`;
   if (event.kind === "order_changed") return `Order changed: ${event.detail}`;
@@ -36,7 +46,7 @@ function eventText(event: DeliveryNoteEvent, papers: Map<number, DeliveryPaperRo
 
 /**
  * Which items were handed over at the godown on a QR scan (each round, and an administrator's reopenings), the
- * reopen button, and every scan of this note's papers.
+ * reopen button, and every scan of this note's QR (the invoice's, or a paper's printed before 12 Nov 2026).
  */
 function HandoverList({ view, orderNo, readOnly, onView }: { view: DeliveryNoteView; orderNo: string; readOnly: boolean; onView: (next: DeliveryNoteView) => void }) {
   const [reopening, setReopening] = useState<number | null>(null);
@@ -59,7 +69,7 @@ function HandoverList({ view, orderNo, readOnly, onView }: { view: DeliveryNoteV
       toast.success(`Item ${line} reopened`, {
         description: result.orderStatus === "Delivered"
           ? "The order is still marked Delivered, here and in Zoho. If the goods did not go, change the order's status and Zoho's delivery yourself."
-          : "Its original can hand it over again.",
+          : "The invoice QR can hand it over again.",
         duration: 12_000,
       });
     } catch (cause) {
@@ -133,9 +143,61 @@ function HandoverList({ view, orderNo, readOnly, onView }: { view: DeliveryNoteV
 }
 
 /**
- * The order's delivery note on the admin order page: why it cannot be generated yet, or the note, its
- * warnings and who generated and printed it. Whatever this shows, the database decides again on the press.
- * readOnly (the sales order is void in Zoho): only a note already made shows, with its warnings, and nothing to press.
+ * Replaces the QR on the order's invoice, with a reason (lost, shared with the wrong person, misused). The old QR then
+ * scans red at the godown; the customer downloads the invoice again for the new one. See
+ * public.admin_replace_invoice_delivery_code.
+ */
+function ReplaceInvoiceQr({ orderNo }: { orderNo: string }) {
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const replace = async () => {
+    setBusy(true);
+    const { data, error } = await supabase.rpc("admin_replace_invoice_delivery_code", { _order_no: orderNo, _reason: reason.trim() });
+    setBusy(false);
+    if (error) { toast.error("Could not replace the invoice QR", { description: error.message }); return; }
+    const generation = (data as { generation?: number } | null)?.generation;
+    toast.success("Invoice QR replaced", {
+      description: `The old QR now scans red at the godown. Ask the customer to download the invoice again from their orders for the new QR${generation ? ` (QR no. ${generation})` : ""}.`,
+      duration: 12_000,
+    });
+    setOpen(false);
+    setReason("");
+  };
+
+  return (
+    <div className="space-y-2 border-t border-border pt-3">
+      {open ? (
+        <>
+          <p className="text-xs text-charcoal">
+            Replace the QR if the invoice was lost, shared with the wrong person or misused. The old QR then scans red at the godown, and the customer downloads the invoice again from their orders to get the new one. Goods already handed over stay handed over.
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <Input aria-label="Why the invoice QR is replaced" value={reason} maxLength={300} onChange={(event) => setReason(event.target.value)}
+              placeholder="Reason, for example: customer lost the invoice" className="h-8 min-w-0 flex-1 text-xs sm:max-w-sm" />
+            <Button size="sm" className="bg-danger text-white hover:bg-danger/90" disabled={busy || reason.trim().length < 3} onClick={() => void replace()}>
+              {busy ? "Replacing…" : "Replace the QR"}
+            </Button>
+            <Button size="sm" variant="outline" disabled={busy} onClick={() => setOpen(false)}>Back</Button>
+          </div>
+        </>
+      ) : (
+        <button type="button" className="inline-flex items-center gap-1 text-xs font-semibold text-navy hover:underline" onClick={() => setOpen(true)}>
+          <QrCode className="h-3.5 w-3.5" /> Replace the invoice QR
+        </button>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The order's delivery note on the admin order page (12 Nov 2026): released automatically once the full payment is
+ * confirmed and Zoho has the paid invoice (or by the godown in-charge's scan), or why it is not released yet, with the
+ * office's "Release now" for when the automatic release did not happen. Then the note, its warnings, how it was
+ * released, the office's print, the invoice QR's replacement and the godown's handovers. Whatever this shows, the
+ * database decides again on each press. readOnly (the sales order is void in Zoho): only a note already made shows,
+ * with its warnings, and nothing to press.
  */
 export function DeliveryNotePanel({ orderNo, className = "", readOnly = false }: { orderNo: string; className?: string; readOnly?: boolean }) {
   const [view, setView] = useState<DeliveryNoteView | null>(null);
@@ -144,7 +206,7 @@ export function DeliveryNotePanel({ orderNo, className = "", readOnly = false }:
   const [stopping, setStopping] = useState(false);
   const [reason, setReason] = useState("");
 
-  // Opening the page adds no Zoho call; Check again and Generate read Zoho now.
+  // Opening the page adds no Zoho call; Check again and Release now read Zoho now.
   const check = useCallback(async (fresh: boolean) => {
     if (STATIC_DATA_MODE) return;
     setBusy("check");
@@ -174,16 +236,17 @@ export function DeliveryNotePanel({ orderNo, className = "", readOnly = false }:
     }
   };
 
-  const generate = async () => {
+  // The office's fallback: the same note the automatic release makes, released now on Zoho read just now.
+  const release = async () => {
     setBusy("generate");
     try {
       const result = await generateDeliveryNote({ data: { orderNo } });
       setView(result.view);
       setFailed("");
-      if (result.issued && result.view.note) toast.success(`Delivery note ${result.view.note.note_no} generated`);
-      else if (!result.view.note) toast.error("The delivery note was not generated", { description: gateWords(result.view.state).title });
+      if (result.issued && result.view.note) toast.success(`Delivery note ${result.view.note.note_no} released`);
+      else if (!result.view.note) toast.error("The delivery note was not released", { description: gateWords(result.view.state).title });
     } catch (cause) {
-      toast.error("Could not generate the delivery note", { description: cause instanceof Error ? cause.message : undefined });
+      toast.error("Could not release the delivery note", { description: cause instanceof Error ? cause.message : undefined });
     } finally {
       setBusy("");
     }
@@ -241,6 +304,10 @@ export function DeliveryNotePanel({ orderNo, className = "", readOnly = false }:
 
       {state && words && !note && (
         <div className="space-y-3">
+          <div className="rounded-md border border-border bg-ivory p-3 text-sm text-charcoal">
+            <p className="flex items-center gap-1.5 font-bold text-navy"><Clock className="h-4 w-4 shrink-0" /> Not released yet</p>
+            <p className="mt-1">The delivery note is released automatically once the full payment is confirmed and Zoho Books has the paid invoice. The godown in-charge then scans the QR on the customer's invoice to print it and hand over the goods.</p>
+          </div>
           <div className={cn("rounded-md border p-3 text-sm", TONES[words.tone])}>
             <p className="flex items-center gap-1.5 font-bold">
               {words.tone === "ok" ? <CheckCircle2 className="h-4 w-4 shrink-0" /> : words.tone === "wait" ? <Clock className="h-4 w-4 shrink-0" /> : <AlertTriangle className="h-4 w-4 shrink-0" />}
@@ -257,8 +324,8 @@ export function DeliveryNotePanel({ orderNo, className = "", readOnly = false }:
           )}
           <div className="flex flex-wrap items-center gap-2">
             {state.allowed && (
-              <Button size="sm" className="bg-navy text-white hover:bg-navy/90" disabled={busy !== ""} onClick={() => void generate()}>
-                <FileCheck2 className="mr-1.5 h-4 w-4" /> {busy === "generate" ? "Generating…" : "Generate delivery note"}
+              <Button size="sm" className="bg-navy text-white hover:bg-navy/90" disabled={busy !== ""} onClick={() => void release()}>
+                <FileCheck2 className="mr-1.5 h-4 w-4" /> {busy === "generate" ? "Releasing…" : "Release now"}
               </Button>
             )}
             {recheck}
@@ -266,7 +333,9 @@ export function DeliveryNotePanel({ orderNo, className = "", readOnly = false }:
               <Link to="/admin/payments" search={true} className="text-xs font-semibold text-gold hover:underline">Payments & Matching</Link>
             )}
           </div>
-          <p className="text-[11px] text-slate">{view!.fresh ? `Zoho Books read ${istDateTime(view!.checkedAt)}` : "From what the website last read from Zoho. Generate and Check again read Zoho now."}</p>
+          {state.allowed && <p className="text-[11px] text-slate">Paid in full but not released yet: the automatic release may have found Zoho behind. Release now reads Zoho again and releases it the same way.</p>}
+          <p className="text-[11px] text-slate">{view!.fresh ? `Zoho Books read ${istDateTime(view!.checkedAt)}` : "From what the website last read from Zoho. Release now and Check again read Zoho now."}</p>
+          {!readOnly && state.code === "paid" && <ReplaceInvoiceQr orderNo={orderNo} />}
           {stopControl}
         </div>
       )}
@@ -274,26 +343,16 @@ export function DeliveryNotePanel({ orderNo, className = "", readOnly = false }:
       {state && words && note && (
         <div className="space-y-3">
           <div className="flex flex-wrap items-start justify-between gap-2">
-            <div>
+            <div className="min-w-0">
               <p className="text-lg font-extrabold text-navy">{note.note_no}</p>
-              <p className="text-xs text-slate">Generated {istDateTime(note.generated_at)} by {note.generated_by_name}</p>
-              <p className="text-xs text-slate">Invoice {note.invoice_number}</p>
+              <p className="text-xs font-semibold text-emerald-800">{releasedWords({ generated_at: note.generated_at, generated_how: howOf(note), generated_by_name: note.generated_by_name }).en}</p>
+              <p className="text-xs text-slate">{`How: ${releasedHowLabel(howOf(note), note.generated_by_name).en} · Invoice ${note.invoice_number}`}</p>
             </div>
             <Button size="sm" className="bg-navy text-white hover:bg-navy/90" asChild>
               <Link to="/admin/delivery-note/$orderNo" params={{ orderNo }}><Printer className="mr-1.5 h-4 w-4" /> Print or download</Link>
             </Button>
           </div>
-          {(() => {
-            // 11 Nov 2026 (owner): a duplicate copy went to the godown and was refused. Say where the original comes from.
-            const reopenedIds = new Set(view!.reopens.map((row) => row.handover_id));
-            const handed = new Set(view!.handovers.filter((row) => !reopenedIds.has(row.id)).map((row) => row.slip_line));
-            const toGo = note.snapshot.items.some((item) => !handed.has(item.line));
-            return !readOnly && toGo && view!.papers.some((row) => row.kind === "duplicate") ? (
-              <p className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-950">
-                Only the original (or a replacement original) hands goods over; duplicate copies scan red at the godown. If the original is lost or a duplicate was sent, open Print or download and use &quot;Need the original again?&quot;.
-              </p>
-            ) : null;
-          })()}
+          <p className="text-xs text-slate">The godown in-charge scans the QR on the customer's invoice to print the note and slips and hand the goods over. The papers have no QR of their own.</p>
           {warnings.length > 0 ? (
             <div className="rounded-md border-2 border-red-300 bg-red-50 p-3 text-sm text-red-900">
               {warnings.map((warning) => <p key={warning} className="font-bold">{warning}</p>)}
@@ -303,6 +362,7 @@ export function DeliveryNotePanel({ orderNo, className = "", readOnly = false }:
             <p className="flex items-center gap-1.5 text-sm font-semibold text-emerald-800"><CheckCircle2 className="h-4 w-4" /> {view!.fresh ? `Still paid in full as of ${istDateTime(view!.checkedAt)}.` : "Paid in full when the website last read Zoho. Printing reads Zoho again."}</p>
           )}
           {recheck}
+          {!readOnly && <ReplaceInvoiceQr orderNo={orderNo} />}
           {stopControl}
           <HandoverList view={view!} orderNo={orderNo} readOnly={readOnly} onView={setView} />
           {view!.events.length > 0 && (
@@ -318,5 +378,85 @@ export function DeliveryNotePanel({ orderNo, className = "", readOnly = false }:
         </div>
       )}
     </Panel>
+  );
+}
+
+type ReleasedNoteRow = {
+  note_no: string; order_no: string; customer: string; items: number; to_go: number; released_at: string; released_how: string; delivered: boolean; godown: string;
+};
+
+/**
+ * The godown's released delivery notes, newest first (the last 30 days, own godown; an admin sees all), for the staff
+ * app and the channel partner's page (public.godown_released_notes): which customers' goods are waiting, and how
+ * many items are still to go. The godown hands them over by scanning the QR on the customer's invoice.
+ */
+export function ReleasedDeliveryNotes({ showGodown = false }: { showGodown?: boolean }) {
+  const [rows, setRows] = useState<ReleasedNoteRow[] | null>(null);
+  const [failed, setFailed] = useState("");
+  const [all, setAll] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  const load = useCallback(async () => {
+    if (STATIC_DATA_MODE) { setRows([]); return; }
+    setLoading(true);
+    const { data, error } = await supabase.rpc("godown_released_notes");
+    setLoading(false);
+    if (error) {
+      setFailed(/does not exist|schema cache|could not find/i.test(error.message) ? "Released delivery notes are not set up in the database yet." : error.message);
+      return;
+    }
+    setRows((data ?? []) as ReleasedNoteRow[]);
+    setFailed("");
+  }, []);
+
+  // The godown's phone may stay open all day: a note released meanwhile shows within a minute.
+  useEffect(() => {
+    void load();
+    const timer = setInterval(() => void load(), 60_000);
+    return () => clearInterval(timer);
+  }, [load]);
+
+  const shown = all ? rows ?? [] : (rows ?? []).slice(0, 8);
+  const waiting = (rows ?? []).filter((row) => !row.delivered && row.to_go > 0).length;
+
+  return (
+    <section className="rounded-2xl border border-border bg-card p-4 shadow-sm">
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="flex items-center gap-2 text-sm font-bold text-navy"><FileCheck2 className="h-4 w-4" /> Released delivery notes</h2>
+        <button type="button" aria-label="Refresh" disabled={loading} onClick={() => void load()}
+          className="grid h-8 w-8 place-items-center rounded-md border border-border text-navy hover:border-gold hover:text-gold disabled:opacity-50">
+          <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
+        </button>
+      </div>
+      <p className="mt-1 text-xs text-slate">The last 30 days. Scan the QR on the customer's invoice to print the papers or hand the goods over.</p>
+      {failed && <p className="mt-2 text-sm text-danger">{failed}</p>}
+      {!rows && !failed && <p className="mt-2 text-sm text-slate">Loading…</p>}
+      {rows && rows.length === 0 && <p className="mt-2 text-sm text-slate">No delivery notes released in the last 30 days.</p>}
+      {rows && rows.length > 0 && (
+        <>
+          {waiting > 0 && <p className="mt-2 text-xs font-semibold text-amber-800">{`${waiting} with goods still to hand over`}</p>}
+          <ul className="mt-2 divide-y divide-border text-sm">
+            {shown.map((row) => (
+              <li key={row.note_no} className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1 py-2">
+                <div className="min-w-0">
+                  <p className="break-words font-semibold text-charcoal">{`${row.order_no} · ${row.customer || "—"}`}</p>
+                  <p className="text-xs text-slate">{`${row.note_no} · released ${istDateTime(row.released_at)}`}</p>
+                  <p className="text-xs text-slate">{`${releasedHowLabel(row.released_how).en}${showGodown && row.godown ? ` · ${row.godown}` : ""}`}</p>
+                </div>
+                <span className={cn("shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold",
+                  row.delivered || row.to_go === 0 ? "bg-emerald-50 text-emerald-800" : "bg-amber-50 text-amber-900")}>
+                  {row.delivered ? "Delivered" : row.to_go === 0 ? "All handed over" : `${row.to_go} of ${row.items} items to go`}
+                </span>
+              </li>
+            ))}
+          </ul>
+          {rows.length > 8 && (
+            <button type="button" className="mt-1 text-xs font-semibold text-navy hover:underline" onClick={() => setAll(!all)}>
+              {all ? "Show fewer" : `Show all ${rows.length}`}
+            </button>
+          )}
+        </>
+      )}
+    </section>
   );
 }

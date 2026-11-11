@@ -5,14 +5,21 @@
  * duplicate copy. Each paper carries the QR code of the press that made it, so a download counts as a copy exactly like
  * a print (the first is the original). Kannada lines are drawn by the browser into images, because the PDF's built-in
  * fonts have no Kannada. Kept free of app imports so the node tests can load it.
+ *
+ * 12 Nov 2026 (owner, 11 Nov): the one QR is now on the invoice. A released note's papers (`release`) carry no QR: they
+ * hand nothing over, so a copy is just a copy, numbered, with who printed it. The GB watermark is a little darker and
+ * drawn last on each page (before the footer), so the table's filled rows can't hide it.
  */
 import type { jsPDF as JsPdf } from "jspdf";
 import { encode } from "uqr";
 import {
-  addressLines, companyHeading, deliveryMethodLabel, isPickup, istDateTime, slipPages,
+  addressLines, companyHeading, deliveryMethodLabel, isPickup, istDateTime, paperWarnings, slipPages,
   type DeliveryGate, type DeliveryNote, type DeliveryPrintRecord, type SlipPage,
 } from "./delivery-notes.ts";
-import { paperKindWords, paperLink, paperStamp, qrCaption, type PaperPrint } from "./delivery-papers.ts";
+import {
+  paperKindWords, paperLink, paperStamp, qrCaption, releasedFact, releasedPaperWarnings, roleWords,
+  type PaperHandover, type PaperPrint, type ReleasePrint,
+} from "./delivery-papers.ts";
 
 type Rgb = [number, number, number];
 const NAVY: Rgb = [32, 72, 58];
@@ -30,17 +37,75 @@ export type TextImageOptions = { sizePt: number; bold?: boolean | undefined; max
 /** Draws text the PDF fonts can't (Kannada, other scripts) as an image; null when it can't. */
 export type TextImageRenderer = (text: string, options: TextImageOptions) => TextImage | null;
 
+/**
+ * A released note's papers (12 Nov 2026): no QR code, a badge in place of original/duplicate, when and how the note was
+ * released, and which copy this is and who printed it.
+ */
+export type ReleaseLabel = {
+  /** The badge on the note and on each slip, e.g. RELEASED or DELIVERY SLIP. */
+  noteBadge: string;
+  slipBadge: string;
+  /** "11 Nov 2026, 10:32:15 AM IST, automatically when the payment was confirmed" */
+  released: string;
+  /** "Ravi (godown in-charge)" */
+  printedBy: string;
+  noteCopy: number | null;
+  slipCopies: Record<string, number>;
+};
+
 export type DeliveryPdfInput = {
-  note: DeliveryNote;
-  state: DeliveryGate;
+  note: Pick<DeliveryNote, "note_no" | "order_no" | "invoice_number" | "generated_at" | "generated_by_name" | "snapshot">;
+  state: Pick<DeliveryGate, "code">;
   selection: { note: boolean; slips: number[] };
   record: Pick<DeliveryPrintRecord, "printedAt" | "noteCode" | "slipCodes" | "notePaper" | "slipPapers">;
   noteWarnings: string[];
   slipWarnings: Record<string, string[]>;
   /** The site's address, for the QR's link: https://grainbazar.com */
   origin: string;
+  /** Papers of a released note: no QR codes on them. */
+  release?: ReleaseLabel | undefined;
 };
 export type DeliveryPdfDeps = { jspdf: typeof import("jspdf"); logo: string | null; textImage: TextImageRenderer | null };
+
+/**
+ * How dark the GB logo watermark is: light, but a little darker than the first papers' 6% (owner, 11 Nov 2026). The
+ * PDF keeps two decimals of it.
+ */
+export const WATERMARK_OPACITY = 0.09;
+
+/**
+ * The PDF input for a released note's papers, printed from the godown's scan of the invoice QR or by the office: the
+ * paper content and copy numbers come with the recorded print, the warnings from the payment check and the items
+ * already handed over.
+ */
+export function releasedPdfInput(print: ReleasePrint, options: {
+  gate: Pick<DeliveryGate, "code" | "items_changed" | "invoice_changed" | "invoice_number">;
+  selection: { note: boolean; slips: number[] };
+  handovers: Record<string, PaperHandover | null | undefined>;
+  origin: string;
+  badges?: { note: string; slip: string };
+}): DeliveryPdfInput {
+  const note = print.note;
+  const lines = slipPages(note.snapshot).map((slip) => slip.slip);
+  const gate: DeliveryGate = {
+    allowed: options.gate.code === "paid", code: options.gate.code, items_changed: Boolean(options.gate.items_changed),
+    invoice_changed: Boolean(options.gate.invoice_changed), invoice_number: options.gate.invoice_number ?? "",
+  };
+  const { noteWarnings, slipWarnings } = releasedPaperWarnings(paperWarnings(gate), lines, options.handovers);
+  return {
+    note, state: gate, selection: options.selection,
+    record: { printedAt: print.printed_at, noteCode: null, slipCodes: {}, notePaper: null, slipPapers: {} },
+    noteWarnings, slipWarnings, origin: options.origin,
+    release: {
+      noteBadge: options.badges?.note ?? "RELEASED",
+      slipBadge: options.badges?.slip ?? "RELEASED",
+      released: releasedFact(note),
+      printedBy: `${print.printed_by} (${roleWords(print.printed_role).en})`,
+      noteCopy: print.note_copy,
+      slipCopies: print.slip_copies ?? {},
+    },
+  };
+}
 
 const PT = 0.3528; // millimetres per point
 
@@ -54,7 +119,7 @@ export function pdfSafe(text: string) {
 const latin = (text: string) => /^[\x20-\x7e\xa0-\xff\n]*$/.test(text);
 
 /** "DN-000001_CLK-577522-071126-164455_original.pdf": the note, the order and what the papers are. */
-export function deliveryPdfFileName(note: Pick<DeliveryNote, "note_no" | "order_no">, input: Pick<DeliveryPdfInput, "selection" | "record">) {
+export function deliveryPdfFileName(note: Pick<DeliveryNote, "note_no" | "order_no">, input: Pick<DeliveryPdfInput, "selection" | "record"> & { release?: ReleaseLabel | undefined }) {
   const kinds = [
     ...(input.selection.note ? [input.record.notePaper] : []),
     ...input.selection.slips.map((line) => input.record.slipPapers[String(line)]),
@@ -63,6 +128,7 @@ export function deliveryPdfFileName(note: Pick<DeliveryNote, "note_no" | "order_
   const distinct = [...new Set(kinds.map(word))];
   const what = input.selection.note && input.selection.slips.length ? "note-and-slips" : input.selection.note ? "note" : input.selection.slips.length === 1 ? `slip-${input.selection.slips[0]}` : "slips";
   const clean = (text: string) => text.replace(/[^A-Za-z0-9-]+/g, "-").replace(/^-+|-+$/g, "");
+  if (input.release) return `${clean(note.note_no)}_${clean(note.order_no)}_${what}_released.pdf`;
   return `${clean(note.note_no)}_${clean(note.order_no)}_${what}_${distinct.length === 1 ? distinct[0] : "copies"}.pdf`;
 }
 
@@ -87,7 +153,9 @@ export function buildDeliveryNotePdf(input: DeliveryPdfInput, deps: DeliveryPdfD
   const { snapshot } = note;
   const company = companyHeading(snapshot.company);
   const companyName = company.name || "Shami Business Ventures";
-  const pages: { label: string; paper: number }[] = [];
+  const { release } = input;
+  // Each page's footer label, which paper it belongs to (for "page x of y"), and that paper's kind (for DUPLICATE).
+  const pages: { label: string; paper: number; print: PaperPrint | null | undefined }[] = [];
   let paperIndex = -1;
   let y = 0;
 
@@ -128,10 +196,11 @@ export function buildDeliveryNotePdf(input: DeliveryPdfInput, deps: DeliveryPdfD
     return (pdf.splitTextToSize(text, options.maxWidth ?? usable) as string[]).length * options.size * PT * 1.28;
   };
 
+  /** Drawn last on each page, over the content: a filled table row drawn later would hide a watermark drawn first. */
   const watermark = (paper: PaperPrint | null | undefined) => {
     try {
       if (deps.logo) {
-        pdf.setGState(new GState({ opacity: 0.06 }));
+        pdf.setGState(new GState({ opacity: WATERMARK_OPACITY }));
         pdf.addImage(deps.logo, "PNG", (W - 120) / 2, (H - 120) / 2, 120, 120, alias(deps.logo), "FAST");
       }
       if (paper?.kind === "duplicate") {
@@ -151,9 +220,10 @@ export function buildDeliveryNotePdf(input: DeliveryPdfInput, deps: DeliveryPdfD
     }
   };
 
-  const kindPill = (paper: PaperPrint | null | undefined, rightEdge: number, top: number) => {
-    const words = paperKindWords(paper?.kind, paper?.duplicate_no).en.toUpperCase();
-    const fill = paper?.kind === "duplicate" ? RED : paper?.kind === "replacement" ? NAVY : GREEN;
+  /** The paper's kind (ORIGINAL, DUPLICATE COPY 2…), or a released note's badge. */
+  const kindPill = (paper: PaperPrint | null | undefined, rightEdge: number, top: number, badge?: string) => {
+    const words = badge ?? paperKindWords(paper?.kind, paper?.duplicate_no).en.toUpperCase();
+    const fill = badge ? GREEN : paper?.kind === "duplicate" ? RED : paper?.kind === "replacement" ? NAVY : GREEN;
     font(8, true, [255, 255, 255]);
     const width = pdf.getTextWidth(words) + 6;
     pdf.setFillColor(fill[0], fill[1], fill[2]);
@@ -161,7 +231,7 @@ export function buildDeliveryNotePdf(input: DeliveryPdfInput, deps: DeliveryPdfD
     pdf.text(words, rightEdge - width / 2, top + 3.9, { align: "center" });
   };
 
-  const header = (title: string, side: string, paper: PaperPrint | null | undefined, continued: boolean) => {
+  const header = (title: string, side: string, paper: PaperPrint | null | undefined, continued: boolean, badge?: string) => {
     if (deps.logo) pdf.addImage(deps.logo, "PNG", M, 9, 19, 19, alias(deps.logo), "FAST");
     const tx = M + (deps.logo ? 23 : 0);
     font(17, true, NAVY);
@@ -179,7 +249,7 @@ export function buildDeliveryNotePdf(input: DeliveryPdfInput, deps: DeliveryPdfD
     pdf.text(continued ? `${title} (contd.)` : title, R, 15.5, { align: "right" });
     font(10, true, NAVY);
     pdf.text(side, R, 21, { align: "right" });
-    kindPill(paper, R, 24);
+    kindPill(paper, R, 24, badge);
     const bottom = Math.max(line + 1.5, 32);
     pdf.setDrawColor(GOLD[0], GOLD[1], GOLD[2]);
     pdf.setLineWidth(0.7);
@@ -188,12 +258,11 @@ export function buildDeliveryNotePdf(input: DeliveryPdfInput, deps: DeliveryPdfD
     return bottom + 5;
   };
 
-  const newPage = (label: string, title: string, side: string, paper: PaperPrint | null | undefined, firstOfPaper: boolean) => {
+  const newPage = (label: string, title: string, side: string, paper: PaperPrint | null | undefined, firstOfPaper: boolean, badge?: string) => {
     if (pages.length) pdf.addPage();
     if (firstOfPaper) paperIndex += 1;
-    pages.push({ label, paper: paperIndex });
-    watermark(paper);
-    y = header(title, side, paper, !firstOfPaper);
+    pages.push({ label, paper: paperIndex, print: paper });
+    y = header(title, side, paper, !firstOfPaper, badge);
   };
 
   /** The big stamp on a duplicate or a replacement original, in English and Kannada. */
@@ -327,16 +396,28 @@ export function buildDeliveryNotePdf(input: DeliveryPdfInput, deps: DeliveryPdfD
   // ---- The delivery note ----
   if (input.selection.note) {
     const paper = input.record.notePaper;
-    const label = `${note.note_no} | Delivery note | ${paperKindWords(paper?.kind, paper?.duplicate_no).en}`;
+    const label = release
+      ? `${note.note_no} | Delivery note (released) | Copy ${release.noteCopy ?? ""}`.trim()
+      : `${note.note_no} | Delivery note | ${paperKindWords(paper?.kind, paper?.duplicate_no).en}`;
     const title = "DELIVERY NOTE";
-    newPage(label, title, note.note_no, paper, true);
+    newPage(label, title, note.note_no, paper, true, release?.noteBadge);
     stamp(paper);
     warningBox(input.noteWarnings);
 
-    const qrSize = 36;
-    const factsWidth = usable - qrSize - 8;
+    // A released note's paper has no QR: its facts take the full width.
+    const qrSize = input.record.noteCode ? 36 : 0;
+    const factsWidth = qrSize ? usable - qrSize - 8 : usable;
     const factsTop = y;
-    facts([
+    facts(release ? [
+      ["Order no.", note.order_no, true],
+      ["Invoice no.", note.invoice_number, true],
+      ["Order date", istDateTime(snapshot.order_placed_at)],
+      ["Delivery", deliveryMethodLabel(snapshot.shipping_method)],
+      ["Released", release.released],
+      ["Payment", input.state.code === "paid" ? "Paid in full" : "See the warning above", true],
+      ["Printed", printedText, true],
+      ["Copy", `Copy ${release.noteCopy ?? ""} by ${release.printedBy}`.trim()],
+    ] : [
       ["Order no.", note.order_no, true],
       ["Invoice no.", note.invoice_number, true],
       ["Order date", istDateTime(snapshot.order_placed_at)],
@@ -346,7 +427,7 @@ export function buildDeliveryNotePdf(input: DeliveryPdfInput, deps: DeliveryPdfD
       ["Printed", printedText, true],
       ["Copy", paperKindWords(paper?.kind, paper?.duplicate_no).en, paper?.kind !== "original"],
     ], factsWidth);
-    const qrBottom = qrBlock(input.record.noteCode, paper, R - qrSize, factsTop, qrSize);
+    const qrBottom = qrSize ? qrBlock(input.record.noteCode, paper, R - qrSize, factsTop, qrSize) : factsTop;
     y = Math.max(y, qrBottom) + 3;
 
     const godownLines = addressLines(snapshot.godown);
@@ -399,7 +480,7 @@ export function buildDeliveryNotePdf(input: DeliveryPdfInput, deps: DeliveryPdfD
       const nameH = measure(line.name, { size: 9, bold: true, maxWidth: itemW });
       const rowH = Math.max(8, nameH + (line.sku ? 4 : 0) + 3.5);
       if (y + rowH > FOOT - 34) {
-        newPage(label, title, note.note_no, paper, false);
+        newPage(label, title, note.note_no, paper, false, release?.noteBadge);
         headRow();
       }
       if (index % 2 === 1) { pdf.setFillColor(CARD[0], CARD[1], CARD[2]); pdf.rect(M, y, usable, rowH, "F"); }
@@ -426,7 +507,7 @@ export function buildDeliveryNotePdf(input: DeliveryPdfInput, deps: DeliveryPdfD
     write(`Total ${totalQty}`, R - 3, y + 1.6, { size: 11, bold: true, align: "right" });
     y += 11;
 
-    if (y + 40 > FOOT) newPage(label, title, note.note_no, paper, false);
+    if (y + 40 > FOOT) newPage(label, title, note.note_no, paper, false, release?.noteBadge);
     write("Vehicle no.", M, y, { size: 8.5, bold: true });
     pdf.setDrawColor(INK[0], INK[1], INK[2]);
     pdf.line(M + 20, y + 3.4, M + 80, y + 3.4);
@@ -439,12 +520,16 @@ export function buildDeliveryNotePdf(input: DeliveryPdfInput, deps: DeliveryPdfD
   for (const slip of allSlips.filter((line) => input.selection.slips.includes(line.slip))) {
     const paper = input.record.slipPapers[String(slip.slip)];
     const side = `Slip ${slip.slip} of ${slip.of}`;
-    newPage(`${note.note_no} | ${side} | ${paperKindWords(paper?.kind, paper?.duplicate_no).en}`, "DELIVERY SLIP", side, paper, true);
+    const slipCopy = release?.slipCopies[String(slip.slip)];
+    newPage(release
+      ? `${note.note_no} | Delivery slip ${slip.slip} of ${slip.of} | Copy ${slipCopy ?? ""}`.trim()
+      : `${note.note_no} | ${side} | ${paperKindWords(paper?.kind, paper?.duplicate_no).en}`, "DELIVERY SLIP", side, paper, true, release?.slipBadge);
     stamp(paper);
     warningBox(input.slipWarnings[String(slip.slip)] ?? []);
 
-    const qrSize = 44;
-    const boxW = usable - qrSize - 8;
+    const slipCode = input.record.slipCodes[String(slip.slip)];
+    const qrSize = slipCode ? 44 : 0;
+    const boxW = qrSize ? usable - qrSize - 8 : usable;
     const nameH = measure(slip.name, { size: 20, bold: true, maxWidth: boxW - 10 });
     const boxH = nameH + (slip.sku ? 5 : 0) + 34 + (slip.stock_no ? 6 : 0);
     pdf.setDrawColor(NAVY[0], NAVY[1], NAVY[2]);
@@ -463,7 +548,7 @@ export function buildDeliveryNotePdf(input: DeliveryPdfInput, deps: DeliveryPdfD
     write(String(slip.qty), M + 5, at + 4, { size: 30, bold: true });
     write(slip.pack_size || "-", M + 5 + (boxW - 10) / 2, at + 5.5, { size: 17, bold: true, maxWidth: (boxW - 10) / 2 });
     if (slip.stock_no) write(`Stock no. ${slip.stock_no}`, M + 5, at + 18, { size: 8.5, bold: true, maxWidth: boxW - 10 });
-    const qrBottom = qrBlock(input.record.slipCodes[String(slip.slip)], paper, R - qrSize, y, qrSize);
+    const qrBottom = qrSize ? qrBlock(slipCode, paper, R - qrSize, y, qrSize) : y;
     y = Math.max(y + boxH, qrBottom) + 6;
 
     facts([
@@ -473,19 +558,21 @@ export function buildDeliveryNotePdf(input: DeliveryPdfInput, deps: DeliveryPdfD
       ["Customer", customerName],
       ["Godown", snapshot.godown.name ?? ""],
       ["Delivery", deliveryMethodLabel(snapshot.shipping_method)],
-      ["Generated", istDateTime(note.generated_at)],
-      ["Printed", printedText, true],
-      ["Copy", paperKindWords(paper?.kind, paper?.duplicate_no).en, paper?.kind !== "original"],
+      ...(release
+        ? [["Released", release.released], ["Printed", printedText, true], ["Copy", `Copy ${slipCopy ?? ""} by ${release.printedBy}`.trim()]] as [string, string, boolean?][]
+        : [["Generated", istDateTime(note.generated_at)], ["Printed", printedText, true], ["Copy", paperKindWords(paper?.kind, paper?.duplicate_no).en, paper?.kind !== "original"]] as [string, string, boolean?][]),
     ], usable);
     y += 6;
     signatures(["Goods issued by (godown)", "Received by"]);
   }
 
-  // Footers: what the paper is and "page x of y" within it, so a loose page still says whose it is.
+  // The watermark over each page's content, then the footer: what the paper is and "page x of y" within it, so a loose
+  // page still says whose it is.
   const total = pdf.getNumberOfPages();
   for (let page = 1; page <= total; page += 1) {
     pdf.setPage(page);
     const meta = pages[page - 1]!;
+    watermark(meta.print);
     const own = pages.filter((p) => p.paper === meta.paper);
     const index = pages.slice(0, page).filter((p) => p.paper === meta.paper).length;
     pdf.setDrawColor(RULE[0], RULE[1], RULE[2]);
@@ -493,10 +580,12 @@ export function buildDeliveryNotePdf(input: DeliveryPdfInput, deps: DeliveryPdfD
     font(7, false, MUTED);
     pdf.text(pdfSafe(`${meta.label}  |  Order ${note.order_no}`), M, H - 9);
     pdf.text(`Page ${index} of ${own.length}`, R, H - 9, { align: "right" });
-    pdf.text("Computer-generated. Goods are handed over only against the QR code of the original or replacement original.", M, H - 5.5);
+    pdf.text(release
+      ? "Computer-generated. Goods are handed over only when the godown scans the QR on the customer's invoice."
+      : "Computer-generated. Goods are handed over only against the QR code of the original or replacement original.", M, H - 5.5);
     pdf.text("grainbazar.com", R, H - 5.5, { align: "right" });
   }
-  pdf.setProperties({ title: `${note.note_no} ${note.order_no}`, subject: "Delivery note", author: companyName, creator: "Grain Bazar" });
+  pdf.setProperties({ title: `${note.note_no} ${note.order_no}`, subject: release ? "Delivery note (released)" : "Delivery note", author: companyName, creator: "Grain Bazar" });
   return { pdf, fileName: deliveryPdfFileName(note, input) };
 }
 

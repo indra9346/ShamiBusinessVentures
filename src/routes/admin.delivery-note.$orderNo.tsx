@@ -1,20 +1,16 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { flushSync } from "react-dom";
-import { ArrowLeft, Download, Printer, RotateCcw } from "lucide-react";
+import { ArrowLeft, Download, Printer } from "lucide-react";
 import { toast } from "sonner";
-import { renderSVG } from "uqr";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import {
   addressLines, companyHeading, deliveryMethodLabel, gateWords, isPickup, istDateTime, paperWarnings, slipPages,
-  type DeliveryGate, type DeliveryNote, type DeliveryNoteView, type SlipPage,
+  type DeliveryGate, type DeliveryNote, type DeliveryNoteEvent, type DeliveryNoteView, type SlipPage,
 } from "@/lib/delivery-notes";
-import {
-  handedOverWarning, paperKindWords, paperLink, paperStamp, personWords, qrCaption, type DeliveryPaperRow, type PaperHandover, type PaperPrint,
-} from "@/lib/delivery-papers";
-import { getDeliveryNote, recordDeliveryPrint } from "@/lib/delivery-notes.functions";
-import { buildDeliveryNotePdf, canvasTextImage, loadLogoPng } from "@/lib/delivery-note-pdf";
+import { personWords, releasedFact, releasedPaperWarnings, roleWords, type PaperHandover } from "@/lib/delivery-papers";
+import { getDeliveryNote, printReleasedPapers } from "@/lib/delivery-notes.functions";
+import { buildDeliveryNotePdf, canvasTextImage, loadLogoPng, releasedPdfInput } from "@/lib/delivery-note-pdf";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/admin/delivery-note/$orderNo")({
@@ -27,14 +23,17 @@ export const Route = createFileRoute("/admin/delivery-note/$orderNo")({
   component: DeliveryNotePrintPage,
 });
 
+/*
+ * The office's print and download of a released delivery note and its slips (12 Nov 2026). The one QR is on the
+ * customer's invoice and only the godown's scan of it hands goods over, so these papers carry no QR, and every print
+ * or download is simply the next numbered copy, with who printed it. Papers printed before then (with their own QR,
+ * original or duplicate) are history only: they show in the order's delivery note panel.
+ */
+
 /** What the next press prints or downloads: the note, every slip, or both. */
 type Selection = { note: boolean; slips: number[] };
-/** What the last press made. The QR codes exist only here, in this tab: the database keeps their hashes. */
-type Paper = {
-  printedAt: string | null; noteCopy: number | null; slipCopies: Record<string, number>; selection: Selection;
-  noteCode: string | null; slipCodes: Record<string, string>;
-  notePaper: PaperPrint | null; slipPapers: Record<string, PaperPrint>;
-};
+/** What the last press made: when, which copy of each paper, and who printed it. */
+type Paper = { printedAt: string | null; noteCopy: number | null; slipCopies: Record<string, number>; selection: Selection; printedBy: string };
 type Mode = "print" | "download";
 type Pick = "all" | "note" | "slips" | number;
 
@@ -69,32 +68,30 @@ const PRINT_CSS = `
  */
 const ARMED_MS = 300_000;
 
-const EMPTY_PAPER: Paper = { printedAt: null, noteCopy: null, slipCopies: {}, selection: { note: true, slips: [] }, noteCode: null, slipCodes: {}, notePaper: null, slipPapers: {} };
+const EMPTY_PAPER: Paper = { printedAt: null, noteCopy: null, slipCopies: {}, selection: { note: true, slips: [] }, printedBy: "" };
 
-/** Each paper's prints so far, from the database: "note" and "slip:2". */
-function printsByPaper(papers: DeliveryPaperRow[]) {
-  const map = new Map<string, DeliveryPaperRow[]>();
-  for (const row of papers) {
-    const key = row.doc === "note" ? "note" : `slip:${row.slip_line}`;
-    map.set(key, [...(map.get(key) ?? []), row]);
+/** How the note came to be ('admin', 'auto' or 'scan'): kept on the note since 12 Nov 2026. */
+const howOf = (note: DeliveryNote) => (note as DeliveryNote & { generated_how?: string }).generated_how ?? "admin";
+
+/** Each paper's printed copies so far, from the note's history: "note" and "slip:2". */
+function printsByPaper(events: DeliveryNoteEvent[]) {
+  const map = new Map<string, DeliveryNoteEvent[]>();
+  for (const event of events) {
+    if (event.kind !== "printed" || !event.doc) continue;
+    const key = event.doc === "note" ? "note" : `slip:${event.slip_line}`;
+    map.set(key, [...(map.get(key) ?? []), event]);
   }
   return map;
 }
 
-/** ["original made 10 Nov, 2:05 PM by Indra", "2 duplicate copies"] for the screen, one phrase each (each translates). */
-function printedSoFar(rows: DeliveryPaperRow[] | undefined) {
-  if (!rows?.length) return ["not printed yet: the next print or download is the original"];
-  const current = [...rows].reverse().find((row) => row.kind !== "duplicate");
-  const duplicates = rows.filter((row) => row.kind === "duplicate").length;
-  const replaced = rows.filter((row) => row.kind === "replacement").length;
-  return [
-    current ? `${paperKindWords(current.kind).en.toLowerCase()} made ${istDateTime(current.printed_at)} by ${current.printed_by}` : "",
-    replaced ? `${replaced} replacement${replaced === 1 ? "" : "s"}` : "",
-    duplicates ? `${duplicates} duplicate cop${duplicates === 1 ? "y" : "ies"}` : "",
-  ].filter(Boolean);
+/** ["3 copies", "last 11 Nov 2026, … by Indra"] for the screen, one phrase each (each translates). */
+function printedSoFar(rows: DeliveryNoteEvent[] | undefined) {
+  if (!rows?.length) return ["not printed yet"];
+  const last = rows.reduce((latest, row) => (row.occurred_at > latest.occurred_at ? row : latest));
+  return [`${rows.length} cop${rows.length === 1 ? "y" : "ies"}`, `last ${istDateTime(last.occurred_at)} by ${last.actor_name}`];
 }
 
-function SoFar({ label, rows }: { label: string; rows: DeliveryPaperRow[] | undefined }) {
+function SoFar({ label, rows }: { label: string; rows: DeliveryNoteEvent[] | undefined }) {
   return (
     <li>
       <span className="font-semibold">{label}</span>{" "}
@@ -104,8 +101,8 @@ function SoFar({ label, rows }: { label: string; rows: DeliveryPaperRow[] | unde
 }
 
 /**
- * Everything the papers say that depends on the view: the payment warnings, which items are handed over, and which
- * papers can still get a replacement original. The same for the screen, the print and the download.
+ * Everything the papers say that depends on the view: the payment warnings and which items are handed over. The same
+ * for the screen, the print and the download.
  */
 function papersState(view: DeliveryNoteView | null) {
   const note = view?.note ?? null;
@@ -116,32 +113,23 @@ function papersState(view: DeliveryNoteView | null) {
   // The items handed over now: a handover an administrator has reopened no longer counts.
   const reopened = new Set((view?.reopens ?? []).map((row) => row.handover_id));
   const handovers: Record<string, PaperHandover> = Object.fromEntries((view?.handovers ?? []).filter((row) => !reopened.has(row.id)).map((row) => [String(row.slip_line), {
-    at: row.handed_over_at, by: row.actor_name, role: row.actor_role === "admin" || row.actor_role === "partner" ? row.actor_role : "staff",
+    at: row.handed_over_at, by: row.actor_name,
+    role: row.actor_role === "admin" || row.actor_role === "partner" || row.actor_role === "incharge" ? row.actor_role : "staff",
     godown: row.branch_name, registered_phone: row.device_registered, round: row.round,
   } satisfies PaperHandover]));
   const handedLines = Object.keys(handovers).map(Number).sort((a, b) => a - b);
-  const openSlips = allSlips.filter((line) => !handovers[String(line)]);
-  const noteWarnings = handedLines.length === 0 ? warnings : [...warnings, handedLines.length === slips.length
-    ? "ALL ITEMS ALREADY HANDED OVER. FOR RECORDS ONLY. DO NOT DELIVER AGAIN."
-    : `ITEM${handedLines.length === 1 ? "" : "S"} ${handedLines.join(", ")} ALREADY HANDED OVER. DELIVER ONLY THE REST.`];
-  const slipWarnings: Record<string, string[]> = Object.fromEntries(allSlips.map((line) => [String(line),
-    handovers[String(line)] ? [...warnings, handedOverWarning(handovers[String(line)])] : warnings]));
-  const prints = printsByPaper(view?.papers ?? []);
-  const hasOriginal = (key: string) => (prints.get(key) ?? []).some((row) => row.kind !== "duplicate");
-  // A replacement original only for a paper that has had an original, and only while its goods are still to go.
-  const replaceable = [...(hasOriginal("note") && openSlips.length ? ["note"] : []), ...openSlips.filter((line) => hasOriginal(`slip:${line}`)).map(String)];
-  return { note, state, slips, allSlips, warnings, handovers, handedLines, openSlips, noteWarnings, slipWarnings, prints, replaceable };
+  const { noteWarnings, slipWarnings } = releasedPaperWarnings(warnings, allSlips, handovers);
+  const prints = printsByPaper(view?.events ?? []);
+  return { note, state, slips, allSlips, warnings, handovers, handedLines, noteWarnings, slipWarnings, prints };
 }
 
 const pickSelection = (pick: Pick, allSlips: number[]): Selection =>
   pick === "all" ? { note: true, slips: allSlips } : pick === "note" ? { note: true, slips: [] } : pick === "slips" ? { note: false, slips: allSlips } : { note: false, slips: [pick] };
 
-const keySelection = (keys: string[]): Selection => ({ note: keys.includes("note"), slips: keys.filter((key) => key !== "note").map(Number).sort((a, b) => a - b) });
-
-/** "the note and slip 1" for a toast. */
-function selectionWords(selection: Selection) {
-  const slips = selection.slips.length ? `slip${selection.slips.length === 1 ? "" : "s"} ${selection.slips.join(", ")}` : "";
-  return [selection.note ? "the note" : "", slips].filter(Boolean).join(" and ");
+/** "note copy 3 and slips 1, 2" for a toast. */
+function copiesWords(selection: Selection, noteCopy: number | null, slipCopies: Record<string, number>) {
+  const slips = selection.slips.map((line) => `slip ${line} copy ${slipCopies[String(line)] ?? "?"}`);
+  return [selection.note ? `note copy ${noteCopy ?? "?"}` : "", ...slips].filter(Boolean).join(", ");
 }
 
 function DeliveryNotePrintPage() {
@@ -152,8 +140,6 @@ function DeliveryNotePrintPage() {
   const [paper, setPaper] = useState<Paper>(EMPTY_PAPER);
   const [armed, setArmed] = useState(false);
   const [pick, setPick] = useState<Pick>("all");
-  const [reason, setReason] = useState("");
-  const [replacePick, setReplacePick] = useState<string[] | null>(null);
   const disarmTimer = useRef<number | undefined>(undefined);
 
   const load = useCallback(async () => {
@@ -173,28 +159,24 @@ function DeliveryNotePrintPage() {
   useEffect(() => () => window.clearTimeout(disarmTimer.current), []);
 
   /**
-   * One press: the database checks the payment, files each paper as its original, a duplicate copy or (with a reason)
-   * a replacement original, and gives this press's QR codes. Then the papers print, or download as a PDF. Either way
-   * the press counts as a copy.
+   * One press: the database checks the payment and records the next copy of each paper chosen, with who printed it.
+   * Then the papers print, or download as a PDF. Either way the press counts as a copy.
    */
-  const press = async (selection: Selection, mode: Mode, replaceReason?: string) => {
+  const press = async (selection: Selection, mode: Mode) => {
     setBusy(mode);
     let recorded = "";
     try {
       // Everything the PDF needs is loaded before the press is recorded, so a recorded copy always gets its file.
       const pdfKit = mode === "download" ? await Promise.all([import("jspdf"), loadLogoPng()]) : null;
-      const { record, view: next } = await recordDeliveryPrint({ data: { orderNo, note: selection.note, slipLines: selection.slips, replaceReason } });
-      const kinds = [...(selection.note ? [record.notePaper] : []), ...selection.slips.map((line) => record.slipPapers[String(line)])]
-        .filter(Boolean).map((print) => paperKindWords(print!.kind, print!.duplicate_no).en.toLowerCase());
-      recorded = [...new Set(kinds)].join(", ");
+      const { print, view: next } = await printReleasedPapers({ data: { orderNo, note: selection.note, slipLines: selection.slips } });
+      recorded = copiesWords(selection, print.note_copy, print.slip_copies ?? {});
       flushSync(() => {
         setView(next);
         setPaper({
-          selection, printedAt: record.printedAt, noteCopy: record.noteCopy, slipCopies: record.slipCopies,
-          noteCode: record.noteCode, slipCodes: record.slipCodes, notePaper: record.notePaper, slipPapers: record.slipPapers,
+          selection, printedAt: print.printed_at, noteCopy: print.note_copy, slipCopies: print.slip_copies ?? {},
+          printedBy: `${print.printed_by} (${roleWords(print.printed_role).en})`,
         });
         if (mode === "print") setArmed(true);
-        if (replaceReason) { setReason(""); setReplacePick(null); }
       });
       if (mode === "print") {
         window.clearTimeout(disarmTimer.current);
@@ -203,13 +185,12 @@ function DeliveryNotePrintPage() {
         return;
       }
       const papers = papersState(next);
-      if (!next.note) throw new Error("This order has no delivery note yet");
-      const { pdf, fileName } = buildDeliveryNotePdf({
-        note: next.note, state: next.state, selection, record,
-        noteWarnings: papers.noteWarnings, slipWarnings: papers.slipWarnings, origin: window.location.origin,
-      }, { jspdf: pdfKit![0], logo: pdfKit![1], textImage: canvasTextImage });
+      const { pdf, fileName } = buildDeliveryNotePdf(
+        releasedPdfInput(print, { gate: next.state, selection, handovers: papers.handovers, origin: window.location.origin }),
+        { jspdf: pdfKit![0], logo: pdfKit![1], textImage: canvasTextImage },
+      );
       pdf.save(fileName);
-      toast.success(`Downloaded ${fileName}`, { description: `${selectionWords(selection)}: ${recorded}. Open the file to print or send it.`, duration: 10_000 });
+      toast.success(`Downloaded ${fileName}`, { description: `Recorded: ${recorded}. Open the file to print or send it.`, duration: 10_000 });
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : "The copy could not be recorded";
       if (recorded) {
@@ -222,9 +203,7 @@ function DeliveryNotePrintPage() {
     }
   };
 
-  const { note, state, slips, allSlips, warnings, handovers, handedLines, noteWarnings, slipWarnings, prints, replaceable } = papersState(view);
-  const chosenReplace = (replacePick ?? replaceable).filter((key) => replaceable.includes(key));
-  const replaceLabel = (key: string) => (key === "note" ? "Note" : `Slip ${key}`);
+  const { note, state, slips, allSlips, warnings, handovers, handedLines, noteWarnings, slipWarnings, prints } = papersState(view);
   const picks: { pick: Pick; label: string }[] = [
     { pick: "all", label: slips.length > 1 ? `Note and all ${slips.length} slips` : slips.length ? "Note and slip" : "Note" },
     ...(slips.length ? [{ pick: "note" as Pick, label: "Note only" }, { pick: "slips" as Pick, label: slips.length === 1 ? "Slip only" : "All slips only" }] : []),
@@ -244,15 +223,10 @@ function DeliveryNotePrintPage() {
           <p className="text-sm text-danger">{failed} <Link to="/admin/login" className="font-semibold underline">Admin sign in</Link></p>
         )}
         {view && !note && state && (
-          <p className="text-sm text-danger">This order has no delivery note yet. {gateWords(state).title}: {gateWords(state).detail}</p>
+          <p className="text-sm text-danger">This order's delivery note is not released yet. {gateWords(state).title}: {gateWords(state).detail}</p>
         )}
         {note && (
           <>
-            {view?.qrReady === false && (
-              <p className="rounded-md border-2 border-red-300 bg-red-50 p-3 text-sm font-bold text-red-900">
-                Printing is paused: the database doesn't have the delivery-slip QR update yet, so the papers would have no QR code. Ask your developer to apply it.
-              </p>
-            )}
             {warnings.length > 0 && (
               <div className="rounded-md border-2 border-red-300 bg-red-50 p-3 text-sm font-bold text-red-900">
                 {warnings.map((warning) => <p key={warning}>{warning}</p>)}
@@ -283,51 +257,16 @@ function DeliveryNotePrintPage() {
               </p>
             </div>
 
-            <div className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-950">
+            <div className="rounded-md border border-sky-200 bg-sky-50 p-2 text-xs text-sky-950">
               <p>
-                <span className="font-bold">QR codes:</span>{" "}
-                <span>The first copy of each paper (printed or downloaded) is its original, the only paper that hands goods over (once per item). Every later copy is a duplicate copy 1, 2, … for records: it is stamped DUPLICATE and its QR scans red at the godown.</span>
+                <span className="font-bold">No QR on these papers:</span>{" "}
+                <span>the godown hands goods over only when the godown in-charge scans the QR on the customer's invoice. Each print or download is the next numbered copy, with who printed it.</span>
               </p>
               <ul className="mt-1 space-y-0.5">
                 <SoFar label="Note:" rows={prints.get("note")} />
                 {slips.map((slip) => <SoFar key={slip.slip} label={`Slip ${slip.slip}:`} rows={prints.get(`slip:${slip.slip}`)} />)}
               </ul>
             </div>
-
-            {replaceable.length > 0 && (
-              <div className="space-y-2 rounded-md border-2 border-navy bg-[#f6f8fb] p-3 text-xs">
-                <p className="flex items-center gap-1.5 text-sm font-bold text-navy"><RotateCcw className="h-4 w-4" /> Need the original again?</p>
-                <p>
-                  If the original was lost, did not print, or a duplicate copy was sent to the godown by mistake, make a replacement original. It hands the goods over like the original; the old original&apos;s QR stops working, and duplicate copies stay for records only. Only for goods not yet handed over.
-                </p>
-                <Input aria-label="Why the original is being replaced" value={reason} maxLength={300} onChange={(event) => setReason(event.target.value)}
-                  placeholder="Reason, for example: duplicate sent to the godown by mistake" className="h-9 bg-white text-xs" />
-                <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Papers to replace">
-                  <span className="text-slate">Replace:</span>
-                  {replaceable.map((key) => {
-                    const on = chosenReplace.includes(key);
-                    return (
-                      <button key={key} type="button" aria-pressed={on}
-                        onClick={() => setReplacePick(on ? chosenReplace.filter((item) => item !== key) : [...chosenReplace, key])}
-                        className={cn("rounded-md border px-2.5 py-1 font-semibold", on ? "border-navy bg-navy text-white" : "border-border bg-white text-navy hover:border-navy")}>
-                        {replaceLabel(key)}
-                      </button>
-                    );
-                  })}
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <Button size="sm" className="bg-navy text-white hover:bg-navy/90" disabled={busy !== "" || reason.trim().length < 3 || chosenReplace.length === 0}
-                    onClick={() => void press(keySelection(chosenReplace), "print", reason.trim())}>
-                    <Printer className="mr-1.5 h-4 w-4" /> Print replacement original
-                  </Button>
-                  <Button size="sm" variant="outline" className="border-navy text-navy" disabled={busy !== "" || reason.trim().length < 3 || chosenReplace.length === 0}
-                    onClick={() => void press(keySelection(chosenReplace), "download", reason.trim())}>
-                    <Download className="mr-1.5 h-4 w-4" /> Download replacement original
-                  </Button>
-                </div>
-                {reason.trim().length < 3 && <p className="text-slate">Write the reason first (at least 3 letters). It is printed on the paper and kept in the history.</p>}
-              </div>
-            )}
 
             {handedLines.length > 0 && (
               <ul className="space-y-0.5 text-xs text-emerald-900">
@@ -357,24 +296,21 @@ function DeliveryNotePrintPage() {
 const SHEET = "dn-sheet relative mx-auto mb-4 w-full max-w-[210mm] overflow-hidden bg-white p-4 text-[13px] leading-snug text-[#1c252e] shadow-md sm:p-8";
 const LABEL = "text-[10.5px] font-bold uppercase tracking-wider text-[#20483a]";
 
-/** The logo, faint, behind the paper; and DUPLICATE across a duplicate copy, so it can't be taken for the original. */
-function Watermark({ print }: { print: PaperPrint | null | undefined }) {
+/**
+ * The GB logo, light, in the middle of the paper: a little darker than before (owner, 11 Nov 2026) and laid over the
+ * content (multiplied, so the text stays readable), so the table's filled rows can't hide it.
+ */
+function Watermark() {
   return (
-    <div aria-hidden className="pointer-events-none absolute inset-0 z-0 flex items-center justify-center overflow-hidden">
-      <img src="/grainbazar-logo.png" alt="" className="w-[62%] max-w-[125mm] opacity-[0.06]" />
-      {print?.kind === "duplicate" && (
-        <p className="absolute whitespace-nowrap text-[58px] font-black uppercase tracking-[0.12em] text-[#b91c1c] opacity-[0.13] [transform:rotate(-53deg)]">
-          Duplicate copy {print.duplicate_no ?? ""}
-        </p>
-      )}
+    <div aria-hidden className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center overflow-hidden mix-blend-multiply">
+      <img src="/grainbazar-logo.png" alt="" className="w-[62%] max-w-[125mm] opacity-[0.09]" />
     </div>
   );
 }
 
-function KindPill({ print }: { print: PaperPrint | null | undefined }) {
-  if (!print) return null;
-  const tone = print.kind === "duplicate" ? "bg-[#b91c1c]" : print.kind === "replacement" ? "bg-[#20483a]" : "bg-[#15803d]";
-  return <span className={`mt-1 inline-block rounded px-2 py-0.5 text-[10.5px] font-bold uppercase tracking-wide text-white ${tone}`}>{paperKindWords(print.kind, print.duplicate_no).en}</span>;
+/** The paper's badge: the note is RELEASED. */
+function Badge({ children }: { children: ReactNode }) {
+  return <span className="mt-1 inline-block rounded bg-[#15803d] px-2 py-0.5 text-[10.5px] font-bold uppercase tracking-wide text-white">{children}</span>;
 }
 
 function Warnings({ warnings }: { warnings: string[] }) {
@@ -382,21 +318,6 @@ function Warnings({ warnings }: { warnings: string[] }) {
   return (
     <div className="dn-keep my-3 border-[3px] border-[#1c252e] p-3 text-center text-[15px] font-extrabold uppercase tracking-wide">
       {warnings.map((warning) => <p key={warning}>{warning}</p>)}
-    </div>
-  );
-}
-
-/** The big stamp on a duplicate (and the replacement note on a replacement original), in both languages. */
-function Stamp({ print }: { print: PaperPrint | null | undefined }) {
-  const stamp = paperStamp(print);
-  if (!stamp) return null;
-  const duplicate = print?.kind === "duplicate";
-  return (
-    <div className={`dn-keep my-3 rounded-md border-[3px] p-3 text-center ${duplicate ? "border-[#b91c1c] bg-[#fef2f2] text-[#b91c1c]" : "border-[#20483a] bg-[#f6f8fb] text-[#20483a]"}`}>
-      <p className={`${duplicate ? "text-3xl" : "text-2xl"} font-black uppercase tracking-widest`}>{stamp.title.en}</p>
-      <p className={`${duplicate ? "text-2xl" : "text-xl"} font-black`}>{stamp.title.kn}</p>
-      <p className="mt-1 text-xs font-bold uppercase text-[#1c252e]">{stamp.detail.en}</p>
-      <p className="text-xs font-bold text-[#1c252e]">{stamp.detail.kn}</p>
     </div>
   );
 }
@@ -410,18 +331,18 @@ function Fact({ label, value, strong }: { label: string; value: string; strong?:
   );
 }
 
-/** The copy line: what this paper is. Before a press, or for a paper the last press didn't make, there is nothing yet. */
-function PrintedFacts({ printedAt, print, inPrint }: { printedAt: string | null; print: PaperPrint | null | undefined; inPrint: boolean }) {
-  const printed = Boolean(printedAt && inPrint && print);
+/** When and which copy. Before a press, or for a paper the last press didn't make, there is nothing yet. */
+function PrintedFacts({ paper, copy, inPrint }: { paper: Paper; copy: number | null | undefined; inPrint: boolean }) {
+  const printed = Boolean(paper.printedAt && inPrint && copy);
   return (
     <>
-      <Fact label="Printed" value={printed ? istDateTime(printedAt!) : printedAt ? "Not in the last copy" : "The time appears when you press Print or Download"} strong />
-      <Fact label="Copy" value={printed ? paperKindWords(print!.kind, print!.duplicate_no).en : "—"} strong={Boolean(printed && print!.kind !== "original")} />
+      <Fact label="Printed" value={printed ? istDateTime(paper.printedAt!) : paper.printedAt ? "Not in the last copy" : "The time appears when you press Print or Download"} strong />
+      <Fact label="Copy" value={printed ? `Copy ${copy} by ${paper.printedBy}` : "—"} />
     </>
   );
 }
 
-function CompanyHead({ note, title, side, print }: { note: DeliveryNote; title: string; side: string; print: PaperPrint | null | undefined }) {
+function CompanyHead({ note, title, side }: { note: DeliveryNote; title: string; side: string }) {
   const company = companyHeading(note.snapshot.company);
   return (
     <header className="flex flex-wrap items-start justify-between gap-3 border-b-[2.5px] border-[#c49634] pb-3">
@@ -439,42 +360,9 @@ function CompanyHead({ note, title, side, print }: { note: DeliveryNote; title: 
       <div className="text-right">
         <p className="text-[21px] font-extrabold uppercase tracking-wide">{title}</p>
         <p className="text-[15px] font-bold text-[#20483a]">{side}</p>
-        <KindPill print={print} />
+        <Badge>Released</Badge>
       </div>
     </header>
-  );
-}
-
-/**
- * The paper's QR: a link to the scan page with this copy's code after "#". Before a press there is no code, so the
- * sheet shows where it will be. The caption says what the paper is, in both languages.
- */
-function PaperQr({ code, print, size }: { code: string | null | undefined; print: PaperPrint | null | undefined; size: "note" | "slip" }) {
-  // About 0.9 mm (note) and 1.1 mm (slip) per square: easy for a phone held at arm's length.
-  const box = size === "slip" ? "h-[44mm] w-[44mm]" : "h-[36mm] w-[36mm]";
-  const caption = qrCaption(print?.kind, print?.duplicate_no);
-  const tone = print?.kind === "duplicate" ? "text-[#b91c1c]" : "text-[#20483a]";
-  return (
-    <figure className={`dn-keep ${size === "slip" ? "w-[46mm]" : "w-[38mm]"} shrink-0 text-center`}>
-      {code ? (
-        <div className={`${box} mx-auto border border-[#dee2e6] bg-white [&>svg]:h-full [&>svg]:w-full`} role="img" aria-label="QR code to check this paper"
-          // uqr returns a self-contained <svg> of the QR code (no scripts). A white border of 4 squares, as the QR
-          // standard asks, so every reader finds the code's edges.
-          dangerouslySetInnerHTML={{ __html: renderSVG(paperLink(window.location.origin, code), { ecc: "M", border: 4 }) }} />
-      ) : (
-        <div className={`${box} mx-auto grid place-items-center border-2 border-dashed border-neutral-400 p-2 text-[11px] text-neutral-600`}>
-          The QR code appears when you press Print or Download
-        </div>
-      )}
-      {code && (
-        <figcaption className="mt-1 text-[10px] leading-tight text-[#66707c]">
-          <span className={`block font-bold uppercase ${tone}`}>{paperKindWords(print?.kind, print?.duplicate_no).en}</span>
-          <span className={`block font-bold ${tone}`}>{paperKindWords(print?.kind, print?.duplicate_no).kn}</span>
-          <span className="block">{caption.en}</span>
-          <span className="block">{caption.kn}</span>
-        </figcaption>
-      )}
-    </figure>
   );
 }
 
@@ -500,7 +388,7 @@ function Signature({ label }: { label: string }) {
 function SheetFooter() {
   return (
     <div className="dn-keep mt-6 flex flex-wrap justify-between gap-2 border-t border-[#dee2e6] pt-2 text-[10px] text-[#66707c]">
-      <p>Computer-generated. Goods are handed over only against the QR code of the original or replacement original.</p>
+      <p>Computer-generated. Goods are handed over only when the godown scans the QR on the customer's invoice.</p>
       <p>grainbazar.com</p>
     </div>
   );
@@ -514,26 +402,22 @@ function NoteSheet({ note, state, warnings, paper, slipCount }: { note: Delivery
   const lines = slipPages(snapshot);
   const totalQty = lines.reduce((sum, line) => sum + Number(line.qty), 0);
   const hasStockNo = lines.some((line) => line.stock_no);
-  const print = paper.noteCode ? paper.notePaper : null;
+  const copy = paper.selection.note ? paper.noteCopy : null;
   return (
     <section className={SHEET} data-print={paper.selection.note ? "yes" : "no"}>
-      <Watermark print={print} />
+      <Watermark />
       <div className="relative z-10">
-        <CompanyHead note={note} title="Delivery note" side={note.note_no} print={print} />
-        <Stamp print={print} />
+        <CompanyHead note={note} title="Delivery note" side={note.note_no} />
         <Warnings warnings={warnings} />
-        <div className="mt-3 flex flex-wrap items-start gap-4">
-          <dl className="grid min-w-0 flex-1 basis-[60%] gap-x-6 gap-y-1 sm:grid-cols-2 print:grid-cols-2">
-            <Fact label="Order no." value={note.order_no} strong />
-            <Fact label="Invoice no." value={note.invoice_number} strong />
-            <Fact label="Order date" value={istDateTime(snapshot.order_placed_at)} />
-            <Fact label="Delivery" value={deliveryMethodLabel(snapshot.shipping_method)} />
-            <Fact label="Generated" value={`${istDateTime(note.generated_at)} by ${note.generated_by_name}`} />
-            <Fact label="Payment" value={state.code === "paid" ? "Paid in full" : "See the warning above"} strong />
-            <PrintedFacts printedAt={paper.printedAt} print={paper.notePaper} inPrint={paper.selection.note} />
-          </dl>
-          <PaperQr code={paper.noteCode} print={paper.notePaper} size="note" />
-        </div>
+        <dl className="mt-3 grid min-w-0 gap-x-6 gap-y-1 sm:grid-cols-2 print:grid-cols-2">
+          <Fact label="Order no." value={note.order_no} strong />
+          <Fact label="Invoice no." value={note.invoice_number} strong />
+          <Fact label="Order date" value={istDateTime(snapshot.order_placed_at)} />
+          <Fact label="Delivery" value={deliveryMethodLabel(snapshot.shipping_method)} />
+          <Fact label="Released" value={releasedFact({ generated_at: note.generated_at, generated_how: howOf(note), generated_by_name: note.generated_by_name })} />
+          <Fact label="Payment" value={state.code === "paid" ? "Paid in full" : "See the warning above"} strong />
+          <PrintedFacts paper={paper} copy={copy} inPrint={paper.selection.note} />
+        </dl>
 
         <div className="mt-4 grid gap-3 sm:grid-cols-2 print:grid-cols-2">
           <Card heading={pickup ? "Customer (collects at the godown)" : "Customer"}>
@@ -565,7 +449,7 @@ function NoteSheet({ note, state, warnings, paper, slipCount }: { note: Delivery
             {/* Repeats on every page of a long note, so a loose page still says whose it is. */}
             <tr className="text-[11px] font-semibold">
               <th colSpan={hasStockNo ? 5 : 4} className="pb-1 font-semibold text-[#66707c]">
-                {note.note_no} · Order {note.order_no}{print && print.kind !== "original" ? ` · ${paperKindWords(print.kind, print.duplicate_no).en.toUpperCase()}` : ""}
+                {note.note_no} · Order {note.order_no} · Delivery note (released){copy ? ` · Copy ${copy}` : ""}
               </th>
             </tr>
             <tr className="bg-[#20483a] text-[11px] uppercase tracking-wider text-white">
@@ -615,34 +499,28 @@ function NoteSheet({ note, state, warnings, paper, slipCount }: { note: Delivery
 
 function SlipSheet({ slip, note, warnings, paper }: { slip: SlipPage; note: DeliveryNote; warnings: string[]; paper: Paper }) {
   const { snapshot } = note;
-  const code = paper.slipCodes[String(slip.slip)];
-  const print = paper.slipPapers[String(slip.slip)];
-  const shown = code ? print : null;
+  const inPrint = paper.selection.slips.includes(slip.slip);
   return (
-    <section className={SHEET} data-print={paper.selection.slips.includes(slip.slip) ? "yes" : "no"}>
-      <Watermark print={shown} />
+    <section className={SHEET} data-print={inPrint ? "yes" : "no"}>
+      <Watermark />
       <div className="relative z-10">
-        <CompanyHead note={note} title="Delivery slip" side={`Slip ${slip.slip} of ${slip.of}`} print={shown} />
-        <Stamp print={shown} />
+        <CompanyHead note={note} title="Delivery slip" side={`Slip ${slip.slip} of ${slip.of}`} />
         <Warnings warnings={warnings} />
-        <div className="dn-keep my-5 flex flex-wrap items-start gap-4">
-          <div className="min-w-0 flex-1 basis-[60%] rounded-lg border-2 border-[#20483a] bg-[#f6f8fb] p-4">
-            <p className={LABEL}>Item</p>
-            <p className="text-2xl font-extrabold break-words">{slip.name}</p>
-            {slip.sku && <p className="text-sm text-[#66707c]">SKU {slip.sku}</p>}
-            <div className="mt-4 grid grid-cols-2 gap-3">
-              <div>
-                <p className={LABEL}>Quantity</p>
-                <p className="text-4xl font-extrabold">{slip.qty}</p>
-              </div>
-              <div className="min-w-0">
-                <p className={LABEL}>Pack size</p>
-                <p className="text-2xl font-extrabold break-words">{slip.pack_size || "—"}</p>
-              </div>
+        <div className="dn-keep my-5 rounded-lg border-2 border-[#20483a] bg-[#f6f8fb] p-4">
+          <p className={LABEL}>Item</p>
+          <p className="text-2xl font-extrabold break-words">{slip.name}</p>
+          {slip.sku && <p className="text-sm text-[#66707c]">SKU {slip.sku}</p>}
+          <div className="mt-4 grid grid-cols-2 gap-3">
+            <div>
+              <p className={LABEL}>Quantity</p>
+              <p className="text-4xl font-extrabold">{slip.qty}</p>
             </div>
-            {slip.stock_no && <p className="mt-3 text-sm font-semibold">Stock no. {slip.stock_no}</p>}
+            <div className="min-w-0">
+              <p className={LABEL}>Pack size</p>
+              <p className="text-2xl font-extrabold break-words">{slip.pack_size || "—"}</p>
+            </div>
           </div>
-          <PaperQr code={code} print={print} size="slip" />
+          {slip.stock_no && <p className="mt-3 text-sm font-semibold">Stock no. {slip.stock_no}</p>}
         </div>
         <dl className="grid gap-x-6 gap-y-1 sm:grid-cols-2 print:grid-cols-2">
           <Fact label="Note no." value={note.note_no} strong />
@@ -651,8 +529,8 @@ function SlipSheet({ slip, note, warnings, paper }: { slip: SlipPage; note: Deli
           <Fact label="Customer" value={snapshot.customer.business_name || snapshot.customer.name} />
           <Fact label="Godown" value={snapshot.godown.name ?? ""} />
           <Fact label="Delivery" value={deliveryMethodLabel(snapshot.shipping_method)} />
-          <Fact label="Generated" value={istDateTime(note.generated_at)} />
-          <PrintedFacts printedAt={paper.printedAt} print={print} inPrint={paper.selection.slips.includes(slip.slip)} />
+          <Fact label="Released" value={releasedFact({ generated_at: note.generated_at, generated_how: howOf(note), generated_by_name: note.generated_by_name })} />
+          <PrintedFacts paper={paper} copy={inPrint ? paper.slipCopies[String(slip.slip)] : null} inPrint={inPrint} />
         </dl>
         <div className="dn-keep mt-8 grid grid-cols-2 gap-3">
           <Signature label="Goods issued by (godown)" />
