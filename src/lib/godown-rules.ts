@@ -4,6 +4,7 @@
  * really be charged. Kept free of app imports so the node tests can load it.
  */
 import type { Branch, BranchState } from "./branches";
+import { incomingView } from "./preorder.ts";
 
 export const defaultBranchOf = (branches: Branch[]) => branches.find((branch) => branch.isDefault && branch.active) ?? branches.find((branch) => branch.active && !branch.vendorId) ?? null;
 
@@ -68,6 +69,18 @@ export function godownOfferOf(
     price: godownPriceOf(state, branch, product.id, product.price),
     stock: branch ? branchStockOf(state, product.id, branch.id) : 0,
   };
+}
+
+/**
+ * Pre-order units of a product on sale at a godown now, and by when (14 Nov 2026): 0 while pre-orders are off or PIN
+ * matching is (the database offers none then either).
+ */
+export function godownArrivingOf(state: Pick<BranchState, "incoming" | "preorder" | "features">, productId: string, branchId: string, todayIst: string) {
+  if (!state.preorder?.enabled || !state.features.branchRouting) return { qty: 0, by: null as string | null };
+  const entry = state.incoming?.get(productId)?.get(branchId);
+  if (!entry) return { qty: 0, by: null as string | null };
+  const view = incomingView({ stock: 0, incoming: entry.qty, incoming_detail: entry.detail }, todayIst);
+  return { qty: view.arriving, by: view.by };
 }
 
 /** The Zoho location an order's sales order sits in: its godown's Zoho location, else Zoho's primary one. */

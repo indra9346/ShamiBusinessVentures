@@ -15,6 +15,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { supabase } from "@/integrations/supabase/client";
 import type { Json } from "@/integrations/supabase/types";
 import { useApp } from "@/lib/store";
+import { DEFAULT_PREORDER_SETTINGS, PREORDER_SETTING_KEY, parsePreorderSettings, type PreorderSettings } from "@/lib/preorder";
 import {
   STOREFRONT_DISPLAY_KEY,
   defaultStorefrontDisplay,
@@ -152,6 +153,7 @@ function AdminSettings() {
           <TabsTrigger value="security">Security</TabsTrigger>
           <TabsTrigger value="storefront">Storefront</TabsTrigger>
           <TabsTrigger value="pickup">Pickup</TabsTrigger>
+          <TabsTrigger value="preorders">Pre-orders</TabsTrigger>
         </TabsList>
 
         <TabsContent value="business">
@@ -258,6 +260,9 @@ function AdminSettings() {
         </TabsContent>
         <TabsContent value="storefront">
           <StorefrontDisplayPanel />
+        </TabsContent>
+        <TabsContent value="preorders">
+          <PreorderSettingsPanel />
         </TabsContent>
 
         <TabsContent value="security">
@@ -403,6 +408,66 @@ function SiteDetailsPanel() {
 }
 
 /** Admin switches for what customers see on product cards; saved as a public setting. */
+/**
+ * Admin › Settings › Pre-orders (14 Nov 2026): goods ordered from a supplier can be sold before they arrive, under a
+ * pre-order batch (Admin › Batches › New pre-order). Saved through admin_set_preorder_settings, which refuses to switch
+ * off while pre-order batches are open.
+ */
+function PreorderSettingsPanel() {
+  const [value, setValue] = useState<PreorderSettings>(DEFAULT_PREORDER_SETTINGS);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    let active = true;
+    void supabase.from("settings").select("value").eq("key", PREORDER_SETTING_KEY).maybeSingle().then(({ data, error }) => {
+      if (active && !error) setValue(parsePreorderSettings(data?.value));
+    });
+    return () => { active = false; };
+  }, []);
+  const save = async () => {
+    setSaving(true);
+    const { data, error } = await supabase.rpc("admin_set_preorder_settings", { _enabled: value.enabled, _grace_days: value.graceDays, _require_ack: value.requireAck });
+    setSaving(false);
+    if (error) {
+      toast.error("Could not save the pre-order settings", { description: error.message });
+      return;
+    }
+    setValue(parsePreorderSettings(data));
+    toast.success(value.enabled ? "Pre-orders are on" : "Pre-orders are off");
+  };
+  return (
+    <Panel title="Pre-orders">
+      <div className="grid gap-4 xl:max-w-3xl">
+        <p className="text-sm text-slate">
+          Sell goods ordered from a supplier before they reach the godown. Make a pre-order batch in Admin › Batches › New pre-order; when the bill comes, match it in Receive purchase. Needs Zoho as the stock master and godown matching by PIN.
+        </p>
+        <div className="flex items-center justify-between gap-4 rounded-md border border-border p-4">
+          <div>
+            <p className="text-sm font-bold text-navy">Pre-orders on</p>
+            <p className="text-xs text-slate">Customers can order units of pre-order batches. Switching off is refused while pre-order batches are open.</p>
+          </div>
+          <Switch checked={value.enabled} onCheckedChange={(checked) => setValue((current) => ({ ...current, enabled: checked }))} aria-label="Pre-orders on" />
+        </div>
+        <div className="flex items-center justify-between gap-4 rounded-md border border-border p-4">
+          <div>
+            <p className="text-sm font-bold text-navy">Customers tick the pre-order box</p>
+            <p className="text-xs text-slate">At checkout they confirm they collect the whole order after the goods arrive, with a full refund if they don't come.</p>
+          </div>
+          <Switch checked={value.requireAck} onCheckedChange={(checked) => setValue((current) => ({ ...current, requireAck: checked }))} aria-label="Customers tick the pre-order box" />
+        </div>
+        <label className="grid gap-1 rounded-md border border-border p-4 text-sm">
+          <span className="font-bold text-navy">Grace days after the expected date</span>
+          <span className="text-xs text-slate">Pre-orders stop this many days after a batch's expected date when its bill has not come (0 to 14).</span>
+          <Input type="number" min={0} max={14} className="w-28" value={value.graceDays}
+            onChange={(e) => setValue((current) => ({ ...current, graceDays: Math.min(14, Math.max(0, Math.floor(Number(e.target.value) || 0))) }))} />
+        </label>
+        <Button className="bg-navy text-white hover:bg-navy/90 sm:w-fit" disabled={saving} onClick={() => void save()}>
+          <Save className="mr-1 h-4 w-4" /> {saving ? "Saving…" : "Save pre-orders"}
+        </Button>
+      </div>
+    </Panel>
+  );
+}
+
 function StorefrontDisplayPanel() {
   const [value, setValue] = useState<StorefrontDisplay>(defaultStorefrontDisplay);
   const [saving, setSaving] = useState(false);

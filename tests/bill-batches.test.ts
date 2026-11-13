@@ -176,3 +176,20 @@ test("13 Nov: a batch whose bill was deleted in Zoho is linked to the same purch
   assert.match(relinkBlocker(batch, { ...line, productId: "OIL" }, "NEW"), /Another product/);
   assert.match(relinkBlocker(batch, { ...line, qty: 350 }, "NEW"), /350 on this bill, 360 in the batch/);
 });
+
+test("pre-order batches: a lot is cancelled, not deleted; a batch with expenses keeps them (as admin_delete_batch)", () => {
+  const lot = { quantity: 360, remaining_quantity: 360, stage: "incoming", batch_code: "CLK-141126-01" };
+  assert.equal(batchDeleteBlocker(lot, [], 0), "Cancel pre-order batch CLK-141126-01 instead");
+  assert.equal(batchDeleteBlocker({ ...lot, stage: "cancelled", quantity: 0, remaining_quantity: 0 }, [], 0), "", "a cancelled lot can be deleted");
+  assert.equal(batchDeleteBlocker({ ...lot, stage: "received" }, [], 0, undefined, false, { tagged: true }), "Expenses are tagged to batch CLK-141126-01; remove them first");
+});
+
+test("charge lines, the bill's created time and its purchase orders", () => {
+  const plan = billPlan({ ...SS4463, created_time: "2026-11-03T10:15:00+0530", purchaseorder_ids: ["PO-1", { purchaseorder_id: "PO-2" }],
+    line_items: [...SS4463.line_items, { line_item_id: "F1", item_id: "", name: "Freight", quantity: 1, rate: 9000, item_total: 9000, tax_percentage: 0, account_name: "Freight Inward" }] });
+  assert.equal(plan.createdAt, "2026-11-03T10:15:00+0530");
+  assert.deepEqual(plan.poIds, ["PO-1", "PO-2"]);
+  const freight = plan.lines.find((l) => l.lineId === "F1")!;
+  assert.deepEqual([freight.chargeLine, freight.accountName], [true, "Freight Inward"]);
+  assert.equal(plan.lines.filter((l) => l.chargeLine).length, 1, "stock items are not charge lines");
+});

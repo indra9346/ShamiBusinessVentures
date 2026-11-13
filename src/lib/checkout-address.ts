@@ -3,6 +3,7 @@
  * anything, what happens to the saved map point, and what a new address did to the order on screen.
  * Kept free of app imports so the node tests can load it.
  */
+import { preorderText } from "./preorder.ts";
 
 export type AddressFields = { label: string; name: string; phone: string; line: string; city: string; state: string; pin: string; landmark: string };
 export type MapPoint = { latitude: number; longitude: number; locationAccuracy: number; locatedAt: string };
@@ -82,8 +83,10 @@ export function pinHint({ pin, outside, movesTo }: { pin: string; outside: boole
 
 export type CheckoutLine = {
   id: string; name: string; qty: number;
-  /** How many this godown can sell now; null = it does not sell this item. */
+  /** How many this godown can sell now (ready + pre-order units on sale); null = it does not sell this item. */
   available: number | null;
+  /** Of available, the units that arrive later (pre-order batches, 14 Nov 2026). */
+  arriving?: number | undefined;
 };
 export type LineProblem = CheckoutLine & { kind: "not_sold" | "short" };
 
@@ -99,6 +102,8 @@ export function lineProblemText(problem: LineProblem, godown: string): string {
   const name = problem.name || "This item";
   if (problem.kind === "not_sold") return `${name}: not sold at the ${godown} godown, so it is not in this total`;
   if (!problem.available) return `${name}: out of stock at the ${godown} godown`;
+  const arriving = Math.max(0, problem.arriving ?? 0);
+  if (arriving > 0) return preorderText.limit(name, problem.available, godown, Math.max(0, problem.available - arriving), arriving, problem.qty);
   return `${name}: only ${problem.available} available at the ${godown} godown, you have ${problem.qty}`;
 }
 

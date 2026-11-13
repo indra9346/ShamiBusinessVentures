@@ -12,6 +12,7 @@ import { branchDeliveryFee, defaultBranchOf, useBranches } from "@/lib/branches"
 import { couponDiscount, gstAfterCoupon, lineGstInside } from "@/lib/pricing";
 import { Input } from "@/components/ui/input";
 import { showCartNotification } from "@/components/site/CartFloatingNotification";
+import { PreorderSplit } from "@/components/site/PreorderSplit";
 
 export const Route = createFileRoute("/cart")({
   head: () => pageHead({ title: `Your Cart | ${SITE_NAME}`, description: "Review your cart, apply coupons and check out.", path: "/cart", noindex: true }),
@@ -352,6 +353,7 @@ function CartQuantityControl({
       ) : qty >= purchaseLimit && purchaseLimit > 0 ? (
         <p className="text-[11px] text-slate">Maximum {purchaseLimit} per purchase</p>
       ) : null}
+      <PreorderSplit product={product} qty={qty} />
     </div>
   );
 }

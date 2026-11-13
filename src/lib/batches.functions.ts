@@ -4,6 +4,7 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import type { Database } from "@/integrations/supabase/types";
 import type { BatchAdjustment, BatchAllocation, BatchOrder, BatchOrderItem, BatchRecord } from "@/lib/batches";
 import type { BatchTransfer } from "@/lib/batch-transfers";
+import { parsePreorderSettings } from "@/lib/preorder";
 
 /*
  * Admin > Batches: every batch with the orders and customers it went to, its losses and gains,
@@ -73,7 +74,15 @@ export const getBatchData = createServerFn({ method: "GET" })
       // When Zoho's godown stock was last read, and how it went (13 Nov 2026: the scheduled check had stopped for two
       // days unnoticed). zoho_godown_stock_check is written after each godown stock run; until the first one, the time
       // the hourly check last started is the best there is.
-      db.from("settings").select("key,value").in("key", ["zoho_godown_stock_check", "zoho_api_budget"]),
+      db.from("settings").select("key,value").in("key", ["zoho_godown_stock_check", "zoho_api_budget", "preorder"]),
+    ]);
+    // Pre-order batches (14 Nov 2026): the watch per godown and product (held units, the last reading), the ready /
+    // arriving split, and the latest lot events (Admin › Batches › Pre-orders).
+    const [watchRows, splitRows, lotEvents] = await Promise.all([
+      allRows((from, to) => db.from("preorder_watch").select("*").order("product_id").order("branch_id").range(from, to), "pre-order watches"),
+      allRows((from, to) => db.from("branch_stock").select("branch_id,product_id,stock,free_total,incoming,incoming_detail,zoho_pending")
+        .or("incoming.gt.0,zoho_pending.eq.true").order("branch_id").order("product_id").range(from, to), "arriving stock"),
+      db.from("batch_lot_events").select("id,batch_id,branch_id,product_id,kind,qty,detail,by_name,note,created_at").order("id", { ascending: false }).limit(300),
     ]);
     if (branchesResult.error || masterResult.error) throw new Error("Could not read godowns and settings");
     const setting = (key: string) => {
@@ -93,6 +102,9 @@ export const getBatchData = createServerFn({ method: "GET" })
       quantity: n(b.quantity), remaining_quantity: n(b.remaining_quantity), unit_cost: n(b.unit_cost),
       zoho_balance: b.zoho_balance === null ? null : n(b.zoho_balance),
       sent_quantity: b.sent_quantity === undefined || b.sent_quantity === null ? null : n(b.sent_quantity),
+      stage: b.stage ?? "received", hold_back: n(b.hold_back),
+      expected_quantity: b.expected_quantity === undefined || b.expected_quantity === null ? null : n(b.expected_quantity),
+      est_unit_cost_ex_gst: b.est_unit_cost_ex_gst === undefined || b.est_unit_cost_ex_gst === null ? null : n(b.est_unit_cost_ex_gst),
     }));
     const batchIds = batches.map((b) => b.id);
 
@@ -159,6 +171,13 @@ export const getBatchData = createServerFn({ method: "GET" })
       zohoStock,
       godowns: (branchesResult.data ?? []).filter((b) => !b.vendor_id).map((b) => ({ id: b.id, name: b.name, code: b.code, active: b.active, zohoLinked: Boolean(b.zoho_location_id) })),
       products, batches, allocations, items, orders, adjustments, reservedCodes: reservedRows.map((row) => row.code), transfers,
+      preorder: {
+        settings: parsePreorderSettings(setting("preorder")),
+        watches: watchRows.map((w) => ({ ...w, zoho_last: n(w.zoho_last), held: n(w.held), last_waiting: n(w.last_waiting), last_unbilled: n(w.last_unbilled),
+          last_raw: w.last_raw === null ? null : n(w.last_raw), pending_delta: n(w.pending_delta) })),
+        stock: splitRows.map((row) => ({ ...row, stock: n(row.stock), free_total: n(row.free_total), incoming: n(row.incoming) })),
+        events: (lotEvents.data ?? []).map((e) => ({ ...e, qty: e.qty === null ? null : n(e.qty) })),
+      },
     };
   });
 

@@ -18,6 +18,7 @@ import { productImages } from "@/lib/product-images";
 import { ProductGallery } from "@/components/site/ProductGallery";
 import { showCustomerNotification } from "@/components/site/CartFloatingNotification";
 import { AddToCartPicker } from "@/components/site/AddToCartPicker";
+import { dayLabel, preorderText } from "@/lib/preorder";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { products as demoProducts } from "@/lib/data";
 import { storeCategorySlug } from "@/lib/category-slug";
@@ -125,7 +126,11 @@ function ProductDetail() {
       </SiteLayout>
     );
   }
-  const availableStock = Math.max(0, Math.floor((Number(product.stock) || 0) - (Number(product.reserved) || 0)));
+  const readyStock = Math.max(0, Math.floor((Number(product.stock) || 0) - (Number(product.reserved) || 0)));
+  // Pre-order units (14 Nov 2026): on sale after the ready ones, collected once they arrive.
+  const arriving = Math.max(0, Number(product.incoming) || 0);
+  const arrivingBy = dayLabel(product.incomingBy);
+  const availableStock = readyStock + arriving;
   const purchaseLimit = currentPurchaseLimit;
   const configuredMax = getMaxPurchaseQuantity(product);
   const vendor = vendors.find((v) => v.id === product.vendorId);
@@ -241,9 +246,18 @@ function ProductDetail() {
           </div>
           <p className="mt-1 text-xs text-slate">Price includes GST · Pack size {product.weight}</p>
 
-          <p className={cn("mt-4 text-sm font-semibold", availableStock > 0 ? "text-success" : "text-danger")}>
-            {availableStock > 0 ? `In stock — ${availableStock} units available` : "Currently out of stock"}
-          </p>
+          {arriving > 0 ? (
+            <div className="mt-4 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
+              <p className="font-semibold">
+                {readyStock > 0 ? preorderText.readyAndArriving(readyStock, arriving, arrivingBy) : preorderText.productLotOnly(arrivingBy)}
+              </p>
+              <p className="mt-1 text-xs">{preorderText.explanation(product.incomingGodown || "nearest")}</p>
+            </div>
+          ) : (
+            <p className={cn("mt-4 text-sm font-semibold", availableStock > 0 ? "text-success" : "text-danger")}>
+              {availableStock > 0 ? `In stock — ${availableStock} units available` : "Currently out of stock"}
+            </p>
+          )}
           <p className="mt-1 text-xs text-slate">Purchase range: 1–{purchaseLimit} units (maximum {configuredMax} per order, subject to stock).</p>
 
           {/* One row, except 1024-1279 px where the half-width column is too narrow for it (stacked there). */}

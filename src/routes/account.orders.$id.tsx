@@ -42,7 +42,8 @@ import { PartPaymentNotice } from "@/components/site/PartPaymentNotice";
 import { HeldCheckoutPay } from "@/components/site/HeldCheckoutPay";
 import { useUpiPayments } from "@/lib/upi-store";
 import { resizedImage } from "@/lib/image-url";
-import { ItemBatchCodes, useOrderItemBatches } from "@/components/batches/OrderItemBatches";
+import { ItemArrivalNote, ItemBatchCodes, orderWaiting, useOrderItemArrivals, useOrderItemBatches } from "@/components/batches/OrderItemBatches";
+import { dayLabel, preorderText } from "@/lib/preorder";
 import { PAYMENT_EXPIRED } from "@/lib/payment-hold";
 import { isBankMethod } from "@/lib/payment-rules";
 
@@ -87,6 +88,9 @@ function AccountOrderDetail() {
     (candidate) => candidate.id === id && orderBelongsToUser(candidate, user),
   );
   const itemBatches = useOrderItemBatches(order?.dbOrderId, order?.items.map((item) => `${item.dbItemId}:${item.qty}:${order.status}`).join(",") ?? "");
+  // Pre-ordered lines (14 Nov 2026): waiting for goods, arrived, or running late.
+  const arrivals = useOrderItemArrivals(order?.dbOrderId, order?.items.map((item) => `${item.dbItemId}:${item.qty}:${order.status}`).join(",") ?? "");
+  const goods = orderWaiting(arrivals);
   // The customer number Zoho gave this account (the order is the signed-in customer's own).
   const customerNumber = useZohoContactNumbers(user?.id).customers.get(order?.customerId || (user?.id ?? ""));
 
@@ -309,6 +313,11 @@ function AccountOrderDetail() {
             </div>
           </dl>
           <ZohoInvoiceStatus orderNo={order.id} audience="customer" className="mt-3" />
+          {goods.waiting > 0 && (
+            <p className="mt-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-950">
+              {order.payment === "Paid" ? preorderText.invoiceLater(order.amount.toFixed(2)) : preorderText.waiting(dayLabel(goods.by))}
+            </p>
+          )}
           {returns.filter((item) => item.order === order.id).map((item) => (
             <p key={item.id} className="mt-3 rounded-md bg-ivory px-3 py-2 text-xs text-navy">
               <span className="font-semibold">Return: {item.product}</span> · {item.status} · Refund {item.refund} · {inrPrecise(item.amount)}
@@ -345,6 +354,7 @@ function AccountOrderDetail() {
                           <p className="font-medium text-navy">{it.product.name}</p>
                           <p className="text-xs text-slate">Qty {it.qty}</p>
                           <ItemBatchCodes batches={it.dbItemId ? itemBatches.get(it.dbItemId) : undefined} />
+                          <ItemArrivalNote arrival={it.dbItemId ? arrivals.get(it.dbItemId) : undefined} />
                         </div>
                       </div>
                     </td>

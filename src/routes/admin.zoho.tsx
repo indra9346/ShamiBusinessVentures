@@ -1053,6 +1053,10 @@ function ZohoCommerceAdmin() {
                     ? `Organization ${connection.organization_id} · Zoho ${connection.region.toUpperCase()}`
                     : "Authorize securely using Zoho OAuth. Your Zoho password is never entered here."}
                 </p>
+                {connection && (
+                  // Batch expenses (14 Nov 2026): the permission list now includes reading Zoho Books expenses.
+                  <p className="mt-1 text-xs text-white/70">Permissions asked for include Zoho Books expenses (read only), for expenses tagged to batches. If the Expenses tab says it can't read them, press Reauthorize Zoho once and accept every permission.</p>
+                )}
               </div>
               <div className="flex flex-wrap gap-2">
                 <Button

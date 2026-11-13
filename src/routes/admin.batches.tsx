@@ -2,7 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import {
-  AlertTriangle, ArrowLeft, ArrowRightLeft, ChevronRight, Clock3, FileSpreadsheet, IndianRupee, Layers, Mail, MapPin, PackageCheck, PackagePlus, Pencil,
+  AlertTriangle, ArrowLeft, ArrowRightLeft, CalendarClock, ChevronRight, Clock3, FileSpreadsheet, IndianRupee, Layers, Mail, MapPin, PackageCheck, PackagePlus, Pencil,
   Phone, RefreshCw, Search, ShoppingCart, Trash2, TrendingDown, TrendingUp, UserRound, Warehouse,
 } from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
@@ -23,13 +23,17 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ReceiveFromBillDialog } from "@/components/batches/ReceiveFromBill";
+import { IncomingBatchDialog } from "@/components/batches/IncomingBatchDialog";
+import { MatchedLotNote, PreorderPanel, clockOf, lotOf, lotOrders, watchOf } from "@/components/batches/PreorderPanel";
+import { dayLabel, lotBadges, lotLabel, lotOverdue, lotSellable, qtyText } from "@/lib/preorder";
 import { SendToGodownsDialog, TransferList } from "@/components/batches/BatchTransfers";
 import { transferProgress } from "@/lib/batch-transfers";
 import { batchDeleteBlocker, billGone, relinkBlocker } from "@/lib/bill-batches";
 import type { BatchBillLine } from "@/lib/zoho-commerce.functions";
 import { cn } from "@/lib/utils";
 
-type Search = { godown?: string | undefined; batch?: string | undefined; order?: string | undefined; customer?: string | undefined; tab?: "batches" | "trace" | undefined; q?: string | undefined };
+// Tabs: Batches, Pre-orders (14 Nov 2026), Trace. Hook for the batch expenses build: an "expenses" tab (spec 10).
+type Search = { godown?: string | undefined; batch?: string | undefined; order?: string | undefined; customer?: string | undefined; tab?: "batches" | "trace" | "preorders" | undefined; q?: string | undefined };
 
 export const Route = createFileRoute("/admin/batches")({
   validateSearch: (search: Record<string, unknown>): Search => ({
@@ -37,7 +41,7 @@ export const Route = createFileRoute("/admin/batches")({
     ...(typeof search["batch"] === "string" && search["batch"] ? { batch: search["batch"] } : {}),
     ...(typeof search["order"] === "string" && search["order"] ? { order: search["order"] } : {}),
     ...(typeof search["customer"] === "string" && search["customer"] ? { customer: search["customer"] } : {}),
-    ...(search["tab"] === "trace" ? { tab: "trace" as const } : {}),
+    ...(search["tab"] === "trace" ? { tab: "trace" as const } : search["tab"] === "preorders" ? { tab: "preorders" as const } : {}),
     ...(typeof search["q"] === "string" && search["q"] ? { q: search["q"] } : {}),
   }),
   head: () => ({ meta: [{ title: "Batches | Grain Bazar Admin" }, { name: "robots", content: "noindex" }] }),
@@ -75,6 +79,10 @@ function AdminBatches() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [receiveOpen, setReceiveOpen] = useState(false);
+  // Receive purchase opened from a pre-order (Match now): at the lot's godown, with the bill when one was found.
+  const [receiveAt, setReceiveAt] = useState<{ godown?: string | undefined; billId?: string | undefined }>({});
+  const [incomingOpen, setIncomingOpen] = useState(false);
+  const openReceive = useCallback((godown?: string, billId?: string) => { setReceiveAt({ godown, billId }); setReceiveOpen(true); }, []);
   const [editRow, setEditRow] = useState<BatchReportRow | null>(null);
   const [status, setStatus] = useState<BatchStatus>("all");
   const [productFilter, setProductFilter] = useState("");
@@ -140,6 +148,7 @@ function AdminBatches() {
 
   const steps: { label: string; onClick?: () => void }[] = [{ label: "All batches", onClick: () => go({ godown: undefined, batch: undefined, order: undefined, customer: undefined, tab: undefined }) }];
   if (search.tab === "trace") steps.push({ label: "Trace customer / order", onClick: () => go({ batch: undefined, order: undefined, customer: undefined }) });
+  if (search.tab === "preorders") steps.push({ label: "Pre-orders", onClick: () => go({ batch: undefined, order: undefined, customer: undefined }) });
   if (search.godown && search.tab !== "trace") steps.push({ label: godownName(search.godown), onClick: () => go({ batch: undefined, order: undefined, customer: undefined }) });
   if (search.customer && search.tab === "trace") {
     const c = report?.customers.find((x) => x.key === search.customer);
@@ -152,15 +161,16 @@ function AdminBatches() {
     <PanelLayout items={adminNav} tone="admin" title="Batches" subtitle="Stock numbers per purchase: sales, profit and customers of every batch, per godown">
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <div className="flex rounded-lg border border-border bg-white p-0.5 text-sm">
-          {([["batches", "Batches"], ["trace", "Trace customer / order"]] as const).map(([key, label]) => (
-            <button key={key} type="button" onClick={() => go({ tab: key === "trace" ? "trace" : undefined, batch: undefined, order: undefined, customer: undefined })}
+          {([["batches", "Batches"], ["preorders", "Pre-orders"], ["trace", "Trace customer / order"]] as const).map(([key, label]) => (
+            <button key={key} type="button" onClick={() => go({ tab: key === "batches" ? undefined : key, batch: undefined, order: undefined, customer: undefined })}
               className={cn("rounded-md px-3 py-1.5 font-semibold transition", (search.tab ?? "batches") === key ? "bg-navy text-white" : "text-slate hover:text-navy")}>{label}</button>
           ))}
         </div>
         <div className="ml-auto flex flex-wrap gap-1.5">
           <Button size="sm" variant="outline" disabled={loading} onClick={() => void load()}><RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", loading && "animate-spin")} />Refresh</Button>
           <Button size="sm" variant="outline" disabled={!report} onClick={downloadExcel}><FileSpreadsheet className="mr-1.5 h-3.5 w-3.5" />Download Excel</Button>
-          <Button size="sm" className="bg-navy text-white hover:bg-navy/90" disabled={!data} onClick={() => setReceiveOpen(true)}><PackagePlus className="mr-1.5 h-3.5 w-3.5" />Receive purchase</Button>
+          <Button size="sm" variant="outline" className="border-amber-400 text-amber-900 hover:bg-amber-50" disabled={!data} onClick={() => setIncomingOpen(true)}><CalendarClock className="mr-1.5 h-3.5 w-3.5" />New pre-order</Button>
+          <Button size="sm" className="bg-navy text-white hover:bg-navy/90" disabled={!data} onClick={() => openReceive(search.godown)}><PackagePlus className="mr-1.5 h-3.5 w-3.5" />Receive purchase</Button>
         </div>
       </div>
 
@@ -177,6 +187,7 @@ function AdminBatches() {
 
       {error && <p className="mb-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</p>}
       {data && <ZohoFreshness stock={data.zohoStock} />}
+      {data && <PreorderAlerts data={data} go={go} onMatch={openReceive} />}
       {!report && !error && <p className="py-10 text-center text-sm text-slate">Loading batches…</p>}
       {data && data.transfers.some((t) => t.status === "pending") && (
         <Panel title="Transfers waiting for Zoho" className="mb-4 border-amber-300">
@@ -194,7 +205,9 @@ function AdminBatches() {
           ? <TraceView report={report} search={search} go={go} />
           : selected
             ? <BatchDetail row={selected} report={report} data={data} adjustments={data.adjustments} orderId={search.order} go={go} onEdit={() => setEditRow(selected)}
-                onDeleted={async () => { go({ batch: undefined, order: undefined }); await load(); }} onChanged={load} />
+                onDeleted={async () => { go({ batch: undefined, order: undefined }); await load(); }} onChanged={load} onMatch={openReceive} />
+            : search.tab === "preorders"
+              ? <PreorderList data={data} search={search} go={go} onNew={() => setIncomingOpen(true)} />
             : <>
                 <BatchList report={report} data={data} search={search} go={go} status={status} setStatus={setStatus}
                   productFilter={productFilter} setProductFilter={setProductFilter} />
@@ -206,7 +219,11 @@ function AdminBatches() {
               </>
       )}
 
-      {data && <ReceiveFromBillDialog open={receiveOpen} onOpenChange={setReceiveOpen} godowns={data.godowns.filter((g) => g.active)} defaultGodown={search.godown}
+      {data && <ReceiveFromBillDialog open={receiveOpen} onOpenChange={setReceiveOpen} godowns={data.godowns.filter((g) => g.active)} defaultGodown={receiveAt.godown ?? search.godown}
+        initialBillId={receiveAt.billId}
+        onSaved={async (batchId) => { await load(); if (batchId) go({ tab: undefined, batch: batchId, order: undefined, customer: undefined }); }} />}
+      {data && incomingOpen && <IncomingBatchDialog open={incomingOpen} onOpenChange={setIncomingOpen} data={data} defaultGodown={search.godown}
+        onReceive={(godown) => { setIncomingOpen(false); openReceive(godown); }}
         onSaved={async (batchId) => { await load(); if (batchId) go({ tab: undefined, batch: batchId, order: undefined, customer: undefined }); }} />}
       {editRow && <EditDialog row={editRow} onClose={() => setEditRow(null)} onSaved={async () => { setEditRow(null); await load(); }} />}
     </PanelLayout>
@@ -221,10 +238,20 @@ function BatchList({ report, data, search, go, status, setStatus, productFilter,
   productFilter: string; setProductFilter: (p: string) => void;
 }) {
   const [query, setQuery] = useState(search.q ?? "");
+  // Pre-order batches (14 Nov 2026): received batches, pre-orders waiting for their bill, or cancelled ones.
+  const [stage, setStage] = useState<"all" | "received" | "incoming" | "cancelled">("all");
   const found = searchBatchReport(report, query);
   const rows = found.rows.filter((row) => (!search.godown || row.batch.branch_id === search.godown)
     && (!productFilter || row.batch.product_id === productFilter)
+    && (stage === "all" || (row.batch.stage ?? "received") === stage)
     && matchesBatchStatus(row, status));
+  const clock = clockOf(data);
+  const lots = data.batches.filter((b) => b.stage === "incoming" && (!search.godown || b.branch_id === search.godown));
+  const arriving = {
+    expected: lots.reduce((sum, b) => sum + b.quantity, 0),
+    sold: lots.reduce((sum, b) => sum + b.quantity - b.remaining_quantity, 0),
+    open: lots.reduce((sum, b) => sum + lotSellable(lotOf(b), clock), 0),
+  };
   // The cards count the whole scope, so they open the list without a search or product filter.
   const openList = (next: BatchStatus) => {
     setQuery("");
@@ -247,6 +274,11 @@ function BatchList({ report, data, search, go, status, setStatus, productFilter,
         <StatCard onClick={() => openList(totals.lossValue < 0 ? "found" : "lost")} compact label={totals.lossValue < 0 ? "Stock found" : "Stock lost"} value={money(Math.abs(totals.lossValue))} icon={totals.lossValue < 0 ? TrendingUp : TrendingDown}
           description={`${units(totals.lost)} units lost, ${units(totals.gained)} found (counts, damage), at cost before GST`} />
         <StatCard onClick={() => openList("soldout")} compact label="Avg. days to sell out" value={totals.averageDaysToSellOut === null ? "—" : String(totals.averageDaysToSellOut)} icon={Clock3} description="sold-out batches" />
+        {lots.length > 0 && (
+          <StatCard onClick={() => go({ tab: "preorders" })} compact label="Arriving (pre-order)" value={units(arriving.expected)} icon={CalendarClock}
+            description={`${units(arriving.sold)} sold ahead · ${units(arriving.open)} open · ${lots.length} pre-order batch${lots.length === 1 ? "" : "es"}`} />
+        )}
+        {/* Hook for the batch expenses build: the "Expenses tagged" card (spec 10) goes here. */}
       </div>
 
       <StockCheck report={report} data={data} godownId={search.godown} onProduct={(productId) => { setQuery(""); setStatus("all"); setProductFilter(productId); scrollToSection("batch-list"); }} />
@@ -299,6 +331,12 @@ function BatchList({ report, data, search, go, status, setStatus, productFilter,
             <option value="">All products</option>
             {products.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
           </select>
+          <select value={stage} onChange={(e) => setStage(e.target.value as typeof stage)} aria-label="Stage" className="h-9 rounded-md border border-input bg-white px-2 text-sm">
+            <option value="all">All stages</option>
+            <option value="received">Received</option>
+            <option value="incoming">Pre-orders</option>
+            <option value="cancelled">Cancelled pre-orders</option>
+          </select>
           <div className="flex rounded-md border border-input bg-white p-0.5 text-xs">
             {([["all", "All"], ["stock", "In stock"], ["soldout", "Sold out"], ["lost", "Stock lost"], ["found", "Stock found"]] as const).map(([key, label]) => (
               <button key={key} type="button" onClick={() => setStatus(key)} className={cn("rounded px-2.5 py-1 font-semibold", status === key ? "bg-navy text-white" : "text-slate")}>{label}</button>
@@ -326,12 +364,12 @@ function BatchList({ report, data, search, go, status, setStatus, productFilter,
                 <tbody>
                   {rows.map((row) => (
                     <tr key={row.batch.id} onClick={() => go({ batch: row.batch.id })} className="cursor-pointer border-t border-border hover:bg-ivory/60">
-                      <td className="whitespace-nowrap px-3 py-2.5 font-mono font-semibold text-navy">{row.batch.batch_code}</td>
+                      <td className="whitespace-nowrap px-3 py-2.5 font-mono font-semibold text-navy">{row.batch.batch_code}<LotTags batch={row.batch} data={data} /></td>
                       <td className="max-w-[240px] truncate px-3 py-2.5" title={row.batch.product_name}>{row.batch.product_name}</td>
                       <td className="max-w-[160px] truncate px-3 py-2.5 text-slate" title={row.godown}>{row.godown}</td>
                       <td className="whitespace-nowrap px-3 py-2.5 text-slate">{day(row.batch.purchase_date)}</td>
                       <td className="px-3 py-2.5 text-right">{units(row.purchased)}</td>
-                      <td className="min-w-[160px] px-3 py-2.5"><FlowBar row={row} /></td>
+                      <td className="min-w-[160px] px-3 py-2.5">{row.batch.stage === "incoming" ? <LotFlowBar batch={row.batch} data={data} /> : <FlowBar row={row} />}</td>
                       <td className={cn("px-3 py-2.5 text-right", row.lost > 0 && "text-red-700")}>{units(row.lost)}</td>
                       <td className="px-3 py-2.5 text-right">{money(row.sales)}</td>
                       <td className={cn("px-3 py-2.5 text-right font-semibold", row.profit < 0 ? "text-red-700" : "text-emerald-700")}>{money(row.profit)}</td>
@@ -346,12 +384,13 @@ function BatchList({ report, data, search, go, status, setStatus, productFilter,
               {rows.map((row) => (
                 <button key={row.batch.id} type="button" onClick={() => go({ batch: row.batch.id })} className="rounded-lg border border-border bg-white p-3 text-left">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="font-mono font-semibold text-navy">{row.batch.batch_code}</span>
+                    <span className="min-w-0 font-mono font-semibold text-navy">{row.batch.batch_code}</span>
                     <ZohoBadge row={row} />
                   </div>
+                  <LotTags batch={row.batch} data={data} />
                   <p className="mt-1 truncate text-sm">{row.batch.product_name}</p>
                   <p className="text-xs text-slate">{row.godown} · {day(row.batch.purchase_date)}</p>
-                  <div className="mt-2"><FlowBar row={row} /></div>
+                  <div className="mt-2">{row.batch.stage === "incoming" ? <LotFlowBar batch={row.batch} data={data} /> : <FlowBar row={row} />}</div>
                   <div className="mt-2 flex justify-between text-xs"><span>{`Sales ${money(row.sales)}`}</span><span className={row.profit < 0 ? "text-red-700" : "text-emerald-700"}>{row.profit < 0 ? `Loss ${money(row.profit)}` : `Profit ${money(row.profit)}`}</span></div>
                 </button>
               ))}
@@ -420,7 +459,9 @@ function ZohoFreshness({ stock }: { stock: BatchData["zohoStock"] }) {
  */
 function StockCheck({ report, data, godownId, onProduct }: { report: BatchReport; data: BatchData; godownId?: string | undefined; onProduct: (productId: string) => void }) {
   const stock = new Map(data.products.map((p) => [p.id, p.stock]));
-  const checks = godownStockChecks(report.rows.filter((row) => !godownId || row.batch.branch_id === godownId), (productId, branchId) => stock.get(productId)?.[branchId] ?? 0);
+  // Received batches only (14 Nov 2026): a pre-order batch's bags are not at the godown yet, and the stock is the ready stock.
+  const checks = godownStockChecks(report.rows.filter((row) => (!godownId || row.batch.branch_id === godownId) && (row.batch.stage ?? "received") === "received"),
+    (productId, branchId) => stock.get(productId)?.[branchId] ?? 0);
   const off = checks.filter((check) => check.difference !== 0);
   return (
     <Panel id="stock-check" title={off.length ? `Stock check: ${off.length} of ${checks.length} products differ` : checks.length ? `Stock check: all ${checks.length} products agree` : "Stock check"}
@@ -486,6 +527,10 @@ function FlowBar({ row, large }: { row: BatchReportRow; large?: boolean }) {
 }
 
 function ZohoBadge({ row }: { row: BatchReportRow }) {
+  if (row.batch.stage === "incoming")
+    return <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-900">No bill yet</span>;
+  if (row.batch.stage === "cancelled")
+    return <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate">Cancelled</span>;
   if (row.batch.bill_flag)
     return <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800" title={row.batch.bill_flag}>Bill changed</span>;
   if (row.batch.zoho_bill_id)
@@ -499,10 +544,13 @@ function ZohoBadge({ row }: { row: BatchReportRow }) {
 
 // ------------------------------------------------------------------ step 3 + 4: batch, order, customer
 
-function BatchDetail({ row, report, data, adjustments, orderId, go, onEdit, onDeleted, onChanged }: {
+function BatchDetail({ row, report, data, adjustments, orderId, go, onEdit, onDeleted, onChanged, onMatch }: {
   row: BatchReportRow; report: BatchReport; data: BatchData; adjustments: BatchAdjustment[]; orderId?: string | undefined;
   go: (next: Partial<Search>) => void; onEdit: () => void; onDeleted: () => Promise<void>; onChanged: () => Promise<void>;
+  onMatch: (godown?: string, billId?: string) => void;
 }) {
+  // A pre-order batch (waiting for its bill): it is edited, matched or cancelled as a pre-order, never sent or counted.
+  const isLot = row.batch.stage === "incoming";
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [sendOpen, setSendOpen] = useState(false);
   // Transfers this batch is part of: the one that made it, and the ones it sent.
@@ -513,7 +561,7 @@ function BatchDetail({ row, report, data, adjustments, orderId, go, onEdit, onDe
   const arrival = data.transfers.find((t) => t.id === row.batch.transfer_id && t.kind === "split");
   const onTheWay = myTransfers.filter((t) => t.parent_batch_id === row.batch.id && t.status === "in_transit");
   const product = data.products.find((p) => p.id === row.batch.product_id);
-  const canSend = row.available > 0 && Boolean(product?.zohoLinked) && !product?.zohoTracksBatches
+  const canSend = !isLot && row.batch.stage !== "cancelled" && row.available > 0 && Boolean(product?.zohoLinked) && !product?.zohoTracksBatches
     && data.godowns.some((g) => g.active && g.zohoLinked && g.id !== row.batch.branch_id)
     && Boolean(data.godowns.find((g) => g.id === row.batch.branch_id)?.zohoLinked);
   const [deleting, setDeleting] = useState(false);
@@ -602,13 +650,20 @@ function BatchDetail({ row, report, data, adjustments, orderId, go, onEdit, onDe
           {canSend && (
             <Button size="sm" className="bg-navy text-white hover:bg-navy/90" onClick={() => setSendOpen(true)}><ArrowRightLeft className="mr-1.5 h-3.5 w-3.5" />Send to other godowns</Button>
           )}
-          <Button size="sm" variant="outline" onClick={onEdit}><Pencil className="mr-1.5 h-3.5 w-3.5" />Edit details</Button>
+          {isLot
+            ? <span className="max-w-[220px] text-right text-[11px] text-slate">Edit pre-order below</span>
+            : row.batch.stage !== "cancelled" && <Button size="sm" variant="outline" onClick={onEdit}><Pencil className="mr-1.5 h-3.5 w-3.5" />Edit details</Button>}
           {deleteBlocker
             ? <p className="max-w-[220px] text-right text-[11px] text-slate">{deleteBlocker}</p>
             : <Button size="sm" variant="outline" className="border-red-200 text-red-700 hover:bg-red-50" onClick={() => setConfirmDelete(true)}><Trash2 className="mr-1.5 h-3.5 w-3.5" />Delete batch</Button>}
         </div>
       </div>
 
+      {isLot && <PreorderPanel batch={b} data={data} onChanged={onChanged} onMatch={onMatch} />}
+      {b.stage === "cancelled" && (
+        <p className="rounded-md border border-border bg-slate-50 p-3 text-sm text-slate">{`Pre-order cancelled${b.closed_at ? ` on ${day(istDate(b.closed_at))}` : ""}${b.closed_note ? `: ${b.closed_note}` : ""}.`}</p>
+      )}
+      <MatchedLotNote batch={b} data={data} onChanged={onChanged} />
       {b.bill_flag && (
         <p className="flex gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
           <AlertTriangle className="h-4 w-4 shrink-0" />
@@ -1053,16 +1108,22 @@ function demoData(): BatchData {
       batch("b1", "CLK-201026-01", "BR-CLK", "P023", "Groundnut Oil 5L Can", 50, 0, 800, "2026-10-20", "2026-10-29T08:00:00Z"),
       batch("b2", "CLK-301026-01", "BR-CLK", "P023", "Groundnut Oil 5L Can", 50, 30, 820, "2026-10-30", null),
       batch("b3", "HBL-251026-01", "BR-HBL", "P023", "Groundnut Oil 5L Can", 40, 25, 810, "2026-10-25", null),
+      // A pre-order batch: 360 bags of Sugar S1 expected in a week, 20 sold ahead.
+      { ...batch("b4", "CLK-141126-01", "BR-CLK", "P001", "Sugar S1", 360, 340, 2500, todayIst(), null), stage: "incoming", expected_quantity: 360,
+        expected_date: new Date(Date.now() + 6 * 86_400_000).toISOString().slice(0, 10), hold_back: 0, selling_paused: false, paused_reason: "",
+        est_unit_cost_ex_gst: 2500, zoho_po_number: "PO-00031", supplier: "Sri Sugars" },
     ],
     allocations: [
       { id: "a1", order_item_id: "i1", batch_id: "b1", reserved_quantity: 48, released_quantity: 0, unit_cost: 800, created_at: now },
       { id: "a2", order_item_id: "i2", batch_id: "b2", reserved_quantity: 20, released_quantity: 0, unit_cost: 820, created_at: now },
       { id: "a3", order_item_id: "i3", batch_id: "b3", reserved_quantity: 15, released_quantity: 0, unit_cost: 810, created_at: now },
+      { id: "a4", order_item_id: "i4", batch_id: "b4", reserved_quantity: 20, released_quantity: 0, unit_cost: 2500, created_at: now },
     ],
     items: [
       { id: "i1", order_id: "o1", product_id: "P023", product_name: "Groundnut Oil 5L Can", qty: 48, unit_price: 949, gst_rate: 5 },
       { id: "i2", order_id: "o2", product_id: "P023", product_name: "Groundnut Oil 5L Can", qty: 20, unit_price: 949, gst_rate: 5 },
       { id: "i3", order_id: "o3", product_id: "P023", product_name: "Groundnut Oil 5L Can", qty: 15, unit_price: 955, gst_rate: 5 },
+      { id: "i4", order_id: "o4", product_id: "P001", product_name: "Sugar S1", qty: 70, unit_price: 2741, gst_rate: 5 },
     ],
     orders: [
       { id: "o1", order_no: "CLK-577522-251026-101500", created_at: "2026-10-25T04:45:00Z", order_status: "Delivered", payment_status: "Paid", branch_id: "BR-CLK", user_id: "u1", customer_name: "Ravi Traders", customer_email: "ravi@example.com", customer_phone: "9876500011", shipping_address: { line1: "Main Road", city: "Challakere", pin: "577522" }, subtotal: 45552, discount: 0 },
@@ -1071,5 +1132,151 @@ function demoData(): BatchData {
     ],
     adjustments: [{ id: "x1", batch_id: "b1", qty: -2, reason: "damaged", note: "2 cans leaked", unit_cost: 800, created_at: "2026-10-27T10:00:00Z", created_by_name: "Manju" }],
     reservedCodes: [],
-  } as BatchData;
+    preorder: {
+      settings: { enabled: true, graceDays: 0, requireAck: true },
+      watches: [{ branch_id: "BR-CLK", product_id: "P001", zoho_last: 50, held: 0, held_since: null, opened_at: now, read_at: now, last_waiting: 70, last_unbilled: 360, last_raw: 0, updated_at: now, pending_delta: 0 }],
+      stock: [{ branch_id: "BR-CLK", product_id: "P001", stock: 0, free_total: 340, incoming: 340, incoming_detail: [], zoho_pending: false }],
+      events: [],
+    },
+  } as unknown as BatchData;
+}
+
+// ------------------------------------------------------------------ pre-order batches (14 Nov 2026, src/lib/preorder.ts)
+
+/** Badges of a batch in the list: a pre-order and its state, a remainder, one made from a pre-order. */
+function LotTags({ batch, data }: { batch: BatchData["batches"][number]; data: BatchData }) {
+  const clock = clockOf(data);
+  const tags: { text: string; tone: "amber" | "red" | "slate" | "sky" }[] = [];
+  if (batch.stage === "incoming") {
+    const lot = lotOf(batch);
+    tags.push({ text: lotLabel(lot, clock.todayIst), tone: "amber" });
+    if (lotOverdue(lot, clock)) tags.push({ text: "Overdue", tone: "red" });
+    if (batch.selling_paused) tags.push({ text: batch.paused_reason === "receiving" ? "Paused while receiving" : "Paused", tone: "slate" });
+    if ((watchOf(data, batch.branch_id, batch.product_id)?.held ?? 0) > 0) tags.push({ text: "Zoho rise held", tone: "red" });
+  } else if (batch.stage === "cancelled") {
+    tags.push({ text: "Cancelled pre-order", tone: "slate" });
+  } else if (batch.expected_quantity !== null && batch.expected_quantity !== undefined) {
+    tags.push({ text: `From pre-order · bill ${batch.zoho_bill_number || batch.purchase_ref}`, tone: "sky" });
+  }
+  if (batch.split_from_batch_id) tags.push({ text: `The rest of ${data.batches.find((b) => b.id === batch.split_from_batch_id)?.batch_code ?? "a pre-order"}`, tone: "sky" });
+  if (!tags.length) return null;
+  const tone = { amber: "bg-amber-100 text-amber-900", red: "bg-red-100 text-red-800", slate: "bg-slate-100 text-slate", sky: "bg-sky-100 text-sky-900" };
+  return (
+    <span className="mt-1 flex flex-wrap gap-1 font-sans">
+      {tags.map((t) => <span key={t.text} className={cn("whitespace-nowrap rounded-full px-1.5 py-0.5 text-[10px] font-semibold", tone[t.tone])}>{t.text}</span>)}
+    </span>
+  );
+}
+
+/** A pre-order's units: expected, sold ahead, held at the godown, open to pre-order, held back. */
+function LotFlowBar({ batch, data }: { batch: BatchData["batches"][number]; data: BatchData }) {
+  const clock = clockOf(data);
+  const lot = lotOf(batch);
+  const sold = Math.max(0, batch.quantity - batch.remaining_quantity);
+  const open = lotSellable(lot, clock);
+  const holdBack = Math.min(batch.hold_back ?? 0, batch.remaining_quantity);
+  const held = Math.min(watchOf(data, batch.branch_id, batch.product_id)?.held ?? 0, batch.quantity);
+  const total = Math.max(batch.quantity, 1);
+  const part = (n: number) => `${Math.max(0, (n / total) * 100)}%`;
+  return (
+    <div>
+      <div className="flex h-2 overflow-hidden rounded-full bg-amber-100">
+        <span className="bg-emerald-500" style={{ width: part(sold) }} title={`Sold ahead ${units(sold)}`} />
+        <span className="bg-sky-300" style={{ width: part(open) }} title={`Open to pre-order ${units(open)}`} />
+        <span className="bg-slate-300" style={{ width: part(holdBack) }} title={`Held back ${units(holdBack)}`} />
+      </div>
+      <p className="mt-1 text-xs text-slate">{`Expected ${units(batch.quantity)} · ${units(sold)} sold · ${units(open)} open${holdBack ? ` · ${units(holdBack)} held back` : ""}${held ? ` · ${units(held)} held in Zoho` : ""}`}</p>
+    </div>
+  );
+}
+
+/** The pre-order alerts (spec 7.6), each clickable: units Zoho shows that the website can't explain, oversold, overdue. */
+function PreorderAlerts({ data, go, onMatch }: { data: BatchData; go: (next: Partial<Search>) => void; onMatch: (godown?: string, billId?: string) => void }) {
+  const clock = clockOf(data);
+  const name = (productId: string) => data.products.find((p) => p.id === productId)?.name ?? productId;
+  const godown = (id: string | null) => data.godowns.find((g) => g.id === id)?.name ?? id ?? "";
+  const lotAt = (branchId: string | null, productId: string) => data.batches.find((b) => b.stage === "incoming" && b.branch_id === branchId && b.product_id === productId)
+    ?? data.batches.find((b) => b.stage === "incoming" && b.product_id === productId);
+  const alerts: { key: string; text: string; tone: "red" | "amber"; action: () => void; label: string }[] = [];
+  for (const w of data.preorder.watches) {
+    const lot = lotAt(w.branch_id, w.product_id);
+    if (w.held > 0)
+      alerts.push({ key: `held-${w.branch_id}-${w.product_id}`, tone: "amber", label: "Match now", action: () => onMatch(w.branch_id),
+        text: `Zoho shows ${qtyText(w.held)} more ${name(w.product_id)} at ${godown(w.branch_id)} than the website counts${w.held_since ? ` (since ${when(w.held_since)})` : ""}. If it is the bill for pre-order batch ${lot?.batch_code ?? "(none here)"}, match it. Those bags are not on sale until then.` });
+    if ((w.last_raw ?? 0) < 0)
+      alerts.push({ key: `over-${w.branch_id}-${w.product_id}`, tone: "red", label: "Open", action: () => (lot ? go({ tab: undefined, batch: lot.id }) : go({ tab: "preorders" })),
+        text: `${name(w.product_id)} at ${godown(w.branch_id)}: ${qtyText(-(w.last_raw ?? 0))} units promised to customers are neither in stock nor on the way. Check pre-order batch ${lot?.batch_code ?? ""} and Zoho.` });
+  }
+  for (const b of data.batches) {
+    if (b.stage !== "incoming" || !lotOverdue(lotOf(b), clock)) continue;
+    const waiting = new Set(lotOrders(data, b.id).map((o) => o.orderNo)).size;
+    alerts.push({ key: `due-${b.id}`, tone: "red", label: "Open", action: () => go({ tab: undefined, batch: b.id }),
+      text: `Pre-order batch ${b.batch_code} was expected by ${dayLabel(b.expected_date, { full: true })} and has no bill. New pre-orders stopped; ${waiting} orders wait.` });
+  }
+  if (!alerts.length) return null;
+  return (
+    <div className="mb-4 grid gap-2">
+      {alerts.map((a) => (
+        <div key={a.key} className={cn("flex flex-wrap items-center justify-between gap-2 rounded-md border p-3 text-sm",
+          a.tone === "red" ? "border-red-300 bg-red-50 text-red-900" : "border-amber-300 bg-amber-50 text-amber-950")}>
+          <span className="flex min-w-0 flex-1 gap-2"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /><span className="min-w-0 break-words">{a.text}</span></span>
+          <Button size="sm" variant="outline" onClick={a.action}>{a.label}</Button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Admin › Batches › Pre-orders: every pre-order batch waiting for its bill, then the recent closed ones. */
+function PreorderList({ data, search, go, onNew }: { data: BatchData; search: Search; go: (next: Partial<Search>) => void; onNew: () => void }) {
+  const clock = clockOf(data);
+  const scoped = data.batches.filter((b) => (b.expected_quantity !== null && b.expected_quantity !== undefined) && (!search.godown || b.branch_id === search.godown));
+  const open = scoped.filter((b) => b.stage === "incoming").sort((a, b) => (a.expected_date ?? "").localeCompare(b.expected_date ?? ""));
+  const closed = scoped.filter((b) => b.stage !== "incoming").sort((a, b) => (b.matched_at ?? b.closed_at ?? "").localeCompare(a.matched_at ?? a.closed_at ?? "")).slice(0, 20);
+  const godown = (id: string | null) => data.godowns.find((g) => g.id === id)?.name ?? "";
+  return (
+    <div className="grid min-w-0 gap-4">
+      {!data.preorder.settings.enabled && (
+        <p className="rounded-md border border-border bg-slate-50 p-3 text-sm text-slate">Pre-orders are switched off. Switch them on in Admin › Settings › Pre-orders to make pre-order batches.</p>
+      )}
+      <Panel title={`Pre-orders waiting for their bill (${open.length})`} action={<Button size="sm" variant="outline" onClick={onNew}><CalendarClock className="mr-1.5 h-3.5 w-3.5" />New pre-order</Button>}>
+        {open.length === 0 ? <p className="text-sm text-slate">No pre-order batch is waiting. Press New pre-order when goods are ordered from a supplier.</p> : (
+          <div className="grid gap-2">
+            {open.map((b) => {
+              const lot = lotOf(b);
+              const waitingOrders = new Set(lotOrders(data, b.id).map((o) => o.orderNo)).size;
+              return (
+                <button key={b.id} type="button" onClick={() => go({ tab: undefined, batch: b.id })}
+                  className="grid min-w-0 gap-1 rounded-lg border border-border bg-white p-3 text-left text-sm transition hover:border-gold">
+                  <span className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="font-mono font-semibold text-navy">{b.batch_code}</span>
+                    <span className="flex flex-wrap gap-1">
+                      {lotBadges(lot, clock, { held: watchOf(data, b.branch_id, b.product_id)?.held ?? 0 }).map((badge) => (
+                        <span key={badge} className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-900">{badge}</span>
+                      ))}
+                    </span>
+                  </span>
+                  <span className="truncate">{`${b.product_name} · ${godown(b.branch_id)}`}</span>
+                  <LotFlowBar batch={b} data={data} />
+                  <span className="text-xs text-slate">{`Expected by ${dayLabel(b.expected_date, { full: true })} · ${waitingOrders} order${waitingOrders === 1 ? "" : "s"} waiting${b.zoho_po_number ? ` · PO ${b.zoho_po_number}` : ""}`}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </Panel>
+      {closed.length > 0 && (
+        <Panel title="Matched and cancelled pre-orders">
+          <div className="grid gap-2">
+            {closed.map((b) => (
+              <button key={b.id} type="button" onClick={() => go({ tab: undefined, batch: b.id })} className="flex min-w-0 flex-wrap justify-between gap-2 rounded-md border border-border px-3 py-2 text-left text-sm hover:border-gold">
+                <span className="min-w-0 truncate"><span className="font-mono font-semibold text-navy">{b.batch_code}</span>{` · ${b.product_name} · ${godown(b.branch_id)}`}</span>
+                <span className="text-xs text-slate">{b.stage === "cancelled" ? `Cancelled${b.closed_at ? ` ${day(istDate(b.closed_at))}` : ""}` : `Matched to bill ${b.zoho_bill_number || b.purchase_ref}${b.matched_at ? ` · ${day(istDate(b.matched_at))}` : ""}`}</span>
+              </button>
+            ))}
+          </div>
+        </Panel>
+      )}
+    </div>
+  );
 }

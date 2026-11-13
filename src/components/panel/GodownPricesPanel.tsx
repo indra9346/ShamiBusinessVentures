@@ -2,6 +2,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { Panel } from "@/components/panel/widgets";
 import { branchStockOf, reloadBranches, useBranches } from "@/lib/branches";
+import { preorderText } from "@/lib/preorder";
 import { inr } from "@/lib/data";
 import { godownPricesNote } from "@/lib/godown-products";
 import { supabase } from "@/integrations/supabase/client";
@@ -51,6 +52,7 @@ export function GodownPricesPanel({ productId, basePrice, status, active }: { pr
                 <p className="text-xs text-slate">
                   {linked ? `Zoho price list: ${branch.zohoPricebookName || branch.zohoPricebookId}` : "No price list: normal price"}
                   {" · "}Stock {stock.toLocaleString("en-IN")}
+                  {(state.incoming.get(productId)?.get(branch.id)?.qty ?? 0) > 0 ? ` ${preorderText.plusArriving(state.incoming.get(productId)?.get(branch.id)?.qty ?? 0)}` : ""}
                   {entry?.pending ? " · waiting for Zoho" : ""}
                 </p>
               </div>

@@ -59,10 +59,12 @@ async function readStorefront(): Promise<Data> {
     rest<{ payload: StorefrontSnapshot["products"][number] }[]>("catalog_products?select=payload"),
     rest<{ payload: StorefrontSnapshot["categories"][number] }[]>("store_categories?select=payload&order=sort_order.asc"),
     rest<Row[]>("branches?select=*&order=sort_order.asc,name.asc"),
-    rest<StorefrontSnapshot["branchStock"]>("branch_stock?select=branch_id,product_id,stock"),
+    // Pre-order batches (14 Nov 2026): arriving units and their dates too; before that migration, the stock alone.
+    rest<StorefrontSnapshot["branchStock"]>("branch_stock?select=branch_id,product_id,stock,incoming,incoming_detail")
+      .catch(() => rest<StorefrontSnapshot["branchStock"]>("branch_stock?select=branch_id,product_id,stock")),
     rest<StorefrontSnapshot["branchPrices"]>("branch_prices?select=branch_id,product_id,price,listed,pending"),
     rest<{ key: string; value: StorefrontSnapshot["settings"][string] }[]>(
-      "settings?select=key,value&is_public=eq.true&key=in.(platform_features,storefront_display,festive_theme,site_details)",
+      "settings?select=key,value&is_public=eq.true&key=in.(platform_features,storefront_display,festive_theme,site_details,preorder)",
     ),
     rest<StorefrontSnapshot["adBanners"]>("ad_banners?select=*&order=sort_order.asc,created_at.asc"),
   ]);

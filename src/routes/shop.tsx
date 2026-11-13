@@ -184,9 +184,9 @@ function Shop() {
       list = list.filter((p) => Number.isFinite(Number(p.rating)) && Number(p.rating) >= minRating);
     }
 
-    // 6. In stock (available units > 0)
+    // 6. In stock (available units > 0), pre-order products included (they are labelled on their cards)
     if (inStock) {
-      list = list.filter((p) => Math.max(0, (Number(p.stock) || 0) - (Number(p.reserved) || 0)) > 0);
+      list = list.filter((p) => Math.max(0, (Number(p.stock) || 0) + (Number(p.incoming) || 0) - (Number(p.reserved) || 0)) > 0);
     }
 
     // 7. Offers only

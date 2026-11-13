@@ -13,6 +13,7 @@ import { showCartNotification } from "@/components/site/CartFloatingNotification
 import { useApp } from "@/lib/store";
 import { getAvailablePurchaseQuantity, getMaxPurchaseQuantity, type Product } from "@/lib/data";
 import { setCartPreview } from "@/lib/cart-preview";
+import { cartLineSplit, dayLabel, preorderText } from "@/lib/preorder";
 
 export function AddToCartPicker({
   product,
@@ -33,10 +34,14 @@ export function AddToCartPicker({
   const [typedQty, setTypedQty] = useState(String(Math.max(1, initialQty)));
   const [keypadEntryStarted, setKeypadEntryStarted] = useState(false);
   const inCart = cart.find((line) => line.id === product.id)?.qty ?? 0;
-  const availableStock = Math.max(
+  const readyStock = Math.max(
     0,
     Math.floor((Number(product.stock) || 0) - (Number(product.reserved) || 0)),
   );
+  // Pre-order units (14 Nov 2026) can be bought too, after the ready ones.
+  const arriving = Math.max(0, Number(product.incoming) || 0);
+  const availableStock = readyStock + arriving;
+  const split = cartLineSplit(qty, readyStock);
   const purchaseLimit = getAvailablePurchaseQuantity(product);
   const configuredMax = getMaxPurchaseQuantity(product);
   const bagWeight = Number.parseFloat(product.weight.replace(/[^\d.]/g, "")) || 0;
@@ -240,6 +245,11 @@ export function AddToCartPicker({
       <p className="mt-2 text-xs text-slate">
         {product.weight} per bag · {selectedWeight || qty} {unit} total
       </p>
+      {split.preorder > 0 && arriving > 0 && (
+        <p className="mt-1 text-xs font-semibold text-amber-800">
+          {split.ready > 0 ? preorderText.cartSplit(split.ready, split.preorder, dayLabel(product.incomingBy)) : preorderText.allArriving(split.preorder, dayLabel(product.incomingBy))}
+        </p>
+      )}
       <button
         type="button"
         disabled={

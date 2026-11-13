@@ -435,6 +435,20 @@ export function godownStockFromZohoItem(item: Record<string, unknown>, zohoLocat
   return Math.max(0, Math.round((available - Math.max(0, pendingQty)) * 100) / 100);
 }
 
+/**
+ * Zoho's available stock for an item at one location, as the pre-order hold step reads it (spec 2.2, 14 Nov 2026):
+ * location_available_stock, else location_stock_on_hand; no entry for the location = 0. Not floored (a negative
+ * number in Zoho stays negative, so the website never counts units Zoho does not have), 3 decimals.
+ */
+export function zohoAvailableAt(item: Record<string, unknown>, zohoLocationId: string) {
+  const locations = Array.isArray(item["locations"]) ? (item["locations"] as Record<string, unknown>[]) : [];
+  const location = locations.find((entry) => String(entry["location_id"] ?? "") === zohoLocationId);
+  if (!location) return 0;
+  const available = finite(location["location_available_stock"]) ?? finite(location["location_stock_on_hand"]) ?? 0;
+  const rounded = Math.sign(available) * Math.round(Math.abs(available) * 1000 + 1e-7) / 1000;
+  return rounded === 0 ? 0 : rounded;
+}
+
 export type GodownPriceRow = { product_id: string; price: number | string; listed: boolean; pending: boolean };
 
 /** Zoho's godown prices with website edits still waiting for Zoho applied on top (they win). */

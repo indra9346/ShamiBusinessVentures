@@ -178,7 +178,7 @@ export function handoverLines(lines: PaperScanLine[] | undefined, many: boolean)
 }
 
 // What stops a delivery outright, not just a record to check.
-const RED_GATES: DeliveryGateCode[] = ["cancelled", "refunded", "payment_expired", "stopped", "return_refunded", "unpaid", "partly_paid"];
+const RED_GATES: DeliveryGateCode[] = ["cancelled", "refunded", "payment_expired", "stopped", "return_refunded", "unpaid", "partly_paid", "not_arrived"];
 
 /** The paper's warnings (paperWarnings) with their Kannada. */
 function gateWarnings(gate: NonNullable<PaperScan["gate"]>): Bi[] {
@@ -194,6 +194,7 @@ function gateWarnings(gate: NonNullable<PaperScan["gate"]>): Bi[] {
     unpaid: "ಪೂರ್ಣ ಪಾವತಿಯಾಗಿಲ್ಲ. ತಲುಪಿಸಬೇಡಿ.",
     partly_paid: "ಪೂರ್ಣ ಪಾವತಿಯಾಗಿಲ್ಲ. ತಲುಪಿಸಬೇಡಿ.",
     zoho_unreadable: "ಪಾವತಿಯನ್ನು ಮತ್ತೆ ಪರಿಶೀಲಿಸಲು ಆಗಲಿಲ್ಲ. ತಲುಪಿಸುವ ಮೊದಲು ಕಚೇರಿಯನ್ನು ಕೇಳಿ.",
+    not_arrived: "ಸರಕು ಇನ್ನೂ ಬಂದಿಲ್ಲ (ಮುಂಗಡ ಆರ್ಡರ್). ಮುಖ್ಯ ಕಚೇರಿ ಅದರ ಬಿಲ್ ಸ್ವೀಕರಿಸುವವರೆಗೆ ಹಸ್ತಾಂತರಿಸಬೇಡಿ.",
   };
   const out: Bi[] = [];
   if (gate.zoho_void) out.push(bi("ORDER IS VOID IN ZOHO BOOKS. DO NOT DELIVER.", "Zoho Books ನಲ್ಲಿ ಆರ್ಡರ್ ರದ್ದಾಗಿದೆ (void). ತಲುಪಿಸಬೇಡಿ."));

@@ -12,6 +12,7 @@ import { PartnerInvoices } from "@/components/partners/PartnerInvoices";
 import { PartnerOrdersToConfirm } from "@/components/partners/PartnerOrdersToConfirm";
 import { MonthlyIncome } from "@/components/partners/MonthlyIncome";
 import { GodownTransfers } from "@/components/batches/GodownTransfers";
+import { ComingToGodown } from "@/components/batches/ComingToGodown";
 import { PartnerStockIndents } from "@/components/partners/StockIndents";
 import { ReleasedDeliveryNotes } from "@/components/panel/DeliveryNotePanel";
 import { supabase } from "@/integrations/supabase/client";
@@ -117,6 +118,7 @@ function PartnerDashboard() {
         <FavouritesBar panel="partner" />
         {error && <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
         <GodownTransfers />
+        <ComingToGodown branchId={me.branchId} />
         <div className="grid gap-4 lg:grid-cols-2">
           <Link to="/slip" className="flex items-center gap-3 self-start rounded-2xl border-2 border-navy bg-card p-4 shadow-sm hover:border-gold">
             <ScanLine className="h-8 w-8 shrink-0 text-navy" />

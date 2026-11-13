@@ -43,6 +43,10 @@ export type BillLine = {
   discountLabel: string;
   /** gross less the line discount: what GST is charged on. */
   taxable: number;
+  /** Zoho's account for the line (freight, hamali… on a vendor bill), for charge lines (14 Nov 2026). */
+  accountName: string;
+  /** A line with no Zoho item, or a non-stock item: freight, hamali and other charges, never a batch. */
+  chargeLine: boolean;
   gstPct: number;
   interState: boolean;
   cgst: number;
@@ -65,6 +69,10 @@ export type BillPlan = {
   locationName: string;
   status: string;
   modifiedAt: string;
+  /** When the bill was made in Zoho (created_time): a pre-order match explains its units only if after the watch opened. */
+  createdAt: string;
+  /** Purchase orders the bill was made from, when Zoho says (a pre-order batch made from one ranks first). */
+  poIds: string[];
   subTotal: number;
   taxTotal: number;
   total: number;
@@ -110,6 +118,8 @@ export function billLinePlan(line: Record<string, unknown>, interState: boolean)
     qty, rate, gross, discount,
     discountLabel: discount === 0 ? "" : isPercent ? rawDiscount : `₹${discount.toFixed(2)}`,
     taxable, gstPct, interState,
+    accountName: text(line["account_name"]),
+    chargeLine: !text(line["item_id"]) || Boolean(text(line["item_type"]) && text(line["item_type"]) !== "inventory"),
     cgst: interState ? 0 : half,
     sgst: interState ? 0 : paise(gst - half),
     igst: interState ? gst : 0,
@@ -149,10 +159,27 @@ export function billPlan(raw: Record<string, unknown>): BillPlan {
     locationName: text(raw["location_name"] ?? raw["branch_name"]),
     status,
     modifiedAt: text(raw["last_modified_time"]),
+    createdAt: text(raw["created_time"]),
+    poIds: billPurchaseOrderIds(raw),
     subTotal: paise(num(raw["sub_total"])),
     taxTotal: paise(num(raw["tax_total"])),
     total, billDiscount, adjustment, interState, lines, warnings,
   };
+}
+
+/** The purchase orders a bill names: purchaseorder_ids (strings or {purchaseorder_id}), else its lines' own (unverified fields). */
+export function billPurchaseOrderIds(raw: Record<string, unknown>) {
+  const ids = new Set<string>();
+  const list = Array.isArray(raw["purchaseorder_ids"]) ? raw["purchaseorder_ids"] as unknown[] : [];
+  for (const entry of list) {
+    const id = typeof entry === "object" && entry ? text((entry as Record<string, unknown>)["purchaseorder_id"]) : text(entry);
+    if (id) ids.add(id);
+  }
+  for (const line of Array.isArray(raw["line_items"]) ? raw["line_items"] as Record<string, unknown>[] : []) {
+    const id = text(line["purchaseorder_id"]);
+    if (id) ids.add(id);
+  }
+  return [...ids];
 }
 
 export const costOf = (line: Pick<BillLine, "unitExGst" | "unitIncGst">, basis: CostBasis) => (basis === "inc_gst" ? line.unitIncGst : line.unitExGst);
@@ -248,8 +275,12 @@ export function billLinesChange(
 }
 
 /** Why a batch cannot be deleted, or "" when it can. Mirrors admin_delete_batch in the database. */
-export function batchDeleteBlocker<A extends { reserved_quantity: number; released_quantity: number }>(batch: { quantity: number; remaining_quantity: number }, allocations: A[], adjustments: number,
-  orderOf?: (allocation: A) => { order_status: string; payment_status: string } | undefined, inTransfer = false) {
+export function batchDeleteBlocker<A extends { reserved_quantity: number; released_quantity: number }>(
+  batch: { quantity: number; remaining_quantity: number; stage?: string | undefined; batch_code?: string | undefined }, allocations: A[], adjustments: number,
+  orderOf?: (allocation: A) => { order_status: string; payment_status: string } | undefined, inTransfer = false, facts: { tagged?: boolean } = {}) {
+  // A pre-order batch is cancelled, not deleted (14 Nov 2026); one with expenses tagged keeps them for the profit.
+  if (batch.stage === "incoming") return `Cancel pre-order batch ${batch.batch_code ?? ""} instead`.replace("  ", " ");
+  if (facts.tagged) return `Expenses are tagged to batch ${batch.batch_code ?? ""}; remove them first`.replace("  ", " ");
   // Its units are at a godown in Zoho because of a transfer: deleting it would lose them here (10 Nov 2026).
   if (inTransfer) return "This batch is part of a transfer between godowns, so it is kept for the record.";
   const held = allocations.reduce((sum, a) => sum + Math.max(0, a.reserved_quantity - a.released_quantity), 0);

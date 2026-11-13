@@ -112,6 +112,20 @@ server in `src/lib/zoho-commerce.functions.ts` (`runBatchTransfer`, `sendBatchTo
 `retryBatchTransfer`, `cancelBatchTransfer`, `createBatchesFromBill`, `reconcileTransfersOnTheWay` in the stock sync). Tests: `tests/batch-transfers.test.ts` (in `test:zoho`) and
 `tests/db/batch-transfers.db-test.mjs` (PGlite).
 
+
+## Pre-order batches (14 Nov 2026)
+
+Goods ordered from a supplier can be sold before they reach the godown, under a **pre-order batch** (Admin › Batches ›
+New pre-order; switch on in Admin › Settings › Pre-orders). Customers order ready bags first, then arriving ones; the
+order waits (no packing, no delivery note, a draft Zoho sales order) until the bill is matched.
+
+**Matching a bill to a pre-order:** type the bill in Zoho as usual; the website holds Zoho's rise so nothing is counted
+twice and shows **Match now**. In Receive purchase each bill line is set to "Match to pre-order …" (or "New batch" with a
+reason); tick that every bag is at the godown and save. The batch takes the bill's cost and the waiting orders go on to
+Zoho. Details, formulas and the worked example: `docs/preorder-batches.md`.
+
+**Batch expenses and P&L:** expenses from Zoho Books tagged to batches (landed cost) come with the next build.
+
 ## Database
 
 Migration `supabase/migrations/20261031190000_batch_tracking.sql` (applied 31 Oct 2026): batch

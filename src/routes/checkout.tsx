@@ -21,6 +21,8 @@ import { WaitingCheckouts } from "@/components/site/WaitingCheckouts";
 import { AWAITING_PAYMENT, PAYMENT_EXPIRED } from "@/lib/payment-hold";
 import { NotInYourArea } from "@/components/site/NotInYourArea";
 import { isOutsideServiceArea } from "@/lib/godown-rules";
+import { PreorderSplit, preorderPart } from "@/components/site/PreorderSplit";
+import { dayLabel, preorderText } from "@/lib/preorder";
 import { useBankDetails, useUpiPayments } from "@/lib/upi-store";
 import { isBankMethod, lapsedTransfer, methodLabel, methodsForOrders, pickMethod, UPI_BELOW, type PayMethod } from "@/lib/payment-rules";
 import { parsePayParam, payPanelId, payParam, restorablePlaced } from "@/lib/upi-return";
@@ -187,6 +189,9 @@ function Checkout() {
   }, [user?.id]);
   const [placedId, setPlacedId] = useState<string | null>(null);
   const [placedOrders, setPlacedOrders] = useState<{ id: string; amount: number; holdUntil: string | null; method: PayMethod }[]>([]);
+  // Pre-order units in this checkout (14 Nov 2026): the customer's tick, and what the placed orders took.
+  const [preorderTick, setPreorderTick] = useState(false);
+  const [placedPreorder, setPlacedPreorder] = useState<{ godown: string; by: string } | null>(null);
   // Every held checkout from this visit has been paid and is now an order.
   const allPaid = placedOrders.length > 0 && placedOrders.every((placed) => orders.some((order) => order.id === placed.id));
   // Every held checkout from this visit ended without being paid.
@@ -290,7 +295,7 @@ function Checkout() {
   // Pickup or home delivery, as the customer's godown offers (same rules as the database):
   // pickup is free; delivery uses the godown's charge, free above its threshold.
   const { homeDelivery } = usePickupSettings();
-  const { branches, features } = useBranches();
+  const { branches, features, preorder: preorderSettings } = useBranches();
   const selectedAddress = addresses.find((a) => a.id === addr);
   const addressPin = selectedAddress?.pin ?? "";
   // Only the PIN codes our godowns serve can order (the database refuses the rest too).
@@ -392,7 +397,7 @@ function Checkout() {
     ? []
     : lineProblems(wantedLines.map((line) => {
       const product = products.find((item) => item.id === line.id);
-      return { id: line.id, qty: line.qty, name: product?.name ?? productNameOf(line.id), available: product ? getAvailablePurchaseQuantity(product) : null };
+      return { id: line.id, qty: line.qty, name: product?.name ?? productNameOf(line.id), available: product ? getAvailablePurchaseQuantity(product) : null, arriving: product?.incoming ?? 0 };
     }));
   useEffect(() => {
     if (placedId || !addressPin) return;
@@ -488,6 +493,14 @@ function Checkout() {
       return;
     }
     if (step === 3) {
+      // Some units arrive later: the customer ticks that the whole order is collected once they arrive (spec 17.1).
+      const later = preorderPart(checkoutItems);
+      if (later.qty > 0 && preorderSettings.requireAck && !preorderTick) {
+        const first = checkoutItems.find((line) => preorderPart([line]).qty > 0);
+        toast.error(preorderText.needsTick(first?.product.name ?? "An item", dayLabel(later.by, { full: true })));
+        document.getElementById("preorder-tick")?.scrollIntoView({ behavior: "smooth", block: "center" });
+        return;
+      }
       if (!payMethod) {
         toast.error("Online payment is being set up", { description: "Please call or WhatsApp us to order now." });
         return;
@@ -511,6 +524,7 @@ function Checkout() {
             payment: "Pending",
             payFirst: true,
             business: isBusiness ? { isB2b: true, gstin: normaliseGstin(bizGstin), legalName: bizName.trim() } : { isB2b: false },
+            acceptPreorder: preorderTick || !preorderSettings.requireAck,
             ...(selectedAddress ? { shippingAddress: selectedAddress } : {}),
             ...(appliedCoupon && orderGroups.length === 1 ? { coupon: appliedCoupon.code } : {}),
             subtotal,
@@ -546,6 +560,9 @@ function Checkout() {
       if (selectedAddress) setHeldAddress({ address: selectedAddress, godown: godownLabel });
       setPlacedId(placed.map((order) => order.id).join(", "));
       setPlacedOrders(placed.map((order) => ({ id: order.id, amount: order.amount, holdUntil: order.holdUntil ?? null, method: payMethod })));
+      // What the database took for later (its own numbers, not the screen's).
+      const laterLines = placed.flatMap((order) => order.preorderLines ?? []);
+      setPlacedPreorder(laterLines.length ? { godown: preorderPart(placedLines).godown || godownLabel, by: laterLines.map((line) => line.by ?? "").sort().at(-1) ?? "" } : null);
       // Kept in the address, so coming back from the UPI app to a reloaded page lands on this pay step again.
       restoredPay.current = true;
       void navigate({ to: "/checkout", search: (prev) => ({ ...prev, pay: payParam(placed.map((order) => order.id)) }), replace: true });
@@ -1117,6 +1134,7 @@ function Checkout() {
                         <p className="text-xs text-slate">
                           Qty {qty}
                         </p>
+                        <PreorderSplit product={product} qty={qty} />
                       </div>
                       <p className="font-semibold text-navy">{inr(product.price * qty)}</p>
                     </div>
@@ -1134,6 +1152,23 @@ function Checkout() {
                   {isBusiness && <div className="font-semibold text-amber-900">{GST_BILL_PAY_NOTE}</div>}
                   {appliedCoupon && <div>Coupon: {appliedCoupon.code}</div>}
                 </dl>
+                {(() => {
+                  const later = preorderPart(checkoutItems);
+                  if (later.qty <= 0) return null;
+                  const by = dayLabel(later.by);
+                  return (
+                    <div id="preorder-tick" className="mt-5 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
+                      <p className="font-semibold">{preorderText.someArrive(later.qty, by)}</p>
+                      <p className="mt-1 text-xs">{preorderText.explanation(later.godown || godownLabel)}</p>
+                      {preorderSettings.requireAck && (
+                        <label className="mt-2 flex items-start gap-2 text-xs font-semibold">
+                          <input type="checkbox" className="mt-0.5 h-4 w-4 shrink-0 accent-amber-700" checked={preorderTick} onChange={(e) => setPreorderTick(e.target.checked)} />
+                          <span className="min-w-0 break-words">{preorderText.ack(later.qty, later.godown || godownLabel, by)}</span>
+                        </label>
+                      )}
+                    </div>
+                  );
+                })()}
               </>
             )}
 
@@ -1151,6 +1186,11 @@ function Checkout() {
                         ? `Total ${inrPrecise(summary.total)}. Prices and stock are held for you: transfer the money and enter the UTR within the time shown. The order is placed once we check it. `
                         : `Total ${inrPrecise(summary.total)}. Prices and stock are held for you while you pay; the order is placed as soon as we confirm the payment in our bank. `}
                     {fulfil === "Pickup" ? "We will let you know when it is ready to collect." : "Delivery in 2–4 business days after payment."}
+                  </p>
+                )}
+                {placedPreorder && !allEnded && (
+                  <p className="mx-auto mt-3 max-w-2xl rounded-md border border-amber-300 bg-amber-50 p-3 text-left text-sm text-amber-950">
+                    {preorderText.orderPart(placedPreorder.godown, dayLabel(placedPreorder.by))}
                   </p>
                 )}
                 {heldAddress && !allEnded && (

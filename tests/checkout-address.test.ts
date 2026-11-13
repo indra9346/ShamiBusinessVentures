@@ -175,3 +175,12 @@ test("every message reads in Kannada, with its values in place", () => {
   assert.ok(translateText("Your total changed from ₹1,050 to ₹1,155", "kn").includes("₹1,155"));
   assert.ok(translateText("Zzyx: only 2 available at the Hubli godown, you have 5", "kn").includes("Zzyx"));
 });
+
+test("pre-order units count as available, and a short line says how many are ready and how many arrive", () => {
+  const problems = lineProblems([
+    { id: "S1", name: "Sugar S1", qty: 60, available: 50, arriving: 40 },
+    { id: "S2", name: "Sugar S2", qty: 30, available: 50, arriving: 40 },
+  ]);
+  assert.deepEqual(problems.map((p) => p.id), ["S1"], "ready + arriving is what can be ordered");
+  assert.equal(lineProblemText(problems[0]!, "Challakere"), "Sugar S1: only 50 can be ordered at the Challakere godown (10 ready, 40 on pre-order), you have 60");
+});

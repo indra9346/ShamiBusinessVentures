@@ -243,6 +243,28 @@ export type BatchRecord = {
   transfer_id?: number | null;
   /** Units this batch sent to other godowns (on the way or arrived), kept on the batch row itself. */
   sent_quantity?: number | null;
+  /**
+   * Pre-order batches (14 Nov 2026, src/lib/preorder.ts): stage 'incoming' = waiting for its bill (a lot), 'received' =
+   * any bill batch (a matched lot too), 'cancelled' = a lot called off. expected_quantity is set on every batch that was
+   * a pre-order; its first cost was the estimate (est_unit_cost_ex_gst).
+   */
+  stage?: string;
+  expected_quantity?: number | null;
+  expected_date?: string | null;
+  hold_back?: number;
+  selling_paused?: boolean;
+  paused_reason?: string;
+  est_unit_cost_ex_gst?: number | null;
+  est_unit_cost_inc_gst?: number | null;
+  zoho_po_id?: string;
+  zoho_po_number?: string;
+  zoho_po_line_id?: string;
+  split_from_batch_id?: string | null;
+  matched_at?: string | null;
+  matched_by_name?: string;
+  closed_at?: string | null;
+  closed_note?: string;
+  not_preorder_note?: string;
 };
 
 /** A transfer between godowns, as far as the report needs it (public.batch_transfers). */
