@@ -51,6 +51,19 @@ export function orderTimestamp(order: { createdAt?: string; date: string }): Dat
   return parseDate(order.createdAt || order.date);
 }
 
+/**
+ * Newest First / Oldest First by when the order was placed (13 Nov 2026: Admin and My Orders sorted by the order number
+ * as text, so ORD-28698 of 17 Oct came before ORD-26102615297 of 26 Oct). Orders without a readable time go last
+ * either way; the same time falls back to the order number.
+ */
+export function compareOrdersByDate(a: { id: string; createdAt?: string; date: string }, b: { id: string; createdAt?: string; date: string }, newestFirst = true) {
+  const at = orderTimestamp(a).getTime(), bt = orderTimestamp(b).getTime();
+  const aOk = Number.isFinite(at), bOk = Number.isFinite(bt);
+  if (aOk !== bOk) return aOk ? -1 : 1;
+  if (aOk && bOk && at !== bt) return newestFirst ? bt - at : at - bt;
+  return newestFirst ? b.id.localeCompare(a.id) : a.id.localeCompare(b.id);
+}
+
 /** Was the order placed in the range (ISO times, both ends included)? No range: every order. */
 export function inOrderRange(order: { createdAt?: string; date: string }, from?: string, to?: string) {
   if (!from || !to) return true;

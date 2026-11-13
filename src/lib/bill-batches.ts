@@ -207,7 +207,8 @@ export function billLinesChange(
     const line = lines.get(batch.lineId);
     if (!line) return `Bill line of batch ${batch.batchCode} was removed in Zoho`;
     if (batch.itemId && line.itemId && line.itemId !== batch.itemId) return `Bill line of batch ${batch.batchCode} now has another item in Zoho`;
-    if (Math.abs(line.qty - batch.quantity) > 0.0005) return `Bill quantity for batch ${batch.batchCode} changed in Zoho (${batch.quantity} → ${line.qty})`;
+    // The batch keeps its quantity to 2 decimals (numeric(14,2)); Zoho's line may have 3.
+    if (Math.abs(Math.round(line.qty * 100) / 100 - batch.quantity) > 0.0005) return `Bill quantity for batch ${batch.batchCode} changed in Zoho (${batch.quantity} → ${line.qty})`;
     if (batch.unitExGst !== null && Math.abs(line.unitExGst - batch.unitExGst) > 0.004)
       return `Bill cost for batch ${batch.batchCode} changed in Zoho (₹${batch.unitExGst.toFixed(2)} → ₹${line.unitExGst.toFixed(2)} before GST)`;
   }

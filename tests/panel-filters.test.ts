@@ -225,3 +225,23 @@ test("a new admin sign-in replaces the idle clock left by an earlier session", (
 
 // Kept in its own file; run from here so package.json, which every open PR edits, stays out of this change.
 import "./customer-data.test.ts";
+
+test("13 Nov: Newest First sorts orders by when they were placed, not by the order number as text", async () => {
+  const { compareOrdersByDate } = await import("../src/lib/panel-filters.ts");
+  // The owner's screenshot: by number as text these came 17, 16, 20, 17, 26, 17 Oct.
+  const orders = [
+    { id: "ORD-28698", createdAt: "2026-10-17T10:00:00Z", date: "17 Oct 2026" },
+    { id: "ORD-27818", createdAt: "2026-10-16T09:00:00Z", date: "16 Oct 2026" },
+    { id: "ORD-27757", createdAt: "2026-10-20T08:00:00Z", date: "20 Oct 2026" },
+    { id: "ORD-26889", createdAt: "2026-10-17T07:00:00Z", date: "17 Oct 2026" },
+    { id: "ORD-26102615297", createdAt: "2026-10-26T06:00:00Z", date: "26 Oct 2026" },
+    { id: "CLK-577522-131126-164242", createdAt: "2026-11-13T11:12:42Z", date: "13 Nov 2026" },
+    { id: "OLD-NO-TIME", date: "" },
+  ];
+  assert.deepEqual([...orders].sort((a, b) => compareOrdersByDate(a, b, true)).map((o) => o.id),
+    ["CLK-577522-131126-164242", "ORD-26102615297", "ORD-27757", "ORD-28698", "ORD-26889", "ORD-27818", "OLD-NO-TIME"]);
+  assert.deepEqual([...orders].sort((a, b) => compareOrdersByDate(a, b, false)).map((o) => o.id),
+    ["ORD-27818", "ORD-26889", "ORD-28698", "ORD-27757", "ORD-26102615297", "CLK-577522-131126-164242", "OLD-NO-TIME"]);
+  // Only the shown date (older rows): still by day.
+  assert.ok(compareOrdersByDate({ id: "A", date: "17 Oct 2026" }, { id: "B", date: "26 Oct 2026" }) > 0);
+});

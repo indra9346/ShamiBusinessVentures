@@ -175,7 +175,7 @@ function AdminBatches() {
       </nav>
 
       {error && <p className="mb-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</p>}
-      {data && <ZohoFreshness checkedAt={data.zohoCheckedAt} generatedAt={data.generatedAt} />}
+      {data && <ZohoFreshness stock={data.zohoStock} generatedAt={data.generatedAt} />}
       {!report && !error && <p className="py-10 text-center text-sm text-slate">Loading batches…</p>}
       {data && data.transfers.some((t) => t.status === "pending") && (
         <Panel title="Transfers waiting for Zoho" className="mb-4 border-amber-300">
@@ -378,13 +378,14 @@ const ZOHO_CHECK_LATE_MINUTES = 90;
  * When Zoho's stock was last read by the scheduled check. Stock received in Zoho (a purchase receive) reaches the
  * godown's stock here only through it; 13 Nov 2026 it had stopped for two days and nobody could see that.
  */
-function ZohoFreshness({ checkedAt, generatedAt }: { checkedAt: string | null; generatedAt: string }) {
+function ZohoFreshness({ stock, generatedAt }: { stock: BatchData["zohoStock"]; generatedAt: string }) {
+  const checkedAt = stock.at;
   const minutes = checkedAt ? Math.round((Date.parse(generatedAt) - Date.parse(checkedAt)) / 60_000) : null;
-  const late = minutes === null || minutes > ZOHO_CHECK_LATE_MINUTES;
-  if (!late) {
+  const late = minutes === null || minutes > ZOHO_CHECK_LATE_MINUTES || !stock.read;
+  if (!late && stock.failed === 0) {
     return (
       <p className="mb-3 flex items-center gap-1.5 text-xs text-slate">
-        <RefreshCw className="h-3.5 w-3.5" />Zoho stock last read {when(checkedAt!)} (every hour). Page updates by itself.
+        <RefreshCw className="h-3.5 w-3.5" />Zoho stock last read {when(checkedAt!)}{stock.items ? ` (${stock.items} items)` : ""}, every hour. Page updates by itself.
       </p>
     );
   }
@@ -392,9 +393,15 @@ function ZohoFreshness({ checkedAt, generatedAt }: { checkedAt: string | null; g
     <p className="mb-4 flex gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
       <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
       <span>
-        {checkedAt ? `Zoho's stock has not been read since ${when(checkedAt)}.` : "Zoho's stock has not been read yet."}{" "}
-        Stock received or changed in Zoho is not on the website until the hourly Zoho check runs again, so godown stock here may be out of date.
-        Do not type the stock in by hand to make up for it.
+        {late
+          ? <>
+              {checkedAt
+                ? stock.read ? `Zoho's stock has not been read since ${when(checkedAt)}.` : `The Zoho check at ${when(checkedAt)} did not read any stock.`
+                : "Zoho's stock has not been read yet."}{" "}
+              Stock received or changed in Zoho is not on the website until the hourly Zoho check runs again, so godown stock here may be out of date.
+              Do not type the stock in by hand to make up for it.
+            </>
+          : <>Zoho stock last read {when(checkedAt!)}, but {stock.failed} {stock.failed === 1 ? "item" : "items"} could not be read{stock.error ? `: ${stock.error}` : ""}. Their godown stock here may be out of date.</>}
       </span>
     </p>
   );
@@ -409,7 +416,7 @@ function StockCheck({ report, data, godownId, onProduct }: { report: BatchReport
   const checks = godownStockChecks(report.rows.filter((row) => !godownId || row.batch.branch_id === godownId), (productId, branchId) => stock.get(productId)?.[branchId] ?? 0);
   const off = checks.filter((check) => check.difference !== 0);
   return (
-    <Panel id="stock-check" title={off.length ? `Stock check: ${off.length} of ${checks.length} products differ` : `Stock check: all ${checks.length} products agree`}
+    <Panel id="stock-check" title={off.length ? `Stock check: ${off.length} of ${checks.length} products differ` : checks.length ? `Stock check: all ${checks.length} products agree` : "Stock check"}
       className={off.length ? "border-amber-300" : ""}>
       {checks.length === 0 ? (
         <p className="text-sm text-slate">No batches yet.</p>
@@ -924,7 +931,7 @@ function demoData(): BatchData {
     created_at: `${date}T05:00:00Z`, vendor: null, vendor_id: null, warehouse: null, updated_at: now, received_by: null, zoho_item_id: "",
   });
   return {
-    generatedAt: now, zohoStockMaster: true, zohoCheckedAt: now, godowns, transfers: [],
+    generatedAt: now, zohoStockMaster: true, zohoStock: { at: now, read: true, items: 18, failed: 0, error: "" }, godowns, transfers: [],
     products: [{ id: "P023", name: "Groundnut Oil 5L Can", sku: "SBV-OI-1022", unit: "", purchasePrice: 820, zohoLinked: true, zohoTracksBatches: true, stock: { "BR-CLK": 30 } }],
     batches: [
       batch("b1", "CLK-201026-01", "BR-CLK", "P023", "Groundnut Oil 5L Can", 50, 0, 800, "2026-10-20", "2026-10-29T08:00:00Z"),

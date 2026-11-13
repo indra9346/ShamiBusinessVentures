@@ -45,7 +45,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { matchesOrderStatus, OPEN_ORDERS, orderStatusFilter } from "@/lib/panel-filters";
+import { compareOrdersByDate, matchesOrderStatus, OPEN_ORDERS, orderStatusFilter } from "@/lib/panel-filters";
 
 export const Route = createFileRoute("/account/orders")({
   validateSearch: (search: Record<string, unknown>) => ({
@@ -130,8 +130,8 @@ function AccountOrders() {
       return matchesQ && matchesStatus;
     });
     list = [...list].sort((a, b) => {
-      if (sort === "date-desc") return b.id.localeCompare(a.id);
-      if (sort === "date-asc") return a.id.localeCompare(b.id);
+      if (sort === "date-desc") return compareOrdersByDate(a, b, true);
+      if (sort === "date-asc") return compareOrdersByDate(a, b, false);
       if (sort === "amount-desc") return b.amount - a.amount;
       return a.amount - b.amount;
     });

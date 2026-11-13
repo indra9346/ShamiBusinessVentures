@@ -4979,6 +4979,7 @@ async function processZohoSyncOutboxRun(
     .catch((cause: unknown) => ({ godowns: 0, prices: 0, sentToZoho: 0, failed: 1, errors: [cause instanceof Error ? cause.message : String(cause)] }));
   const godownStock = await withZohoPurpose("Hourly check: godown stock", () => syncZohoGodownStock(db, region, connection.organization_id, token))
     .catch((cause: unknown) => ({ enabled: true, items: 0, pulled: 0, sentToZoho: 0, failed: 1, errors: [cause instanceof Error ? cause.message : String(cause)] }));
+  await recordGodownStockCheck(db, godownStock);
   // Rice sample purchase orders cancelled or removed in Zoho, so a sample comes back even if nobody has the page open.
   const ricePurchaseOrders = await import("@/lib/rice-samples.functions").then((desk) => desk.syncRiceSamplePos())
     .catch((cause: unknown) => ({ failed: 1, errors: [cause instanceof Error ? cause.message : String(cause)] }));
@@ -6539,8 +6540,35 @@ export const syncZohoGodownsNow = createServerFn({ method: "POST" })
     const { region, organizationId, token } = await zohoOrderContext(db);
     const prices = await syncZohoGodownPrices(db, region, organizationId, token);
     const stock = await syncZohoGodownStock(db, region, organizationId, token);
+    await recordGodownStockCheck(db, stock);
     return { prices, stock };
   });
+
+/** Settings key: when Zoho's godown stock was last read, and how it went (Admin > Batches shows it; 13 Nov 2026). */
+const GODOWN_STOCK_CHECK_SETTING = "zoho_godown_stock_check";
+
+/**
+ * Remembers a godown stock run: when, how many Zoho items were read, how many failed and the first error. A run that
+ * did not read stock (Zoho not the stock master, transfers unreadable) is kept as such, so the page never says
+ * "fresh" for it. Never throws: the run's own result matters more than this note.
+ */
+async function recordGodownStockCheck(
+  db: Awaited<ReturnType<typeof dbAdmin>>,
+  result: { enabled: boolean; items: number; pulled: number; sentToZoho: number; failed: number; errors: string[] },
+) {
+  try {
+    await db.from("settings").upsert({
+      key: GODOWN_STOCK_CHECK_SETTING,
+      value: {
+        at: new Date().toISOString(), enabled: result.enabled, items: result.items, pulled: result.pulled,
+        sentToZoho: result.sentToZoho, failed: result.failed, error: (result.errors[0] ?? "").slice(0, 300),
+      } as Json,
+      is_public: false, updated_at: new Date().toISOString(),
+    });
+  } catch (cause) {
+    console.warn(zohoLogLine("godown_stock_check_note_failed", { message: cause instanceof Error ? cause.message.slice(0, 200) : String(cause) }));
+  }
+}
 
 // ---------------------------------------------------------------- batches (rules in src/lib/batches.ts)
 // Zoho refuses packages and adjustments of an item with "Track batches" ticked unless they name
@@ -6712,6 +6740,9 @@ const BILL_CHECK_SETTING = "batch_bill_check";
 const BILL_CHECK_MINUTES = 30;
 /** Bills Zoho no longer lists are looked up one by one: at most this many per check. */
 const BILL_CHECK_LOOKUPS = 10;
+/** Bills whose edit time moved are read in full to compare their batch lines: at most this many per check, apart from the
+ * lookups above, so a bill that keeps its "changed" flag can't use them all up (13 Nov 2026). */
+const BILL_LINE_LOOKUPS = 5;
 
 function billsPermissionHint(message: string) {
   return /scope|not authorized|unauthori[sz]ed|permission|57\b/i.test(message)
@@ -7455,6 +7486,7 @@ export const checkBatchBills = createServerFn({ method: "POST" })
     const seen = new Map(list.map(billSummary).map((bill) => [bill.billId, bill]));
     const flags: { bill_id: string; flag: string; modified?: string }[] = [];
     let lookups = 0;
+    let lineLookups = 0;
     const readBill = async (billId: string) =>
       (await inventoryRequest<{ bill?: Record<string, unknown> }>(region, organizationId, token, `bills/${encodeURIComponent(billId)}`, "GET")).bill;
     for (const [billId, was] of stored) {
@@ -7479,8 +7511,8 @@ export const checkBatchBills = createServerFn({ method: "POST" })
         // Only Zoho's edit time moved: a purchase receive, a payment or a note does that too (13 Nov 2026: the receive
         // of "YET TO COME" flagged CLK-131126-02). Flag only when a batch's own bill line changed.
         if (!full) {
-          if (lookups >= BILL_CHECK_LOOKUPS) continue;
-          lookups += 1;
+          if (lineLookups >= BILL_LINE_LOOKUPS) continue;
+          lineLookups += 1;
           try {
             full = await readBill(billId);
           } catch {

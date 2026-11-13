@@ -10,7 +10,8 @@
 //   1. the public address (SITE_URL), as before;
 //   2. this server's own web server (127.0.0.1, then ::1) under the site's name, so the certificate is still checked;
 //   3. the app's own socket from LiteSpeed (/usr/local/lsws/extapp-sock/<domain>:_.sock).
-// A route is left for the next one only when nothing was sent on it (or the answer was not the website's), so the
+// A route is left for the next one only when the website cannot have run the sync on it: no connection, a quick page
+// that is not the website's, or a connection dropped within 5 s with no reply. Anything slower stops the job, so the
 // sync never runs twice. Each route that fails prints one line with its reason, so the cron output shows what happened.
 import http from "node:http";
 import https from "node:https";
@@ -60,11 +61,13 @@ function describe(cause) {
 
 /**
  * One try. { sent: false, reason } = it never connected, so nothing reached the website and the next route is safe.
- * { sent: true, status, type, body } = the answer; { sent: true, reason } = it failed after the request went out.
+ * { sent: true, status, type, body } = the answer; { sent: true, reason, answered } = it failed after the request
+ * went out (answered: whether any reply had started).
  */
 function attempt(route) {
   return new Promise((resolve) => {
     let connected = false;
+    let answered = false;
     let settled = false;
     let connectTimer;
     let totalTimer;
@@ -82,11 +85,12 @@ function attempt(route) {
       agent: false,
       headers: { Authorization: `Bearer ${secret}`, Host: site.host, "User-Agent": "grainbazar-zoho-cron" },
     }, (response) => {
+      answered = true;
       let body = "";
       response.setEncoding("utf8");
       response.on("data", (chunk) => { if (body.length < 20_000) body += chunk; });
       response.on("end", () => done({ sent: true, status: response.statusCode ?? 0, type: String(response.headers["content-type"] ?? ""), body }));
-      response.on("error", (cause) => done({ sent: true, reason: describe(cause) }));
+      response.on("error", (cause) => done({ sent: true, answered: true, reason: describe(cause) }));
     });
     connectTimer = setTimeout(() => {
       if (connected) return;
@@ -95,12 +99,12 @@ function attempt(route) {
     }, CONNECT_MS);
     totalTimer = setTimeout(() => {
       request.destroy();
-      done({ sent: connected, reason: `no answer in ${TOTAL_MS / 1000} s` });
+      done({ sent: connected, answered, reason: `no answer in ${TOTAL_MS / 1000} s` });
     }, TOTAL_MS);
     request.on("socket", (socket) => {
       socket.once(web === https && !route.options.socketPath ? "secureConnect" : "connect", () => { connected = true; });
     });
-    request.on("error", (cause) => done({ sent: connected, reason: describe(cause) }));
+    request.on("error", (cause) => done({ sent: connected, answered, reason: describe(cause) }));
     request.end();
   });
 }
@@ -110,6 +114,11 @@ const fromTheWebsite = (result) => result.type.includes("application/json");
 
 /** A page that is not the website's but came slowly (a proxy timeout) may sit in front of a sync that did run. */
 const QUICK_MS = 20_000;
+/**
+ * A connection the server dropped this quickly, before any reply, was refused in front of the website (the web
+ * server or its bot check): the website answers only when the sync is done, which takes longer than this.
+ */
+const DROPPED_MS = 5_000;
 
 let tried = 0;
 for (const route of routes) {
@@ -121,8 +130,14 @@ for (const route of routes) {
     continue;
   }
   if (result.reason) {
-    // The request went out: another route could run the sync a second time, so stop here.
-    console.error(`${now()} ${route.name}: Zoho sync request failed after it was sent (${result.reason})`);
+    const seconds = Math.round((Date.now() - started) / 100) / 10;
+    if (!result.answered && Date.now() - started < DROPPED_MS) {
+      // Dropped at once with no reply: refused before the website, so the sync did not run there.
+      console.error(`${now()} ${route.name}: dropped after ${seconds} s with no reply (${result.reason})`);
+      continue;
+    }
+    // The request went out and may have reached the website: another route could run the sync twice, so stop here.
+    console.error(`${now()} ${route.name}: Zoho sync request failed after it was sent (${result.reason}, ${seconds} s)`);
     process.exit(1);
   }
   if (!fromTheWebsite(result)) {
