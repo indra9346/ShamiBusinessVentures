@@ -74,13 +74,8 @@ REVOKE ALL ON SEQUENCE public.stock_indent_events_id_seq FROM PUBLIC, anon, auth
 GRANT SELECT ON public.stock_indents, public.stock_indent_lines, public.stock_indent_events TO authenticated;
 GRANT ALL ON public.stock_indents, public.stock_indent_lines, public.stock_indent_events TO service_role;
 
--- The godown the signed-in user runs as its active channel partner (null for anyone else). Used by the read rules.
-CREATE OR REPLACE FUNCTION public.current_partner_branch()
-RETURNS text LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public' AS $$
-  SELECT branch_id FROM public.channel_partners WHERE user_id = auth.uid() AND status = 'active' LIMIT 1
-$$;
-REVOKE ALL ON FUNCTION public.current_partner_branch() FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.current_partner_branch() TO authenticated;
+-- public.current_partner_branch() (20261031120000, unchanged here): the godown the signed-in user runs as its active
+-- channel partner, null for anyone else.
 
 DROP POLICY IF EXISTS stock_indents_read ON public.stock_indents;
 CREATE POLICY stock_indents_read ON public.stock_indents FOR SELECT TO authenticated
