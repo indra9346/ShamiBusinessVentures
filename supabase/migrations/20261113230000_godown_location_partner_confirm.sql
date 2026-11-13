@@ -27,8 +27,11 @@
 --    "Confirmed by channel partner" line (or a vendor's shipment line) could be made up. That right is withdrawn, and a
 --    partner's confirm also keeps the channel partner's id (order_tracking.partner_id), which is what
 --    partner_orders_to_confirm reads.
--- guard_order_mutation and sync_order_vendor_fulfillments are the live definitions (read 13 Nov 2026) with only the
--- app.partner_confirm lines added.
+-- guard_order_mutation is the live definition (read 13 Nov 2026, checked again before release) with only the
+-- app.partner_confirm lines added. sync_order_vendor_fulfillments is NOT changed here: 20261113200000_payment_stale_states
+-- (applied first) makes it copy the order status forward for any role, never back, so a partner's confirm (Placed or
+-- Payment Confirmed -> Accepted) moves the seller rows exactly as an admin's confirm does. An earlier draft replaced it
+-- with the definition from before that migration, which would have undone it.
 
 ALTER TABLE public.branches DROP CONSTRAINT IF EXISTS branches_map_url_https;
 ALTER TABLE public.branches ADD CONSTRAINT branches_map_url_https
@@ -188,37 +191,7 @@ BEGIN
 END
 $function$;
 
-CREATE OR REPLACE FUNCTION public.sync_order_vendor_fulfillments()
- RETURNS trigger
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-DECLARE syncing_setting text;
-BEGIN
-  IF NEW.order_status IS NOT DISTINCT FROM OLD.order_status THEN RETURN NEW; END IF;
-  -- An unpaid checkout has no fulfilment to move. In an admin's session this copy broke the status CHECK.
-  IF NEW.order_status IN ('Awaiting Payment', 'Payment Expired') THEN RETURN NEW; END IF;
-  syncing_setting := COALESCE(current_setting('app.syncing_vendor_fulfillments', true), 'off');
-  IF NEW.order_status = 'Cancelled' THEN
-    PERFORM set_config('app.syncing_vendor_fulfillments', 'on', true);
-    UPDATE public.order_vendor_fulfillments SET status = 'Cancelled', updated_at = now()
-      WHERE order_id = NEW.id AND status <> 'Cancelled';
-  -- Changed 13 Nov 2026: a channel partner's confirm (partner_confirm_order, flag app.partner_confirm) moves the
-  -- fulfilments with the order, exactly as an admin's status change does.
-  ELSIF public.has_role(auth.uid(), 'admin') OR current_setting('app.partner_confirm', true) = 'on' THEN
-    PERFORM set_config('app.syncing_vendor_fulfillments', 'on', true);
-    UPDATE public.order_vendor_fulfillments SET status = NEW.order_status, updated_at = now()
-      WHERE order_id = NEW.id AND status IS DISTINCT FROM NEW.order_status;
-  ELSIF OLD.order_status IN ('Placed', 'Awaiting Payment') AND NEW.order_status = 'Payment Confirmed' THEN
-    PERFORM set_config('app.syncing_vendor_fulfillments', 'on', true);
-    UPDATE public.order_vendor_fulfillments SET status = 'Payment Confirmed', updated_at = now()
-      WHERE order_id = NEW.id AND status IN ('Placed', 'Awaiting Payment');
-  END IF;
-  PERFORM set_config('app.syncing_vendor_fulfillments', COALESCE(syncing_setting, 'off'), true);
-  RETURN NEW;
-END;
-$function$;
+-- sync_order_vendor_fulfillments: see the header (left as 20261113200000_payment_stale_states made it).
 
 /**
  * The channel partner confirms an order of their own godown (13 Nov 2026). Returns {order_no, status, confirmed, already}:
