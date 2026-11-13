@@ -190,6 +190,9 @@ export function billChange(stored: { modifiedAt: string; total: number }, now: {
   return "";
 }
 
+/** A flag billLinesChange gave: one of the batches' own bill lines changed in Zoho. */
+export const isBillLineFlag = (flag: string) => /^Bill (line|quantity|cost) (of|for) batch /.test(flag);
+
 /** billChange's answer when only Zoho's edit time moved: the server then compares the batch lines (billLinesChange). */
 export const BILL_EDITED = "Bill edited in Zoho after its batches were made";
 

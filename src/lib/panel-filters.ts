@@ -161,10 +161,12 @@ export const matchesCouponView = (coupon: { status: string; used: number }, view
 export const matchesReadFilter = (read: boolean, view: string) =>
   view === "unread" ? !read : view === "read" ? read : true;
 
-export type BatchStatus = "all" | "stock" | "soldout" | "lost";
+export type BatchStatus = "all" | "stock" | "soldout" | "lost" | "found";
 
-export const matchesBatchStatus = (row: { available: number; lost: number }, status: BatchStatus) =>
-  status === "stock" ? row.available > 0 : status === "soldout" ? row.available <= 0 : status === "lost" ? row.lost > 0 : true;
+/** found (13 Nov 2026): batches with units found by a count, behind the "Stock found" card. */
+export const matchesBatchStatus = (row: { available: number; lost: number; gained?: number }, status: BatchStatus) =>
+  status === "stock" ? row.available > 0 : status === "soldout" ? row.available <= 0 : status === "lost" ? row.lost > 0
+    : status === "found" ? (row.gained ?? 0) > 0 : true;
 
 export const matchesBranchView = (branch: { active: boolean; deliveryEnabled: boolean; isDefault: boolean }, view: string) =>
   view === "active" ? branch.active : view === "delivery" ? branch.active && branch.deliveryEnabled : view === "default" ? branch.isDefault : true;

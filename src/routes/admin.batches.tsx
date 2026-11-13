@@ -175,7 +175,7 @@ function AdminBatches() {
       </nav>
 
       {error && <p className="mb-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</p>}
-      {data && <ZohoFreshness stock={data.zohoStock} generatedAt={data.generatedAt} />}
+      {data && <ZohoFreshness stock={data.zohoStock} />}
       {!report && !error && <p className="py-10 text-center text-sm text-slate">Loading batches…</p>}
       {data && data.transfers.some((t) => t.status === "pending") && (
         <Panel title="Transfers waiting for Zoho" className="mb-4 border-amber-300">
@@ -243,7 +243,7 @@ function BatchList({ report, data, search, go, status, setStatus, productFilter,
         <StatCard onClick={() => openList("all")} compact label="Sales (excl. GST)" value={money(totals.sales)} icon={ShoppingCart} description={`${units(totals.sold)} units sold`} />
         <StatCard onClick={() => openList("all")} compact label={totals.profit < 0 ? "Loss" : "Profit"} value={money(Math.abs(totals.profit))} icon={totals.profit < 0 ? TrendingDown : TrendingUp} highlight
           description={profitBreakup(totals)} />
-        <StatCard onClick={() => openList("lost")} compact label={totals.lossValue < 0 ? "Stock found" : "Stock lost"} value={money(Math.abs(totals.lossValue))} icon={totals.lossValue < 0 ? TrendingUp : TrendingDown}
+        <StatCard onClick={() => openList(totals.lossValue < 0 ? "found" : "lost")} compact label={totals.lossValue < 0 ? "Stock found" : "Stock lost"} value={money(Math.abs(totals.lossValue))} icon={totals.lossValue < 0 ? TrendingUp : TrendingDown}
           description={`${units(totals.lost)} units lost, ${units(totals.gained)} found (counts, damage), at cost before GST`} />
         <StatCard onClick={() => openList("soldout")} compact label="Avg. days to sell out" value={totals.averageDaysToSellOut === null ? "—" : String(totals.averageDaysToSellOut)} icon={Clock3} description="sold-out batches" />
       </div>
@@ -299,7 +299,7 @@ function BatchList({ report, data, search, go, status, setStatus, productFilter,
             {products.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
           </select>
           <div className="flex rounded-md border border-input bg-white p-0.5 text-xs">
-            {([["all", "All"], ["stock", "In stock"], ["soldout", "Sold out"], ["lost", "Stock lost"]] as const).map(([key, label]) => (
+            {([["all", "All"], ["stock", "In stock"], ["soldout", "Sold out"], ["lost", "Stock lost"], ["found", "Stock found"]] as const).map(([key, label]) => (
               <button key={key} type="button" onClick={() => setStatus(key)} className={cn("rounded px-2.5 py-1 font-semibold", status === key ? "bg-navy text-white" : "text-slate")}>{label}</button>
             ))}
           </div>
@@ -378,9 +378,15 @@ const ZOHO_CHECK_LATE_MINUTES = 90;
  * When Zoho's stock was last read by the scheduled check. Stock received in Zoho (a purchase receive) reaches the
  * godown's stock here only through it; 13 Nov 2026 it had stopped for two days and nobody could see that.
  */
-function ZohoFreshness({ stock, generatedAt }: { stock: BatchData["zohoStock"]; generatedAt: string }) {
+function ZohoFreshness({ stock }: { stock: BatchData["zohoStock"] }) {
+  // Ages on an open page: re-checked every minute (the data itself reloads when stock changes).
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowMs(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
   const checkedAt = stock.at;
-  const minutes = checkedAt ? Math.round((Date.parse(generatedAt) - Date.parse(checkedAt)) / 60_000) : null;
+  const minutes = checkedAt ? Math.round((nowMs - Date.parse(checkedAt)) / 60_000) : null;
   const late = minutes === null || minutes > ZOHO_CHECK_LATE_MINUTES || !stock.read;
   if (!late && stock.failed === 0) {
     return (

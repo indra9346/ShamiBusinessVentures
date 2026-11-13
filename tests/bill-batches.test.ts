@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { BILL_EDITED, batchDeleteBlocker, billChange, billLinesChange, billPlan, billSummary, costOf, lineBlocker } from "../src/lib/bill-batches.ts";
+import { BILL_EDITED, batchDeleteBlocker, billChange, billLinesChange, billPlan, billSummary, costOf, isBillLineFlag, lineBlocker } from "../src/lib/bill-batches.ts";
 
 // The client's real bills of 3 Nov 2026, in the shape Zoho's GET /bills/:id returns them.
 const line = (id: string, name: string, qty: number, rate: number, itemTotal: number, extra: Record<string, unknown> = {}) => ({
@@ -147,4 +147,14 @@ test("13 Nov: a bill whose edit time moved is flagged only when a batch's own li
   assert.match(billLinesChange([{ ...batches[1]!, unitExGst: 98.04 }], plan), /cost for batch CLK-031126-05 changed in Zoho \(₹98.04 → ₹92.21 before GST\)/);
   assert.match(billLinesChange([{ ...batches[0]!, lineId: "GONE" }], plan), /line of batch CLK-031126-04 was removed/);
   assert.match(billLinesChange([{ ...batches[0]!, itemId: "I-OTHER" }], plan), /another item/);
+});
+
+test("13 Nov review: a 3-decimal bill quantity matches its 2-decimal batch; line flags are recognised", () => {
+  const plan = billPlan({ ...VS903, line_items: [line("L5", "Loose sugar", 12.345, 40, 493.8)] });
+  assert.equal(billLinesChange([{ batchCode: "CLK-1", lineId: "L5", itemId: "I-L5", quantity: 12.35, unitExGst: null }], plan), "");
+  assert.match(billLinesChange([{ batchCode: "CLK-1", lineId: "L5", itemId: "I-L5", quantity: 12.4, unitExGst: null }], plan), /quantity for batch CLK-1/);
+  for (const flag of ["Bill line of batch X was removed in Zoho", "Bill quantity for batch X changed in Zoho (2 → 3)", "Bill cost for batch X changed in Zoho (₹1.00 → ₹2.00 before GST)"])
+    assert.ok(isBillLineFlag(flag), flag);
+  for (const flag of ["", BILL_EDITED, "Bill voided in Zoho", "Bill deleted in Zoho", "Bill total changed in Zoho (₹1.00 → ₹2.00)"])
+    assert.ok(!isBillLineFlag(flag), flag);
 });

@@ -60,8 +60,9 @@ END $function$;
 REVOKE ALL ON FUNCTION private.record_batch_stock_change(text, text, numeric, text, text, uuid, text) FROM PUBLIC, anon, authenticated;
 
 -- The bill check (checkBatchBills) compares a bill's batch lines when only Zoho's edit time moved (a purchase receive
--- or a payment touches the bill too). Lines as they were: no flag, and the new edit time is kept so the bill is not
--- fetched again. _rows = [{bill_id, flag, modified?}].
+-- or a payment touches the bill too). The edit time it read comes along as "modified" and is kept, so the bill is read
+-- again only when Zoho's edit time moves once more: lines as they were clear the flag, a changed line keeps it.
+-- _rows = [{bill_id, flag, modified?}]; without "modified" the stored edit time stays.
 CREATE OR REPLACE FUNCTION public.flag_batch_bill_changes(_rows jsonb)
 RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public' AS $function$
 DECLARE
@@ -78,7 +79,7 @@ BEGIN
       SET bill_flag = flag,
           bill_flag_at = CASE WHEN flag = '' THEN NULL WHEN bill_flag = flag THEN bill_flag_at ELSE now() END,
           bill_checked_at = now(),
-          zoho_bill_modified = CASE WHEN flag = '' AND modified <> '' THEN modified ELSE zoho_bill_modified END
+          zoho_bill_modified = CASE WHEN modified <> '' THEN modified ELSE zoho_bill_modified END
       WHERE zoho_bill_id = line->>'bill_id' AND zoho_bill_id <> '';
     GET DIAGNOSTICS changed = ROW_COUNT;
     IF flag <> '' THEN flagged := flagged + changed; END IF;

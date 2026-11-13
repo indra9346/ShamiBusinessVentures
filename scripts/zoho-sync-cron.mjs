@@ -10,12 +10,14 @@
 //   1. the public address (SITE_URL), as before;
 //   2. this server's own web server (127.0.0.1, then ::1) under the site's name, so the certificate is still checked;
 //   3. the app's own socket from LiteSpeed (/usr/local/lsws/extapp-sock/<domain>:_.sock).
-// A route is left for the next one only when the website cannot have run the sync on it: no connection, a quick page
-// that is not the website's, or a connection dropped within 5 s with no reply. Anything slower stops the job, so the
-// sync never runs twice. Each route that fails prints one line with its reason, so the cron output shows what happened.
+// A route is left for the next one only when the website cannot have run the sync on it: no connection, a quick
+// refusal in front of it (redirect, bot check, 403/404/421/429), or a connection dropped within 5 s with no reply.
+// Anything slower, and any 5xx error page, stops the job, so the sync never runs twice. Each route that fails prints
+// one line with its reason, so the cron output shows what happened.
 import http from "node:http";
 import https from "node:https";
-import { readdirSync } from "node:fs";
+import { isIP } from "node:net";
+import { statSync } from "node:fs";
 import { join } from "node:path";
 
 const site = new URL((process.env.SITE_URL || "https://grainbazar.com").replace(/\/+$/, ""));
@@ -33,23 +35,33 @@ if (!secret) {
 
 const secure = site.protocol === "https:";
 const port = Number(site.port) || (secure ? 443 : 80);
+// "[::1]" in a URL is "::1" to connect to; an IP address is never a certificate name (no servername then).
+const hostname = site.hostname.replace(/^\[(.*)\]$/, "$1");
+const tlsName = isIP(hostname) ? {} : { servername: hostname };
 
-/** LiteSpeed's sockets for this site's app: grainbazar.com:_.sock first, then www. */
+/**
+ * This site's own app sockets, only by their exact names (grainbazar.com:_.sock, then www.grainbazar.com:_.sock), only
+ * if they are sockets owned by this account: the folder is LiteSpeed's, and the secret must not go to a socket that
+ * someone else made there.
+ */
 function appSockets() {
-  try {
-    const names = readdirSync(SOCKET_DIR).filter((name) => name.endsWith(".sock"));
-    const bare = site.hostname.replace(/^www\./, "");
-    return [`${bare}:`, `www.${bare}:`].flatMap((prefix) => names.filter((name) => name.startsWith(prefix))).map((name) => join(SOCKET_DIR, name));
-  } catch {
-    return [];
-  }
+  const bare = hostname.replace(/^www\./, "");
+  const uid = typeof process.getuid === "function" ? process.getuid() : null;
+  return [`${bare}:_.sock`, `www.${bare}:_.sock`].map((name) => join(SOCKET_DIR, name)).filter((path) => {
+    try {
+      const info = statSync(path);
+      return info.isSocket() && (uid === null || info.uid === uid);
+    } catch {
+      return false;
+    }
+  });
 }
 
 const web = secure ? https : http;
 const routes = [
-  { name: "public address", lib: web, options: { host: site.hostname, port, servername: site.hostname } },
-  { name: "this server (127.0.0.1)", lib: web, options: { host: "127.0.0.1", port, servername: site.hostname } },
-  { name: "this server (::1)", lib: web, options: { host: "::1", port, servername: site.hostname } },
+  { name: "public address", lib: web, options: { host: hostname, port, ...tlsName } },
+  { name: "this server (127.0.0.1)", lib: web, options: { host: "127.0.0.1", port, ...tlsName } },
+  { name: "this server (::1)", lib: web, options: { host: "::1", port, ...tlsName } },
   ...appSockets().map((socketPath) => ({ name: `app socket ${socketPath}`, lib: http, options: { socketPath } })),
 ];
 
@@ -115,6 +127,12 @@ const fromTheWebsite = (result) => result.type.includes("application/json");
 /** A page that is not the website's but came slowly (a proxy timeout) may sit in front of a sync that did run. */
 const QUICK_MS = 20_000;
 /**
+ * Answers a web server or its bot check gives without passing the request on: a redirect, 400 (bad request), 403 (bot
+ * check), 404, 421 (wrong host), 429 (too many requests), 508 (resource limit). A 5xx error page may come after the
+ * request reached the app, so it never counts as refused.
+ */
+const refusedInFront = (status) => (status >= 300 && status < 400) || [400, 403, 404, 421, 429, 508].includes(status);
+/**
  * A connection the server dropped this quickly, before any reply, was refused in front of the website (the web
  * server or its bot check): the website answers only when the sync is done, which takes longer than this.
  */
@@ -142,11 +160,14 @@ for (const route of routes) {
   }
   if (!fromTheWebsite(result)) {
     const page = `${result.status}, not from the website (${result.type || "no type"}): ${result.body.replace(/\s+/g, " ").slice(0, 160)}`;
-    if (Date.now() - started > QUICK_MS) {
+    if (Date.now() - started > QUICK_MS || !refusedInFront(result.status)) {
+      // Slow, or a server error (the app may have crashed or timed out part-way through the sync): stop, so it never
+      // runs twice; the next run is 15 minutes away.
       console.error(`${now()} ${route.name}: answered ${page} after ${Math.round((Date.now() - started) / 1000)} s; the sync may have run, so no other route is tried`);
       process.exit(1);
     }
-    // A quick page that is not the website's (bot check, proxy error): the sync did not run, so the next route may reach it.
+    // A quick refusal in front of the website (redirect, bot check, wrong host, too many requests): the sync did not
+    // run, so the next route may reach it.
     console.error(`${now()} ${route.name}: answered ${page}`);
     continue;
   }

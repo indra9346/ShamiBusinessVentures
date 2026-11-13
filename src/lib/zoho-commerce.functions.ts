@@ -35,7 +35,7 @@ import {
   ZOHO_CALL_DEFAULT_PURPOSE, ZOHO_CALL_LOG_SETTING, describeZohoCall, mergeZohoCalls, type ZohoCall, type ZohoCallLog,
 } from "@/lib/zoho-call-log";
 import { ZOHO_TOKEN_LIMIT_MESSAGE, createZohoTokenCache, isZohoTokenLimit, type ZohoTokenCache, type ZohoTokenReply } from "@/lib/zoho-token-cache";
-import { BILL_EDITED, billChange, billLinesChange, billPlan, billSummary, lineBlocker } from "@/lib/bill-batches";
+import { BILL_EDITED, billChange, billLinesChange, billPlan, billSummary, isBillLineFlag, lineBlocker } from "@/lib/bill-batches";
 import {
   CREATE_HOLD_MINUTES, createHoldUntil, findTransferByNumber, godownTransferLines, godownTransferResult, isTransferred, readCreateAnswer,
   readZohoTransfer, transferOrderBody, zohoSaysMissing, type BatchTransfer, type GodownTransfer,
@@ -7462,16 +7462,17 @@ export const checkBatchBills = createServerFn({ method: "POST" })
     const last = Date.parse(str(plainObject(setting?.value)["at"]));
     if (Number.isFinite(last) && Date.now() - last < BILL_CHECK_MINUTES * 60_000) return { checked: false as const, flagged: 0 };
     const { data: rows } = await db.from("batches")
-      .select("batch_code,zoho_bill_id,zoho_bill_line_id,zoho_item_id,quantity,unit_cost_ex_gst,parent_batch_id,zoho_bill_modified,zoho_bill_total")
+      .select("batch_code,zoho_bill_id,zoho_bill_line_id,zoho_item_id,quantity,unit_cost_ex_gst,parent_batch_id,zoho_bill_modified,zoho_bill_total,bill_flag,bill_checked_at")
       .neq("zoho_bill_id", "");
-    const stored = new Map<string, { modifiedAt: string; total: number }>();
+    const stored = new Map<string, { modifiedAt: string; total: number; flag: string; checkedAt: string }>();
     // The batches made from each bill's own lines (a batch sent on to another godown has no line of its own).
     const lineBatches = new Map<string, { batchCode: string; lineId: string; itemId: string; quantity: number; unitExGst: number | null }[]>();
     for (const row of (rows ?? []) as {
       batch_code: string; zoho_bill_id: string; zoho_bill_line_id: string; zoho_item_id: string; quantity: number; unit_cost_ex_gst: number | null;
-      parent_batch_id: string | null; zoho_bill_modified: string; zoho_bill_total: number | null;
+      parent_batch_id: string | null; zoho_bill_modified: string; zoho_bill_total: number | null; bill_flag: string | null; bill_checked_at: string | null;
     }[]) {
-      if (!stored.has(row.zoho_bill_id)) stored.set(row.zoho_bill_id, { modifiedAt: row.zoho_bill_modified, total: Number(row.zoho_bill_total) || 0 });
+      if (!stored.has(row.zoho_bill_id))
+        stored.set(row.zoho_bill_id, { modifiedAt: row.zoho_bill_modified, total: Number(row.zoho_bill_total) || 0, flag: row.bill_flag ?? "", checkedAt: row.bill_checked_at ?? "" });
       if (row.zoho_bill_line_id && !row.parent_batch_id)
         lineBatches.set(row.zoho_bill_id, [...(lineBatches.get(row.zoho_bill_id) ?? []), {
           batchCode: row.batch_code, lineId: row.zoho_bill_line_id, itemId: row.zoho_item_id ?? "", quantity: Number(row.quantity) || 0,
@@ -7489,7 +7490,9 @@ export const checkBatchBills = createServerFn({ method: "POST" })
     let lineLookups = 0;
     const readBill = async (billId: string) =>
       (await inventoryRequest<{ bill?: Record<string, unknown> }>(region, organizationId, token, `bills/${encodeURIComponent(billId)}`, "GET")).bill;
-    for (const [billId, was] of stored) {
+    // The bills checked longest ago first, so the lookups go round all of them instead of the same few every time.
+    const order = [...stored.entries()].sort((a, b) => a[1].checkedAt.localeCompare(b[1].checkedAt));
+    for (const [billId, was] of order) {
       let now: { status: string; modifiedAt: string; total: number } | null | undefined = seen.get(billId);
       let full: Record<string, unknown> | undefined;
       if (!now) {
@@ -7520,11 +7523,13 @@ export const checkBatchBills = createServerFn({ method: "POST" })
           }
         }
         if (!full) continue;
-        const lineFlag = billLinesChange(lines, billPlan(full));
-        flags.push(lineFlag ? { bill_id: billId, flag: lineFlag } : { bill_id: billId, flag: "", modified: now.modifiedAt });
+        // Either way the edit time read is kept: a line that changed stays flagged without the bill being read again
+        // until Zoho's edit time moves once more.
+        flags.push({ bill_id: billId, flag: billLinesChange(lines, billPlan(full)), modified: now.modifiedAt });
         continue;
       }
-      flags.push({ bill_id: billId, flag });
+      // Nothing new since a batch line was found changed: that flag stays until someone corrects the bill.
+      flags.push({ bill_id: billId, flag: flag === "" && isBillLineFlag(was.flag) ? was.flag : flag });
     }
     const { data: flagged, error } = await db.rpc("flag_batch_bill_changes", { _rows: flags });
     if (error) throw new Error(error.message);

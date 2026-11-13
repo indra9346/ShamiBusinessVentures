@@ -177,6 +177,9 @@ test("the coupon, read and batch views", () => {
   assert.equal(matchesBatchStatus(batches[0]!, "lost"), false);
   assert.equal(matchesBatchStatus(batches[1]!, "lost"), true);
   assert.equal(matchesBatchStatus(batches[0]!, "all"), true);
+  // 13 Nov 2026: the Stock found card's list.
+  assert.equal(matchesBatchStatus({ available: 5, lost: 0, gained: 5 }, "found"), true);
+  assert.equal(matchesBatchStatus({ available: 5, lost: 2 }, "found"), false);
 });
 
 test("the branch cards: delivery counts active branches only", () => {
