@@ -20,6 +20,7 @@ import { GODOWN_SIGNATURE_BUCKET } from "@/lib/godown-signature";
 import { canvasTextImage, loadLogoPng } from "@/lib/delivery-note-pdf";
 import { deliveryQrLink, deliveryQrOrigin, drawPdfQr } from "@/lib/pdf-qr";
 import { cleanContactNumber, contactNumberLine } from "@/lib/zoho-contact-numbers";
+import { collectAddressLine, collectFromBlock, type CollectPoint } from "@/lib/godown-location";
 
 export { invoiceLines, type Line };
 
@@ -268,8 +269,17 @@ export async function buildInvoicePdf(order: Order, options: InvoiceOptions = {}
   // The godown's contact on its invoices: that area's channel partner's mobile, else the godown's phone.
   const godownPhone = (orderBranch && context.phones.get(orderBranch.id)) || orderBranch?.phone || company.phone;
   const pickupPoint = !isPickup ? null : orderBranch
-    ? { name: orderBranch.name, address: orderBranch.address, phone: godownPhone, instructions: orderBranch.instructions }
+    ? { name: orderBranch.name, address: orderBranch.address, phone: godownPhone, instructions: orderBranch.instructions, mapUrl: orderBranch.mapUrl }
     : legacyPoint;
+  // "Collect goods from here" under the notes (owner, 13 Nov 2026), with the godown's location QR when Admin > Godowns
+  // has its location link: on every copy of a collect-from-godown order.
+  const collectPoint: CollectPoint | null = !pickupPoint ? null : {
+    name: pickupPoint.name,
+    address: orderBranch ? collectAddressLine(orderBranch) : pickupPoint.address,
+    phone: pickupPoint.phone,
+    instructions: pickupPoint.instructions,
+    mapUrl: pickupPoint.mapUrl,
+  };
   const customerGstState = /^[0-9]{2}/.test(order.gstin ?? "") ? order.gstin!.slice(0, 2) : "";
   const deliveryStateCode = STATE_CODES[(order.state || "").trim().toLowerCase()] ?? "";
   const supplyCode = pickupPoint ? orderBranch?.stateCode || company.stateCode : customerGstState || deliveryStateCode || company.stateCode;
@@ -680,9 +690,33 @@ export async function buildInvoicePdf(order: Order, options: InvoiceOptions = {}
   summaryRows.push([pickupPoint ? "Pickup charges" : "Shipping charges", order.shipping]);
   if (roundOff !== 0 && Math.abs(roundOff) < 1) summaryRows.push(["Round off", roundOff]);
   const summaryH = summaryRows.length * 5.6 + 26;
-  if (y + summaryH + 52 > bottomLimit) newPage(false);
-  y += 6;
   const sumW = 78;
+  // The left column, measured before anything is drawn: the total in words, the notes and, for an order collected from
+  // a godown, the "Collect goods from here" block (owner, 13 Nov 2026). It must fit beside the totals, or both move on.
+  const leftW = usable - sumW - 10;
+  pdf.setFont("helvetica", "bold");
+  pdf.setFontSize(8.6);
+  const words = pdf.splitTextToSize(`Indian Rupee ${numberToIndianWords(order.amount).replace(/ Rupees/, "")}`, leftW) as string[];
+  pdf.setFont("helvetica", "normal");
+  pdf.setFontSize(8);
+  const notes = [
+    `Order ${order.id} placed on Grain Bazar.`,
+    // The goods are handed over against the delivery QR now, not the order number (owner, 11 Nov 2026). Where to collect
+    // them is the block under the notes (owner, 13 Nov 2026), so the note no longer names the godown.
+    pickupPoint ? (qrCode
+      ? "Show this invoice's delivery QR at the godown counter."
+      : "The tax invoice carries your delivery QR once the payment is confirmed; show it at the godown counter.") : "",
+    !facts.payments.length && (order.utr || order.txn) ? `Payment reference: ${order.utr || order.txn}` : "",
+    couponInLines ? `Coupon ${order.coupon ?? ""}: Rs. ${money(order.discount)} taken off the items above in proportion, with the GST on it.`.replace("  ", " ") : "",
+    zohoNumber ? "" : "Proforma: the tax invoice number comes from Zoho Books once the invoice is raised.",
+    copy === "office" ? "Office copy: includes fulfilling vendor details. Do not share with the customer." : "",
+  ].filter(Boolean).flatMap((note) => pdf.splitTextToSize(note, leftW) as string[]);
+  const collect = collectPoint ? collectFromBlock(pdf, collectPoint, leftW, { ink, muted, navy, rule }) : null;
+  // `ly` runs a line step (3.8 mm) past the notes' last line: the block starts about 1.5 mm under that line's text.
+  const COLLECT_GAP = -1.4;
+  const leftH = 5 + words.length * 4 + 4 + 4.5 + notes.length * 3.8 + (collect ? COLLECT_GAP + collect.height : 0);
+  if (y + summaryH + 52 > bottomLimit || y + 6 + leftH > bottomLimit) newPage(false);
+  y += 6;
   const sumX = R - sumW;
   let sy = y;
   pdf.setFontSize(8.6);
@@ -714,7 +748,6 @@ export async function buildInvoicePdf(order: Order, options: InvoiceOptions = {}
   pdf.text("Balance due", sumX, sy);
   pdf.text(rupees(balance), R, sy, { align: "right" });
 
-  const leftW = usable - sumW - 10;
   pdf.setFont("helvetica", "bold");
   pdf.setFontSize(7.8);
   pdf.setTextColor(...muted);
@@ -722,7 +755,6 @@ export async function buildInvoicePdf(order: Order, options: InvoiceOptions = {}
   pdf.setFont("helvetica", "bold");
   pdf.setFontSize(8.6);
   pdf.setTextColor(...ink);
-  const words = pdf.splitTextToSize(`Indian Rupee ${numberToIndianWords(order.amount).replace(/ Rupees/, "")}`, leftW) as string[];
   pdf.text(words, M, y + 5);
   let ly = y + 5 + words.length * 4 + 4;
   pdf.setFont("helvetica", "bold");
@@ -732,20 +764,12 @@ export async function buildInvoicePdf(order: Order, options: InvoiceOptions = {}
   pdf.setFont("helvetica", "normal");
   pdf.setFontSize(8);
   pdf.setTextColor(...ink);
-  const notes = [
-    `Order ${order.id} placed on Grain Bazar.`,
-    // The goods are handed over against the delivery QR now, not the order number (owner, 11 Nov 2026).
-    pickupPoint ? (qrCode
-      ? `Collect from ${pickupPoint.name}. Show this invoice's delivery QR at the godown counter.`
-      : `Collect from ${pickupPoint.name}. The tax invoice carries your delivery QR once the payment is confirmed; show it at the godown counter.`) : "",
-    !facts.payments.length && (order.utr || order.txn) ? `Payment reference: ${order.utr || order.txn}` : "",
-    couponInLines ? `Coupon ${order.coupon ?? ""}: Rs. ${money(order.discount)} taken off the items above in proportion, with the GST on it.`.replace("  ", " ") : "",
-    zohoNumber ? "" : "Proforma: the tax invoice number comes from Zoho Books once the invoice is raised.",
-    copy === "office" ? "Office copy: includes fulfilling vendor details. Do not share with the customer." : "",
-  ].filter(Boolean).flatMap((note) => pdf.splitTextToSize(note, leftW) as string[]);
   pdf.text(notes, M, ly + 4.5);
   ly += 4.5 + notes.length * 3.8;
-  y = Math.max(sy + 8, ly + 4);
+  // Where to collect the goods, with the godown's location QR: right under the notes, on every copy.
+  if (collect) ly = collect.draw(M, ly + COLLECT_GAP);
+  // The block ends on its own last line (the notes' `ly` runs a line step past theirs), so less space follows it.
+  y = Math.max(sy + 8, ly + (collect ? 2.6 : 4));
 
   // The terms and the signature line take about 31 mm. Reserving no more than that keeps an ordinary order on one page.
   const termsH = 33;

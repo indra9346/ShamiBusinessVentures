@@ -9,6 +9,7 @@ import { inr } from "@/lib/data";
 import { matchesBranchView } from "@/lib/panel-filters";
 import { useApp } from "@/lib/store";
 import { PLATFORM_FEATURES_KEY, reloadBranches, useBranches, type Branch } from "@/lib/branches";
+import { MAP_LINK_MAX, isGoogleMapsLink, mapLinkProblem, printableMapLink } from "@/lib/godown-location";
 import { useDepositAccounts } from "@/components/panel/DepositAccountsPanel";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -163,6 +164,9 @@ function AdminBranches() {
     if (!code) { toast.error("Enter a short branch code, e.g. CLK"); return; }
     if (form.address.trim().length < 8) { toast.error("Enter the full godown address"); return; }
     if (!/^\d{6}$/.test(form.pincode.trim())) { toast.error("Enter the godown's 6-digit PIN code"); return; }
+    // The location link is printed as a QR on this godown's invoices (13 Nov 2026): only a working https link.
+    const mapProblem = mapLinkProblem(form.mapUrl);
+    if (mapProblem) { toast.error(mapProblem); return; }
     const pincodes = [...new Set(form.pincodes.split(/[\s,]+/).map((pin) => pin.trim()).filter(Boolean))];
     if (pincodes.some((pin) => !/^\d{6}$/.test(pin))) { toast.error("PIN codes served must be 6 digits each"); return; }
     if (form.gstin.trim() && !/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/.test(form.gstin.trim().toUpperCase())) {
@@ -277,6 +281,13 @@ function AdminBranches() {
               <div className="space-y-2 text-sm">
                 <p className="flex items-start gap-1.5 text-charcoal"><MapPin className="mt-0.5 h-4 w-4 shrink-0 text-slate" />{branch.address}</p>
                 {branch.phone && <p className="flex items-center gap-1.5 text-charcoal"><Phone className="h-4 w-4 text-slate" />{branch.phone}</p>}
+                {!branch.vendorId && (
+                  <p className="text-xs text-slate">
+                    {printableMapLink(branch.mapUrl)
+                      ? <>Location QR on invoices: <a href={printableMapLink(branch.mapUrl)} target="_blank" rel="noreferrer" className="font-semibold text-navy hover:text-gold">open the location link</a></>
+                      : <>No location link yet: invoices print the address without a location QR. <button type="button" className="font-semibold text-gold hover:underline" onClick={() => setForm(formFrom(branch))}>Add the location link</button></>}
+                  </p>
+                )}
                 <p className="text-xs text-slate">Code {branch.code} · {branch.state} ({branch.stateCode}) · Zoho location: {branch.zohoLocationName || "not set"}</p>
                 <p className="text-xs text-slate">Serves PIN {branch.servesPincodes.join(", ") || "—"}</p>
                 <p className="text-xs text-slate">
@@ -349,7 +360,18 @@ function AdminBranches() {
               <div className="grid gap-1.5"><Label>Godown PIN code</Label><Input inputMode="numeric" maxLength={6} value={form.pincode} onChange={(e) => setForm({ ...form, pincode: e.target.value.replace(/\D/g, "") })} /></div>
               <div className="grid gap-1.5"><Label>Phone</Label><Input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></div>
               <div className="grid gap-1.5"><Label>Email</Label><Input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></div>
-              <div className="grid gap-1.5 sm:col-span-2"><Label>Google Maps link</Label><Input value={form.mapUrl} onChange={(e) => setForm({ ...form, mapUrl: e.target.value })} placeholder="https://maps.app.goo.gl/…" /></div>
+              <div className="grid gap-1.5 sm:col-span-2">
+                <Label htmlFor="branch-map-url">Godown location link (Google Maps)</Label>
+                <Input id="branch-map-url" inputMode="url" maxLength={MAP_LINK_MAX} value={form.mapUrl} onChange={(e) => setForm({ ...form, mapUrl: e.target.value.trim() })} placeholder="https://maps.app.goo.gl/…" />
+                <p className="text-xs text-slate">In Google Maps, open the godown, press Share, then Copy link. Invoices of orders collected here print it as a QR: "Scan for the godown location".</p>
+                {mapLinkProblem(form.mapUrl) ? <p className="text-xs font-semibold text-danger">{mapLinkProblem(form.mapUrl)}</p>
+                  : printableMapLink(form.mapUrl) ? (
+                    <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                      <a href={printableMapLink(form.mapUrl)} target="_blank" rel="noreferrer" className="font-semibold text-navy hover:text-gold">Open this link to check it</a>
+                      {!isGoogleMapsLink(form.mapUrl) && <span className="text-amber-800">This is not a Google Maps link. It still prints; check that it opens the godown's location.</span>}
+                    </p>
+                  ) : <p className="text-xs text-slate">No link yet: the invoices print the godown's address without a QR.</p>}
+              </div>
               <div className="grid gap-1.5 sm:col-span-2"><Label>Pickup instructions</Label><Input value={form.instructions} onChange={(e) => setForm({ ...form, instructions: e.target.value })} /></div>
               <div className="grid gap-1.5 sm:col-span-2"><Label>PIN codes this godown serves</Label><Textarea rows={2} value={form.pincodes} onChange={(e) => setForm({ ...form, pincodes: e.target.value })} placeholder="577522, 577536, …" /></div>
               <div className="grid gap-1.5"><Label>Branch GSTIN (if separate)</Label><Input maxLength={15} value={form.gstin} onChange={(e) => setForm({ ...form, gstin: e.target.value.toUpperCase() })} /></div>
