@@ -52,12 +52,14 @@ export const isMissingInDatabase = (error: { code?: string; message?: string } |
 type SubmissionRow = {
   order_no: string; amount: number | string; utr: string; customer_name: string; submitted_at: string;
   status: string; reviewed_at: string | null; note: string | null; late?: boolean | null; sent_by_role?: string | null;
+  reviewed_by?: string | null;
 };
-const fromRow = (row: SubmissionRow): UpiSubmission => ({
+const fromRow = (row: SubmissionRow, names: Map<string, string> = new Map()): UpiSubmission => ({
   orderNo: row.order_no, amount: Number(row.amount), utr: row.utr, customer: row.customer_name, submittedAt: row.submitted_at,
   status: row.status as UpiSubmission["status"], ...(row.reviewed_at ? { reviewedAt: row.reviewed_at } : {}), ...(row.note ? { note: row.note } : {}),
   ...(row.late ? { late: true } : {}),
   ...(row.sent_by_role === "partner" || row.sent_by_role === "admin" ? { sentByRole: row.sent_by_role } : {}),
+  ...(row.reviewed_by ? { reviewedById: row.reviewed_by, reviewedBy: names.get(row.reviewed_by) || "Unknown admin" } : {}),
 });
 
 export async function loadUpiSettings(): Promise<UpiSettings> {
@@ -152,10 +154,14 @@ export async function loadBankAudit(): Promise<BankAuditRow[]> {
 export async function loadUpiSubmissions(): Promise<UpiSubmission[]> {
   if (STATIC_DATA_MODE) return readJson<UpiSubmission[]>(DEMO_SUBMISSIONS, []);
   const { data, error } = await supabase.from("upi_payment_submissions")
-    .select("order_no,amount,utr,customer_name,submitted_at,status,reviewed_at,note,late,sent_by_role")
+    .select("order_no,amount,utr,customer_name,submitted_at,status,reviewed_at,note,late,sent_by_role,reviewed_by")
     .order("submitted_at", { ascending: false }).limit(500);
   if (error) throw new Error(error.message);
-  return (data ?? []).map(fromRow);
+  // Who checked each one, by name (admins may read every profile; a customer only gets their own rows, never reviewed_by names).
+  const ids = [...new Set((data ?? []).map((row) => row.reviewed_by).filter((id): id is string => Boolean(id)))];
+  const { data: people } = ids.length ? await supabase.from("profiles").select("id,full_name").in("id", ids) : { data: [] };
+  const names = new Map((people ?? []).map((person) => [person.id, person.full_name ?? ""] as const));
+  return (data ?? []).map((row) => fromRow(row, names));
 }
 
 export async function submitUpiPayment(submission: { orderNo: string; amount: number; utr: string; customer: string }) {

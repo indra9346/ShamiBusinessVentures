@@ -15,6 +15,7 @@ import { AdShowcase } from "@/components/site/AdShowcase";
 import { DiyaLedge, RangoliCorners } from "@/components/site/DiwaliDecor";
 import { useFestiveTheme } from "@/lib/festive";
 import { storeCategorySlug } from "@/lib/category-slug";
+import { useStorefrontDisplay } from "@/lib/storefront-display";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -35,7 +36,9 @@ function Index() {
   const navigate = useNavigate();
   const festive = useFestiveTheme();
 
-  const popularProducts = products.filter(isStorefrontProduct).slice(0, 8);
+  // Admin → Settings → Storefront can switch the Popular Products row off (13 Nov 2026).
+  const { showPopularProducts } = useStorefrontDisplay();
+  const popularProducts = showPopularProducts ? products.filter(isStorefrontProduct).slice(0, 8) : [];
   // Only the live categories are shown; until they arrive, grey placeholders hold their place
   // (never the built-in pictures, which would flash and then change).
   const displayCategories = categories.filter((c) => c.enabled).slice(0, 3);
@@ -135,6 +138,7 @@ function Index() {
         {/* Festival dates: lit diyas and the greeting on the line between the two sections, rangoli in the corners */}
         {festive.on && <><DiyaLedge /><RangoliCorners /></>}
         <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 sm:py-12">
+          {showPopularProducts && <>
           <div className="mb-6 flex items-end justify-between gap-4">
             <div>
               <p className="text-xs font-bold text-gold">Picked for you</p>
@@ -163,7 +167,8 @@ function Index() {
               <ProductCard key={product.id} product={product} />
             ))}
           </div>
-          <div className="mt-8 text-center">
+          </>}
+          <div className={showPopularProducts ? "mt-8 text-center" : "text-center"}>
             <Button asChild size="lg" className="h-11 px-7 font-bold bg-navy text-white hover:bg-midnight">
               <Link to="/categories">
                 All Products <ArrowRight className="ml-2 h-4 w-4" />

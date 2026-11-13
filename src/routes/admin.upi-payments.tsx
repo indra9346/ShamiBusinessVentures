@@ -36,6 +36,12 @@ export const Route = createFileRoute("/admin/upi-payments")({
   component: AdminUpiPayments,
 });
 
+/** The Approved by cell when no admin is on the record. */
+const approvedByNobody = (s: { status: string; note?: string }) =>
+  s.status === "confirmed" ? "Automatic match" : s.note === UNCHECKED_UTR_NOTE ? "Nobody (not checked in 24 h)" : "—";
+/** The approver now has a column of their own, so the result text doesn't repeat "by <name>". */
+const withoutApprover = (note: string, name?: string) => (name ? note.replace(` by ${name}`, "") : note);
+
 const istTime = (iso: string) => new Date(iso).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
 
 /**
@@ -64,7 +70,10 @@ function AdminUpiPayments() {
   const done = submissions.filter((s) => s.status !== "submitted" && s.note !== UNCHECKED_UTR_NOTE);
   // The Confirmed and Rejected cards open the list below, showing just those.
   const [doneFilter, setDoneFilter] = useState<"all" | "confirmed" | "rejected">("all");
-  const doneShown = doneFilter === "all" ? done : done.filter((s) => s.status === doneFilter);
+  // 13 Nov 2026 (owner): who approved each payment in its own column, and every payment one person approved.
+  const [approver, setApprover] = useState("");
+  const approvers = [...new Set(done.map((s) => s.reviewedBy).filter((name): name is string => Boolean(name)))].sort((a, b) => a.localeCompare(b));
+  const doneShown = done.filter((s) => (doneFilter === "all" || s.status === doneFilter) && (!approver || s.reviewedBy === approver));
   const openDone = (status: "confirmed" | "rejected") => {
     setDoneFilter(status);
     scrollToSection("checked-payments");
@@ -326,7 +335,22 @@ function AdminUpiPayments() {
         <div id="checked-payments" className="mt-6 scroll-mt-36">
         <Panel
           title={doneFilter === "confirmed" ? "Confirmed payments" : doneFilter === "rejected" ? "Rejected payments" : "Checked payments"}
-          action={doneFilter === "all" ? undefined : <button type="button" className="text-xs font-semibold text-gold hover:underline" onClick={() => setDoneFilter("all")}>Show all</button>}
+          action={
+            <>
+              {approvers.length > 0 && (
+                <label className="flex items-center gap-1.5 text-xs text-slate">
+                  Approved by
+                  <select value={approver} onChange={(e) => setApprover(e.target.value)} className="h-8 rounded-md border border-input bg-white px-2 text-xs text-charcoal" aria-label="Show payments approved by">
+                    <option value="">Everyone</option>
+                    {approvers.map((name) => <option key={name} value={name}>{name}</option>)}
+                  </select>
+                </label>
+              )}
+              {(doneFilter !== "all" || approver) && (
+                <button type="button" className="text-xs font-semibold text-gold hover:underline" onClick={() => { setDoneFilter("all"); setApprover(""); }}>Show all</button>
+              )}
+            </>
+          }
         >
           {doneShown.length === 0 ? <p className="text-sm text-slate">None yet.</p> : (
           <>
@@ -334,7 +358,7 @@ function AdminUpiPayments() {
           <div className="overflow-x-auto">
             <ResizableTable tableId="upi-done" className="w-full min-w-[700px] text-left text-sm">
               <thead><tr className="border-b border-border text-[11px] font-bold uppercase tracking-wider text-slate">
-                <th className="w-8 px-1 py-2"><span className="sr-only">Select</span></th><th className="px-2 py-2">Checked</th><th className="px-2 py-2">Order</th><th className="px-2 py-2 text-right">Amount</th><th className="px-2 py-2">UTR</th><th className="px-2 py-2">Result</th><th className="px-2 py-2"><span className="sr-only">Delete</span></th>
+                <th className="w-8 px-1 py-2"><span className="sr-only">Select</span></th><th className="px-2 py-2">Checked</th><th className="px-2 py-2">Order</th><th className="px-2 py-2 text-right">Amount</th><th className="px-2 py-2">UTR</th><th className="px-2 py-2">Approved by</th><th className="px-2 py-2">Result</th><th className="px-2 py-2"><span className="sr-only">Delete</span></th>
               </tr></thead>
               <tbody>
                 {doneShown.map((s) => {
@@ -349,8 +373,15 @@ function AdminUpiPayments() {
                     </td>
                     <td className="px-2 py-2 text-right tabular-nums">{inrPrecise(s.amount)}</td>
                     <td className="px-2 py-2 font-mono">{s.utr}</td>
+                    <td className="whitespace-nowrap px-2 py-2 text-xs">
+                      {s.reviewedBy
+                        ? <button type="button" onClick={() => setApprover(s.reviewedBy ?? "")} className="font-semibold text-navy hover:underline" title={`Show every payment ${s.reviewedBy} checked`}>
+                            {s.reviewedBy}{s.status === "rejected" && <span className="ml-1 font-normal text-danger">(rejected)</span>}
+                          </button>
+                        : <span className="text-slate">{approvedByNobody(s)}</span>}
+                    </td>
                     <td className={cn("px-2 py-2 text-xs font-semibold", s.status === "confirmed" ? "text-emerald-700" : "text-danger")}>
-                      {s.status === "confirmed" ? `Confirmed paid${s.note ? ` · ${s.note}` : ""}`
+                      {s.status === "confirmed" ? `Confirmed paid${s.note ? ` · ${withoutApprover(s.note, s.reviewedBy)}` : ""}`
                         : s.note === REFUNDED_UTR_NOTE ? "Refunded"
                         : REUSED_UTR_NOTE.test(s.note ?? "") ? s.note
                         : `Rejected${s.note ? `: ${s.note}` : ""}`}

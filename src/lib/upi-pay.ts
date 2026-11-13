@@ -32,6 +32,9 @@ export type UpiSubmission = {
   late?: boolean;
   /** Who sent it: the customer, the godown's channel partner, or an admin. */
   sentByRole?: "customer" | "partner" | "admin";
+  /** The admin who confirmed or rejected it (13 Nov 2026: shown in its own column, and the list filters by it). */
+  reviewedById?: string;
+  reviewedBy?: string;
 };
 
 /** A UPI ID: handle@bank (letters, digits, dot, dash, underscore before @). */

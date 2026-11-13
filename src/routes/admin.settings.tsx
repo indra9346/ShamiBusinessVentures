@@ -308,6 +308,11 @@ const storefrontOptions: { key: keyof StorefrontDisplay; title: string; hint: st
     title: "Show ratings and reviews",
     hint: "Star ratings and review counts on product cards and the product page, plus the shop's rating filter.",
   },
+  {
+    key: "showPopularProducts",
+    title: "Show Popular Products on the home page",
+    hint: "The “Picked for you · Popular Products” row on the home page. Switched off, the home page goes from the categories straight to the All Products button.",
+  },
 ];
 
 const siteDetailRows: { key: SiteDetailField; title: string; hint: string }[] = [
