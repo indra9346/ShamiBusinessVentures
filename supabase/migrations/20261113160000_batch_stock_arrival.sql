@@ -88,27 +88,39 @@ END $function$;
 REVOKE ALL ON FUNCTION public.flag_batch_bill_changes(jsonb) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.flag_batch_bill_changes(jsonb) TO service_role;
 
--- The live batch that took the same 360 units twice (see the top). Only when it is exactly as found on 13 Nov:
--- its three hand-entered corrections (+360, −360, +360) are taken out and its units go back to what the bill brought.
--- Anywhere else (a new database, or the batch changed since) this does nothing.
+-- The live batch that took the same 360 units twice (see the top). Its three hand-entered corrections (+360, −360,
+-- +360) are taken out and its units go back to what the bill brought less what orders have taken since: at 16:24 IST a
+-- checkout (2 bags, awaiting payment) took 2, so 718 becomes 358, the same as Challakere's stock. Only when the batch
+-- adds up exactly that way: units left = bought − sent on − held or sold by orders + the 360 counted twice, and its
+-- only losses and gains are those three rows. Anywhere else (a new database, or the batch changed otherwise) it does
+-- nothing, and running it again does nothing.
 DO $fix$
 DECLARE
   fake_ids uuid[] := ARRAY['5992eb4c-4720-43d6-9464-89f52c250196', '196c31bf-710f-498f-8ce3-f7d8b56973dd', '7edc0e51-968e-4dd5-be08-320a9addee3f']::uuid[];
   target_batch uuid := '5fc4958b-e737-42d4-8736-a027ddaf867e';
+  batch_row public.batches%ROWTYPE;
   found_rows integer;
   net numeric;
+  by_orders numeric;
 BEGIN
-  -- The batch is locked, so no order can take from it while it is corrected.
-  PERFORM 1 FROM public.batches b
-    WHERE b.id = target_batch AND b.batch_code = 'CLK-131126-02' AND b.quantity = 360 AND b.remaining_quantity = 720
+  -- The product first, then the batch (the order of locks orders and transfers use), so no order can take from it
+  -- while it is corrected.
+  PERFORM 1 FROM public.catalog_products WHERE id = 'ZI-3579709000000834002' FOR UPDATE;
+  SELECT * INTO batch_row FROM public.batches b
+    WHERE b.id = target_batch AND b.batch_code = 'CLK-131126-02' AND b.quantity = 360
     FOR UPDATE;
   IF NOT FOUND THEN RETURN; END IF;
-  SELECT count(*), COALESCE(SUM(a.qty), 0) INTO found_rows, net FROM public.batch_adjustments a
-    WHERE a.batch_id = target_batch AND a.reason = 'correction' AND a.note = 'Godown stock set by head office';
+  SELECT count(*), COALESCE(SUM(a.qty), 0) INTO found_rows, net FROM public.batch_adjustments a WHERE a.batch_id = target_batch;
   -- Exactly the three hand edits and nothing else on this batch.
   IF found_rows <> 3 OR net <> 360
-     OR (SELECT count(*) FROM public.batch_adjustments a WHERE a.id = ANY (fake_ids) AND a.batch_id = target_batch) <> 3
-     OR EXISTS (SELECT 1 FROM public.batch_adjustments a WHERE a.batch_id = target_batch AND NOT (a.id = ANY (fake_ids))) THEN
+     OR (SELECT count(*) FROM public.batch_adjustments a
+          WHERE a.id = ANY (fake_ids) AND a.batch_id = target_batch AND a.reason = 'correction' AND a.note = 'Godown stock set by head office') <> 3 THEN
+    RETURN;
+  END IF;
+  SELECT COALESCE(SUM(al.reserved_quantity - al.released_quantity), 0) INTO by_orders
+    FROM public.order_item_batch_allocations al WHERE al.batch_id = target_batch;
+  IF batch_row.remaining_quantity <> batch_row.quantity - COALESCE(batch_row.sent_quantity, 0) - by_orders + net
+     OR batch_row.remaining_quantity - net < 0 THEN
     RETURN;
   END IF;
   DELETE FROM public.batch_adjustments WHERE id = ANY (fake_ids) AND batch_id = target_batch;
