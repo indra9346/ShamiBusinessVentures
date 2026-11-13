@@ -102,12 +102,31 @@ test("the database does the confirm, with the same UPDATE as the admin's and the
   assert.match(fn, /UPDATE public\.orders SET order_status = 'Accepted' WHERE id = o\.id;/);
   assert.ok(!/payment_status\s*=\s*'Paid'\s*,|paid_amount\s*=|INSERT INTO public\.payments/.test(fn), "never writes money");
   assert.match(fn, /set_config\('app\.partner_confirm', 'on', true\)/);
-  assert.match(fn, /actor_role\)\n\s+VALUES \(o\.id, 'Accepted', format\('Confirmed by channel partner %s at %s\.'/);
+  assert.match(fn, /actor_role, partner_id\)\n\s+VALUES \(o\.id, 'Accepted', format\('Confirmed by channel partner %s at %s\.', me\.name, COALESCE\(godown, o\.branch_id\)\), 'partner', me\.id\);/,
+    "who confirmed: the partner's id, not only their name");
   assert.match(sql, /REVOKE ALL ON FUNCTION public\.partner_confirm_order\(text\) FROM PUBLIC, anon;\nGRANT EXECUTE ON FUNCTION public\.partner_confirm_order\(text\) TO authenticated;/);
   assert.match(sql, /REVOKE ALL ON FUNCTION public\.partner_orders_to_confirm\(\) FROM PUBLIC, anon;/);
   // The triggers know the flag: the guard lets only this step through, the fulfilments move as for an admin.
   assert.match(sql, /IF current_setting\('app\.partner_confirm', true\) = 'on'\n\s+AND OLD\.order_status IN \('Placed', 'Payment Confirmed'\) AND NEW\.order_status = 'Accepted'\n\s+AND OLD\.payment_status = 'Paid'\n\s+AND OLD\.branch_id IS NOT NULL AND OLD\.branch_id = public\.current_partner_branch\(\)/);
   assert.match(sql, /ELSIF public\.has_role\(auth\.uid\(\), 'admin'\) OR current_setting\('app\.partner_confirm', true\) = 'on' THEN/);
+});
+
+test("who confirmed cannot be made up from the site (review, 13 Nov 2026)", () => {
+  const sql = read("supabase/migrations/20261113230000_godown_location_partner_confirm.sql");
+  // Customers and vendors could add their own order_tracking rows (tracking_insert); only the database writes them now.
+  assert.match(sql, /DROP POLICY IF EXISTS tracking_insert ON public\.order_tracking;\nREVOKE INSERT, UPDATE, DELETE, TRUNCATE ON public\.order_tracking FROM PUBLIC, anon, authenticated;/);
+  assert.match(sql, /ALTER TABLE public\.order_tracking ADD COLUMN IF NOT EXISTS partner_id uuid REFERENCES public\.channel_partners\(id\) ON DELETE SET NULL;/);
+  // The partner's list reads the partner's own record, never the free-text role.
+  const list = sql.slice(sql.indexOf("CREATE OR REPLACE FUNCTION public.partner_orders_to_confirm"), sql.indexOf("REVOKE ALL ON FUNCTION public.partner_orders_to_confirm"));
+  assert.match(list, /WHERE tr\.order_id = o\.id AND tr\.partner_id IS NOT NULL AND tr\.status = 'Accepted'/);
+  assert.ok(!list.includes("actor_role"), "the list never trusts actor_role");
+  // Nothing on the site writes order_tracking (the database's SECURITY DEFINER functions do).
+  for (const path of ["src/lib/store.tsx", "src/lib/customer-data.ts", "src/components/partners/PartnerOrdersToConfirm.tsx"]) {
+    assert.ok(!/from\("order_tracking"\)\.(insert|upsert|update|delete)/.test(read(path)), path);
+  }
+  const types = read("src/integrations/supabase/types.ts");
+  const table = types.slice(types.indexOf("      order_tracking: {"), types.indexOf("      orders: {"));
+  assert.match(table, /partner_id: string \| null/);
 });
 
 test("the partner's page: Orders to confirm with Confirm order and the invoice; the Zoho push is allowed for their godown", () => {
@@ -123,6 +142,10 @@ test("the partner's page: Orders to confirm with Confirm order and the invoice; 
   assert.match(panel, /<DialogTitle>Confirm this order\?<\/DialogTitle>/, "asked before it is done");
   const invoices = read("src/components/partners/PartnerInvoices.tsx");
   assert.match(invoices, /partnerOrderInvoice\(\{ \.\.\.row, invoice_mine: true \}\)\.words/);
+  // On a phone the longer words wrap beside the amount instead of pushing the page sideways (review, 13 Nov 2026).
+  assert.match(invoices, /<div className="flex min-w-0 items-center gap-3">\n\s+<span className="shrink-0 whitespace-nowrap text-sm font-bold text-navy tabular-nums">/);
+  assert.match(invoices, /<span className="min-w-0 max-w-\[16rem\] text-right text-xs text-charcoal">/);
+  assert.ok(!invoices.includes('className="flex shrink-0 items-center gap-3"'), "the amount-and-words block may shrink");
   const zoho = read("src/lib/zoho-commerce.functions.ts");
   assert.match(zoho, /\.from\("channel_partners"\)\.select\("id"\)\n\s+\.eq\("user_id", userId\)\.eq\("status", "active"\)\.eq\("branch_id", order\.branch_id\)\.maybeSingle\(\);/);
   assert.equal((zoho.match(/\.select\("id,user_id(,zoho_salesorder_id)?,branch_id"\)/g) ?? []).length, 2, "both pushes read the order's godown");

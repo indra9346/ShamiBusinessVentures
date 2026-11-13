@@ -902,6 +902,7 @@ export type Database = {
           id: string
           note: string | null
           order_id: string
+          partner_id: string | null
           status: string
         }
         Insert: {
@@ -910,6 +911,7 @@ export type Database = {
           id?: string
           note?: string | null
           order_id: string
+          partner_id?: string | null
           status: string
         }
         Update: {
@@ -918,6 +920,7 @@ export type Database = {
           id?: string
           note?: string | null
           order_id?: string
+          partner_id?: string | null
           status?: string
         }
         Relationships: [
@@ -926,6 +929,13 @@ export type Database = {
             columns: ["order_id"]
             isOneToOne: false
             referencedRelation: "orders"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "order_tracking_partner_id_fkey"
+            columns: ["partner_id"]
+            isOneToOne: false
+            referencedRelation: "channel_partners"
             referencedColumns: ["id"]
           },
         ]

@@ -128,6 +128,7 @@ await order("T-VOID", { zoho: "void" });                                   // vo
 await order("T-REFUND", { payment: "Refunded", paid: 0 });                 // refunded
 await order("T-DONE", { status: "Delivered" });                            // long done
 await order("T-HBL", { branch: "BR-HBL", partner: HBL });                  // Hubli's order
+await order("T-FORGE");                                                    // confirmed by an admin; then a made-up partner line
 for (const table of TABLES) await q(`ALTER TABLE public.${table} ENABLE TRIGGER USER`);
 await q("DELETE FROM public.notifications");
 await q("DELETE FROM public.zoho_sync_outbox");
@@ -189,8 +190,11 @@ assert.ok(partnerFx.notes.includes(`customer:${CUSTOMER}:Order status updated:Or
 assert.ok(partnerFx.notes.includes(`vendor:${VENDOR}:Order status updated:Order NO is now Accepted.`));
 assert.ok(partnerFx.notes.includes(`admin:${ADMIN}:Order status updated:Order NO is now Accepted.`), "every admin hears of the partner's confirm");
 assert.ok(partnerFx.notes.includes(`admin:${ADMIN2}:Order status updated:Order NO is now Accepted.`));
-const tracking = await q("SELECT status, note, actor_role FROM public.order_tracking WHERE order_id = $1", [ids["T-PARTNER"]]);
-assert.deepEqual(tracking, [{ status: "Accepted", note: "Confirmed by channel partner Partner CLK at Challakere Godown.", actor_role: "partner" }], "who confirmed it is kept");
+const tracking = await q("SELECT status, note, actor_role, partner_id FROM public.order_tracking WHERE order_id = $1", [ids["T-PARTNER"]]);
+assert.deepEqual(tracking, [{ status: "Accepted", note: "Confirmed by channel partner Partner CLK at Challakere Godown.", actor_role: "partner", partner_id: CLK }],
+  "who confirmed it is kept, with the partner's id");
+// The customer still reads their order's history.
+assert.equal((await as(CUSTOMER, () => q("SELECT count(*)::int AS n FROM public.order_tracking WHERE order_id = $1", [ids["T-PARTNER"]])))[0].n, 1);
 assert.equal((await q("SELECT count(*)::int AS n FROM public.order_tracking WHERE order_id = $1", [ids["T-ADMIN"]]))[0].n, 0);
 
 // From Placed, paid in full: the same step as the admin's "Mark as Confirmed".
@@ -236,12 +240,42 @@ await refuses(() => forced(P_CLK, "UPDATE public.orders SET order_status = 'Acce
 await as(P_CLK, () => q("UPDATE public.orders SET order_status = 'Accepted' WHERE order_no = 'T-PART'")).catch(() => undefined);
 assert.equal(await statusOf("T-PART"), "Payment Confirmed");
 
+// ---------------------------------------------------------------- nobody can make up who confirmed (review, 13 Nov 2026)
+// An admin confirms T-FORGE (that path writes no history line). Its customer, its vendor, the godown's partner and an
+// admin, all from the site, then try to add a line saying a channel partner confirmed it, one of them dated a month ahead.
+// Only the database's own functions write order_tracking.
+await as(ADMIN, () => q("SELECT public.admin_update_order_status('T-FORGE', 'Accepted')"));
+assert.equal(await statusOf("T-FORGE"), "Accepted");
+for (const [user, label] of [[CUSTOMER, "the customer"], [VENDOR, "the vendor"], [P_CLK, "the godown's partner"], [ADMIN, "an admin"], [null, "not signed in"]]) {
+  await refuses(() => as(user, () => q(`INSERT INTO public.order_tracking (order_id, status, actor_role, note, created_at)
+    VALUES ($1, 'Accepted', 'partner', 'Confirmed by channel partner Partner CLK at Challakere Godown.', now() + interval '30 days')`, [ids["T-FORGE"]])),
+    /permission denied/, `${label}: a made-up partner line`);
+  await refuses(() => as(user, () => q("INSERT INTO public.order_tracking (order_id, status, actor_role, partner_id) VALUES ($1, 'Accepted', 'partner', $2)",
+    [ids["T-FORGE"], CLK])), /permission denied/, `${label}: a made-up line with the partner's id`);
+  await refuses(() => as(user, () => q("UPDATE public.order_tracking SET partner_id = NULL, note = 'x' WHERE order_id = $1", [ids["T-PARTNER"]])),
+    /permission denied/, `${label}: changing the partner's line`);
+  await refuses(() => as(user, () => q("DELETE FROM public.order_tracking WHERE order_id = $1", [ids["T-PARTNER"]])),
+    /permission denied/, `${label}: removing the partner's line`);
+}
+assert.equal((await q("SELECT count(*)::int AS n FROM public.order_tracking WHERE order_id = $1", [ids["T-FORGE"]]))[0].n, 0);
+assert.deepEqual((await q("SELECT note, partner_id FROM public.order_tracking WHERE order_id = $1", [ids["T-PARTNER"]])),
+  [{ note: "Confirmed by channel partner Partner CLK at Challakere Godown.", partner_id: CLK }], "the partner's own line is untouched");
+const trackingRights = (await q(`SELECT
+  has_table_privilege('authenticated', 'public.order_tracking', 'INSERT') AS auth_insert,
+  has_table_privilege('authenticated', 'public.order_tracking', 'UPDATE') AS auth_update,
+  has_table_privilege('authenticated', 'public.order_tracking', 'DELETE') AS auth_delete,
+  has_table_privilege('authenticated', 'public.order_tracking', 'SELECT') AS auth_select,
+  has_table_privilege('anon', 'public.order_tracking', 'INSERT') AS anon_insert,
+  (SELECT count(*)::int FROM pg_policies WHERE schemaname = 'public' AND tablename = 'order_tracking' AND cmd <> 'SELECT') AS write_policies`))[0];
+assert.deepEqual(trackingRights, { auth_insert: false, auth_update: false, auth_delete: false, auth_select: true, anon_insert: false, write_policies: 0 });
+
 // ---------------------------------------------------------------- the partner's list
 const list = (user) => as(user, () => q("SELECT * FROM public.partner_orders_to_confirm()"));
 const rows = await list(P_CLK);
 assert.deepEqual(rows.map((r) => r.order_no).sort(), ["T-ADMIN", "T-PART", "T-PARTNER", "T-PLACED", "T-REFUND", "T-UNPAID", "T-VOID"].sort(),
   "waiting ones (paid or not) and the partner's own confirms; not checkouts, cancelled, delivered or Hubli's");
 const row = (no) => rows.find((r) => r.order_no === no);
+assert.equal(row("T-FORGE"), undefined, "an admin's confirm is never listed as the partner's");
 assert.ok(row("T-PARTNER").confirmed_at && row("T-PLACED").confirmed_at, "confirmed by the partner, with when");
 assert.equal(row("T-PART").confirmed_at, null);
 assert.equal(row("T-VOID").zoho_void, true);
@@ -272,7 +306,11 @@ await setLink("");
 await refuses(() => setLink("http://maps.app.goo.gl/Xr4Pq9LmZb2VnT8k6"), /branches_map_url_https/, "not https");
 await refuses(() => setLink("maps.app.goo.gl/Xr4Pq9LmZb2VnT8k6"), /branches_map_url_https/, "no scheme");
 await refuses(() => setLink("https://maps.app.goo.gl/a b"), /branches_map_url_https/, "a space");
+// At most 150 characters: a longer link prints a QR too dense to read from paper.
+await setLink(`https://maps.app.goo.gl/${"x".repeat(150 - 24)}`);
+await refuses(() => setLink(`https://maps.app.goo.gl/${"x".repeat(151 - 24)}`), /branches_map_url_https/, "151 characters");
 await refuses(() => setLink(`https://maps.app.goo.gl/${"x".repeat(1000)}`), /branches_map_url_https/, "too long");
+await setLink("");
 await refuses(() => as(P_CLK, async () => {
   const changed = await q("UPDATE public.branches SET map_url = 'https://evil.example/x' WHERE id = 'BR-CLK' RETURNING id");
   if (!changed.length) throw new Error("no rows changed");

@@ -3,9 +3,11 @@
  * will be uploaded in admin panel for godown location) and show Collect goods from here and rest details").
  *
  * The admin pastes each godown's Google Maps link in Admin > Godowns (branches.map_url). An order collected from a godown
- * then prints, under its notes, a "Collect goods from here" block: the godown's name, address, phone and hours, and a QR
- * of that link labelled "Scan for the godown location". Without a link the block prints without the QR. The QR is drawn
- * with the same code as the invoice's delivery QR (pdf-qr.ts), and on a phone the PDF's QR can also be tapped.
+ * then prints, under its notes, a "Collect goods from here" block: a QR of that link, and beside it the godown's name,
+ * address and "Scan for the godown location". Without a link the block prints without the QR. The godown's phone and
+ * pickup instructions are already in the invoice's PICKUP FROM card at the top, so the block does not print them again
+ * (review, 13 Nov 2026: repeating them pushed the delivery QR onto a second page). The QR is drawn with the same code as
+ * the invoice's delivery QR (pdf-qr.ts), and on a phone the PDF's QR can also be tapped.
  *
  * Kept free of app imports so the node tests can load it.
  */
@@ -13,8 +15,12 @@ import type { jsPDF as JsPdf } from "jspdf";
 import { encode } from "uqr";
 import { drawPdfQr } from "./pdf-qr.ts";
 
-/** Longest link kept (the database allows the same). */
-export const MAP_LINK_MAX = 1000;
+/**
+ * Longest link kept (the database allows the same, branches_map_url_https). The QR on paper must stay readable: at 150
+ * characters it is 57 modules across in 24 mm, 0.42 mm a module. A Google Maps link copied from the address bar is often
+ * 250-500 characters; Share > Copy link gives a short maps.app.goo.gl link of about 40.
+ */
+export const MAP_LINK_MAX = 150;
 
 /**
  * Why a location link cannot be saved, or null when it can. An empty link is allowed: that godown's invoices then print
@@ -25,7 +31,7 @@ export function mapLinkProblem(value: string | null | undefined): string | null 
   if (!link) return null;
   if (/\s/.test(link)) return "The location link cannot have spaces. In Google Maps, open the godown, press Share, then Copy link, and paste it here.";
   if (!/^https:\/\//i.test(link)) return "The location link must start with https:// (in Google Maps: Share, then Copy link).";
-  if (link.length > MAP_LINK_MAX) return "The location link is too long. In Google Maps, press Share, then Copy link, for a short link.";
+  if (link.length > MAP_LINK_MAX) return "The location link is too long to print as a clear QR. In Google Maps, open the godown, press Share, then Copy link, and paste that short link here.";
   let url: URL;
   try {
     url = new URL(link);
@@ -72,8 +78,8 @@ export function collectAddressLine(godown: { address?: string; city?: string; st
   return [address, said(city) ? "" : city, tail].filter(Boolean).join(", ");
 }
 
-/** The godown an order is collected from, as the block prints it. */
-export type CollectPoint = { name: string; address: string; phone: string; instructions: string; mapUrl: string };
+/** The godown an order is collected from, as the block prints it (its phone and instructions are in PICKUP FROM). */
+export type CollectPoint = { name: string; address: string; mapUrl: string };
 
 type Rgb = [number, number, number];
 /** The invoice's own colours, so the block matches the page. */
@@ -85,8 +91,8 @@ export const COLLECT_QR_LABEL = "Scan for the godown location";
 
 /**
  * The QR's side in mm: about 0.45 mm a module (a phone reads it from a hand's length), never under 16 mm or over 24 mm,
- * so a short maps.app.goo.gl link stays small (the invoice keeps to one page) and a long google.com/maps link stays
- * readable.
+ * so a short maps.app.goo.gl link stays small (the invoice keeps to one page). The longest link kept (MAP_LINK_MAX) still
+ * gets 0.42 mm a module.
  */
 export function collectQrSize(link: string): number {
   const modules = encode(link, { ecc: "M", border: 4 }).data.length;
@@ -96,12 +102,13 @@ export function collectQrSize(link: string): number {
 /** Only these drawing calls are used, so a test can record them without a real PDF. */
 export type CollectSurface = Pick<JsPdf, "setFont" | "setFontSize" | "setTextColor" | "text" | "splitTextToSize" | "setFillColor" | "rect" | "setDrawColor" | "link">;
 
-type Row = { lines: string[]; bold: boolean; size: number; color: "ink" | "muted" | "navy"; step: number };
+type Row = { lines: string[]; bold: boolean; size: number; color: "ink" | "muted" | "navy"; step: number; label?: boolean };
 
 /**
  * The "Collect goods from here" block, measured first (so the invoice can keep it on the page with the notes) and drawn
- * by `draw(x, top)`. With a link: the QR and its label on the left, the heading and the godown's details beside it.
- * Without one: the heading and the details across the full width. Returns the block's height in mm.
+ * by `draw(x, top)`. With a link: the QR on the left and, beside it, the heading, the godown's name and address, and the
+ * QR's label, so the block is no taller than the QR. Without one: the heading, name and address across the full width.
+ * Returns the block's height in mm.
  */
 export function collectFromBlock(pdf: CollectSurface, point: CollectPoint, width: number, style: CollectStyle) {
   const link = printableMapLink(point.mapUrl);
@@ -110,47 +117,39 @@ export function collectFromBlock(pdf: CollectSurface, point: CollectPoint, width
   const textX = qr ? qr + GAP : 0;
   const textW = Math.max(20, width - textX);
   const rows: Row[] = [];
-  const add = (text: string, bold: boolean, size: number, color: Row["color"], step: number) => {
+  const add = (text: string, bold: boolean, size: number, color: Row["color"], step: number, label = false) => {
     const clean = text.trim();
     if (!clean) return;
     pdf.setFont("helvetica", bold ? "bold" : "normal");
     pdf.setFontSize(size);
-    rows.push({ lines: pdf.splitTextToSize(clean, textW) as string[], bold, size, color, step });
+    rows.push({ lines: pdf.splitTextToSize(clean, textW) as string[], bold, size, color, step, label });
   };
-  // Sized like the notes above it, a little tighter: the block must leave room for the delivery QR at the bottom.
-  add(COLLECT_HEADING, true, 7.6, "muted", 3.9);
-  add(point.name, true, 8, "ink", 3.4);
-  add(point.address, false, 7.6, "ink", 3.2);
-  add(point.phone ? `Phone ${point.phone}` : "", false, 7.6, "ink", 3.2);
-  add(point.instructions, false, 7.2, "muted", 3.1);
-  // The label under the QR, in as many short lines as its width needs.
-  pdf.setFont("helvetica", "bold");
-  pdf.setFontSize(6.2);
-  const label = qr ? (pdf.splitTextToSize(COLLECT_QR_LABEL, qr + 1) as string[]) : [];
-  const LABEL_STEP = 2.4;
-  // Text rows: a baseline 2.8 mm under the top for the first line, then each line's own step; about 0.9 mm under the
-  // last baseline for its descenders.
+  // A little smaller than the notes above it: with a two-line address the text is no taller than a short link's QR
+  // (16.7 mm), so the delivery QR at the bottom keeps to the first page.
+  add(COLLECT_HEADING, true, 7.4, "muted", 3.6);
+  add(point.name, true, 7.8, "ink", 3.3);
+  add(point.address, false, 7.3, "ink", 3.05);
+  if (qr) add(COLLECT_QR_LABEL, true, 6.6, "navy", 3, true);
+  // A baseline 2.8 mm under the top for the first line, then each line's own step; about 0.9 mm under the last baseline
+  // for its descenders.
   const textH = rows.reduce((sum, row) => sum + row.lines.length * row.step, 0) - (rows.at(-1)?.step ?? 0) + 3.7;
-  const qrH = qr ? qr + 1.1 + label.length * LABEL_STEP : 0;
-  const height = Math.max(textH, qrH);
+  const height = Math.max(textH, qr);
 
   const draw = (x: number, top: number) => {
     if (qr) {
       drawPdfQr(pdf, link, x, top, qr);
       pdf.setDrawColor(...style.rule);
       pdf.rect(x, top, qr, qr);
-      pdf.setFont("helvetica", "bold");
-      pdf.setFontSize(6.2);
-      pdf.setTextColor(...style.navy);
-      label.forEach((line, index) => pdf.text(line, x + qr / 2, top + qr + 2.3 + index * LABEL_STEP, { align: "center" }));
-      // A PDF opened on a phone: tapping the QR or its label opens the location.
-      pdf.link(x, top, qr, qrH, { url: link });
+      // A PDF opened on a phone: tapping the QR opens the location.
+      pdf.link(x, top, qr, qr, { url: link });
     }
     let at = top + 2.8;
     for (const row of rows) {
       pdf.setFont("helvetica", row.bold ? "bold" : "normal");
       pdf.setFontSize(row.size);
       pdf.setTextColor(...style[row.color]);
+      // The label can be tapped too.
+      if (row.label) pdf.link(x + textX, at - 2.4, textW, row.lines.length * row.step, { url: link });
       for (const line of row.lines) {
         pdf.text(line, x + textX, at);
         at += row.step;
@@ -158,5 +157,5 @@ export function collectFromBlock(pdf: CollectSurface, point: CollectPoint, width
     }
     return top + height;
   };
-  return { height, link, qrSize: qr, label, rows: rows.map((row) => row.lines.join(" ")), draw };
+  return { height, link, qrSize: qr, rows: rows.map((row) => row.lines.join(" ")), draw };
 }

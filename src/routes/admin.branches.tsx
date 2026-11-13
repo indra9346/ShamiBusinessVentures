@@ -9,7 +9,7 @@ import { inr } from "@/lib/data";
 import { matchesBranchView } from "@/lib/panel-filters";
 import { useApp } from "@/lib/store";
 import { PLATFORM_FEATURES_KEY, reloadBranches, useBranches, type Branch } from "@/lib/branches";
-import { MAP_LINK_MAX, isGoogleMapsLink, mapLinkProblem, printableMapLink } from "@/lib/godown-location";
+import { isGoogleMapsLink, mapLinkProblem, printableMapLink } from "@/lib/godown-location";
 import { useDepositAccounts } from "@/components/panel/DepositAccountsPanel";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -362,7 +362,7 @@ function AdminBranches() {
               <div className="grid gap-1.5"><Label>Email</Label><Input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></div>
               <div className="grid gap-1.5 sm:col-span-2">
                 <Label htmlFor="branch-map-url">Godown location link (Google Maps)</Label>
-                <Input id="branch-map-url" inputMode="url" maxLength={MAP_LINK_MAX} value={form.mapUrl} onChange={(e) => setForm({ ...form, mapUrl: e.target.value.trim() })} placeholder="https://maps.app.goo.gl/…" />
+                <Input id="branch-map-url" inputMode="url" value={form.mapUrl} onChange={(e) => setForm({ ...form, mapUrl: e.target.value.trim() })} placeholder="https://maps.app.goo.gl/…" />
                 <p className="text-xs text-slate">In Google Maps, open the godown, press Share, then Copy link. Invoices of orders collected here print it as a QR: "Scan for the godown location".</p>
                 {mapLinkProblem(form.mapUrl) ? <p className="text-xs font-semibold text-danger">{mapLinkProblem(form.mapUrl)}</p>
                   : printableMapLink(form.mapUrl) ? (

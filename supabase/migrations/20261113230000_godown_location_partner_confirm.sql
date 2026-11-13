@@ -3,7 +3,10 @@
 -- the order & get invoice also".
 --
 -- 1. branches.map_url, the godown's location link that Admin > Godowns saves and the invoice prints as a QR: an https
---    link or nothing. NOT VALID: rows saved before are left as they are (the invoice prints only a working https link).
+--    link of at most 150 characters, or nothing. A longer link (a Google Maps address-bar link is often 250-500) makes a
+--    QR too dense to read from paper; Google Maps' Share > Copy link gives a short maps.app.goo.gl link. NOT VALID: rows
+--    saved before are left as they are (the invoice prints only a link that passes the same rule; on 13 Nov 2026 both
+--    godowns had none).
 -- 2. A channel partner confirms an order of their own godown, with the same effect as an admin's "Mark as Confirmed"
 --    (admin_update_order_status to Accepted): the same UPDATE, so the same triggers run (Zoho sync job and, from it, the
 --    Zoho Books invoice; notifications to the customer, vendors and every admin; partner commission status; vendor
@@ -18,12 +21,24 @@
 --    partner_orders_to_confirm lists the godown's orders waiting for that, and the ones confirmed by a partner in the
 --    last 3 days, with whether the partner may open each invoice (partner_invoice_order's rule: orders placed while they
 --    ran the godown).
+-- 3. Who confirmed an order can be trusted. order_tracking rows are written only by the database's own SECURITY DEFINER
+--    functions (vendor_update_order_fulfillment and partner_confirm_order); the site never inserts them. The old
+--    tracking_insert policy still let any signed-in customer or vendor of an order add a row of their own, so a
+--    "Confirmed by channel partner" line (or a vendor's shipment line) could be made up. That right is withdrawn, and a
+--    partner's confirm also keeps the channel partner's id (order_tracking.partner_id), which is what
+--    partner_orders_to_confirm reads.
 -- guard_order_mutation and sync_order_vendor_fulfillments are the live definitions (read 13 Nov 2026) with only the
 -- app.partner_confirm lines added.
 
 ALTER TABLE public.branches DROP CONSTRAINT IF EXISTS branches_map_url_https;
 ALTER TABLE public.branches ADD CONSTRAINT branches_map_url_https
-  CHECK (map_url = '' OR (map_url ~ '^https://[^[:space:]]+$' AND char_length(map_url) <= 1000)) NOT VALID;
+  CHECK (map_url = '' OR (map_url ~ '^https://[^[:space:]]+$' AND char_length(map_url) <= 150)) NOT VALID;
+
+DROP POLICY IF EXISTS tracking_insert ON public.order_tracking;
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON public.order_tracking FROM PUBLIC, anon, authenticated;
+ALTER TABLE public.order_tracking ADD COLUMN IF NOT EXISTS partner_id uuid REFERENCES public.channel_partners(id) ON DELETE SET NULL;
+COMMENT ON COLUMN public.order_tracking.partner_id IS
+  'The channel partner who made this step (partner_confirm_order). Only the database''s own functions write order_tracking.';
 
 CREATE OR REPLACE FUNCTION public.guard_order_mutation()
  RETURNS trigger
@@ -254,8 +269,8 @@ BEGIN
   PERFORM set_config('app.partner_confirm', 'on', true);
   UPDATE public.orders SET order_status = 'Accepted' WHERE id = o.id;
   PERFORM set_config('app.partner_confirm', 'off', true);
-  INSERT INTO public.order_tracking (order_id, status, note, actor_role)
-    VALUES (o.id, 'Accepted', format('Confirmed by channel partner %s at %s.', me.name, COALESCE(godown, o.branch_id)), 'partner');
+  INSERT INTO public.order_tracking (order_id, status, note, actor_role, partner_id)
+    VALUES (o.id, 'Accepted', format('Confirmed by channel partner %s at %s.', me.name, COALESCE(godown, o.branch_id)), 'partner', me.id);
   RETURN jsonb_build_object('order_no', o.order_no, 'status', 'Accepted', 'confirmed', true, 'already', false);
 END $function$;
 REVOKE ALL ON FUNCTION public.partner_confirm_order(text) FROM PUBLIC, anon;
@@ -292,9 +307,10 @@ BEGIN
     COALESCE(private.order_signing_partner(o.id) = me.id, false),
     t.created_at
   FROM public.orders o
+  -- A partner's confirm is the row partner_confirm_order wrote, with the partner's id (nobody else can write one).
   LEFT JOIN LATERAL (
     SELECT tr.created_at FROM public.order_tracking tr
-    WHERE tr.order_id = o.id AND tr.actor_role = 'partner' AND tr.status = 'Accepted'
+    WHERE tr.order_id = o.id AND tr.partner_id IS NOT NULL AND tr.status = 'Accepted'
     ORDER BY tr.created_at DESC LIMIT 1) t ON true
   WHERE o.branch_id = me.branch_id
     AND (o.order_status IN ('Placed', 'Payment Confirmed')

@@ -272,12 +272,11 @@ export async function buildInvoicePdf(order: Order, options: InvoiceOptions = {}
     ? { name: orderBranch.name, address: orderBranch.address, phone: godownPhone, instructions: orderBranch.instructions, mapUrl: orderBranch.mapUrl }
     : legacyPoint;
   // "Collect goods from here" under the notes (owner, 13 Nov 2026), with the godown's location QR when Admin > Godowns
-  // has its location link: on every copy of a collect-from-godown order.
+  // has its location link: on every copy of a collect-from-godown order. The phone and the pickup instructions are in the
+  // PICKUP FROM card at the top, so the block does not repeat them (it kept the delivery QR off the first page).
   const collectPoint: CollectPoint | null = !pickupPoint ? null : {
     name: pickupPoint.name,
     address: orderBranch ? collectAddressLine(orderBranch) : pickupPoint.address,
-    phone: pickupPoint.phone,
-    instructions: pickupPoint.instructions,
     mapUrl: pickupPoint.mapUrl,
   };
   const customerGstState = /^[0-9]{2}/.test(order.gstin ?? "") ? order.gstin!.slice(0, 2) : "";
@@ -702,18 +701,19 @@ export async function buildInvoicePdf(order: Order, options: InvoiceOptions = {}
   const notes = [
     `Order ${order.id} placed on Grain Bazar.`,
     // The goods are handed over against the delivery QR now, not the order number (owner, 11 Nov 2026). Where to collect
-    // them is the block under the notes (owner, 13 Nov 2026), so the note no longer names the godown.
+    // them is the block under the notes (owner, 13 Nov 2026), so the note no longer names the godown. The location QR may
+    // sit right under this note, so it names the DELIVERY QR band at the bottom: that is the one shown at the counter.
     pickupPoint ? (qrCode
-      ? "Show this invoice's delivery QR at the godown counter."
-      : "The tax invoice carries your delivery QR once the payment is confirmed; show it at the godown counter.") : "",
+      ? "At the godown counter, show the DELIVERY QR at the bottom."
+      : "The tax invoice carries your DELIVERY QR once the payment is confirmed; show it at the godown counter.") : "",
     !facts.payments.length && (order.utr || order.txn) ? `Payment reference: ${order.utr || order.txn}` : "",
     couponInLines ? `Coupon ${order.coupon ?? ""}: Rs. ${money(order.discount)} taken off the items above in proportion, with the GST on it.`.replace("  ", " ") : "",
     zohoNumber ? "" : "Proforma: the tax invoice number comes from Zoho Books once the invoice is raised.",
     copy === "office" ? "Office copy: includes fulfilling vendor details. Do not share with the customer." : "",
   ].filter(Boolean).flatMap((note) => pdf.splitTextToSize(note, leftW) as string[]);
   const collect = collectPoint ? collectFromBlock(pdf, collectPoint, leftW, { ink, muted, navy, rule }) : null;
-  // `ly` runs a line step (3.8 mm) past the notes' last line: the block starts about 1.5 mm under that line's text.
-  const COLLECT_GAP = -1.4;
+  // `ly` runs a line step (3.8 mm) past the notes' last line: the block starts about 1.4 mm under that line's text.
+  const COLLECT_GAP = -1.8;
   const leftH = 5 + words.length * 4 + 4 + 4.5 + notes.length * 3.8 + (collect ? COLLECT_GAP + collect.height : 0);
   if (y + summaryH + 52 > bottomLimit || y + 6 + leftH > bottomLimit) newPage(false);
   y += 6;
@@ -768,8 +768,8 @@ export async function buildInvoicePdf(order: Order, options: InvoiceOptions = {}
   ly += 4.5 + notes.length * 3.8;
   // Where to collect the goods, with the godown's location QR: right under the notes, on every copy.
   if (collect) ly = collect.draw(M, ly + COLLECT_GAP);
-  // The block ends on its own last line (the notes' `ly` runs a line step past theirs), so less space follows it.
-  y = Math.max(sy + 8, ly + (collect ? 2.6 : 4));
+  // The block ends on its QR or its own last line (the notes' `ly` runs a line step past theirs), so less space follows.
+  y = Math.max(sy + 8, ly + (collect ? 1.8 : 4));
 
   // The terms and the signature line take about 31 mm. Reserving no more than that keeps an ordinary order on one page.
   const termsH = 33;
