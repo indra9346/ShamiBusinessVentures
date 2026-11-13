@@ -3708,16 +3708,24 @@ async function callerVendorId(db: Awaited<ReturnType<typeof dbAdmin>>, userId: s
 
 /**
  * Who may trigger an instant Zoho push for an order: the customer who placed it, an admin,
- * or a vendor with a line in it (vendor fulfilment updates change the order too).
+ * a vendor with a line in it (vendor fulfilment updates change the order too), or the active
+ * channel partner of the order's own godown (13 Nov 2026: they confirm its orders, and the
+ * push makes its Zoho Books invoice now instead of at the queue's next run). A push only
+ * sends the order as the database has it, the same as the queue does.
  */
 async function mayPushOrder(
   db: Awaited<ReturnType<typeof dbAdmin>>,
   userId: string,
   isAdmin: () => Promise<boolean>,
-  order: { id: string; user_id: string | null },
+  order: { id: string; user_id: string | null; branch_id?: string | null },
 ) {
   if (order.user_id === userId) return true;
   if (await isAdmin()) return true;
+  if (order.branch_id) {
+    const { data: partner } = await db.from("channel_partners").select("id")
+      .eq("user_id", userId).eq("status", "active").eq("branch_id", order.branch_id).maybeSingle();
+    if (partner) return true;
+  }
   const vendorId = await callerVendorId(db, userId);
   if (!vendorId) return false;
   const { count } = await db.from("order_items").select("id", { count: "exact", head: true })
@@ -3731,7 +3739,7 @@ export const pushOrderStockToZoho = createServerFn({ method: "POST" })
   .validator(z.object({ orderNo: z.string().trim().min(1).max(80) }))
   .handler(async ({ data, context }) => {
     const db = await dbAdmin();
-    const { data: order } = await db.from("orders").select("id,user_id").eq("order_no", data.orderNo).maybeSingle();
+    const { data: order } = await db.from("orders").select("id,user_id,branch_id").eq("order_no", data.orderNo).maybeSingle();
     if (!order) return { pushed: 0 };
     const isAdmin = async () => !!(await context.supabase.rpc("has_role", { _user_id: context.userId, _role: "admin" })).data;
     if (!(await mayPushOrder(db, context.userId, isAdmin, order))) return { pushed: 0 };
@@ -5453,7 +5461,7 @@ export const pushOrderChangeToZoho = createServerFn({ method: "POST" })
     const db = await dbAdmin();
     const { data: order, error } = await db
       .from("orders")
-      .select("id,user_id,zoho_salesorder_id")
+      .select("id,user_id,zoho_salesorder_id,branch_id")
       .eq("order_no", data.orderNo)
       .maybeSingle();
     if (error || !order) return { pushed: false };

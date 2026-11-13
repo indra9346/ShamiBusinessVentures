@@ -902,6 +902,7 @@ export type Database = {
           id: string
           note: string | null
           order_id: string
+          partner_id: string | null
           status: string
         }
         Insert: {
@@ -910,6 +911,7 @@ export type Database = {
           id?: string
           note?: string | null
           order_id: string
+          partner_id?: string | null
           status: string
         }
         Update: {
@@ -918,6 +920,7 @@ export type Database = {
           id?: string
           note?: string | null
           order_id?: string
+          partner_id?: string | null
           status?: string
         }
         Relationships: [
@@ -926,6 +929,13 @@ export type Database = {
             columns: ["order_id"]
             isOneToOne: false
             referencedRelation: "orders"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "order_tracking_partner_id_fkey"
+            columns: ["partner_id"]
+            isOneToOne: false
+            referencedRelation: "channel_partners"
             referencedColumns: ["id"]
           },
         ]
@@ -1484,6 +1494,8 @@ export type Database = {
       delivery_admin_release_print: { Args: { _order_no: string; _note: boolean; _slip_lines: number[]; _zoho: Json | null; _actor: string }; Returns: Json }
       godown_released_notes: { Args: Record<string, never>; Returns: { note_no: string; order_no: string; customer: string; items: number; to_go: number; released_at: string; released_how: string; delivered: boolean; godown: string }[] }
       my_delivery_role: { Args: Record<string, never>; Returns: Json }
+      partner_confirm_order: { Args: { _order_no: string }; Returns: Json }
+      partner_orders_to_confirm: { Args: Record<string, never>; Returns: { order_no: string; placed_at: string; order_status: string; payment_status: string; payment_method: string; shipping_method: string; total: number; paid_amount: number; customer: string; items: string | null; zoho_void: boolean; invoice_number: string | null; invoice_mine: boolean; confirmed_at: string | null }[] }
       partner_payment_checkouts: { Args: Record<string, never>; Returns: { order_no: string; status: string; total: number; method: string; placed_at: string; hold_until: string | null; customer: string; items: string; utr: string | null; utr_status: string | null; utr_late: boolean; utr_sent_by: string | null }[] }
       order_delete_with_payments_check: { Args: { _order_no: string }; Returns: Json }
       complete_follow_up_task: { Args: { _id: string; _note?: string }; Returns: Json }

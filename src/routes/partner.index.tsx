@@ -9,6 +9,7 @@ import { CommissionOrders, PartnerLeaderboard, TargetBar, commissionTotals, useP
 import { MyPartnerReport } from "@/components/partners/MyPartnerReport";
 import { PartnerPayouts } from "@/components/partners/PartnerPayouts";
 import { PartnerInvoices } from "@/components/partners/PartnerInvoices";
+import { PartnerOrdersToConfirm } from "@/components/partners/PartnerOrdersToConfirm";
 import { MonthlyIncome } from "@/components/partners/MonthlyIncome";
 import { GodownTransfers } from "@/components/batches/GodownTransfers";
 import { PartnerStockIndents } from "@/components/partners/StockIndents";
@@ -127,6 +128,8 @@ function PartnerDashboard() {
           {/* 12 Nov 2026: the notes released at this godown, with the items still to go. */}
           <ReleasedDeliveryNotes />
         </div>
+        {/* Added 13 Nov 2026 (owner): confirm the godown's paid orders, as the office does, and get each invoice. */}
+        <PartnerOrdersToConfirm />
         <p className="text-xs text-slate">{monthLabel(month)} · updates live every 30 seconds</p>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {statement ? (

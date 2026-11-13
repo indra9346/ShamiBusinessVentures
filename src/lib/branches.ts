@@ -60,7 +60,7 @@ export const DEMO_BRANCH: Branch = {
   id: "BR-CLK", code: "CLK", name: "Grain Bazar Challakere Godown",
   address: "Pavagada Road, Behind Mahalakshmi Kalyana Mantapa, Mahadevi Road, Challakere, Karnataka 577522",
   city: "Challakere", state: "Karnataka", stateCode: "29", pincode: "577522", phone: "8310084308",
-  email: "shamibusinessventurespvtltd@gmail.com", mapUrl: "", instructions: "Bring your order number. Collect during working hours.",
+  email: "shamibusinessventurespvtltd@gmail.com", mapUrl: "", instructions: "Show the delivery QR on your invoice at the counter. Collect during working hours.",
   gstin: "", zohoLocationId: "", zohoLocationName: "CLK Shami Business Ventures", zohoPricebookId: "", zohoPricebookName: "",
   servesPincodes: ["577522", "577536", "577537", "577538", "577543"], pickupEnabled: true, deliveryEnabled: false,
   deliveryFee: 0, freeDeliveryAbove: null, isDefault: true, active: true, sortOrder: 0, vendorId: null,
