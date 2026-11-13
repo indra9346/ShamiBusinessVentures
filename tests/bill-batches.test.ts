@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { batchDeleteBlocker, billChange, billPlan, billSummary, costOf, lineBlocker } from "../src/lib/bill-batches.ts";
+import { BILL_EDITED, batchDeleteBlocker, billChange, billLinesChange, billPlan, billSummary, costOf, lineBlocker } from "../src/lib/bill-batches.ts";
 
 // The client's real bills of 3 Nov 2026, in the shape Zoho's GET /bills/:id returns them.
 const line = (id: string, name: string, qty: number, rate: number, itemTotal: number, extra: Record<string, unknown> = {}) => ({
@@ -129,4 +129,22 @@ test("a batch can be deleted only while nothing has touched it", () => {
   assert.match(batchDeleteBlocker(fresh, [{ reserved_quantity: 1, released_quantity: 0 }], 0, () => ({ order_status: "Cancelled", payment_status: "Pending" })), /Orders have tak/);
   assert.match(batchDeleteBlocker(fresh, [], 1), /Stock counts/);
   assert.match(batchDeleteBlocker({ quantity: 12, remaining_quantity: 10 }, [], 0), /moved/);
+});
+
+test("13 Nov: a bill whose edit time moved is flagged only when a batch's own line changed", () => {
+  // Zoho moves a bill's edit time for a purchase receive or a payment too: "YET TO COME" (Sugar S1) was flagged that way.
+  const stored = { modifiedAt: "2026-11-13T14:10:00+0530", total: 955395 };
+  assert.equal(billChange(stored, { status: "open", modifiedAt: "2026-11-13T15:20:00+0530", total: 955395 }), BILL_EDITED);
+  const plan = billPlan(SS4463);
+  const batches = [
+    { batchCode: "CLK-031126-04", lineId: "L1", itemId: "I-L1", quantity: 2, unitExGst: 98.04 },
+    { batchCode: "CLK-031126-05", lineId: "L2", itemId: "I-L2", quantity: 6, unitExGst: 92.21 },
+  ];
+  assert.equal(billLinesChange(batches, plan), "");
+  // A cost written before the bill was read (null) is not compared.
+  assert.equal(billLinesChange([{ ...batches[0]!, unitExGst: null }], plan), "");
+  assert.match(billLinesChange([{ ...batches[0]!, quantity: 3 }], plan), /quantity for batch CLK-031126-04 changed in Zoho \(3 → 2\)/);
+  assert.match(billLinesChange([{ ...batches[1]!, unitExGst: 98.04 }], plan), /cost for batch CLK-031126-05 changed in Zoho \(₹98.04 → ₹92.21 before GST\)/);
+  assert.match(billLinesChange([{ ...batches[0]!, lineId: "GONE" }], plan), /line of batch CLK-031126-04 was removed/);
+  assert.match(billLinesChange([{ ...batches[0]!, itemId: "I-OTHER" }], plan), /another item/);
 });

@@ -19,16 +19,17 @@ const ROUTES = readdirSync(join(SRC, "routes")).filter((name) => name.endsWith("
 const PANELS = {
   admin: ROUTES.filter((name) => name.startsWith("admin.") && !["admin.login.tsx", "admin.index.tsx"].includes(name)),
   vendor: ROUTES.filter((name) => name.startsWith("vendor.") && !["vendor.login.tsx", "vendor.index.tsx", "vendor.register.tsx"].includes(name)),
-  customer: [...ROUTES.filter((name) => name.startsWith("account.")), "wishlist.tsx"].filter((name) => ROUTES.includes(name)),
+  // The wishlist is the panel's own page (account.wishlist.tsx) since 13 Nov 2026; the shop's /wishlist is not a panel page.
+  customer: ROUTES.filter((name) => name.startsWith("account.")),
   partner: ["partner.index.tsx", "partner.attendance.tsx", "slip.tsx"],
   staff: ["staff.index.tsx", "staff.device.tsx", "slip.tsx"],
 };
 /**
  * Pages offered as pages only: they have no panel search on them to show a button after opening (the scanner, the
- * godown phone's setup, the shop's wishlist), and the scanner's buttons change with each scan or are for signed-out
+ * godown phone's setup), and the scanner's buttons change with each scan or are for signed-out
  * visitors.
  */
-const PAGES_ONLY = new Set(["slip.tsx", "staff.device.tsx", "wishlist.tsx"]);
+const PAGES_ONLY = new Set(["slip.tsx", "staff.device.tsx"]);
 
 /** Page names people know them by: the side menus first, then these, then the page's own heading. */
 const EXTRA_LABELS = {

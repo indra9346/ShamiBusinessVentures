@@ -7,7 +7,7 @@ import { PICKUP_SETTINGS_KEY, parsePickupSettings, pickupPointForPin } from "@/l
 import { isMeasureUnit, toBaseQuantity } from "@/lib/data";
 import { MAX_COUNT, isBigChange, planStockCount, stockCountDescription, zohoLocationStock } from "@/lib/stock-counts";
 import {
-  batchLineText, isBatchCode, normalizeBatchCode, packageLinesWithBatches, planBatchGain, planBatchLoss, planZohoBatchIn, planZohoBatchOut,
+  batchGainOf, batchLineText, isBatchCode, normalizeBatchCode, packageLinesWithBatches, planBatchGain, planBatchLoss, planZohoBatchIn, planZohoBatchOut,
   zohoBatchesAtLocation, zohoTracksBatches, type BatchShare, type StockBatch, type ZohoBatch,
 } from "@/lib/batches";
 import { awaitingImportApproval, zohoItemAsHiddenProduct, zohoItemImportable, zohoItemSaleProblem, zohoItemsNotOnWebsite } from "@/lib/zoho-item-import";
@@ -35,7 +35,7 @@ import {
   ZOHO_CALL_DEFAULT_PURPOSE, ZOHO_CALL_LOG_SETTING, describeZohoCall, mergeZohoCalls, type ZohoCall, type ZohoCallLog,
 } from "@/lib/zoho-call-log";
 import { ZOHO_TOKEN_LIMIT_MESSAGE, createZohoTokenCache, isZohoTokenLimit, type ZohoTokenCache, type ZohoTokenReply } from "@/lib/zoho-token-cache";
-import { billChange, billPlan, billSummary, lineBlocker } from "@/lib/bill-batches";
+import { BILL_EDITED, billChange, billLinesChange, billPlan, billSummary, lineBlocker } from "@/lib/bill-batches";
 import {
   CREATE_HOLD_MINUTES, createHoldUntil, findTransferByNumber, godownTransferLines, godownTransferResult, isTransferred, readCreateAnswer,
   readZohoTransfer, transferOrderBody, zohoSaysMissing, type BatchTransfer, type GodownTransfer,
@@ -6494,11 +6494,13 @@ export const submitStockCount = createServerFn({ method: "POST" })
         : "The count could not be saved. Try again.");
     }
     // The same loss / gain per batch, for the batch reports: for a batch-tracked item the batches
-    // Zoho changed; otherwise the website's change (oldest batch loses first, newest takes a gain).
+    // Zoho changed; otherwise the website's change (oldest batch loses first, newest takes a gain). A rise is a gain
+    // only beyond what the batches already hold: a bill's batch reaching the count is not found stock (13 Nov 2026).
     if (!tracked) {
       const change = Math.round((plan.siteAfter - siteBefore) * 1000) / 1000;
       const website = change === 0 ? [] : await websiteBatchesAt(db, branch.id, product.id);
-      shares = change < 0 ? planBatchLoss(website, -change).shares : change > 0 ? planBatchGain(website, change).shares : [];
+      shares = change < 0 ? planBatchLoss(website, -change).shares
+        : change > 0 ? planBatchGain(website, batchGainOf(website, plan.siteAfter, change)).shares : [];
     }
     await recordBatchShares(db, shares, {
       reason: data.reason === "damaged" ? "damaged" : "stock_count", note: data.note, stockCountId: countId ?? null,
@@ -7428,34 +7430,69 @@ export const checkBatchBills = createServerFn({ method: "POST" })
     const { data: setting } = await db.from("settings").select("value").eq("key", BILL_CHECK_SETTING).maybeSingle();
     const last = Date.parse(str(plainObject(setting?.value)["at"]));
     if (Number.isFinite(last) && Date.now() - last < BILL_CHECK_MINUTES * 60_000) return { checked: false as const, flagged: 0 };
-    const { data: rows } = await db.from("batches").select("zoho_bill_id,zoho_bill_modified,zoho_bill_total").neq("zoho_bill_id", "");
+    const { data: rows } = await db.from("batches")
+      .select("batch_code,zoho_bill_id,zoho_bill_line_id,zoho_item_id,quantity,unit_cost_ex_gst,parent_batch_id,zoho_bill_modified,zoho_bill_total")
+      .neq("zoho_bill_id", "");
     const stored = new Map<string, { modifiedAt: string; total: number }>();
-    for (const row of (rows ?? []) as { zoho_bill_id: string; zoho_bill_modified: string; zoho_bill_total: number | null }[])
+    // The batches made from each bill's own lines (a batch sent on to another godown has no line of its own).
+    const lineBatches = new Map<string, { batchCode: string; lineId: string; itemId: string; quantity: number; unitExGst: number | null }[]>();
+    for (const row of (rows ?? []) as {
+      batch_code: string; zoho_bill_id: string; zoho_bill_line_id: string; zoho_item_id: string; quantity: number; unit_cost_ex_gst: number | null;
+      parent_batch_id: string | null; zoho_bill_modified: string; zoho_bill_total: number | null;
+    }[]) {
       if (!stored.has(row.zoho_bill_id)) stored.set(row.zoho_bill_id, { modifiedAt: row.zoho_bill_modified, total: Number(row.zoho_bill_total) || 0 });
+      if (row.zoho_bill_line_id && !row.parent_batch_id)
+        lineBatches.set(row.zoho_bill_id, [...(lineBatches.get(row.zoho_bill_id) ?? []), {
+          batchCode: row.batch_code, lineId: row.zoho_bill_line_id, itemId: row.zoho_item_id ?? "", quantity: Number(row.quantity) || 0,
+          unitExGst: row.unit_cost_ex_gst === null || row.unit_cost_ex_gst === undefined ? null : Number(row.unit_cost_ex_gst),
+        }]);
+    }
     await db.from("settings").upsert({ key: BILL_CHECK_SETTING, value: { at: new Date().toISOString() } as Json, is_public: false, updated_at: new Date().toISOString() });
     if (!stored.size) return { checked: true as const, flagged: 0 };
     const { region, organizationId, token } = await zohoOrderContext(db);
     const list = (await inventoryRequest<{ bills?: Record<string, unknown>[] }>(region, organizationId, token, "bills", "GET", undefined,
       { per_page: "200", sort_column: "last_modified_time", sort_order: "D" })).bills ?? [];
     const seen = new Map(list.map(billSummary).map((bill) => [bill.billId, bill]));
-    const flags: { bill_id: string; flag: string }[] = [];
+    const flags: { bill_id: string; flag: string; modified?: string }[] = [];
     let lookups = 0;
+    const readBill = async (billId: string) =>
+      (await inventoryRequest<{ bill?: Record<string, unknown> }>(region, organizationId, token, `bills/${encodeURIComponent(billId)}`, "GET")).bill;
     for (const [billId, was] of stored) {
       let now: { status: string; modifiedAt: string; total: number } | null | undefined = seen.get(billId);
+      let full: Record<string, unknown> | undefined;
       if (!now) {
         // Not among the 200 most recently changed bills: unchanged, voided far back, or deleted. Ask Zoho, a few at a time.
         if (lookups >= BILL_CHECK_LOOKUPS) continue;
         lookups += 1;
         try {
-          const bill = (await inventoryRequest<{ bill?: Record<string, unknown> }>(region, organizationId, token, `bills/${encodeURIComponent(billId)}`, "GET")).bill;
-          now = bill ? billSummary(bill) : null;
+          full = await readBill(billId);
+          now = full ? billSummary(full) : null;
         } catch (cause) {
           const message = cause instanceof Error ? cause.message : String(cause);
           if (!/does not exist|not found|invalid.*bill|1002/i.test(message)) continue;
           now = null;
         }
       }
-      flags.push({ bill_id: billId, flag: billChange(was, now) });
+      const flag = billChange(was, now);
+      const lines = lineBatches.get(billId) ?? [];
+      if (flag === BILL_EDITED && now && lines.length) {
+        // Only Zoho's edit time moved: a purchase receive, a payment or a note does that too (13 Nov 2026: the receive
+        // of "YET TO COME" flagged CLK-131126-02). Flag only when a batch's own bill line changed.
+        if (!full) {
+          if (lookups >= BILL_CHECK_LOOKUPS) continue;
+          lookups += 1;
+          try {
+            full = await readBill(billId);
+          } catch {
+            continue;
+          }
+        }
+        if (!full) continue;
+        const lineFlag = billLinesChange(lines, billPlan(full));
+        flags.push(lineFlag ? { bill_id: billId, flag: lineFlag } : { bill_id: billId, flag: "", modified: now.modifiedAt });
+        continue;
+      }
+      flags.push({ bill_id: billId, flag });
     }
     const { data: flagged, error } = await db.rpc("flag_batch_bill_changes", { _rows: flags });
     if (error) throw new Error(error.message);

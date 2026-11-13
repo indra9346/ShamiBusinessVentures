@@ -186,7 +186,31 @@ export function billChange(stored: { modifiedAt: string; total: number }, now: {
   if (!now) return "Bill deleted in Zoho";
   if (now.status === "void") return "Bill voided in Zoho";
   if (stored.total && Math.abs(now.total - stored.total) > 0.004) return `Bill total changed in Zoho (₹${stored.total.toFixed(2)} → ₹${now.total.toFixed(2)})`;
-  if (stored.modifiedAt && now.modifiedAt && now.modifiedAt !== stored.modifiedAt) return "Bill edited in Zoho after its batches were made";
+  if (stored.modifiedAt && now.modifiedAt && now.modifiedAt !== stored.modifiedAt) return BILL_EDITED;
+  return "";
+}
+
+/** billChange's answer when only Zoho's edit time moved: the server then compares the batch lines (billLinesChange). */
+export const BILL_EDITED = "Bill edited in Zoho after its batches were made";
+
+/**
+ * A bill whose edit time moved, read in full: whether the lines its batches were made from are still as they were
+ * (13 Nov 2026). A purchase receive, a payment or a note touches the bill's edit time too; that is not a change to
+ * the batch. "" = the batch lines are unchanged, else what changed.
+ */
+export function billLinesChange(
+  batches: { batchCode: string; lineId: string; itemId: string; quantity: number; unitExGst: number | null }[],
+  bill: Pick<BillPlan, "lines">,
+) {
+  const lines = new Map(bill.lines.map((line) => [line.lineId, line]));
+  for (const batch of batches) {
+    const line = lines.get(batch.lineId);
+    if (!line) return `Bill line of batch ${batch.batchCode} was removed in Zoho`;
+    if (batch.itemId && line.itemId && line.itemId !== batch.itemId) return `Bill line of batch ${batch.batchCode} now has another item in Zoho`;
+    if (Math.abs(line.qty - batch.quantity) > 0.0005) return `Bill quantity for batch ${batch.batchCode} changed in Zoho (${batch.quantity} → ${line.qty})`;
+    if (batch.unitExGst !== null && Math.abs(line.unitExGst - batch.unitExGst) > 0.004)
+      return `Bill cost for batch ${batch.batchCode} changed in Zoho (₹${batch.unitExGst.toFixed(2)} → ₹${line.unitExGst.toFixed(2)} before GST)`;
+  }
   return "";
 }
 

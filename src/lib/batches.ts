@@ -9,7 +9,8 @@
  *     private.allocate_order_item_batches); stock without a batch stays unbatched.
  *   * Stock-count losses and gains are recorded per batch (oldest batch loses first, the newest
  *     batch takes a gain), so each batch shows purchased, sold, available, lost, sales, profit and
- *     the days it took to sell out.
+ *     the days it took to sell out. A rise in the godown's stock is a gain only beyond what its
+ *     batches already hold (batchGainOf, 13 Nov 2026): a bill's batch reaching the count is not.
  *   * Zoho: for items with "Track batches" ticked in Zoho, receipts, packages and adjustments name
  *     the Zoho batch (Zoho refuses them otherwise); batches made in Zoho are imported.
  *
@@ -78,6 +79,18 @@ export function planBatchGain(batches: StockBatch[], amount: number): { shares: 
   const newest = [...batches].sort(oldestFirst).at(-1);
   if (!newest || amount <= 0) return { shares: [], rest: qty(Math.max(0, amount)) };
   return { shares: [{ batchId: newest.id, qty: qty(amount) }], rest: 0 };
+}
+
+/**
+ * How much of a rise in a godown's stock is a real gain for its batches (13 Nov 2026). A batch made from a Zoho bill
+ * holds its units before the godown's stock shows them (Zoho's purchase receive reaches the website later, or
+ * someone enters it), so a rise first covers those batch units; only what the stock holds beyond its batches is a
+ * gain. Same rule as private.record_batch_stock_change in the database. `stockAfter` = the godown's stock after the
+ * rise, `batches` = its batches before it.
+ */
+export function batchGainOf(batches: Pick<StockBatch, "remaining">[], stockAfter: number, increase: number) {
+  const inBatches = batches.reduce((sum, batch) => sum + Math.max(0, num(batch.remaining)), 0);
+  return qty(Math.max(0, Math.min(num(increase), num(stockAfter) - inBatches)));
 }
 
 // ------------------------------------------------------------------ Zoho batches
@@ -470,6 +483,37 @@ export function buildBatchReport(input: {
 }
 
 export type BatchReport = ReturnType<typeof buildBatchReport>;
+
+/** One product at one godown: the units its batches hold next to the godown's stock on the website. */
+export type GodownStockCheck = {
+  godownId: string; godown: string; productId: string; productName: string;
+  inBatches: number; godownStock: number;
+  /** godownStock − inBatches: below 0 = batch units the godown's stock does not show; above 0 = units without a batch. */
+  difference: number;
+};
+
+/**
+ * The live check behind the Batches page (13 Nov 2026): for every product with batches at a godown, whether the
+ * godown's stock and its batches agree. They differ while a bill's units have not reached the godown's stock yet
+ * (Zoho's purchase receive not synced), after stock was taken out in Zoho, or when stock has no batch.
+ */
+export function godownStockChecks(rows: BatchReportRow[], stockOf: (productId: string, godownId: string) => number): GodownStockCheck[] {
+  const groups = new Map<string, GodownStockCheck>();
+  for (const row of rows) {
+    const godownId = row.batch.branch_id ?? "";
+    if (!godownId) continue;
+    const key = `${godownId}|${row.batch.product_id}`;
+    const seen = groups.get(key) ?? {
+      godownId, godown: row.godown, productId: row.batch.product_id, productName: row.batch.product_name,
+      inBatches: 0, godownStock: qty(num(stockOf(row.batch.product_id, godownId))), difference: 0,
+    };
+    seen.inBatches = qty(seen.inBatches + row.available);
+    groups.set(key, seen);
+  }
+  return [...groups.values()]
+    .map((check) => ({ ...check, difference: qty(check.godownStock - check.inBatches) }))
+    .sort((a, b) => a.godown.localeCompare(b.godown) || a.productName.localeCompare(b.productName));
+}
 
 // ------------------------------------------------------------------ which cost a batch's profit uses
 

@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   addressLine, batchAdjustmentSheet, batchLineText, batchReportSheets, buildBatchReport, costBasesOf, costBeforeGst, costCopyBeforeGst, costWithGst, daysBetween, formatBatchCode, godownCodeOf, isBatchCode,
-  normalizeBatchCode, packageLinesWithBatches, planBatchGain, planBatchLoss, planZohoBatchIn, planZohoBatchOut, searchBatchReport, sumTotals,
+  batchGainOf, godownStockChecks, normalizeBatchCode, packageLinesWithBatches, planBatchGain, planBatchLoss, planZohoBatchIn, planZohoBatchOut, searchBatchReport, sumTotals,
   zohoBatchesAtLocation, zohoTracksBatches, type BatchOrder, type BatchRecord,
 } from "../src/lib/batches.ts";
 import { buildXlsx } from "../src/lib/xlsx.ts";
@@ -302,4 +302,50 @@ test("review fixes: saved-address 'line', one sale per order line and batch, tot
   const hubli = sumTotals(report.rows.filter((r) => r.batch.branch_id === "BR-HBL"));
   assert.deepEqual([hubli.purchased, hubli.sold, hubli.available], [5, 0, 5]);
   assert.deepEqual([report.all.purchased, report.all.sold], [55, 5]);
+});
+
+test("13 Nov: a bill's batch reaching the godown's stock is not a gain; only stock beyond the batches is", () => {
+  // Live: CLK-131126-02, Sugar S1, 360 from a bill; Challakere's stock 0 until it was set to 360 by hand.
+  const sugar = [stock("sugar", "2026-11-13", 360)];
+  assert.equal(batchGainOf(sugar, 360, 360), 0);
+  // Part of it there already (Zoho receive synced 100): raising to 360 is still the batch arriving.
+  assert.equal(batchGainOf(sugar, 360, 260), 0);
+  // 365 counted: 5 more than any batch holds is found stock.
+  assert.equal(batchGainOf(sugar, 365, 365), 5);
+  // Batches already counted in full (stock 360, batch 360): every unit of a rise is a gain, as before.
+  assert.equal(batchGainOf(sugar, 370, 10), 10);
+  // No batches: everything beyond them is a gain (planBatchGain then has nothing to attach it to).
+  assert.equal(batchGainOf([], 12, 12), 12);
+  // Emptied batches hold nothing.
+  assert.equal(batchGainOf([stock("old", "2026-10-01", 0), stock("new", "2026-11-01", 4)], 10, 10), 6);
+  // The live sequence +360, −360, +360 ends with the batch at 360 and no gain or loss left over.
+  let remaining = 360;
+  const gain1 = batchGainOf([{ remaining }], 360, 360);
+  remaining += gain1;
+  const loss = planBatchLoss([stock("sugar", "2026-11-13", remaining)], 360).shares.reduce((s, x) => s + x.qty, 0);
+  remaining += loss;
+  const gain2 = batchGainOf([{ remaining }], 360, 360);
+  remaining += gain2;
+  assert.deepEqual([gain1, loss, gain2, remaining], [0, -360, 360, 360]);
+});
+
+test("13 Nov: stock check puts each product's batches next to its godown's stock", () => {
+  const report = buildBatchReport({
+    batches: [
+      batch({ id: "s1", batch_code: "CLK-131126-02", product_id: "SUGAR", product_name: "Sugar S1", quantity: 360, remaining_quantity: 360, status: "Active", depleted_at: null }),
+      batch({ id: "o1", batch_code: "CLK-031126-08", product_id: "OIL", product_name: "Ekadantha OIL", quantity: 12, remaining_quantity: 9, status: "Active", depleted_at: null }),
+      batch({ id: "o2", batch_code: "CLK-051126-01", product_id: "OIL", product_name: "Ekadantha OIL", quantity: 3, remaining_quantity: 3, status: "Active", depleted_at: null }),
+      batch({ id: "h1", batch_code: "HBL-061126-01", branch_id: "BR-HBL", product_id: "OIL", product_name: "Ekadantha OIL", quantity: 5, remaining_quantity: 5, status: "Active", depleted_at: null }),
+    ],
+    allocations: [], items: [], orders: [], adjustments: [],
+    godowns: [{ id: "BR-CLK", name: "Challakere" }, { id: "BR-HBL", name: "Hubli" }],
+    today: "2026-11-13",
+  });
+  const stockAt: Record<string, number> = { "SUGAR|BR-CLK": 0, "OIL|BR-CLK": 14, "OIL|BR-HBL": 5 };
+  const checks = godownStockChecks(report.rows, (product, godown) => stockAt[`${product}|${godown}`] ?? 0);
+  assert.deepEqual(checks.map((c) => [c.godown, c.productName, c.inBatches, c.godownStock, c.difference]), [
+    ["Challakere", "Ekadantha OIL", 12, 14, 2],   // 2 units without a batch
+    ["Challakere", "Sugar S1", 360, 0, -360],     // the bill's units not in the godown's stock yet
+    ["Hubli", "Ekadantha OIL", 5, 5, 0],
+  ]);
 });

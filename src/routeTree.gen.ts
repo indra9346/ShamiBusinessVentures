@@ -33,6 +33,7 @@ import { Route as AccountProfileRouteImport } from './routes/account.profile'
 import { Route as AccountReviewsRouteImport } from './routes/account.reviews'
 import { Route as AccountSettingsRouteImport } from './routes/account.settings'
 import { Route as AccountTrackRouteImport } from './routes/account.track'
+import { Route as AccountWishlistRouteImport } from './routes/account.wishlist'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
 import { Route as AdminAdsRouteImport } from './routes/admin.ads'
 import { Route as AdminAttendanceRouteImport } from './routes/admin.attendance'
@@ -230,6 +231,11 @@ const AccountSettingsRoute = AccountSettingsRouteImport.update({
 const AccountTrackRoute = AccountTrackRouteImport.update({
   id: '/track',
   path: '/track',
+  getParentRoute: () => AccountRoute,
+} as any)
+const AccountWishlistRoute = AccountWishlistRouteImport.update({
+  id: '/wishlist',
+  path: '/wishlist',
   getParentRoute: () => AccountRoute,
 } as any)
 const AdminIndexRoute = AdminIndexRouteImport.update({
@@ -649,6 +655,7 @@ export interface FileRoutesByFullPath {
   '/account/reviews': typeof AccountReviewsRoute
   '/account/settings': typeof AccountSettingsRoute
   '/account/track': typeof AccountTrackRoute
+  '/account/wishlist': typeof AccountWishlistRoute
   '/admin/ads': typeof AdminAdsRoute
   '/admin/attendance': typeof AdminAttendanceRoute
   '/admin/batches': typeof AdminBatchesRoute
@@ -752,6 +759,7 @@ export interface FileRoutesByTo {
   '/account/reviews': typeof AccountReviewsRoute
   '/account/settings': typeof AccountSettingsRoute
   '/account/track': typeof AccountTrackRoute
+  '/account/wishlist': typeof AccountWishlistRoute
   '/admin/ads': typeof AdminAdsRoute
   '/admin/attendance': typeof AdminAttendanceRoute
   '/admin/batches': typeof AdminBatchesRoute
@@ -857,6 +865,7 @@ export interface FileRoutesById {
   '/account/reviews': typeof AccountReviewsRoute
   '/account/settings': typeof AccountSettingsRoute
   '/account/track': typeof AccountTrackRoute
+  '/account/wishlist': typeof AccountWishlistRoute
   '/admin/ads': typeof AdminAdsRoute
   '/admin/attendance': typeof AdminAttendanceRoute
   '/admin/batches': typeof AdminBatchesRoute
@@ -963,6 +972,7 @@ export interface FileRouteTypes {
     | '/account/reviews'
     | '/account/settings'
     | '/account/track'
+    | '/account/wishlist'
     | '/admin/ads'
     | '/admin/attendance'
     | '/admin/batches'
@@ -1066,6 +1076,7 @@ export interface FileRouteTypes {
     | '/account/reviews'
     | '/account/settings'
     | '/account/track'
+    | '/account/wishlist'
     | '/admin/ads'
     | '/admin/attendance'
     | '/admin/batches'
@@ -1170,6 +1181,7 @@ export interface FileRouteTypes {
     | '/account/reviews'
     | '/account/settings'
     | '/account/track'
+    | '/account/wishlist'
     | '/admin/ads'
     | '/admin/attendance'
     | '/admin/batches'
@@ -1504,6 +1516,13 @@ declare module '@tanstack/react-router' {
       path: '/track'
       fullPath: '/account/track'
       preLoaderRoute: typeof AccountTrackRouteImport
+      parentRoute: typeof AccountRoute
+    }
+    '/account/wishlist': {
+      id: '/account/wishlist'
+      path: '/wishlist'
+      fullPath: '/account/wishlist'
+      preLoaderRoute: typeof AccountWishlistRouteImport
       parentRoute: typeof AccountRoute
     }
     '/admin/': {
@@ -2076,6 +2095,7 @@ interface AccountRouteChildren {
   AccountReviewsRoute: typeof AccountReviewsRoute
   AccountSettingsRoute: typeof AccountSettingsRoute
   AccountTrackRoute: typeof AccountTrackRoute
+  AccountWishlistRoute: typeof AccountWishlistRoute
 }
 
 const AccountRouteChildren: AccountRouteChildren = {
@@ -2087,6 +2107,7 @@ const AccountRouteChildren: AccountRouteChildren = {
   AccountReviewsRoute: AccountReviewsRoute,
   AccountSettingsRoute: AccountSettingsRoute,
   AccountTrackRoute: AccountTrackRoute,
+  AccountWishlistRoute: AccountWishlistRoute,
 }
 
 const AccountRouteWithChildren =

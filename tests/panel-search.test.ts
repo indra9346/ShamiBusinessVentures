@@ -229,7 +229,9 @@ test("pages with no search on them are offered as pages only", () => {
     }
   }
   assert.ok(PANEL_PAGES.partner.some((page) => page.to === "/slip"), "the scan page itself is still there");
-  assert.ok(PANEL_PAGES.customer.some((page) => page.to === "/wishlist"));
+  // 13 Nov 2026: the wishlist is the customer panel's own page, searchable like the others; the shop page is not offered.
+  assert.ok(PANEL_PAGES.customer.some((page) => page.to === "/account/wishlist"));
+  assert.ok(!PANEL_PAGES.customer.some((page) => page.to === "/wishlist"));
   assert.ok(!PANEL_FEATURES.partner.some((item) => /sign in$/i.test(item.text)), "no buttons for signed-out visitors");
 });
 

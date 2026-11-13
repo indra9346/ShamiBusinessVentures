@@ -52,7 +52,7 @@ export const getBatchData = createServerFn({ method: "GET" })
   .handler(async ({ context }) => {
     await ensureAdmin(context.supabase, context.userId);
     const db = serviceClient();
-    const [batchRows, adjustmentRows, branchesResult, productRows, linkRows, stockRows, masterResult, reservedRows, transferRows] = await Promise.all([
+    const [batchRows, adjustmentRows, branchesResult, productRows, linkRows, stockRows, masterResult, reservedRows, transferRows, budgetResult] = await Promise.all([
       allRows((from, to) => db.from("batches").select("*").order("created_at").order("id").range(from, to), "batches"),
       allRows((from, to) => db.from("batch_adjustments").select("id,batch_id,qty,reason,note,unit_cost,created_at,created_by_name")
         .order("created_at", { ascending: false }).order("id").range(from, to), "batch losses and gains"),
@@ -67,8 +67,13 @@ export const getBatchData = createServerFn({ method: "GET" })
       allRows((from, to) => db.from("batch_transfers")
         .select("id,transfer_no,kind,status,from_branch_id,from_location_id,from_location_name,to_branch_id,to_location_id,parent_batch_id,quantity,bill,lines,zoho_transfer_order_id,zoho_status,attempts,last_error,result,created_at,created_by_name,sent_at,received_at,received_by_name,received_by_role,create_sent_at,zoho_number_taken")
         .order("id", { ascending: false }).range(from, to), "transfers between godowns"),
+      // When the scheduled Zoho check last read Zoho's stock (13 Nov 2026: it had stopped for two days unnoticed).
+      db.from("settings").select("value").eq("key", "zoho_api_budget").maybeSingle(),
     ]);
     if (branchesResult.error || masterResult.error) throw new Error("Could not read godowns and settings");
+    const budget = budgetResult.data?.value && typeof budgetResult.data.value === "object" && !Array.isArray(budgetResult.data.value)
+      ? budgetResult.data.value as Record<string, unknown> : {};
+    const zohoCheckedAt = typeof budget["lastInboundPollAt"] === "string" && budget["lastInboundPollAt"] ? budget["lastInboundPollAt"] : null;
     const batches: BatchRecord[] = batchRows.map((b) => ({
       ...b,
       quantity: n(b.quantity), remaining_quantity: n(b.remaining_quantity), unit_cost: n(b.unit_cost),
@@ -137,6 +142,7 @@ export const getBatchData = createServerFn({ method: "GET" })
     return {
       generatedAt: new Date().toISOString(),
       zohoStockMaster: master["enabled"] === true,
+      zohoCheckedAt,
       godowns: (branchesResult.data ?? []).filter((b) => !b.vendor_id).map((b) => ({ id: b.id, name: b.name, code: b.code, active: b.active, zohoLinked: Boolean(b.zoho_location_id) })),
       products, batches, allocations, items, orders, adjustments, reservedCodes: reservedRows.map((row) => row.code), transfers,
     };

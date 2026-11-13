@@ -114,7 +114,7 @@ function Account() {
         <StatCard link={{ to: "/account/orders" }} label="Total Orders" value={String(ordersList.length)} icon={Package} compact />
         <StatCard link={{ to: "/account/invoices" }} label="Total Spend" value={inr(totalSpend)} icon={Wallet} highlight compact />
         <StatCard link={{ to: "/account/orders", search: { status: OPEN_ORDERS } }} label="Active Deliveries" value={String(activeDeliveries)} icon={Truck} compact />
-        <StatCard link={{ to: "/wishlist" }} label="Wishlist Items" value={String(wishlist.length)} icon={Heart} compact />
+        <StatCard link={{ to: "/account/wishlist" }} label="Wishlist Items" value={String(wishlist.length)} icon={Heart} compact />
       </div>
 
       <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
@@ -260,7 +260,7 @@ function Account() {
         <Panel
           title="Wishlist Preview"
           action={
-            <Link to="/wishlist" className="text-xs font-semibold text-navy hover:text-gold">
+            <Link to="/account/wishlist" className="text-xs font-semibold text-navy hover:text-gold">
               View all
             </Link>
           }

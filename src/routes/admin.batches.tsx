@@ -15,7 +15,7 @@ import { downloadXlsx } from "@/lib/xlsx";
 import { supabase } from "@/integrations/supabase/client";
 import {
   adjustmentReasonLabel, batchAdjustmentSheet, batchReportSheets, buildBatchReport, costBasesOf, costBasisName, costBeforeGst, costWithGst, formatBatchCode, istDate,
-  searchBatchReport, sumTotals, type BatchAdjustment, type BatchReport, type BatchReportRow, type BatchSale,
+  godownStockChecks, searchBatchReport, sumTotals, type BatchAdjustment, type BatchReport, type BatchReportRow, type BatchSale,
 } from "@/lib/batches";
 import type { BatchData } from "@/lib/batches.functions";
 import { Button } from "@/components/ui/button";
@@ -110,6 +110,8 @@ function AdminBatches() {
     const channel = supabase.channel(`batches-${Math.random().toString(36).slice(2)}`)
       .on("postgres_changes", { event: "*", schema: "public", table: "batches" }, soon)
       .on("postgres_changes", { event: "*", schema: "public", table: "orders" }, soon)
+      // Godown stock (Zoho sync, head-office edits, staff counts): the stock check below follows it live.
+      .on("postgres_changes", { event: "*", schema: "public", table: "branch_stock" }, soon)
       .subscribe();
     return () => { if (timer) window.clearTimeout(timer); void supabase.removeChannel(channel); };
   }, [load]);
@@ -173,6 +175,7 @@ function AdminBatches() {
       </nav>
 
       {error && <p className="mb-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</p>}
+      {data && <ZohoFreshness checkedAt={data.zohoCheckedAt} generatedAt={data.generatedAt} />}
       {!report && !error && <p className="py-10 text-center text-sm text-slate">Loading batches…</p>}
       {data && data.transfers.some((t) => t.status === "pending") && (
         <Panel title="Transfers waiting for Zoho" className="mb-4 border-amber-300">
@@ -238,10 +241,14 @@ function BatchList({ report, data, search, go, status, setStatus, productFilter,
         <StatCard onClick={() => openList("stock")} compact label="Batches in stock" value={`${totals.active} / ${totals.batches}`} icon={Layers} description="with units left / all" />
         <StatCard onClick={() => openList("stock")} compact label="Units available" value={units(totals.available)} icon={PackageCheck} description={`of ${units(totals.purchased)} purchased`} />
         <StatCard onClick={() => openList("all")} compact label="Sales (excl. GST)" value={money(totals.sales)} icon={ShoppingCart} description={`${units(totals.sold)} units sold`} />
-        <StatCard onClick={() => openList("all")} compact label={totals.profit < 0 ? "Loss" : "Profit"} value={money(totals.profit)} icon={totals.profit < 0 ? TrendingDown : TrendingUp} highlight description="sales less cost and stock lost, all before GST" />
-        <StatCard onClick={() => openList("lost")} compact label="Stock lost" value={money(totals.lossValue)} icon={TrendingDown} description={`${units(totals.lost)} units (counts, damage)`} />
+        <StatCard onClick={() => openList("all")} compact label={totals.profit < 0 ? "Loss" : "Profit"} value={money(Math.abs(totals.profit))} icon={totals.profit < 0 ? TrendingDown : TrendingUp} highlight
+          description={profitBreakup(totals)} />
+        <StatCard onClick={() => openList("lost")} compact label={totals.lossValue < 0 ? "Stock found" : "Stock lost"} value={money(Math.abs(totals.lossValue))} icon={totals.lossValue < 0 ? TrendingUp : TrendingDown}
+          description={`${units(totals.lost)} units lost, ${units(totals.gained)} found (counts, damage), at cost before GST`} />
         <StatCard onClick={() => openList("soldout")} compact label="Avg. days to sell out" value={totals.averageDaysToSellOut === null ? "—" : String(totals.averageDaysToSellOut)} icon={Clock3} description="sold-out batches" />
       </div>
+
+      <StockCheck report={report} data={data} godownId={search.godown} onProduct={(productId) => { setQuery(""); setStatus("all"); setProductFilter(productId); scrollToSection("batch-list"); }} />
 
       {(() => {
         // Bill batches are costed without GST for profit, like sales. A cost typed in by hand can't be told apart.
@@ -359,6 +366,83 @@ const average = (rows: BatchReportRow[]) => {
   const done = rows.filter((r) => r.daysToSellOut !== null);
   return done.length ? Math.round((done.reduce((s, r) => s + (r.daysToSellOut ?? 0), 0) / done.length) * 10) / 10 : null;
 };
+
+/** How the profit card's figure is made, so a loss or gain of stock can't look like trading profit. */
+const profitBreakup = (t: { sales: number; costOfSold: number; lossValue: number }) =>
+  `sales ${money(t.sales)} − cost of units sold ${money(t.costOfSold)} ${t.lossValue < 0 ? "+ stock found" : "− stock lost"} ${money(Math.abs(t.lossValue))}, before GST`;
+
+/** The scheduled Zoho check reads Zoho's godown stock every hour (every 15 minutes the job runs; hourly the stock). */
+const ZOHO_CHECK_LATE_MINUTES = 90;
+
+/**
+ * When Zoho's stock was last read by the scheduled check. Stock received in Zoho (a purchase receive) reaches the
+ * godown's stock here only through it; 13 Nov 2026 it had stopped for two days and nobody could see that.
+ */
+function ZohoFreshness({ checkedAt, generatedAt }: { checkedAt: string | null; generatedAt: string }) {
+  const minutes = checkedAt ? Math.round((Date.parse(generatedAt) - Date.parse(checkedAt)) / 60_000) : null;
+  const late = minutes === null || minutes > ZOHO_CHECK_LATE_MINUTES;
+  if (!late) {
+    return (
+      <p className="mb-3 flex items-center gap-1.5 text-xs text-slate">
+        <RefreshCw className="h-3.5 w-3.5" />Zoho stock last read {when(checkedAt!)} (every hour). Page updates by itself.
+      </p>
+    );
+  }
+  return (
+    <p className="mb-4 flex gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+      <span>
+        {checkedAt ? `Zoho's stock has not been read since ${when(checkedAt)}.` : "Zoho's stock has not been read yet."}{" "}
+        Stock received or changed in Zoho is not on the website until the hourly Zoho check runs again, so godown stock here may be out of date.
+        Do not type the stock in by hand to make up for it.
+      </span>
+    </p>
+  );
+}
+
+/**
+ * Godown stock next to what its batches hold, per product (13 Nov 2026): the two should agree, so a difference is
+ * shown with what it means instead of being added to a batch.
+ */
+function StockCheck({ report, data, godownId, onProduct }: { report: BatchReport; data: BatchData; godownId?: string | undefined; onProduct: (productId: string) => void }) {
+  const stock = new Map(data.products.map((p) => [p.id, p.stock]));
+  const checks = godownStockChecks(report.rows.filter((row) => !godownId || row.batch.branch_id === godownId), (productId, branchId) => stock.get(productId)?.[branchId] ?? 0);
+  const off = checks.filter((check) => check.difference !== 0);
+  return (
+    <Panel id="stock-check" title={off.length ? `Stock check: ${off.length} of ${checks.length} products differ` : `Stock check: all ${checks.length} products agree`}
+      className={off.length ? "border-amber-300" : ""}>
+      {checks.length === 0 ? (
+        <p className="text-sm text-slate">No batches yet.</p>
+      ) : (
+        <div className="grid gap-2">
+          {(off.length ? off : checks).map((check) => (
+            <div key={`${check.godownId}|${check.productId}`} className="min-w-0 rounded-md border border-border px-3 py-2 text-sm">
+              <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
+                <button type="button" onClick={() => onProduct(check.productId)} className="min-w-0 break-words text-left font-semibold text-navy hover:underline">{check.productName}</button>
+                <span className="text-xs text-slate">{check.godown}</span>
+              </div>
+              <p className="mt-1 text-xs">
+                In batches <b>{units(check.inBatches)}</b> · Godown stock <b>{units(check.godownStock)}</b>
+              </p>
+              <p className={cn("mt-1 text-xs", check.difference === 0 ? "text-emerald-700" : "text-amber-800")}>
+                {check.difference === 0
+                  ? "Agree"
+                  : check.difference < 0
+                    ? `${units(-check.difference)} batch units are not in the godown's stock: the Zoho receive has not reached the website yet, or stock was taken out in Zoho.`
+                    : `${units(check.difference)} units in the godown have no batch (stock from before batches, or a bill not received as a batch yet).`}
+              </p>
+            </div>
+          ))}
+          {off.length > 0 && off.length < checks.length && (
+            <p className="text-xs text-slate">
+              {checks.length - off.length === 1 ? "The other product agrees." : `The other ${checks.length - off.length} products agree.`}
+            </p>
+          )}
+        </div>
+      )}
+    </Panel>
+  );
+}
 
 function Figure({ label, value, tone }: { label: string; value: string; tone?: "good" | "bad" | undefined }) {
   return (
@@ -840,7 +924,7 @@ function demoData(): BatchData {
     created_at: `${date}T05:00:00Z`, vendor: null, vendor_id: null, warehouse: null, updated_at: now, received_by: null, zoho_item_id: "",
   });
   return {
-    generatedAt: now, zohoStockMaster: true, godowns, transfers: [],
+    generatedAt: now, zohoStockMaster: true, zohoCheckedAt: now, godowns, transfers: [],
     products: [{ id: "P023", name: "Groundnut Oil 5L Can", sku: "SBV-OI-1022", unit: "", purchasePrice: 820, zohoLinked: true, zohoTracksBatches: true, stock: { "BR-CLK": 30 } }],
     batches: [
       batch("b1", "CLK-201026-01", "BR-CLK", "P023", "Groundnut Oil 5L Can", 50, 0, 800, "2026-10-20", "2026-10-29T08:00:00Z"),

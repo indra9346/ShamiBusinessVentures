@@ -5,7 +5,7 @@ export const accountNav = [
   { label: "My Profile", to: "/account/profile", icon: User },
   { label: "My Orders", to: "/account/orders", icon: Package },
   { label: "Track Orders", to: "/account/track", icon: Truck },
-  { label: "Wishlist", to: "/wishlist", icon: Heart },
+  { label: "Wishlist", to: "/account/wishlist", icon: Heart },
   { label: "Saved Addresses", to: "/account/addresses", icon: MapPin },
   { label: "Reviews & Ratings", to: "/account/reviews", icon: Star },
   { label: "Notifications", to: "/account/notifications", icon: Bell },
