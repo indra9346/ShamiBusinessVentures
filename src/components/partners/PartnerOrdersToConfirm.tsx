@@ -12,9 +12,9 @@ import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import type { InvoiceFacts } from "@/lib/invoice-lines";
 import { partnerInvoiceOrder, paymentLabel } from "@/lib/partner-invoices";
 import {
-  PARTNER_CONFIRM_WORDS, confirmQuestion, partnerOrderInvoice, partnerOrderRows, rowConfirmState, type PartnerOrderRow,
+  PARTNER_CONFIRM_WORDS, confirmQuestion, confirmedNote, partnerOrderInvoice, partnerOrderRows, rowConfirmState, type PartnerOrderRow,
 } from "@/lib/partner-confirm";
-import { orderToneClass } from "@/lib/order-status-tone";
+import { TONE_CLASSES } from "@/lib/order-status-tone";
 import { pushOrderToZohoInBackground } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
@@ -60,7 +60,7 @@ export function PartnerOrdersToConfirm() {
       if (result["already"] === true) {
         toast.info(`Order ${row.order_no} was already confirmed`);
       } else {
-        toast.success(`Order ${row.order_no} confirmed`, { description: "The customer and our office have been told. The tax invoice is being made in Zoho." });
+        toast.success(`Order ${row.order_no} confirmed`, { description: confirmedNote(row.order_status) });
         // The same instant Zoho push an admin's confirm makes; the queue sends it anyway if this one cannot.
         pushOrderToZohoInBackground(row.order_no);
       }
@@ -93,8 +93,8 @@ export function PartnerOrdersToConfirm() {
     const state = rowConfirmState(row);
     const invoice = partnerOrderInvoice(row);
     return (
-      // The order colours (11 Nov 2026): waiting yellow, confirmed green.
-      <li key={row.order_no} className={cn("rounded-lg border p-3", orderToneClass(row.order_status, "tile") || "border-border bg-white")}>
+      // The order colours (11 Nov 2026): waiting for this partner's confirm yellow (a Payment Confirmed order too), confirmed green.
+      <li key={row.order_no} className={cn("rounded-lg border p-3", TONE_CLASSES[state === "confirmed" ? "confirmed" : "pending"].tile)}>
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div className="min-w-0">
             <p className="break-all font-mono text-xs font-semibold text-navy">{row.order_no}</p>
@@ -137,7 +137,7 @@ export function PartnerOrdersToConfirm() {
           <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />Refresh
         </button>
       )}>
-      <p className="mb-3 text-xs text-slate">Paid orders of your godown wait here for you to confirm them, as our office does. Our office confirms every payment first. Once an order is confirmed, open its invoice here or under Customer invoices to view, print or download it.</p>
+      <p className="mb-3 text-xs text-slate">Paid orders of your godown wait here for you to confirm them, as our office does. Our office confirms every payment first. Open an order's invoice here or under Customer invoices to view, print or download it.</p>
       {failed ? <p className="text-sm text-danger">{failed}</p>
         : !rows ? <p className="flex items-center gap-2 text-sm text-slate"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</p>
         : !rows.length ? <p className="text-sm text-slate">No orders are waiting to be confirmed.</p>
@@ -157,7 +157,7 @@ export function PartnerOrdersToConfirm() {
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Confirm this order?</DialogTitle>
-            <DialogDescription>{asking ? confirmQuestion(asking.order_no) : ""}</DialogDescription>
+            <DialogDescription>{asking ? confirmQuestion(asking.order_no, asking.order_status) : ""}</DialogDescription>
           </DialogHeader>
           {asking && (
             <p className="text-sm text-charcoal">{asking.customer} · {inrPrecise(asking.total)} · {asking.items}</p>

@@ -110,6 +110,17 @@ export function partnerOrderInvoice(row: Pick<PartnerOrderRow, "order_status" | 
     : { open: true, words: "Zoho is making the tax invoice. Until then this opens as a proforma; refresh in a minute." };
 }
 
-/** The question asked before a confirm. */
-export const confirmQuestion = (orderNo: string) =>
-  `Confirm order ${orderNo}? The customer and our office are told, and the order's tax invoice is made in Zoho.`;
+/**
+ * The question asked before a confirm. A Payment Confirmed order already has its Zoho tax invoice (orderNeedsZohoInvoice), so
+ * only a Placed one is told the invoice is made now.
+ */
+export const confirmQuestion = (orderNo: string, orderStatus?: string | null) =>
+  orderStatus === "Placed"
+    ? `Confirm order ${orderNo}? The customer and our office are told, and the order's tax invoice is made in Zoho.`
+    : `Confirm order ${orderNo}? The customer and our office are told, and the order moves to Confirmed.`;
+
+/** The note after a confirm, by the status the order had. */
+export const confirmedNote = (orderStatus?: string | null) =>
+  orderStatus === "Placed"
+    ? "The customer and our office have been told. The tax invoice is being made in Zoho."
+    : "The customer and our office have been told.";

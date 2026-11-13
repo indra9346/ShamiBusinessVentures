@@ -44,7 +44,7 @@ type Form = {
 
 const emptyForm: Form = {
   id: "", code: "", name: "", address: "", city: "", state: "Karnataka", pincode: "", phone: "", email: "", mapUrl: "",
-  instructions: "Bring your order number. Collect during working hours.", gstin: "", zohoLocationId: "", zohoLocationName: "",
+  instructions: "Show the delivery QR on your invoice at the counter. Collect during working hours.", gstin: "", zohoLocationId: "", zohoLocationName: "",
   zohoPricebookId: "", zohoPricebookName: "",
   pincodes: "", pickupEnabled: true, deliveryEnabled: false, deliveryFee: "0", freeDeliveryAbove: "", active: true,
 };

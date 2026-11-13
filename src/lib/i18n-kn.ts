@@ -6367,6 +6367,10 @@ export const kn: Record<string, string> = {
   "This order is void in Zoho. Our office decides what happens to it": "ಈ ಆರ್ಡರ್ Zoho ದಲ್ಲಿ ರದ್ದಾಗಿದೆ (void). ಇದಕ್ಕೆ ಏನಾಗಬೇಕು ಎಂದು ನಮ್ಮ ಕಚೇರಿ ನಿರ್ಧರಿಸುತ್ತದೆ",
   "This order's payment was refunded, so it cannot be confirmed": "ಈ ಆರ್ಡರ್‌ನ ಪಾವತಿ ಮರುಪಾವತಿಯಾಗಿದೆ, ಆದ್ದರಿಂದ ಇದನ್ನು ದೃಢೀಕರಿಸಲು ಆಗುವುದಿಲ್ಲ",
   "This order is not fully paid yet. Only our office confirms payments; once it has, you can confirm the order here": "ಈ ಆರ್ಡರ್‌ಗೆ ಇನ್ನೂ ಪೂರ್ಣ ಪಾವತಿಯಾಗಿಲ್ಲ. ಪಾವತಿಗಳನ್ನು ನಮ್ಮ ಕಚೇರಿ ಮಾತ್ರ ದೃಢೀಕರಿಸುತ್ತದೆ; ಅದು ದೃಢೀಕರಿಸಿದ ನಂತರ ನೀವು ಇಲ್ಲಿ ಆರ್ಡರ್ ದೃಢೀಕರಿಸಬಹುದು",
+  "Confirm order {0}? The customer and our office are told, and the order moves to Confirmed.": "ಆರ್ಡರ್ {0} ದೃಢೀಕರಿಸಬೇಕೇ? ಗ್ರಾಹಕರಿಗೆ ಮತ್ತು ನಮ್ಮ ಕಚೇರಿಗೆ ತಿಳಿಸಲಾಗುತ್ತದೆ, ಮತ್ತು ಆರ್ಡರ್ ದೃಢೀಕರಿಸಲಾಗಿದೆ ಸ್ಥಿತಿಗೆ ಹೋಗುತ್ತದೆ.",
+  "The customer and our office have been told.": "ಗ್ರಾಹಕರಿಗೆ ಮತ್ತು ನಮ್ಮ ಕಚೇರಿಗೆ ತಿಳಿಸಲಾಗಿದೆ.",
+  "Open an order's invoice here or under Customer invoices to view, print or download it.": "ಆರ್ಡರ್‌ನ ಇನ್‌ವಾಯ್ಸ್ ಅನ್ನು ನೋಡಲು, ಮುದ್ರಿಸಲು ಅಥವಾ ಡೌನ್‌ಲೋಡ್ ಮಾಡಲು ಇಲ್ಲಿ ಅಥವಾ ಗ್ರಾಹಕರ ಇನ್‌ವಾಯ್ಸ್‌ಗಳಲ್ಲಿ ತೆರೆಯಿರಿ.",
+  "Show the delivery QR on your invoice at the counter. Collect during working hours.": "ಕೌಂಟರ್‌ನಲ್ಲಿ ನಿಮ್ಮ ಇನ್‌ವಾಯ್ಸ್‌ನ ಡೆಲಿವರಿ QR ತೋರಿಸಿ. ಕೆಲಸದ ಸಮಯದಲ್ಲಿ ಪಡೆದುಕೊಳ್ಳಿ.",
 };
 
 /** Word-level fallbacks for text that isn't in the dictionary (product names, specs from the database). */
