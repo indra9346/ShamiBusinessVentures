@@ -104,6 +104,23 @@ export function deleteAsksAboutMoney(check: DeleteCheck) {
   return check.paid > 0 || check.paid_without_record > 0;
 }
 
+/** The database's order_delete_with_payments_check answer, with its numbers as numbers. */
+export function normaliseDeleteCheck(raw: DeleteCheck): DeleteCheck {
+  return { ...raw, paid: Number(raw.paid ?? 0), paid_without_record: Number(raw.paid_without_record ?? 0), payments: (raw.payments ?? []).map((p) => ({ ...p, amount: Number(p.amount) })) };
+}
+
+/**
+ * Whether "Delete all details" may run for a ticked row without asking anything (delete several at once, 13 Nov 2026).
+ * A row with money on it, or one that must be cancelled first, needs its own Delete, where the admin answers those
+ * questions. Null when it may go.
+ */
+export function bulkDeleteAllDetailsProblem(check: DeleteCheck): string | null {
+  if (check.blocker) return check.blocker;
+  if (deleteAsksAboutMoney(check)) return "Money is recorded on it: use its own Delete, which asks whether the money was real.";
+  if (check.needs_cancel) return "It must be cancelled first: use its own Delete.";
+  return null;
+}
+
 /** What the Delete will do, in order, and why it cannot run yet (null when it can). */
 export function deletePlan(check: DeleteCheck, answer: MoneyAnswer, goodsBack: boolean | null): { why: string | null; steps: string[] } {
   if (check.blocker) return { why: check.blocker, steps: [] };

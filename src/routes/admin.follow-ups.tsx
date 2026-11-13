@@ -18,6 +18,7 @@ import {
   type FollowUpForm,
 } from "@/lib/follow-ups-store";
 import { cn } from "@/lib/utils";
+import { BulkBar, BulkDeleteDialog, TickBox, useBulkSelection } from "@/components/panel/BulkSelect";
 
 export const Route = createFileRoute("/admin/follow-ups")({
   head: () => ({ meta: [{ title: "Follow-ups | Shami Admin" }, { name: "robots", content: "noindex" }] }),
@@ -80,6 +81,10 @@ function AdminFollowUps() {
     if (who !== "all") return task.employeeId === who;
     return true;
   }), [tasks, today, show, who]);
+
+  // 13 Nov 2026 (owner): tick several follow-ups and delete them together (each removed for good, like its own Delete).
+  const bulk = useBulkSelection(shown.map((task) => task.id));
+  const [bulkOpen, setBulkOpen] = useState(false);
 
   const set = <K extends keyof FollowUpForm>(key: K, value: FollowUpForm[K]) => setForm((current) => ({ ...current, [key]: value }));
   const problem = followUpProblem(form);
@@ -219,6 +224,8 @@ function AdminFollowUps() {
           : shown.length === 0 ? (
             <p className="flex items-center gap-2 text-sm text-slate"><ListTodo className="h-4 w-4" />{show === "open" ? "No open follow-ups. Add one above." : "Nothing here."}</p>
           ) : (
+            <>
+            <BulkBar state={bulk.state} count={bulk.count} selectable={shown.length} onToggleAll={bulk.toggleAll} onClear={bulk.clear} onDelete={() => setBulkOpen(true)} hint="Tick follow-ups to delete several together" />
             <ul className="space-y-2">
               {shown.map((task) => {
                 const state = dueState(task, today);
@@ -227,7 +234,8 @@ function AdminFollowUps() {
                 return (
                   <li key={task.id} className="flex overflow-hidden rounded-lg border border-border bg-white">
                     <span className={cn("w-1.5 shrink-0", style.bar)} aria-hidden />
-                    <div className="min-w-0 flex-1 p-3">
+                    <TickBox checked={bulk.isSelected(task.id)} onChange={(on) => bulk.toggle(task.id, on)} label={`Select ${task.title}`} className="ml-1 mt-2" />
+                    <div className="min-w-0 flex-1 py-3 pl-1 pr-3">
                       <div className="flex flex-wrap items-start justify-between gap-2">
                         <div className="min-w-0">
                           <p className={cn("font-semibold text-navy", !open && "line-through decoration-slate/50")}>{task.title}</p>
@@ -260,8 +268,19 @@ function AdminFollowUps() {
                 );
               })}
             </ul>
+            </>
           )}
       </Panel>
+      {bulkOpen && (
+        <BulkDeleteDialog
+          title={(n) => (n === 1 ? "Delete 1 follow-up?" : `Delete ${n} follow-ups?`)}
+          description="They are removed for good. To keep one on record, use Cancel task on it instead."
+          items={shown.filter((task) => bulk.isSelected(task.id)).map((task) => ({ id: task.id, label: `${task.title} · ${longDate(task.dueOn)}` }))}
+          run={(id) => deleteFollowUp(id)}
+          onClose={() => setBulkOpen(false)}
+          onFinished={(done) => { if (done.length) { bulk.clear(); void reload(); } }}
+        />
+      )}
     </PanelLayout>
   );
 }

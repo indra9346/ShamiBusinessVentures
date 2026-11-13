@@ -627,6 +627,24 @@ export type Database = {
         Update: { id?: string; branch_id?: string; product_id?: string | null; kind?: string; value?: number; enabled?: boolean; updated_by?: string | null; updated_at?: string }
         Relationships: []
       }
+      stock_indents: {
+        Row: { id: string; indent_no: string; branch_id: string; partner_id: string | null; partner_name: string; needed_by: string | null; notes: string; status: string; status_note: string; status_changed_at: string | null; status_changed_by: string | null; status_changed_by_name: string; created_by: string | null; created_at: string; updated_at: string }
+        Insert: { indent_no: string; branch_id: string; id?: string; partner_id?: string | null; partner_name?: string; needed_by?: string | null; notes?: string; status?: string; status_note?: string; created_by?: string | null }
+        Update: { status?: string; status_note?: string }
+        Relationships: []
+      }
+      stock_indent_lines: {
+        Row: { id: string; indent_id: string; line_no: number; product_id: string | null; product_name: string; quantity: number; unit: string; grade: string; remarks: string }
+        Insert: { indent_id: string; line_no: number; product_name: string; quantity: number; unit: string; id?: string; product_id?: string | null; grade?: string; remarks?: string }
+        Update: { grade?: string; remarks?: string }
+        Relationships: []
+      }
+      stock_indent_events: {
+        Row: { id: number; indent_id: string; event: string; note: string; by_user: string | null; by_name: string; by_role: string; at: string }
+        Insert: { indent_id: string; event: string; note?: string; by_user?: string | null; by_name?: string; by_role?: string; id?: never; at?: string }
+        Update: { note?: string }
+        Relationships: []
+      }
       panel_favourites: {
         Row: { id: number; user_id: string; panel: string; item_key: string; label: string; to_path: string; find_text: string; position: number; created_at: string }
         Insert: { user_id: string; panel: string; item_key: string; label: string; to_path: string; find_text?: string; position?: number; id?: never; created_at?: string }
@@ -1447,6 +1465,11 @@ export type Database = {
       submit_upi_utr: { Args: { _order_no: string; _utr: string }; Returns: { id: string; order_id: string; order_no: string; user_id: string | null; customer_name: string; amount: number; utr: string; status: string; note: string | null; submitted_at: string; reviewed_at: string | null; reviewed_by: string | null } }
       admin_end_payment_hold: { Args: { _order_no: string; _reason?: string }; Returns: boolean }
       admin_cancel_order: { Args: { _order_no: string; _reason: string; _goods_back?: boolean | null; _refund?: Json | null }; Returns: Json }
+      partner_raise_stock_indent: { Args: { _lines: Json; _notes?: string; _needed_by?: string | null }; Returns: string }
+      partner_cancel_stock_indent: { Args: { _indent_no: string; _reason?: string }; Returns: undefined }
+      admin_set_stock_indent_status: { Args: { _indent_no: string; _status: string; _note?: string }; Returns: undefined }
+      login_email_owner: { Args: { _email: string }; Returns: Json }
+      current_partner_branch: { Args: Record<PropertyKey, never>; Returns: string }
       admin_delete_utr: { Args: { _order_no: string; _reason: string }; Returns: Json }
       submit_utr_for_order: { Args: { _order_no: string; _utr: string; _method?: string | null }; Returns: Json }
       admin_place_ended_checkout: { Args: { _order_no: string; _utr?: string | null; _method?: string | null; _checked_against?: string | null }; Returns: Json }

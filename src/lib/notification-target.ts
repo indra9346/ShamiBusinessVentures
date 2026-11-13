@@ -38,6 +38,7 @@ export function notificationTarget(
   }
   if (title.includes("payment")) return "/admin/payments";
   if (title.includes("vendor")) return "/admin/vendors";
+  if (title.includes("stock requirement")) return "/admin/indents";
   if (title.includes("stock")) return "/admin/inventory";
   if (title.includes("review")) return "/admin/reviews";
   if (title.includes("customer")) return "/admin/customers";

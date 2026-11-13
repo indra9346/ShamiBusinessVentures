@@ -14,6 +14,7 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import { BulkBar, BulkDeleteDialog, TickBox, useBulkSelection } from "@/components/panel/BulkSelect";
 
 export const Route = createFileRoute("/admin/reviews")({
   head: () => ({
@@ -76,6 +77,9 @@ function AdminReviews() {
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const pageItems = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  // 13 Nov 2026 (owner): tick several reviews on this page and delete them together (each as its own Delete does).
+  const bulk = useBulkSelection(pageItems.map((r) => String(r.id)));
+  const [bulkOpen, setBulkOpen] = useState(false);
 
   return (
     <PanelLayout items={adminNav} tone="admin" title="Reviews" subtitle="Moderate product reviews">
@@ -113,12 +117,14 @@ function AdminReviews() {
         }
       >
         {status !== "All" && <FilterNote label={status} onClear={() => { setStatus("All"); setPage(1); }} />}
+        <BulkBar state={bulk.state} count={bulk.count} selectable={pageItems.length} onToggleAll={bulk.toggleAll} onClear={bulk.clear} onDelete={() => setBulkOpen(true)} hint="Tick reviews on this page to delete several together" />
         <div className="grid gap-4">
           {pageItems.length === 0 && <p className="py-10 text-center text-sm text-slate">No reviews match your filters.</p>}
           {pageItems.map((r) => (
             <div key={r.id} className="rounded-lg border border-border p-4">
               <div className="flex items-start justify-between gap-3">
-                <div className="flex items-start gap-3">
+                <div className="flex items-start gap-2">
+                  <TickBox checked={bulk.isSelected(String(r.id))} onChange={(on) => bulk.toggle(String(r.id), on)} label={`Select the review by ${r.customer}`} className="-ml-1.5 -mt-0.5" />
                   <Avatar className="h-9 w-9"><AvatarFallback className="bg-navy/10 text-xs font-bold text-navy">{r.avatar}</AvatarFallback></Avatar>
                   <div>
                     <p className="font-semibold text-navy">{r.customer}</p>
@@ -164,6 +170,16 @@ function AdminReviews() {
           </div>
         </div>
       </Panel>
+      {bulkOpen && (
+        <BulkDeleteDialog
+          title={(n) => (n === 1 ? "Delete 1 review?" : `Delete ${n} reviews?`)}
+          description="They are removed for good from the shop and from each product's rating. To keep one but hide it, use Reject instead."
+          items={pageItems.filter((r) => bulk.isSelected(String(r.id))).map((r) => ({ id: String(r.id), label: `${r.customer} · ${r.product} · ${r.title}` }))}
+          run={async (id) => { if (!(await deleteReview(id))) throw new Error("Could not delete it"); }}
+          onClose={() => setBulkOpen(false)}
+          onFinished={(done) => { if (done.length) bulk.clear(); }}
+        />
+      )}
     </PanelLayout>
   );
 }

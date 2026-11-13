@@ -21,6 +21,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { notificationTarget } from "@/lib/notification-target";
 import { supabase } from "@/integrations/supabase/client";
+import { BulkBar, BulkDeleteDialog, TickBox, useBulkSelection } from "@/components/panel/BulkSelect";
 
 export const Route = createFileRoute("/admin/notifications")({
   head: () => ({
@@ -63,6 +64,10 @@ function AdminNotifications() {
       ),
     [notifications, role, type, readView],
   );
+
+  // 13 Nov 2026 (owner): tick several alerts and delete them together (each as its own delete button does).
+  const bulk = useBulkSelection(list.map((n) => String(n.id)));
+  const [bulkOpen, setBulkOpen] = useState(false);
 
   const stats = useMemo(
     () => ({
@@ -167,6 +172,8 @@ function AdminNotifications() {
                 <p className="text-xs text-slate">Try a different role or alert type.</p>
               </div>
             ) : (
+              <>
+              <BulkBar state={bulk.state} count={bulk.count} selectable={list.length} onToggleAll={bulk.toggleAll} onClear={bulk.clear} onDelete={() => setBulkOpen(true)} hint="Tick alerts to delete several together" />
               <ul className="grid gap-3">
                 {list.map((n) => (
                   <li
@@ -184,10 +191,11 @@ function AdminNotifications() {
                     }}
                     role="button"
                     tabIndex={0}
-                    className={`grid gap-2 rounded-lg border p-4 transition-colors sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center ${
+                    className={`grid grid-cols-[auto_minmax(0,1fr)] gap-x-1 gap-y-2 rounded-lg border py-4 pl-2 pr-4 transition-colors sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-center ${
                       n.read ? "border-border bg-card" : "border-gold/40 bg-ivory"
                     }`}
                   >
+                    <TickBox checked={bulk.isSelected(String(n.id))} onChange={(on) => bulk.toggle(String(n.id), on)} label={`Select ${n.title}`} className="self-start" />
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
                         <p className="text-sm font-bold text-navy">{n.title}</p>
@@ -199,7 +207,7 @@ function AdminNotifications() {
                       <p className="mt-1 text-sm text-charcoal">{n.body}</p>
                       <p className="mt-1 text-xs text-slate">{n.time}</p>
                     </div>
-                    <div className="flex gap-2">
+                    <div className="col-start-2 flex gap-2 sm:col-start-3">
                       {!n.read && (
                         <Button
                           variant="outline"
@@ -226,8 +234,19 @@ function AdminNotifications() {
                   </li>
                 ))}
               </ul>
+              </>
             )}
           </Panel>
+          {bulkOpen && (
+            <BulkDeleteDialog
+              title={(n) => (n === 1 ? "Delete 1 alert?" : `Delete ${n} alerts?`)}
+              description="They go from this inbox. Orders, payments and everything else stay as they are."
+              items={list.filter((n) => bulk.isSelected(String(n.id))).map((n) => ({ id: String(n.id), label: `${n.title} · ${n.time}` }))}
+              run={async (id) => { if (!(await deleteNotification(Number(id)))) throw new Error("Could not delete it"); }}
+              onClose={() => setBulkOpen(false)}
+              onFinished={(done) => { if (done.length) bulk.clear(); }}
+            />
+          )}
         </TabsContent>
 
         <TabsContent value="broadcast">

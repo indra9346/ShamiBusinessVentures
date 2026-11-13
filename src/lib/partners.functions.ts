@@ -3,7 +3,10 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import type { Database } from "@/integrations/supabase/types";
-import { normalisePartnerPhone, partnerEmailProblem, partnerPasswordProblem, partnerPhoneProblem } from "@/lib/partners";
+import {
+  emailTakenMessage, isEmailTakenError, normalisePartnerPhone, partnerEmailProblem, partnerPasswordProblem, partnerPhoneProblem,
+  type LoginEmailOwner,
+} from "@/lib/partners";
 
 /*
  * Channel partner (godown distributor) accounts. Only administrators create them: the admin enters
@@ -21,6 +24,16 @@ function serviceClient() {
 async function ensureAdmin(supabase: SupabaseClient<Database>, userId: string) {
   const { data, error } = await supabase.rpc("has_role", { _user_id: userId, _role: "admin" });
   if (error || !data) throw new Error("Administrator access is required");
+}
+
+/**
+ * Which account already signs in with this email (database login_email_owner, service role only). Undefined when the
+ * database cannot say (the function is not there yet): the Supabase answer is then the only check.
+ */
+async function loginEmailOwner(db: SupabaseClient<Database>, email: string): Promise<LoginEmailOwner | null | undefined> {
+  const { data, error } = await db.rpc("login_email_owner", { _email: email });
+  if (error) return undefined;
+  return (data as unknown as LoginEmailOwner | null) ?? null;
 }
 
 const passwordSchema = z.string().superRefine((value, ctx) => {
@@ -45,6 +58,8 @@ export const createChannelPartner = createServerFn({ method: "POST" })
     if (!branch) throw new Error("Godown not found");
     const { data: existing } = await db.from("channel_partners").select("name").eq("branch_id", data.branchId).eq("status", "active").maybeSingle();
     if (existing) throw new Error(`${branch.name} already has an active channel partner (${existing.name}). Suspend them first.`);
+    const owner = await loginEmailOwner(db, data.email);
+    if (owner) throw new Error(emailTakenMessage(owner));
 
     const { data: created, error } = await db.auth.admin.createUser({
       email: data.email,
@@ -53,8 +68,8 @@ export const createChannelPartner = createServerFn({ method: "POST" })
       user_metadata: { full_name: data.name, phone: data.phone, account_type: "channel_partner" },
     });
     if (error || !created.user) {
-      throw new Error(/already been registered|already exists/i.test(error?.message ?? "")
-        ? "This email already has a Grain Bazar account. Use a different email for the partner login."
+      throw new Error(isEmailTakenError(error?.message ?? "")
+        ? emailTakenMessage((await loginEmailOwner(db, data.email)) ?? null)
         : `The login could not be created: ${error?.message ?? "unknown error"}`);
     }
     const userId = created.user.id;
@@ -108,11 +123,16 @@ export const updateChannelPartnerContact = createServerFn({ method: "POST" })
     if (emailChanged) {
       const { data: other } = await db.from("channel_partners").select("name").eq("email", data.email).neq("id", partner.id).maybeSingle();
       if (other) throw new Error(`${other.name} already signs in with this email.`);
+      // 13 Nov 2026: Supabase's admin update does not check whether another login has the email; the database refuses it
+      // and the admin saw only "Error updating user". Ask the database first, so the admin is told who has it.
+      const owner = await loginEmailOwner(db, data.email);
+      if (owner && owner.user_id !== partner.user_id) throw new Error(emailTakenMessage(owner));
       const { error } = await db.auth.admin.updateUserById(partner.user_id, { email: data.email, email_confirm: true });
       if (error) {
-        throw new Error(/already been registered|already exists|already registered/i.test(error.message)
-          ? "This email already has a Grain Bazar account. Use a different email for the partner login."
-          : `The login email could not be changed: ${error.message}`);
+        const again = isEmailTakenError(error.message) || /error updating user/i.test(error.message) ? await loginEmailOwner(db, data.email) : undefined;
+        if (again && again.user_id !== partner.user_id) throw new Error(emailTakenMessage(again));
+        if (isEmailTakenError(error.message)) throw new Error(emailTakenMessage(null));
+        throw new Error(`The login email could not be changed, so nothing was changed. Supabase said: ${error.message}`);
       }
     }
     await db.auth.admin.updateUserById(partner.user_id, { user_metadata: { phone } });
