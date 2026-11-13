@@ -26,6 +26,7 @@ import { Route as SitemapDotxmlRouteImport } from './routes/sitemap[.]xml'
 import { Route as SlipRouteImport } from './routes/slip'
 import { Route as WishlistRouteImport } from './routes/wishlist'
 import { Route as AccountAddressesRouteImport } from './routes/account.addresses'
+import { Route as AccountHowToOrderRouteImport } from './routes/account.how-to-order'
 import { Route as AccountInvoicesRouteImport } from './routes/account.invoices'
 import { Route as AccountNotificationsRouteImport } from './routes/account.notifications'
 import { Route as AccountOrdersRouteImport } from './routes/account.orders'
@@ -196,6 +197,11 @@ const WishlistRoute = WishlistRouteImport.update({
 const AccountAddressesRoute = AccountAddressesRouteImport.update({
   id: '/addresses',
   path: '/addresses',
+  getParentRoute: () => AccountRoute,
+} as any)
+const AccountHowToOrderRoute = AccountHowToOrderRouteImport.update({
+  id: '/how-to-order',
+  path: '/how-to-order',
   getParentRoute: () => AccountRoute,
 } as any)
 const AccountInvoicesRoute = AccountInvoicesRouteImport.update({
@@ -648,6 +654,7 @@ export interface FileRoutesByFullPath {
   '/slip': typeof SlipRoute
   '/wishlist': typeof WishlistRoute
   '/account/addresses': typeof AccountAddressesRoute
+  '/account/how-to-order': typeof AccountHowToOrderRoute
   '/account/invoices': typeof AccountInvoicesRoute
   '/account/notifications': typeof AccountNotificationsRoute
   '/account/orders': typeof AccountOrdersRouteWithChildren
@@ -752,6 +759,7 @@ export interface FileRoutesByTo {
   '/slip': typeof SlipRoute
   '/wishlist': typeof WishlistRoute
   '/account/addresses': typeof AccountAddressesRoute
+  '/account/how-to-order': typeof AccountHowToOrderRoute
   '/account/invoices': typeof AccountInvoicesRoute
   '/account/notifications': typeof AccountNotificationsRoute
   '/account/orders': typeof AccountOrdersRouteWithChildren
@@ -858,6 +866,7 @@ export interface FileRoutesById {
   '/slip': typeof SlipRoute
   '/wishlist': typeof WishlistRoute
   '/account/addresses': typeof AccountAddressesRoute
+  '/account/how-to-order': typeof AccountHowToOrderRoute
   '/account/invoices': typeof AccountInvoicesRoute
   '/account/notifications': typeof AccountNotificationsRoute
   '/account/orders': typeof AccountOrdersRouteWithChildren
@@ -965,6 +974,7 @@ export interface FileRouteTypes {
     | '/slip'
     | '/wishlist'
     | '/account/addresses'
+    | '/account/how-to-order'
     | '/account/invoices'
     | '/account/notifications'
     | '/account/orders'
@@ -1069,6 +1079,7 @@ export interface FileRouteTypes {
     | '/slip'
     | '/wishlist'
     | '/account/addresses'
+    | '/account/how-to-order'
     | '/account/invoices'
     | '/account/notifications'
     | '/account/orders'
@@ -1174,6 +1185,7 @@ export interface FileRouteTypes {
     | '/slip'
     | '/wishlist'
     | '/account/addresses'
+    | '/account/how-to-order'
     | '/account/invoices'
     | '/account/notifications'
     | '/account/orders'
@@ -1467,6 +1479,13 @@ declare module '@tanstack/react-router' {
       path: '/addresses'
       fullPath: '/account/addresses'
       preLoaderRoute: typeof AccountAddressesRouteImport
+      parentRoute: typeof AccountRoute
+    }
+    '/account/how-to-order': {
+      id: '/account/how-to-order'
+      path: '/how-to-order'
+      fullPath: '/account/how-to-order'
+      preLoaderRoute: typeof AccountHowToOrderRouteImport
       parentRoute: typeof AccountRoute
     }
     '/account/invoices': {
@@ -2088,6 +2107,7 @@ const AccountOrdersRouteWithChildren = AccountOrdersRoute._addFileChildren(
 
 interface AccountRouteChildren {
   AccountAddressesRoute: typeof AccountAddressesRoute
+  AccountHowToOrderRoute: typeof AccountHowToOrderRoute
   AccountInvoicesRoute: typeof AccountInvoicesRoute
   AccountNotificationsRoute: typeof AccountNotificationsRoute
   AccountOrdersRoute: typeof AccountOrdersRouteWithChildren
@@ -2100,6 +2120,7 @@ interface AccountRouteChildren {
 
 const AccountRouteChildren: AccountRouteChildren = {
   AccountAddressesRoute: AccountAddressesRoute,
+  AccountHowToOrderRoute: AccountHowToOrderRoute,
   AccountInvoicesRoute: AccountInvoicesRoute,
   AccountNotificationsRoute: AccountNotificationsRoute,
   AccountOrdersRoute: AccountOrdersRouteWithChildren,

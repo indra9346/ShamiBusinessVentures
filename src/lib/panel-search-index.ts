@@ -66,6 +66,7 @@ export const PANEL_PAGES: Record<PanelKey, PanelPage[]> = {
     { "to": "/account/profile", "label": "My Profile" },
     { "to": "/account/orders", "label": "My Orders" },
     { "to": "/account/track", "label": "Track Orders" },
+    { "to": "/account/how-to-order", "label": "How to order" },
     { "to": "/account/wishlist", "label": "Wishlist" },
     { "to": "/account/addresses", "label": "Saved Addresses" },
     { "to": "/account/reviews", "label": "Reviews & Ratings" },
@@ -686,6 +687,9 @@ export const PANEL_FEATURES: Record<PanelKey, PanelFeature[]> = {
   customer: [
     { "to": "/account/addresses", "text": "Add New Address", "kind": "button" },
     { "to": "/account/addresses", "text": "Set Default", "kind": "button" },
+    { "to": "/account/how-to-order", "text": "English", "kind": "button" },
+    { "to": "/account/how-to-order", "text": "The steps", "kind": "section" },
+    { "to": "/account/how-to-order", "text": "Browse products", "kind": "link" },
     { "to": "/account/invoices", "text": "Total Invoices", "kind": "card" },
     { "to": "/account/invoices", "text": "Invoiced Value", "kind": "card" },
     { "to": "/account/invoices", "text": "GST Paid", "kind": "card" },
