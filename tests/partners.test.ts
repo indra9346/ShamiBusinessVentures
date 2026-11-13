@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   commissionAmount, commissionStatus, describeRate, monthLabel, monthStart, partnerPasswordProblem,
-  suggestPartnerPassword, targetProgress,
+  suggestPartnerPassword, targetProgress, emailTakenMessage, isEmailTakenError,
 } from "../src/lib/partners.ts";
 
 test("commission: rupees per unit, or % of the line excluding GST, to the paisa", () => {
@@ -49,4 +49,19 @@ test("partner passwords: at least 8 characters with letters and a number", () =>
     assert.match(suggested, /^[A-HJ-NP-Za-hj-kmnp-z]{8}-[2-9]{3}$/);
     assert.equal(partnerPasswordProblem(suggested), null);
   }
+});
+
+test("a login email that another account already uses: Supabase's words are recognised and the admin is told who", () => {
+  // What live Supabase answered on 12 Nov 2026 (the admin saw only "Error updating user").
+  assert.ok(isEmailTakenError('ERROR: duplicate key value violates unique constraint "users_email_partial_key" (SQLSTATE 23505)'));
+  assert.ok(isEmailTakenError("A user with this email address has already been registered"));
+  assert.ok(isEmailTakenError("email_exists"));
+  assert.ok(!isEmailTakenError("Error updating user"), "the vague message alone is not proof; the server asks the database who has it");
+  assert.equal(emailTakenMessage({ user_id: "u", name: "Ravi", kind: "customer", partner_status: null }),
+    "A customer's shopping login (Ravi) already uses this email. One email can sign in to only one account, so nothing was changed. Use a different email for the partner's login.");
+  assert.match(emailTakenMessage({ user_id: "u", name: "Testing Channel Partner", kind: "channel_partner", partner_status: "suspended" }), /^Another channel partner's login \(Testing Channel Partner\), now suspended, already uses this email\./);
+  assert.match(emailTakenMessage({ user_id: "u", name: "", kind: "admin", partner_status: null }), /^An admin login already uses/);
+  assert.match(emailTakenMessage({ user_id: "u", name: "Manju", kind: "staff", partner_status: null }), /^A godown employee's login \(Manju\)/);
+  assert.match(emailTakenMessage({ user_id: "u", name: "Mills", kind: "vendor", partner_status: null }), /^A seller \(vendor\) login \(Mills\)/);
+  assert.match(emailTakenMessage(null), /^Another Grain Bazar login already uses this email/);
 });

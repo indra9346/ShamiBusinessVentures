@@ -48,6 +48,7 @@ import { Route as AdminDeliveryNotesRouteImport } from './routes/admin.delivery-
 import { Route as AdminEnquiriesRouteImport } from './routes/admin.enquiries'
 import { Route as AdminFollowUpsRouteImport } from './routes/admin.follow-ups'
 import { Route as AdminGodownReportRouteImport } from './routes/admin.godown-report'
+import { Route as AdminIndentsRouteImport } from './routes/admin.indents'
 import { Route as AdminInventoryRouteImport } from './routes/admin.inventory'
 import { Route as AdminLoginRouteImport } from './routes/admin.login'
 import { Route as AdminNotificationsRouteImport } from './routes/admin.notifications'
@@ -304,6 +305,11 @@ const AdminFollowUpsRoute = AdminFollowUpsRouteImport.update({
 const AdminGodownReportRoute = AdminGodownReportRouteImport.update({
   id: '/admin/godown-report',
   path: '/admin/godown-report',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminIndentsRoute = AdminIndentsRouteImport.update({
+  id: '/admin/indents',
+  path: '/admin/indents',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AdminInventoryRoute = AdminInventoryRouteImport.update({
@@ -657,6 +663,7 @@ export interface FileRoutesByFullPath {
   '/admin/enquiries': typeof AdminEnquiriesRouteWithChildren
   '/admin/follow-ups': typeof AdminFollowUpsRoute
   '/admin/godown-report': typeof AdminGodownReportRoute
+  '/admin/indents': typeof AdminIndentsRoute
   '/admin/inventory': typeof AdminInventoryRoute
   '/admin/login': typeof AdminLoginRoute
   '/admin/notifications': typeof AdminNotificationsRoute
@@ -759,6 +766,7 @@ export interface FileRoutesByTo {
   '/admin/enquiries': typeof AdminEnquiriesRouteWithChildren
   '/admin/follow-ups': typeof AdminFollowUpsRoute
   '/admin/godown-report': typeof AdminGodownReportRoute
+  '/admin/indents': typeof AdminIndentsRoute
   '/admin/inventory': typeof AdminInventoryRoute
   '/admin/login': typeof AdminLoginRoute
   '/admin/notifications': typeof AdminNotificationsRoute
@@ -863,6 +871,7 @@ export interface FileRoutesById {
   '/admin/enquiries': typeof AdminEnquiriesRouteWithChildren
   '/admin/follow-ups': typeof AdminFollowUpsRoute
   '/admin/godown-report': typeof AdminGodownReportRoute
+  '/admin/indents': typeof AdminIndentsRoute
   '/admin/inventory': typeof AdminInventoryRoute
   '/admin/login': typeof AdminLoginRoute
   '/admin/notifications': typeof AdminNotificationsRoute
@@ -968,6 +977,7 @@ export interface FileRouteTypes {
     | '/admin/enquiries'
     | '/admin/follow-ups'
     | '/admin/godown-report'
+    | '/admin/indents'
     | '/admin/inventory'
     | '/admin/login'
     | '/admin/notifications'
@@ -1070,6 +1080,7 @@ export interface FileRouteTypes {
     | '/admin/enquiries'
     | '/admin/follow-ups'
     | '/admin/godown-report'
+    | '/admin/indents'
     | '/admin/inventory'
     | '/admin/login'
     | '/admin/notifications'
@@ -1173,6 +1184,7 @@ export interface FileRouteTypes {
     | '/admin/enquiries'
     | '/admin/follow-ups'
     | '/admin/godown-report'
+    | '/admin/indents'
     | '/admin/inventory'
     | '/admin/login'
     | '/admin/notifications'
@@ -1269,6 +1281,7 @@ export interface RootRouteChildren {
   AdminEnquiriesRoute: typeof AdminEnquiriesRouteWithChildren
   AdminFollowUpsRoute: typeof AdminFollowUpsRoute
   AdminGodownReportRoute: typeof AdminGodownReportRoute
+  AdminIndentsRoute: typeof AdminIndentsRoute
   AdminInventoryRoute: typeof AdminInventoryRoute
   AdminLoginRoute: typeof AdminLoginRoute
   AdminNotificationsRoute: typeof AdminNotificationsRoute
@@ -1596,6 +1609,13 @@ declare module '@tanstack/react-router' {
       path: '/admin/godown-report'
       fullPath: '/admin/godown-report'
       preLoaderRoute: typeof AdminGodownReportRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/indents': {
+      id: '/admin/indents'
+      path: '/admin/indents'
+      fullPath: '/admin/indents'
+      preLoaderRoute: typeof AdminIndentsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/admin/inventory': {
@@ -2213,6 +2233,7 @@ const rootRouteChildren: RootRouteChildren = {
   AdminEnquiriesRoute: AdminEnquiriesRouteWithChildren,
   AdminFollowUpsRoute: AdminFollowUpsRoute,
   AdminGodownReportRoute: AdminGodownReportRoute,
+  AdminIndentsRoute: AdminIndentsRoute,
   AdminInventoryRoute: AdminInventoryRoute,
   AdminLoginRoute: AdminLoginRoute,
   AdminNotificationsRoute: AdminNotificationsRoute,

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { adminCancelPlan, cancelFormProblem, cancelSteps, deleteAsksAboutMoney, deletedPaymentKind, deletePlan, refundArgument, REFUND_MODES, type CancelForm, type DeleteCheck } from "../src/lib/order-cancel.ts";
+import { adminCancelPlan, cancelFormProblem, cancelSteps, deleteAsksAboutMoney, deletedPaymentKind, deletePlan, refundArgument, REFUND_MODES, type CancelForm, type DeleteCheck, bulkDeleteAllDetailsProblem, normaliseDeleteCheck } from "../src/lib/order-cancel.ts";
 import {
   liveZohoInvoices, matchRefundPayments, refundAlreadyInZoho, zohoOrderPapers, zohoRefundBody, zohoRefundMode, zohoRefundProblem, zohoVoidRefusedReview,
   type WebsiteRefund,
@@ -207,4 +207,16 @@ test("Payments & Matching has Refund and Delete, and every order page has Delete
     if (!/^Remove its/.test(step)) assert.ok(kn[step], step);
   const sql = readFileSync("supabase/migrations/20261111230000_delete_order_with_payments_check.sql", "utf8");
   for (const m of sql.matchAll(/blocker := '((?:[^']|'')+)'/g)) assert.ok(kn[m[1]!.replace(/''/g, "'")], m[1]);
+});
+
+test("deleting several at once: only rows that need no question go; the rest keep their own Delete", () => {
+  const base = normaliseDeleteCheck({ blocker: null, status: "Payment Expired", paid: "0" as never, payments: [], paid_without_record: "0" as never, bank_alert: false, confirmed_utr: null, needs_cancel: false, after_dispatch: false, zoho_alive: false });
+  assert.equal(base.paid, 0);
+  assert.equal(bulkDeleteAllDetailsProblem(base), null);
+  assert.equal(bulkDeleteAllDetailsProblem({ ...base, blocker: "A delivery note was printed for it" }), "A delivery note was printed for it");
+  assert.match(bulkDeleteAllDetailsProblem({ ...base, paid: 130 }) ?? "", /Money is recorded on it/);
+  assert.match(bulkDeleteAllDetailsProblem({ ...base, paid_without_record: 5 }) ?? "", /Money is recorded on it/);
+  assert.match(bulkDeleteAllDetailsProblem({ ...base, needs_cancel: true }) ?? "", /cancelled first/);
+  const money = normaliseDeleteCheck({ ...base, paid: "2518.95" as never, payments: [{ id: "p", amount: "2518.95" as never, method: "NEFT", reference: "2535", in_zoho: false }] });
+  assert.equal(money.payments[0]!.amount, 2518.95);
 });

@@ -11,6 +11,7 @@ import { PartnerPayouts } from "@/components/partners/PartnerPayouts";
 import { PartnerInvoices } from "@/components/partners/PartnerInvoices";
 import { MonthlyIncome } from "@/components/partners/MonthlyIncome";
 import { GodownTransfers } from "@/components/batches/GodownTransfers";
+import { PartnerStockIndents } from "@/components/partners/StockIndents";
 import { ReleasedDeliveryNotes } from "@/components/panel/DeliveryNotePanel";
 import { supabase } from "@/integrations/supabase/client";
 import { inrPrecise } from "@/lib/data";
@@ -142,6 +143,9 @@ function PartnerDashboard() {
           <StatCard onClick={() => openLines("sales")} label="Sales (excl. GST)" value={inrPrecise(totals.sales)} icon={Target} description={`${totals.orders} orders`} />
           <StatCard onClick={() => scrollToSection("leaderboard")} label="Leaderboard rank" value={myRank ? `#${myRank} of ${leaders?.length ?? 0}` : "—"} icon={Trophy} />
         </div>
+
+        {/* Added 13 Nov 2026 (owner): ask head office for stock (an indent) and follow its status. */}
+        <PartnerStockIndents branchId={me.branchId} godown={me.godown} partnerName={me.name} />
 
         {/* Added 12 Nov 2026 (owner): send the UTR a customer shows you; our office confirms it. */}
         <PartnerPaymentsPanel />

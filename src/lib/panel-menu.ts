@@ -117,7 +117,7 @@ const ADMIN_GROUPS: { key: string; label: string; pages: string[] }[] = [
   { key: "money", label: "Payments", pages: ["/admin/payments", "/admin/upi-payments", "/admin/payouts", "/admin/commissions"] },
   { key: "products", label: "Products", pages: ["/admin/products", "/admin/product-codes", "/admin/categories", "/admin/pricing", "/admin/ads"] },
   { key: "inventory", label: "Inventory", pages: ["/admin/inventory", "/admin/batches", "/admin/stock-counts", "/admin/rice-samples"] },
-  { key: "partners", label: "Partners & Godowns", pages: ["/admin/partners", "/admin/partner-income", "/admin/partner-payouts", "/admin/partner-report", "/admin/branches", "/admin/vendors", "/admin/attendance"] },
+  { key: "partners", label: "Partners & Godowns", pages: ["/admin/partners", "/admin/partner-income", "/admin/partner-payouts", "/admin/partner-report", "/admin/indents", "/admin/branches", "/admin/vendors", "/admin/attendance"] },
   { key: "reports", label: "Reports", pages: ["/admin/reports", "/admin/godown-report"] },
   { key: "system", label: "Zoho & Settings", pages: ["/admin/zoho", "/admin/zoho-api-calls", "/admin/notifications", "/admin/settings"] },
 ];

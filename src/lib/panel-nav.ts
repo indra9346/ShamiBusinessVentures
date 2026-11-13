@@ -1,5 +1,6 @@
 import {
   BadgePercent,
+  ClipboardPen,
   Bell,
   Boxes,
   Building2,
@@ -65,6 +66,7 @@ export const adminNav = [
   { label: "Partner Monthly Income", to: "/admin/partner-income", icon: Calculator },
   { label: "Partner Payouts", to: "/admin/partner-payouts", icon: HandCoins },
   { label: "Partner Report", to: "/admin/partner-report", icon: Trophy },
+  { label: "Partner Order Book", to: "/admin/indents", icon: ClipboardPen },
   { label: "Attendance", to: "/admin/attendance", icon: CalendarCheck },
   { label: "Follow-ups", to: "/admin/follow-ups", icon: ListTodo },
   { label: "Categories", to: "/admin/categories", icon: Tags },

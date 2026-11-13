@@ -14,13 +14,14 @@ import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { DEFAULT_UPI_SETTINGS, isValidVpa, settingsProblem, upiPaymentUri, type UpiSettings } from "@/lib/upi-pay";
 import { RejectUtrDialog, type RejectChoice } from "@/components/panel/RejectUtrDialog";
 import { isBankMethod } from "@/lib/payment-rules";
-import { loadBankAudit, loadBankSettings, loadUpiAudit, markUtrRefunded, placeEndedCheckout, rejectUtrAndEndCheckout, reopenBankCredit, reviewUpiPayment, saveBankDetails, saveUpiSettings, settleBankCredit, useUpiPayments, type BankAuditRow, type BankCredit, type UpiAuditRow, type CreditWithoutUtr } from "@/lib/upi-store";
+import { deleteUtrRecord, loadBankAudit, loadBankSettings, loadUpiAudit, markUtrRefunded, placeEndedCheckout, rejectUtrAndEndCheckout, reopenBankCredit, reviewUpiPayment, saveBankDetails, saveUpiSettings, settleBankCredit, useUpiPayments, type BankAuditRow, type BankCredit, type UpiAuditRow, type CreditWithoutUtr } from "@/lib/upi-store";
 import { parseBankCredit, parseCreditWithoutReference } from "@/lib/bank-alert";
 import { CreditHint, CreditsWithoutUtrPanel } from "@/components/panel/CreditsWithoutUtr";
 import { SameUtrBadge, UtrChecksPanel, useUtrChecks } from "@/components/panel/UtrChecksPanel";
 import { AWAITING_PAYMENT, clockText, holdSecondsLeft } from "@/lib/payment-hold";
 import { CustomersPayingNow } from "@/components/panel/CustomersPayingNow";
 import { DeleteUtrDialog } from "@/components/panel/DeleteUtrDialog";
+import { BulkBar, BulkDeleteDialog, TickBox, useBulkSelection } from "@/components/panel/BulkSelect";
 import { BankStatementPanel } from "@/components/panel/BankStatementPanel";
 import { ResizableTable } from "@/hooks/use-column-resize";
 import { Button } from "@/components/ui/button";
@@ -97,6 +98,10 @@ function AdminUpiPayments() {
   // late: sent after the checkout ended, so confirming places it again (admin_place_ended_checkout).
   const [confirming, setConfirming] = useState<{ orderNo: string; amount: number; utr: string; late?: boolean } | null>(null);
   const [deletingUtr, setDeletingUtr] = useState<{ orderNo: string; utr: string; note: string | null } | null>(null);
+  // 13 Nov 2026 (owner): tick several rejected or refunded UTRs and delete them together, each through admin_delete_utr.
+  const utrDeletable = doneShown.filter((s) => s.status === "rejected" && s.note !== UNCHECKED_UTR_NOTE).map((s) => s.orderNo);
+  const utrBulk = useBulkSelection(utrDeletable);
+  const [utrBulkOpen, setUtrBulkOpen] = useState(false);
   const confirm = async (orderNo: string, amount: number, utr: string, checkedAgainst: string, remark: string, late = false) => {
     setConfirming(null);
     setBusy(orderNo);
@@ -324,16 +329,19 @@ function AdminUpiPayments() {
           action={doneFilter === "all" ? undefined : <button type="button" className="text-xs font-semibold text-gold hover:underline" onClick={() => setDoneFilter("all")}>Show all</button>}
         >
           {doneShown.length === 0 ? <p className="text-sm text-slate">None yet.</p> : (
+          <>
+          <BulkBar state={utrBulk.state} count={utrBulk.count} selectable={utrDeletable.length} onToggleAll={utrBulk.toggleAll} onClear={utrBulk.clear} onDelete={() => setUtrBulkOpen(true)} hint="Tick rejected or refunded UTRs to delete several together" />
           <div className="overflow-x-auto">
             <ResizableTable tableId="upi-done" className="w-full min-w-[700px] text-left text-sm">
               <thead><tr className="border-b border-border text-[11px] font-bold uppercase tracking-wider text-slate">
-                <th className="px-2 py-2">Checked</th><th className="px-2 py-2">Order</th><th className="px-2 py-2 text-right">Amount</th><th className="px-2 py-2">UTR</th><th className="px-2 py-2">Result</th><th className="px-2 py-2"><span className="sr-only">Delete</span></th>
+                <th className="w-8 px-1 py-2"><span className="sr-only">Select</span></th><th className="px-2 py-2">Checked</th><th className="px-2 py-2">Order</th><th className="px-2 py-2 text-right">Amount</th><th className="px-2 py-2">UTR</th><th className="px-2 py-2">Result</th><th className="px-2 py-2"><span className="sr-only">Delete</span></th>
               </tr></thead>
               <tbody>
                 {doneShown.map((s) => {
                   const hold = paymentHolds.find((item) => item.orderNo === s.orderNo);
                   return (
                   <tr key={s.orderNo} className="border-b border-border/60">
+                    <td className="px-1 py-1">{utrDeletable.includes(s.orderNo) && <TickBox checked={utrBulk.isSelected(s.orderNo)} onChange={(on) => utrBulk.toggle(s.orderNo, on)} label={`Select UTR ${s.utr}`} />}</td>
                     <td className="whitespace-nowrap px-2 py-2 text-xs text-slate">{s.reviewedAt ? istTime(s.reviewedAt) : "—"}</td>
                     <td className="px-2 py-2 font-mono text-xs">
                       {s.orderNo}
@@ -364,9 +372,21 @@ function AdminUpiPayments() {
               </tbody>
             </ResizableTable>
           </div>
+          </>
           )}
         </Panel>
         </div>
+      )}
+      {utrBulkOpen && (
+        <BulkDeleteDialog
+          title={(n) => (n === 1 ? "Delete 1 UTR record?" : `Delete ${n} UTR records?`)}
+          description="Only rejected or refunded UTRs. Each goes through the same database check as its own Delete, one after another. A refunded transfer still cannot pay for anything, and a copy of each stays in the Delete Log with your reason."
+          items={doneShown.filter((s) => utrBulk.isSelected(s.orderNo)).map((s) => ({ id: s.orderNo, label: `${s.orderNo} · UTR ${s.utr} · ${s.note === REFUNDED_UTR_NOTE ? "Refunded" : "Rejected"}` }))}
+          reason="required"
+          run={(orderNo, reason) => deleteUtrRecord(orderNo, reason)}
+          onClose={() => setUtrBulkOpen(false)}
+          onFinished={(done) => { if (done.length) utrBulk.clear(); }}
+        />
       )}
       {deletingUtr && <DeleteUtrDialog {...deletingUtr} onClose={() => setDeletingUtr(null)} />}
       {confirming && <ConfirmPaidDialog {...confirming} onClose={() => setConfirming(null)} onConfirm={(checkedAgainst, remark) => void confirm(confirming.orderNo, confirming.amount, confirming.utr, checkedAgainst, remark, Boolean(confirming.late))} />}

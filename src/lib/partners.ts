@@ -84,6 +84,29 @@ export function partnerEmailProblem(email: string) {
   return null;
 }
 
+/** Who already signs in with an email (the database's login_email_owner, 13 Nov 2026). */
+export type LoginEmailOwner = { user_id: string; name: string; kind: "channel_partner" | "admin" | "staff" | "vendor" | "customer"; partner_status: string | null };
+
+/**
+ * Supabase's own words when an email belongs to another login. Its admin "update user" does not check first: the database
+ * refuses the duplicate and Supabase answers only "Error updating user" (seen on live 12 Nov 2026, users_email_partial_key).
+ */
+export function isEmailTakenError(message: string) {
+  return /already been registered|already exists|already registered|email_exists|duplicate key|users_email_partial_key/i.test(message);
+}
+
+/** The message the admin sees when the email is already another account's sign-in. */
+export function emailTakenMessage(owner: LoginEmailOwner | null) {
+  const name = owner?.name?.trim() ? ` (${owner.name.trim()})` : "";
+  const who = !owner ? "Another Grain Bazar login"
+    : owner.kind === "channel_partner" ? `Another channel partner's login${name}${owner.partner_status === "suspended" ? ", now suspended," : ""}`
+    : owner.kind === "admin" ? `An admin login${name}`
+    : owner.kind === "staff" ? `A godown employee's login${name}`
+    : owner.kind === "vendor" ? `A seller (vendor) login${name}`
+    : `A customer's shopping login${name}`;
+  return `${who} already uses this email. One email can sign in to only one account, so nothing was changed. Use a different email for the partner's login.`;
+}
+
 /** A 10-digit Indian mobile number, or blank (the godown's own phone is printed on invoices then). Spaces and +91 are dropped. */
 export function normalisePartnerPhone(phone: string) {
   const digits = phone.replace(/\D/g, "");
