@@ -22,12 +22,40 @@
 -- 11. cancel_marketplace_order refuses while a UTR waits; apply_zoho_order_cancellation closes a waiting UTR as not
 --     checked in time and tells the admins.
 -- 12. admin_utr_conflicts: a lapsed UTR placed again on the same account is settled on its own.
+--
+-- After review (13 Nov 2026): a refund is recorded in its own columns (refunded_at, refunded_by, refunded_from), so the
+-- admin who approved a payment stays its approver after the order is cancelled with a refund (Approved by); a UTR check
+-- group with any other order is never settled on its own (NULL-safe); a payment recorded by hand with a bank alert for its
+-- UTR frees a kept credit without a UTR rather than taking it; removing the payment that paid an order clears the
+-- follow_up line that said it was paid.
 
 -- ---------------------------------------------------------------- new columns
 
 ALTER TABLE public.upi_payment_submissions ADD COLUMN IF NOT EXISTS follow_up text;
 COMMENT ON COLUMN public.upi_payment_submissions.follow_up IS
-  'What an admin still has to do about a UTR nobody checked in time, when its order was paid with another payment. Cleared when the row is settled.';
+  'What an admin still has to do about a UTR nobody checked in time, when its order was paid with another payment. Cleared when the row is settled, or when that order is no longer paid in full.';
+
+-- A refund is its own fact: reviewed_by / reviewed_at stay who checked the UTR (approved or rejected it), so an approved
+-- payment refunded later is still that admin's approval, never shown as one they rejected.
+ALTER TABLE public.upi_payment_submissions
+  ADD COLUMN IF NOT EXISTS refunded_at timestamptz,
+  ADD COLUMN IF NOT EXISTS refunded_by uuid,
+  ADD COLUMN IF NOT EXISTS refunded_from text;
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'public.upi_payment_submissions'::regclass AND conname = 'upi_payment_submissions_refunded_from_check') THEN
+    ALTER TABLE public.upi_payment_submissions ADD CONSTRAINT upi_payment_submissions_refunded_from_check CHECK (refunded_from IN ('confirmed', 'rejected'));
+  END IF;
+END $$;
+COMMENT ON COLUMN public.upi_payment_submissions.refunded_at IS 'When this UTR''s money was recorded as sent back (note ''refunded by our team'').';
+COMMENT ON COLUMN public.upi_payment_submissions.refunded_by IS 'The admin who recorded the refund (cancel with refund, Refunded, or a bank alert settled as refunded).';
+COMMENT ON COLUMN public.upi_payment_submissions.refunded_from IS
+  'What the row was when refunded: confirmed (an approved payment whose order was cancelled with a refund; reviewed_by is who approved it) or rejected (a UTR nobody checked in time).';
+-- Rows refunded before this (only by mark_utr_refunded, from a UTR nobody checked in time): the admin it named was the
+-- refunder, not a checker. Guarded by refunded_from, so it runs once.
+UPDATE public.upi_payment_submissions
+   SET refunded_from = 'rejected', refunded_at = COALESCE(reviewed_at, submitted_at), refunded_by = reviewed_by, reviewed_by = NULL
+ WHERE status = 'rejected' AND note = 'refunded by our team' AND refunded_from IS NULL;
 
 ALTER TABLE public.order_cancellations
   ADD COLUMN IF NOT EXISTS placed_again_at timestamptz,
@@ -42,7 +70,8 @@ ALTER TABLE public.bank_credits_without_reference ADD COLUMN IF NOT EXISTS paid_
 COMMENT ON COLUMN public.bank_credits_without_reference.paid_by_ref IS
   'The payment reference this credit was taken as (used): removing that payment reopens the credit.';
 
--- A follow_up line belongs to an open lapsed UTR only: once the row is settled any other way it would be stale.
+-- A follow_up line belongs to an open lapsed UTR only: once the row is settled any other way it would be stale. The refund
+-- columns belong to a refunded row only.
 CREATE OR REPLACE FUNCTION private.clear_settled_follow_up()
  RETURNS trigger
  LANGUAGE plpgsql
@@ -50,6 +79,9 @@ AS $function$
 BEGIN
   IF NEW.follow_up IS NOT NULL AND NOT (NEW.status = 'rejected' AND NEW.note IS NOT DISTINCT FROM 'we could not check your UTR in time') THEN
     NEW.follow_up := NULL;
+  END IF;
+  IF NOT (NEW.status = 'rejected' AND NEW.note IS NOT DISTINCT FROM 'refunded by our team') THEN
+    NEW.refunded_at := NULL; NEW.refunded_by := NULL; NEW.refunded_from := NULL;
   END IF;
   RETURN NEW;
 END;
@@ -62,9 +94,10 @@ CREATE TRIGGER upi_submissions_clear_follow_up BEFORE UPDATE OF status, note ON 
 -- ---------------------------------------------------------------- 6. a kept bank credit, when its checkout is paid another way
 
 -- Called wherever an order becomes Paid in full. A credit without a UTR kept for this checkout (orders.bank_credit_id, or
--- suggested for it) is taken as the money recorded when an admin recorded it (_taken) and the amount is the same. Otherwise
--- (the automatic UTR path, another amount, a second credit, or another credit being used right now) it is freed for its
--- real order or a refund, and the admins are told.
+-- suggested for it) is taken as the money recorded when an admin recorded it with nothing else to show for it (_taken) and
+-- the amount is the same. Otherwise (the automatic UTR path, a bank alert with the UTR recorded, another amount, a second
+-- credit, or another credit being used right now) it may be a second transfer: it is freed for its real order or a
+-- refund, and the admins are told.
 CREATE OR REPLACE FUNCTION private.settle_kept_bank_credit(_order_id uuid, _reference text, _amount numeric, _taken boolean DEFAULT true)
  RETURNS integer
  LANGUAGE plpgsql
@@ -133,8 +166,9 @@ BEGIN
   PERFORM pg_advisory_xact_lock(hashtextextended('upi-utr:' || key, 0)) FROM unnest(private.utr_lock_keys(_utr)) AS key;
   IF NOT EXISTS (SELECT 1 FROM public.payments p WHERE p.status = 'Paid' AND private.same_payment_ref(p.txn_ref, _utr))
      AND NOT EXISTS (SELECT 1 FROM public.upi_payment_submissions x WHERE x.status = 'confirmed' AND private.same_utr(x.utr, _utr)) THEN
+    -- Nobody checked these UTRs, so reviewed_by stays empty: who recorded the refund is refunded_by.
     FOR s IN
-      UPDATE public.upi_payment_submissions SET note = 'refunded by our team', reviewed_at = now(), reviewed_by = auth.uid()
+      UPDATE public.upi_payment_submissions SET note = 'refunded by our team', refunded_at = now(), refunded_by = auth.uid(), refunded_from = 'rejected'
        WHERE status = 'rejected' AND note = 'we could not check your UTR in time' AND private.same_utr(utr, _utr)
       RETURNING order_no, order_id, user_id, utr
     LOOP
@@ -269,7 +303,9 @@ BEGIN
       SET follow_up = left(format('The order was paid with another payment (%s). Check whether this transfer came too: if it did, refund it and press Refunded.', reference), 300)
       WHERE order_id = target.id AND status = 'rejected' AND note = 'we could not check your UTR in time' AND NOT private.same_utr(utr, reference);
     -- Added 13 Nov 2026: a bank credit without a UTR kept for this checkout is this money, or is freed and named to the admins.
-    PERFORM private.settle_kept_bank_credit(target.id, reference, _amount, true);
+    -- When a bank alert carries this very UTR, that alert is the money recorded, so the kept credit may be a second transfer:
+    -- freed and named, as on the automatic path, never closed against the same payment.
+    PERFORM private.settle_kept_bank_credit(target.id, reference, _amount, credit.id IS NULL);
   ELSE
     -- A part payment: that UTR is used up, so the customer can send the next one. A different UTR still waits, for what is left.
     DELETE FROM public.upi_payment_submissions WHERE order_id = target.id AND status = 'submitted' AND private.same_utr(utr, reference);
@@ -747,9 +783,13 @@ BEGIN
           to_char(refund_date, 'DD Mon YYYY'), o.order_no), 300)
       WHERE order_id = o.id AND status <> 'settled';
     -- Added 13 Nov 2026: the customer's UTR that paid this order no longer reads "Confirmed paid": it was paid back (every
-    -- Paid payment above was, whatever reference it was recorded under; an order has one UTR row). Who approved it and when
-    -- stay (Approved by); the refund itself is on order_refunds and order_cancellations with who did it.
-    UPDATE public.upi_payment_submissions SET status = 'rejected', note = 'refunded by our team'
+    -- Paid payment above was, whatever reference it was recorded under; an order has one UTR row, and a confirmed one was
+    -- closed as this order's money, "Recorded by an admin with reference ..." when the reference differs). Left open, that
+    -- UTR could pay another order with money already sent back, and no check would see it: the refunded reference is not it.
+    -- Who approved it and when stay (Approved by: refunded_from = 'confirmed'); who refunded it and when are refunded_by
+    -- and refunded_at, as on order_refunds and order_cancellations.
+    UPDATE public.upi_payment_submissions
+      SET status = 'rejected', note = 'refunded by our team', refunded_at = now(), refunded_by = auth.uid(), refunded_from = 'confirmed'
       WHERE order_id = o.id AND status = 'confirmed';
   ELSIF _refund IS NOT NULL AND jsonb_typeof(_refund) = 'object' THEN
     RAISE EXCEPTION 'Nothing was paid on this order, so there is no refund to record.';
@@ -924,6 +964,11 @@ BEGIN
   -- The transfer is free again: nothing should still say it paid for this order.
   UPDATE public.upi_payment_submissions SET status = 'rejected', note = 'payment removed by an admin', reviewed_at = now(), reviewed_by = auth.uid()
     WHERE order_id = o.id AND status = 'confirmed' AND private.same_payment_ref(utr, p.txn_ref);
+  -- Added 13 Nov 2026 (review): the order is not paid in full any more, so a lapsed UTR's line "The order was paid with
+  -- another payment" is no longer true; that transfer may be the very money the order now needs. Paid in full again, it is
+  -- written again (admin_confirm_manual_payment).
+  UPDATE public.upi_payment_submissions SET follow_up = NULL
+    WHERE order_id = o.id AND follow_up IS NOT NULL AND paid_now < o.total;
   UPDATE public.bank_credits SET status = 'unmatched', order_id = NULL, order_no = NULL, note = 'Payment removed by an admin'
     WHERE order_id = o.id AND status IN ('matched', 'mismatch', 'balance') AND private.same_payment_ref(utr, p.txn_ref);
   -- Added 13 Nov 2026: a lapsed checkout's UTR that this payment had placed again is open again (refund it, or record it on
@@ -1202,7 +1247,9 @@ BEGIN
     FROM paid_one p JOIN per_order po ON po.key = p.key
     WHERE p.paid_orders = 1
     GROUP BY p.key, p.paid_order
-    HAVING bool_and(po.order_no = p.paid_order OR po.placed_again_as = p.paid_order)
+    -- NULL-safe: an order with no "Placed again as" UTR (a refused try, a UTR rejected for another reason, an earlier UTR,
+    -- a bank alert on it) is false here, not NULL, which bool_and would skip.
+    HAVING bool_and(po.order_no = p.paid_order OR COALESCE(po.placed_again_as = p.paid_order, false))
   ), judged AS (
     SELECT g.*, r.note AS manual_note, r.reviewed_at AS manual_at,
       (r.utr_key IS NOT NULL AND r.reviewed_at >= g.last_at) AS manual,

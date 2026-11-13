@@ -118,10 +118,11 @@ function helpers(db) {
     try { await fn(); } catch (error) { message = error.message; }
     assert.match(message, pattern, `${label}: expected a refusal, got "${message}"`);
   };
-  // to_jsonb: follow_up exists only once the migration ran.
+  // to_jsonb: follow_up and the refunded_ columns exist only once the migration ran.
   const subOf = async (o) => {
     const s = (await one("SELECT to_jsonb(s) AS s FROM public.upi_payment_submissions s WHERE order_id = $1", [o.id])).s;
-    return { status: s.status, note: s.note, utr: s.utr, follow_up: s.follow_up ?? null, reviewed_by: s.reviewed_by, reviewed_at: s.reviewed_at };
+    return { status: s.status, note: s.note, utr: s.utr, follow_up: s.follow_up ?? null, reviewed_by: s.reviewed_by, reviewed_at: s.reviewed_at,
+      refunded_by: s.refunded_by ?? null, refunded_from: s.refunded_from ?? null, refunded_at: s.refunded_at ?? null };
   };
   const sellers = async (o) => (await q("SELECT vendor_id, status FROM public.order_vendor_fulfillments WHERE order_id = $1 ORDER BY vendor_id", [o.id])).map((r) => `${r.vendor_id}:${r.status}`);
   const notes = async (title, like) => (await q("SELECT DISTINCT recipient_role, message FROM public.notifications WHERE title = $1 AND message LIKE $2", [title, `%${like}%`]));
@@ -190,6 +191,10 @@ await q("INSERT INTO public.order_cancellations (order_id, order_no, stage, reas
 const look = await order("TEST-LOOKALIKE", "Delivered", { paid_amount: 100, payment_status: "Paid" }, { sellers: [["VENDOR-001", "Packed"]] });
 await pay(look, "578086325097");
 await sub(look, "578086325097", "rejected", LAPSE);
+// A UTR refunded before the migration (by the old mark_utr_refunded, which put the refunder in reviewed_by). None live.
+const oldRefund = await order("TEST-OLD-REFUND", "Payment Expired", { payment_hold_outcome: "expired" });
+await sub(oldRefund, "612300000555", "rejected", "refunded by our team");
+await q("UPDATE public.upi_payment_submissions SET reviewed_by = $2, reviewed_at = '2026-11-10T10:00:00Z' WHERE order_id = $1", [oldRefund.id, ADMIN]);
 
 // ---- the glitches, as they are live
 // 1/2. "Refunded" on the CLK row succeeds although that transfer paid the delivered order (tried, then undone).
@@ -216,7 +221,7 @@ console.log("ok 1 the glitches reproduce on the old functions");
 // ================================================================ the migration, twice
 await db.exec(NEW_SQL);
 const snapshot = async () => JSON.stringify(await q(`
-  SELECT s.order_no, s.status, s.note, s.reviewed_at, s.reviewed_by, s.follow_up FROM public.upi_payment_submissions s ORDER BY s.order_no`))
+  SELECT s.order_no, s.status, s.note, s.reviewed_at, s.reviewed_by, s.follow_up, s.refunded_at, s.refunded_by, s.refunded_from FROM public.upi_payment_submissions s ORDER BY s.order_no`))
   + JSON.stringify(await q("SELECT o.order_no, f.status, f.updated_at FROM public.order_vendor_fulfillments f JOIN public.orders o ON o.id = f.order_id ORDER BY o.order_no"))
   + JSON.stringify(await q("SELECT order_no, placed_again_at, placed_again_by_name FROM public.order_cancellations ORDER BY order_no"));
 const once = await snapshot();
@@ -235,6 +240,10 @@ assert.deepEqual(await sellers(sync1), ["VENDOR-001:Packed"]);
 assert.equal((await one("SELECT order_status FROM public.orders WHERE id = $1", [clk.id])).order_status, "Delivered", "the order itself is not recalculated");
 // 5. The live ended checkout is still ended: not marked placed again.
 assert.equal((await one("SELECT placed_again_at FROM public.order_cancellations WHERE order_id = $1", [clkEnded.id])).placed_again_at, null);
+// A UTR refunded before: whoever was in reviewed_by refunded it (nobody had checked it), so it moves to refunded_by.
+row = await subOf(oldRefund);
+assert.deepEqual([row.note, row.reviewed_by, row.refunded_by, row.refunded_from, new Date(row.refunded_at).toISOString()],
+  ["refunded by our team", null, ADMIN, "rejected", "2026-11-10T10:00:00.000Z"], "an earlier refund keeps who did it, not as a checker");
 // 8. The CLK customer's data delete is no longer blocked by that UTR (nor by the look-alike: a Paid payment carries it).
 assert.deepEqual((await blockers(CUSTOMER)).unconfirmed_payment ?? [], [], "a lapsed UTR that a Paid payment carries does not block");
 // Grants, SECURITY DEFINER and search_path are as they were.
@@ -269,6 +278,8 @@ assert.ok((await blockers(CUSTOMER)).unconfirmed_payment.includes(e3.no), "its m
 await admin("SELECT public.mark_utr_refunded($1)", [e3.no]);
 row = await subOf(e3);
 assert.equal(row.note, "refunded by our team"); assert.equal(row.follow_up, null, "settled: the follow-up line goes");
+assert.deepEqual([row.reviewed_by, row.refunded_by, row.refunded_from], [null, ADMIN, "rejected"], "nobody approved it; who refunded it is refunded_by");
+assert.notEqual(row.refunded_at, null);
 assert.equal((await one("SELECT count(*)::int AS n FROM public.refunded_transfers WHERE utr = '612300000031'")).n, 1);
 assert.equal((await notes("Refund recorded", "612300000031")).length, 1);
 console.log("ok 3 item 1: own lapsed UTR confirmed when it paid; another transfer stays open with a follow-up");
@@ -352,6 +363,9 @@ for (const o of [e0, e2]) {
 row = await subOf(e2);
 assert.equal(row.status, "rejected"); assert.equal(row.note, "refunded by our team", "item 9: the confirmed UTR of a refunded order reads refunded");
 assert.equal(row.reviewed_by, ADMIN, "still approved by the admin who placed it"); assert.equal(row.reviewed_at, approved.reviewed_at);
+// Approved by stays ADMIN's approval, not a rejection: the refund is its own record, by the admin who cancelled.
+assert.deepEqual([row.refunded_by, row.refunded_from], [ADMIN2, "confirmed"], "refunded by the admin who cancelled, after an approval");
+assert.notEqual(row.refunded_at, null);
 assert.equal((await one("SELECT count(*)::int AS n FROM public.refunded_transfers WHERE utr = '612300000201'")).n, 1);
 console.log("ok 7 items 5 + 9: ended checkout marked placed again, later cancel works and keeps it; refunded UTR reads refunded");
 
@@ -457,6 +471,71 @@ assert.equal(same.reviewed, true); assert.equal(same.auto_settled, true);
 assert.equal(same.review_note, "Lapsed checkout TEST-A-12 placed again as TEST-B-12 on the same account");
 assert.equal(cross.reviewed, false, "another account stays open"); assert.equal(cross.severity, "high");
 console.log("ok 12 item 12: same-account reuse settled on its own, another account stays a high warning");
+
+// ================================================================ review fixes (13 Nov 2026)
+
+// ---- UTR checks: a third order of the same account that is not "Placed again as" the paid order keeps the group open
+// (bool_and skipped its NULL, so the group read settled and its note said that order was placed again).
+for (const [n, third] of [["1", "refused try"], ["2", "UTR rejected for another reason"]]) {
+  const a = await order(`TEST-RV-A-${n}`, "Payment Expired", { payment_hold_outcome: "expired" });
+  const b = await order(`TEST-RV-B-${n}`, "Awaiting Payment", { payment_hold_until: soon() });
+  const c3 = await order(`TEST-RV-C-${n}`, "Placed");
+  const utr = `71230000013${n}`;
+  await sub(a, utr, "rejected", LAPSE);
+  await sub(b, utr, "submitted");
+  await admin("SELECT public.review_upi_utr($1, 'confirmed', NULL, $2)", [b.no, utr]);
+  assert.equal((await subOf(a)).note, `Placed again as ${b.no}`);
+  if (n === "1") {
+    await q("INSERT INTO public.utr_attempts (order_id, order_no, user_id, utr, utr_key, amount, outcome, reason) VALUES ($1,$2,$3,$4,$4,100,'refused','this UTR already paid an order')", [c3.id, c3.no, CUSTOMER, utr]);
+  } else {
+    await sub(c3, utr, "rejected", "UTR not in the bank");
+  }
+  const g = (await admin("SELECT public.admin_utr_conflicts(90) AS r"))[0].r.groups.find((x) => x.key === utr);
+  assert.deepEqual([g.orders, g.accounts, g.reviewed, g.auto_settled], [3, 1, false, false], `a ${third} on a third order keeps the group open`);
+  assert.equal(g.review_note ?? null, null, "and no note says that order was placed again");
+}
+assert.equal((await admin("SELECT public.admin_utr_conflicts(90) AS r"))[0].r.groups.find((x) => x.key === "612300000131").auto_settled, true, "the two-order reuse is still settled");
+
+// ---- removing the payment that paid an order clears the follow_up line that said the order was paid
+const f4 = await order("TEST-EXP-F4", "Payment Expired", { payment_hold_outcome: "expired" });
+await sub(f4, "612300000401", "rejected", LAPSE);
+await admin("SELECT public.admin_place_ended_checkout($1, '612300000402', 'NEFT', NULL)", [f4.no]);
+assert.match((await subOf(f4)).follow_up, /paid with another payment \(612300000402\)/);
+await admin("SELECT public.admin_delete_payment($1, 'Recorded on the wrong order')", [(await one("SELECT id FROM public.payments WHERE order_id = $1", [f4.id])).id]);
+assert.equal((await one("SELECT payment_status FROM public.orders WHERE id = $1", [f4.id])).payment_status, "Pending");
+row = await subOf(f4);
+assert.deepEqual([row.status, row.note, row.follow_up], ["rejected", LAPSE, null], "the order is unpaid: the lapsed UTR stays open, without the stale line");
+await admin("SELECT public.admin_confirm_manual_payment($1, 100, '612300000403', 'NEFT')", [f4.no]);
+assert.match((await subOf(f4)).follow_up, /paid with another payment \(612300000403\)/, "paid in full again: the line is written again");
+
+// ---- a payment recorded by hand while a bank alert carries its UTR: a kept credit without a UTR is freed and named,
+// as on the automatic path, never closed against the same payment.
+const k5 = await order("TEST-KEEP-5", "Awaiting Payment", { total: 160, subtotal: 160, payment_hold_until: soon(), created_at: new Date(Date.now() - 300_000).toISOString() });
+r = await recordSms(160, 5);
+assert.equal(r.linked_order, k5.no);
+await db.exec("SET session_replication_role = replica");
+const alert5 = (await one("INSERT INTO public.bank_credits (amount, utr, status, raw) VALUES (160, '612300005555', 'unmatched', 'sms') RETURNING id")).id;
+await db.exec("SET session_replication_role = origin");
+await admin("SELECT public.admin_confirm_manual_payment($1, 160, '612300005555')", [k5.no]);
+assert.equal((await one("SELECT status FROM public.bank_credits WHERE id = $1", [alert5])).status, "matched", "the alert with the UTR is the money");
+credit = await one("SELECT status, suggested_order_no, paid_by_ref FROM public.bank_credits_without_reference WHERE id = $1", [r.id]);
+assert.deepEqual(credit, { status: "new", suggested_order_no: null, paid_by_ref: null }, "the credit without a UTR is not taken too");
+assert.equal((await one("SELECT bank_credit_id FROM public.orders WHERE id = $1", [k5.id])).bank_credit_id, null);
+assert.equal((await notes("Payment needs you", "kept for TEST-KEEP-5")).length, 1, "the admins are told");
+
+// ---- (kept, reviewer's finding 2) paid under another reference while the customer's UTR waited, then cancelled with a
+// refund: that UTR row was closed as this order's money, so it reads refunded and cannot pay another order.
+const cr = await order("TEST-CAN-REF", "Awaiting Payment", { payment_hold_until: soon() });
+await sub(cr, "612300000601", "submitted");
+await admin("SELECT public.admin_confirm_manual_payment($1, 100, 'NEFT HDFC0000123 SBIN612399990000', 'NEFT')", [cr.no]);
+row = await subOf(cr);
+assert.deepEqual([row.status, row.note, row.reviewed_by], ["confirmed", "Recorded by an admin with reference NEFT HDFC0000123 SBIN612399990000", ADMIN]);
+await h.as(ADMIN2, "authenticated", async () => q("SELECT public.admin_cancel_order($1, 'Customer cancelled', NULL, $2::jsonb)", [cr.no, JSON.stringify({ ...(await refund()), mode: "NEFT", reference: "REFUNDTESTCANREF01" })]));
+row = await subOf(cr);
+assert.deepEqual([row.status, row.note, row.reviewed_by, row.refunded_by, row.refunded_from], ["rejected", "refunded by our team", ADMIN, ADMIN2, "confirmed"]);
+const cr2 = await order("TEST-CAN-REF-2", "Placed");
+await refuses(() => admin("SELECT public.admin_confirm_manual_payment($1, 100, '612300000601')", [cr2.no]), /This UTR was refunded/, "money paid back cannot pay another order");
+console.log("ok 14 review: UTR checks NULL-safe, follow_up cleared when the payment goes, kept credit freed beside a UTR alert, refunds keep the approver");
 
 // ================================================================ the one-off fixes are guarded
 {

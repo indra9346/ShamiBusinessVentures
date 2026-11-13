@@ -36,9 +36,22 @@ export const Route = createFileRoute("/admin/upi-payments")({
   component: AdminUpiPayments,
 });
 
+/**
+ * Approved, then its money went back (the order was cancelled with a refund). The database keeps who approved it, so it
+ * stays theirs in Approved by and in its filter, and is never shown or counted as a rejection.
+ */
+const refundedAfterApproval = (s: { note?: string; refundedFrom?: string }) => s.note === REFUNDED_UTR_NOTE && s.refundedFrom === "confirmed";
+/** Approved as paid, whether or not it was refunded later: the Confirmed card and its list. */
+const wasApproved = (s: { status: string; note?: string; refundedFrom?: string }) => s.status === "confirmed" || refundedAfterApproval(s);
 /** The Approved by cell when no admin is on the record. */
-const approvedByNobody = (s: { status: string; note?: string }) =>
-  s.status === "confirmed" ? "Automatic match" : s.note === UNCHECKED_UTR_NOTE ? "Nobody (not checked in 24 h)" : "—";
+const approvedByNobody = (s: { status: string; note?: string; refundedFrom?: string }) =>
+  wasApproved(s) ? "Automatic match"
+    : s.note === UNCHECKED_UTR_NOTE ? "Nobody (not checked in 24 h)"
+    : s.note === REFUNDED_UTR_NOTE ? "Nobody (not checked in time)"
+    : "—";
+/** "by Name · 13 Nov, 14:05" for a refund, as far as it is known. */
+const refundedByText = (s: { refundedBy?: string; refundedAt?: string }) =>
+  `${s.refundedBy ? ` by ${s.refundedBy}` : ""}${s.refundedAt ? ` · ${istTime(s.refundedAt)}` : ""}`;
 /** The approver now has a column of their own, so the result text doesn't repeat "by <name>". */
 const withoutApprover = (note: string, name?: string) => (name ? note.replace(` by ${name}`, "") : note);
 
@@ -65,15 +78,24 @@ function AdminUpiPayments() {
   const problem = settingsProblem(form);
   const previewQr = useMemo(() => (isValidVpa(form.vpa) ? renderSVG(upiPaymentUri(form, 1, "TEST-1"), { border: 2 }) : ""), [form]);
   const waiting = submissions.filter((s) => s.status === "submitted");
-  // Not checked in time: the money may be in the bank, so these stay open until someone closes them.
-  const lapsed = submissions.filter((s) => s.status === "rejected" && s.note === UNCHECKED_UTR_NOTE);
-  const done = submissions.filter((s) => s.status !== "submitted" && s.note !== UNCHECKED_UTR_NOTE);
+  // Not checked in time: the money may be in the bank, so these stay open until someone closes them. One whose order was
+  // paid since is settled (13 Nov 2026: CLK-577522-111126-155932 kept a Refunded button after its Rs 260 paid the order),
+  // unless the database says it is another transfer still to check (followUp): the order was paid with other money, so this
+  // one may have to be refunded. That rule must stay when this is merged with fix/batch-double-count (b14f822).
+  const orderPaid = (orderNo: string) => orders.find((order) => order.id === orderNo)?.payment === "Paid";
+  const isLapsed = (s: (typeof submissions)[number]) => s.status === "rejected" && s.note === UNCHECKED_UTR_NOTE && (Boolean(s.followUp) || !orderPaid(s.orderNo));
+  const lapsed = submissions.filter(isLapsed);
+  const done = submissions.filter((s) => s.status !== "submitted" && !isLapsed(s));
   // The Confirmed and Rejected cards open the list below, showing just those.
   const [doneFilter, setDoneFilter] = useState<"all" | "confirmed" | "rejected">("all");
-  // 13 Nov 2026 (owner): who approved each payment in its own column, and every payment one person approved.
+  const inDoneFilter = (s: (typeof done)[number]) =>
+    doneFilter === "all" || (doneFilter === "confirmed" ? wasApproved(s) : s.status === "rejected" && !refundedAfterApproval(s));
+  const refundedLater = done.filter(refundedAfterApproval).length;
+  // 13 Nov 2026 (owner): who approved each payment in its own column, and every payment one person approved. A payment
+  // approved and refunded later stays with the person who approved it.
   const [approver, setApprover] = useState("");
   const approvers = [...new Set(done.map((s) => s.reviewedBy).filter((name): name is string => Boolean(name)))].sort((a, b) => a.localeCompare(b));
-  const doneShown = done.filter((s) => (doneFilter === "all" || s.status === doneFilter) && (!approver || s.reviewedBy === approver));
+  const doneShown = done.filter((s) => inDoneFilter(s) && (!approver || s.reviewedBy === approver));
   const openDone = (status: "confirmed" | "rejected") => {
     setDoneFilter(status);
     scrollToSection("checked-payments");
@@ -185,8 +207,8 @@ function AdminUpiPayments() {
 
       <div className="mb-6 grid gap-4 sm:grid-cols-3">
         <StatCard onClick={() => scrollToSection("payments-to-check")} label="Waiting for your check" value={String(waiting.length)} icon={QrCode} highlight={waiting.length > 0} description={waiting.length ? `${inrPrecise(waiting.reduce((s, w) => s + w.amount, 0))} to match in the bank` : "Nothing to check"} />
-        <StatCard onClick={() => openDone("confirmed")} label="Confirmed" value={String(done.filter((s) => s.status === "confirmed").length)} icon={CheckCircle2} description="Marked paid" />
-        <StatCard onClick={() => openDone("rejected")} label="Rejected" value={String(done.filter((s) => s.status === "rejected").length)} icon={XCircle} description="Customer asked to correct" />
+        <StatCard onClick={() => openDone("confirmed")} label="Confirmed" value={String(done.filter(wasApproved).length)} icon={CheckCircle2} description={refundedLater ? `Marked paid · ${refundedLater} refunded later` : "Marked paid"} />
+        <StatCard onClick={() => openDone("rejected")} label="Rejected" value={String(done.filter((s) => s.status === "rejected" && !refundedAfterApproval(s)).length)} icon={XCircle} description="Customer asked to correct" />
       </div>
 
       <UtrChecksPanel checks={utrChecks.checks} error={utrChecks.error} onChange={utrChecks.refresh} />
@@ -203,6 +225,7 @@ function AdminUpiPayments() {
                     <p className="font-mono text-xs text-navy">{s.orderNo} · <b>{s.utr}</b> · {inrPrecise(s.amount)}</p>
                     <p className="text-xs text-slate">{s.customer || "—"}{hold?.phone ? ` · ${hold.phone}` : ""}</p>
                     {hold && <p className="text-[11px] text-slate">{hold.lines.map((line) => `${line.name ?? line.productId} × ${line.qty}`).join(", ")}</p>}
+                    {s.followUp && <p className="mt-0.5 text-[11px] font-semibold text-amber-800">{s.followUp}</p>}
                   </div>
                   <Button size="sm" variant="outline" disabled={busy === s.orderNo} onClick={() => void markRefunded(s.orderNo, s.utr)}>Refunded</Button>
                 </li>
@@ -376,13 +399,15 @@ function AdminUpiPayments() {
                     <td className="whitespace-nowrap px-2 py-2 text-xs">
                       {s.reviewedBy
                         ? <button type="button" onClick={() => setApprover(s.reviewedBy ?? "")} className="font-semibold text-navy hover:underline" title={`Show every payment ${s.reviewedBy} checked`}>
-                            {s.reviewedBy}{s.status === "rejected" && <span className="ml-1 font-normal text-danger">(rejected)</span>}
+                            {s.reviewedBy}{s.status === "rejected" && !refundedAfterApproval(s) && <span className="ml-1 font-normal text-danger">(rejected)</span>}
                           </button>
                         : <span className="text-slate">{approvedByNobody(s)}</span>}
                     </td>
-                    <td className={cn("px-2 py-2 text-xs font-semibold", s.status === "confirmed" ? "text-emerald-700" : "text-danger")}>
+                    <td className={cn("px-2 py-2 text-xs font-semibold", s.status === "confirmed" ? "text-emerald-700" : refundedAfterApproval(s) ? "text-amber-800" : "text-danger")}>
                       {s.status === "confirmed" ? `Confirmed paid${s.note ? ` · ${withoutApprover(s.note, s.reviewedBy)}` : ""}`
-                        : s.note === REFUNDED_UTR_NOTE ? "Refunded"
+                        : refundedAfterApproval(s) ? `Approved, then refunded${refundedByText(s)} (order cancelled)`
+                        : s.note === REFUNDED_UTR_NOTE ? `Refunded${refundedByText(s)}`
+                        : s.note === UNCHECKED_UTR_NOTE ? "Not checked in time, then paid: the order is paid"
                         : REUSED_UTR_NOTE.test(s.note ?? "") ? s.note
                         : `Rejected${s.note ? `: ${s.note}` : ""}`}
                     </td>
@@ -584,13 +609,17 @@ function BankAlertsPanel({ credits, creditsWithoutUtr = [], checkingOrders, onDe
     .sort((a, b) => Date.parse(b) - Date.parse(a))[0];
   const needsYou = credits.filter((credit) => ["ambiguous", "mismatch", "late", "balance"].includes(credit.status));
 
-  const settle = async (credit: BankCredit) => {
-    const note = window.prompt(`What was done about ₹${credit.amount} (UTR ${credit.utr})? For example: refunded on 28 Oct. A settled alert can pay for nothing, so if you placed the order by hand, record this payment on it instead.`, "");
+  // refunded (13 Nov 2026): the money went back, so the database also marks the customer's UTR for it refunded (it leaves
+  // Not checked in time, can pay for nothing, and the customer is told). Settling for any other reason leaves the UTR alone.
+  const settle = async (credit: BankCredit, refunded = false) => {
+    const note = refunded
+      ? window.prompt(`How and when was ₹${credit.amount} (UTR ${credit.utr}) sent back to the customer? For example: UPI refund on 28 Oct. That UTR can then pay for nothing, and a customer who sent it is told.`, "")
+      : window.prompt(`What was done about ₹${credit.amount} (UTR ${credit.utr})? If the money was sent back, press Refunded instead. A settled alert can pay for nothing, so if you placed the order by hand, record this payment on it instead.`, "");
     if (!note?.trim()) return;
     setBusy(credit.id);
     try {
-      await settleBankCredit(credit.id, note.trim());
-      toast.success("Marked settled");
+      await settleBankCredit(credit.id, note.trim(), refunded);
+      toast.success(refunded ? "Refund recorded" : "Marked settled");
     } catch (cause) {
       toast.error("Could not settle", { description: cause instanceof Error ? cause.message : undefined });
     } finally {
@@ -680,7 +709,10 @@ function BankAlertsPanel({ credits, creditsWithoutUtr = [], checkingOrders, onDe
                   <td className="px-2 py-2">
                     {/* While its UTR waits, a balance is answered by Confirm paid or Reject above: settling it would make Confirm refuse. */}
                     {(["ambiguous", "mismatch", "late", "unmatched"].includes(credit.status) || (credit.status === "balance" && !checkingOrders.includes(credit.orderNo ?? ""))) && (
-                      <Button size="sm" variant="outline" disabled={busy === credit.id} onClick={() => void settle(credit)}>Mark settled</Button>
+                      <div className="flex flex-wrap gap-2">
+                        <Button size="sm" variant="outline" disabled={busy === credit.id} onClick={() => void settle(credit, true)}>Refunded</Button>
+                        <Button size="sm" variant="outline" disabled={busy === credit.id} onClick={() => void settle(credit)}>Mark settled</Button>
+                      </div>
                     )}
                     {credit.status === "settled" && (
                       <Button size="sm" variant="ghost" disabled={busy === credit.id} onClick={() => void reopen(credit)}>Reopen</Button>

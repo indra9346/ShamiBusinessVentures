@@ -77,6 +77,15 @@ export function deletedPaymentKind(kind: string) {
   return kind === "utr" ? "UTR record" : "Payment";
 }
 
+/**
+ * An ended checkout that an admin placed again after finding its payment (order_cancellations.placed_again_at, 13 Nov
+ * 2026): it is an order now, not a cancel. Null for any other record. `when` formats the time as the page does.
+ */
+export function placedAgainText(row: { placed_again_at?: string | null; placed_again_by_name?: string | null }, when: (iso: string) => string): string | null {
+  if (!row.placed_again_at) return null;
+  return `Placed again on ${when(row.placed_again_at)}${row.placed_again_by_name ? ` by ${row.placed_again_by_name}` : ""} after its payment was found: it is an order now, not cancelled`;
+}
+
 /*
  * Delete any order (11 Nov 2026, the owner on Payments & Matching: "need delete option ... make and work with sense").
  * order_delete_with_payments_check says what the Delete would do; the admin says first whether the money recorded on the
