@@ -8,8 +8,12 @@
 // off on 10 Nov, so grainbazar.com now points at this same server, and the server's call to its own public address
 // fails. The job now tries, in order, until the website itself answers:
 //   1. the public address (SITE_URL), as before;
-//   2. this server's own web server (127.0.0.1, then ::1) under the site's name, so the certificate is still checked;
-//   3. the app's own socket from LiteSpeed (/usr/local/lsws/extapp-sock/<domain>:_.sock).
+//   2. the app's other addresses on Hostinger (CRON_FALLBACK_URLS; for grainbazar.com its Hostinger temporary address
+//      dimgrey-albatross-569783.hostingersite.com, which goes through Hostinger's CDN, as grainbazar.com did before
+//      10 Nov, and is the same app with the same secret);
+//   3. this server's own web server (127.0.0.1, then ::1) under the site's name, so the certificate is still checked;
+//   4. the app's own socket from LiteSpeed (/usr/local/lsws/extapp-sock/<domain>:_.sock).
+// First run of this job on live (13 Nov 17:30 IST): 1 "read ECONNRESET", 3 answered another site's 404, no socket.
 // A route is left for the next one only when the website cannot have run the sync on it: no connection, a quick
 // refusal in front of it (redirect, bot check, 403/404/421/429), or a connection dropped within 5 s with no reply.
 // Anything slower, and any 5xx error page, stops the job, so the sync never runs twice. Each route that fails prints
@@ -57,9 +61,28 @@ function appSockets() {
   });
 }
 
+/** The app's other addresses, each with its own Host and certificate name. Comma-separated; "" turns them off. */
+const DEFAULT_FALLBACKS = /(^|.)grainbazar.com$/.test(hostname) ? "https://dimgrey-albatross-569783.hostingersite.com" : "";
+const fallbacks = (process.env.CRON_FALLBACK_URLS ?? DEFAULT_FALLBACKS).split(",").map((url) => url.trim()).filter(Boolean)
+  .flatMap((url) => {
+    try {
+      const other = new URL(url);
+      const host = other.hostname.replace(/^[(.*)]$/, "$1");
+      const tls = other.protocol === "https:";
+      return [{
+        name: `other address ${other.host}`, lib: tls ? https : http, hostHeader: other.host,
+        options: { host, port: Number(other.port) || (tls ? 443 : 80), ...(isIP(host) ? {} : { servername: host }) },
+      }];
+    } catch {
+      console.error(`${now()} CRON_FALLBACK_URLS: "${url}" is not an address, left out`);
+      return [];
+    }
+  });
+
 const web = secure ? https : http;
 const routes = [
   { name: "public address", lib: web, options: { host: hostname, port, ...tlsName } },
+  ...fallbacks,
   { name: "this server (127.0.0.1)", lib: web, options: { host: "127.0.0.1", port, ...tlsName } },
   { name: "this server (::1)", lib: web, options: { host: "::1", port, ...tlsName } },
   ...appSockets().map((socketPath) => ({ name: `app socket ${socketPath}`, lib: http, options: { socketPath } })),
@@ -95,7 +118,7 @@ function attempt(route) {
       path: PATH,
       method: "GET",
       agent: false,
-      headers: { Authorization: `Bearer ${secret}`, Host: site.host, "User-Agent": "grainbazar-zoho-cron" },
+      headers: { Authorization: `Bearer ${secret}`, Host: route.hostHeader ?? site.host, "User-Agent": "grainbazar-zoho-cron" },
     }, (response) => {
       answered = true;
       let body = "";
@@ -114,7 +137,7 @@ function attempt(route) {
       done({ sent: connected, answered, reason: `no answer in ${TOTAL_MS / 1000} s` });
     }, TOTAL_MS);
     request.on("socket", (socket) => {
-      socket.once(web === https && !route.options.socketPath ? "secureConnect" : "connect", () => { connected = true; });
+      socket.once(route.lib === https && !route.options.socketPath ? "secureConnect" : "connect", () => { connected = true; });
     });
     request.on("error", (cause) => done({ sent: connected, answered, reason: describe(cause) }));
     request.end();
