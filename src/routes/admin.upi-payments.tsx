@@ -65,9 +65,12 @@ function AdminUpiPayments() {
   const problem = settingsProblem(form);
   const previewQr = useMemo(() => (isValidVpa(form.vpa) ? renderSVG(upiPaymentUri(form, 1, "TEST-1"), { border: 2 }) : ""), [form]);
   const waiting = submissions.filter((s) => s.status === "submitted");
-  // Not checked in time: the money may be in the bank, so these stay open until someone closes them.
-  const lapsed = submissions.filter((s) => s.status === "rejected" && s.note === UNCHECKED_UTR_NOTE);
-  const done = submissions.filter((s) => s.status !== "submitted" && s.note !== UNCHECKED_UTR_NOTE);
+  // Not checked in time: the money may be in the bank, so these stay open until someone closes them. One whose order
+  // was paid since (placed again, or matched in Payments & Matching) is settled, never something to refund (13 Nov 2026:
+  // CLK-577522-111126-155932 stayed here with a Refunded button after its ₹260 had paid the delivered order).
+  const orderPaid = (orderNo: string) => orders.find((order) => order.id === orderNo)?.payment === "Paid";
+  const lapsed = submissions.filter((s) => s.status === "rejected" && s.note === UNCHECKED_UTR_NOTE && !orderPaid(s.orderNo));
+  const done = submissions.filter((s) => s.status !== "submitted" && (s.note !== UNCHECKED_UTR_NOTE || orderPaid(s.orderNo)));
   // The Confirmed and Rejected cards open the list below, showing just those.
   const [doneFilter, setDoneFilter] = useState<"all" | "confirmed" | "rejected">("all");
   // 13 Nov 2026 (owner): who approved each payment in its own column, and every payment one person approved.
@@ -382,6 +385,7 @@ function AdminUpiPayments() {
                     </td>
                     <td className={cn("px-2 py-2 text-xs font-semibold", s.status === "confirmed" ? "text-emerald-700" : "text-danger")}>
                       {s.status === "confirmed" ? `Confirmed paid${s.note ? ` · ${withoutApprover(s.note, s.reviewedBy)}` : ""}`
+                        : s.note === UNCHECKED_UTR_NOTE ? "Not checked in time, then paid: the order is paid"
                         : s.note === REFUNDED_UTR_NOTE ? "Refunded"
                         : REUSED_UTR_NOTE.test(s.note ?? "") ? s.note
                         : `Rejected${s.note ? `: ${s.note}` : ""}`}

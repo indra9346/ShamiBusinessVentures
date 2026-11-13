@@ -25,7 +25,8 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { ReceiveFromBillDialog } from "@/components/batches/ReceiveFromBill";
 import { SendToGodownsDialog, TransferList } from "@/components/batches/BatchTransfers";
 import { transferProgress } from "@/lib/batch-transfers";
-import { batchDeleteBlocker } from "@/lib/bill-batches";
+import { batchDeleteBlocker, billGone, relinkBlocker } from "@/lib/bill-batches";
+import type { BatchBillLine } from "@/lib/zoho-commerce.functions";
 import { cn } from "@/lib/utils";
 
 type Search = { godown?: string | undefined; batch?: string | undefined; order?: string | undefined; customer?: string | undefined; tab?: "batches" | "trace" | undefined; q?: string | undefined };
@@ -551,6 +552,7 @@ function BatchDetail({ row, report, data, adjustments, orderId, go, onEdit, onDe
   const b = row.batch;
   return (
     <div className="grid min-w-0 gap-4 [&>*]:min-w-0">
+      {billGone(b.bill_flag) && !b.parent_batch_id && <RelinkBill row={row} onChanged={onChanged} />}
       <div className="flex flex-wrap items-start justify-between gap-3 rounded-lg border border-gold/40 bg-gradient-to-br from-ivory to-white p-4 shadow-card">
         <div>
           <button type="button" onClick={() => go({ batch: undefined, order: undefined })} className="mb-2 flex items-center gap-1 text-xs font-semibold text-slate hover:text-navy"><ArrowLeft className="h-3.5 w-3.5" />Back to batches</button>
@@ -733,6 +735,114 @@ function BatchDetail({ row, report, data, adjustments, orderId, go, onEdit, onDe
       {sendOpen && (
         <SendToGodownsDialog open={sendOpen} onOpenChange={setSendOpen} batch={b} godowns={data.godowns} available={row.available} onDone={onChanged} />
       )}
+    </div>
+  );
+}
+
+/**
+ * A batch whose bill was deleted or voided in Zoho (13 Nov 2026: "YET TO COME" was deleted to be entered again with its
+ * real number): link it to the same purchase entered again, instead of making a second batch that would count the
+ * units twice. Only a line of the same product and quantity; the cost becomes the new bill's (relink_batch_bill).
+ */
+function RelinkBill({ row, onChanged }: { row: BatchReportRow; onChanged: () => Promise<void> }) {
+  const b = row.batch;
+  const [open, setOpen] = useState(false);
+  const [bills, setBills] = useState<{ billId: string; billNumber: string; vendorName: string; date: string; total: number }[] | null>(null);
+  const [billId, setBillId] = useState("");
+  const [lines, setLines] = useState<BatchBillLine[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState("");
+  const godown = b.branch_id ?? "";
+  const loadBills = async () => {
+    setProblem("");
+    setBills(null);
+    try {
+      const { listBatchBills } = await import("@/lib/zoho-commerce.functions");
+      setBills((await listBatchBills({ data: { branchId: godown } })).bills.filter((bill) => bill.billId !== b.zoho_bill_id));
+    } catch (cause) {
+      setProblem(cause instanceof Error ? cause.message : "Could not read bills from Zoho");
+    }
+  };
+  const pickBill = async (id: string) => {
+    setBillId(id);
+    setLines(null);
+    setProblem("");
+    if (!id) return;
+    try {
+      const { getBatchBill } = await import("@/lib/zoho-commerce.functions");
+      setLines((await getBatchBill({ data: { branchId: godown, billId: id } })).bill.lines);
+    } catch (cause) {
+      setProblem(cause instanceof Error ? cause.message : "Could not read the bill from Zoho");
+    }
+  };
+  const link = async (line: BatchBillLine) => {
+    setBusy(true);
+    try {
+      const { relinkBatchToBill } = await import("@/lib/zoho-commerce.functions");
+      const done = await relinkBatchToBill({ data: { batchId: b.id, billId, lineId: line.lineId } });
+      toast.success(`Batch ${done.batch_code} is now on bill ${done.new_bill}`, {
+        description: Number(done.cost_before) !== Number(done.cost_now)
+          ? `Its cost changed from ${money(Number(done.cost_before))} to ${money(Number(done.cost_now))} per unit, as on the new bill; its sales use the new cost.`
+          : "Same cost as before. Its sales and stock stay as they were.",
+        duration: 10000,
+      });
+      setOpen(false);
+      await onChanged();
+    } catch (cause) {
+      toast.error("Could not link the batch", { description: cause instanceof Error ? cause.message : undefined });
+    } finally {
+      setBusy(false);
+    }
+  };
+  const candidates = (lines ?? []).filter((line) => line.productId === b.product_id);
+  return (
+    <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
+      <p className="flex items-center gap-2 font-bold"><AlertTriangle className="h-4 w-4" />{b.bill_flag}: bill {b.zoho_bill_number || b.purchase_ref}</p>
+      <p className="mt-1">
+        If this purchase was entered again in Zoho (for example with the real bill number), link this batch to the new bill.
+        Do not make a new batch from it: the units would be counted twice.
+      </p>
+      <Button size="sm" className="mt-3 bg-navy text-white hover:bg-navy/90" onClick={() => { setOpen(true); void loadBills(); }}>Link to the new bill</Button>
+      <Dialog open={open} onOpenChange={(next) => { if (!busy) setOpen(next); }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{`Link batch ${b.batch_code} to the new bill`}</DialogTitle>
+            <DialogDescription>{`Choose the bill entered again in Zoho, then its ${b.product_name} line of ${units(b.quantity)}.`}</DialogDescription>
+          </DialogHeader>
+          {problem && <p className="rounded-md border border-red-200 bg-red-50 p-2 text-xs text-red-700">{problem}</p>}
+          {!bills && !problem && <p className="text-sm text-slate">Reading bills from Zoho…</p>}
+          {bills && (
+            <select value={billId} onChange={(e) => void pickBill(e.target.value)} className="h-9 w-full rounded-md border border-input bg-white px-2 text-sm" aria-label="New bill">
+              <option value="">Choose the bill</option>
+              {bills.map((bill) => <option key={bill.billId} value={bill.billId}>{`${bill.billNumber} · ${bill.vendorName} · ${day(bill.date)} · ${money(bill.total)}`}</option>)}
+            </select>
+          )}
+          {billId && !lines && !problem && <p className="text-sm text-slate">Reading the bill…</p>}
+          {lines && (candidates.length === 0
+            ? <p className="text-sm text-slate">{`This bill has no ${b.product_name} line.`}</p>
+            : (
+              <ul className="grid gap-2">
+                {candidates.map((line) => {
+                  const why = relinkBlocker(
+                    { productId: b.product_id, quantity: b.quantity, billId: b.zoho_bill_id ?? "", billFlag: b.bill_flag ?? "" },
+                    { productId: line.productId, qty: line.qty, batchCode: line.batchCode }, billId,
+                  );
+                  return (
+                    <li key={line.lineId} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border p-2 text-sm">
+                      <span>{`${line.name} · ${units(line.qty)} · ${money(line.unitExGst)} per unit before GST`}</span>
+                      {why
+                        ? <span className="text-xs text-danger">{why}</span>
+                        : <Button size="sm" disabled={busy} className="bg-navy text-white hover:bg-navy/90" onClick={() => void link(line)}>{busy ? "Linking…" : "Link"}</Button>}
+                    </li>
+                  );
+                })}
+              </ul>
+            ))}
+          <DialogFooter>
+            <Button variant="outline" disabled={busy} onClick={() => setOpen(false)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

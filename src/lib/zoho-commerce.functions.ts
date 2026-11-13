@@ -35,7 +35,7 @@ import {
   ZOHO_CALL_DEFAULT_PURPOSE, ZOHO_CALL_LOG_SETTING, describeZohoCall, mergeZohoCalls, type ZohoCall, type ZohoCallLog,
 } from "@/lib/zoho-call-log";
 import { ZOHO_TOKEN_LIMIT_MESSAGE, createZohoTokenCache, isZohoTokenLimit, type ZohoTokenCache, type ZohoTokenReply } from "@/lib/zoho-token-cache";
-import { BILL_EDITED, billChange, billLinesChange, billPlan, billSummary, isBillLineFlag, lineBlocker } from "@/lib/bill-batches";
+import { BILL_EDITED, BILL_GONE_FLAGS, billChange, billLinesChange, billPlan, billSummary, goneBillLookalike, isBillLineFlag, lineBlocker, relinkBlocker } from "@/lib/bill-batches";
 import {
   CREATE_HOLD_MINUTES, createHoldUntil, findTransferByNumber, godownTransferLines, godownTransferResult, isTransferred, readCreateAnswer,
   readZohoTransfer, transferOrderBody, zohoSaysMissing, type BatchTransfer, type GodownTransfer,
@@ -2656,7 +2656,7 @@ async function syncLinkedZohoOrder(
     }
   } else if (ZOHO_CLOSED_ORDER_STATES.includes(zohoStatus())) {
     // Zoho is the official book: a void there closes this order too, refused only when money was received here.
-    const closed = await closeOrderVoidedInZoho(db, order, str(zoho["salesorder_number"]), zohoStatus());
+    const closed = await closeOrderVoidedInZoho(db, order, str(zoho["salesorder_number"]), zohoStatus(), zoho);
     await saveZohoZohoState(db, order.id, zoho);
     if (!closed.closed) throw new NeedsReviewError(closed.review);
     await refreshSalesOrderSnapshotSafe(db, organizationId, zoho);
@@ -3155,15 +3155,19 @@ async function recordZohoInvoiceState(
   zoho: Record<string, unknown>,
 ) {
   const invoices = zohoInvoicesOf(zoho);
-  if (!invoices || !orderNeedsZohoInvoice(order.order_status)) return;
+  // A cancelled order is read too (only read, nothing is made): voided in Zoho, its invoice copy here must say so
+  // (13 Nov 2026: CLK-577522-031126-141705 still read "Issued · unpaid" after Zoho voided it).
+  const cancelled = order.order_status === "Cancelled";
+  if (!invoices || (!orderNeedsZohoInvoice(order.order_status) && !cancelled)) return;
   const row = await readInvoiceRecord(db, order.id);
   const decision = invoiceDecision(asInvoiceRecord(row), invoices);
   if (decision.action === "track") {
     const { invoice } = decision;
     const status = websiteInvoiceStatus(invoice.status);
     if (row?.zoho_invoice_id === invoice.invoiceId && row.status === status && Number(row.balance) === invoice.balance) return;
-    // More is due than before: a payment was removed in Zoho. A delivered order gets no other sync, so ask for one.
-    if (row?.zoho_invoice_id === invoice.invoiceId && row.balance != null && invoice.balance != null && invoice.balance > Number(row.balance) + 0.005) {
+    // More is due than before: a payment was removed in Zoho. A delivered order gets no other sync, so ask for one
+    // (never for a cancelled order: there is nothing to push).
+    if (!cancelled && row?.zoho_invoice_id === invoice.invoiceId && row.balance != null && invoice.balance != null && invoice.balance > Number(row.balance) + 0.005) {
       await db.rpc("enqueue_zoho_sync", { _entity_type: "order", _entity_id: order.id });
     }
     await saveInvoiceRecord(db, order, {
@@ -3258,12 +3262,22 @@ async function closeOrderVoidedInZoho(
   order: { id: string; order_no: string; order_status: string },
   salesOrderNumber: string,
   zohoStatus: string,
+  zoho?: Record<string, unknown>,
 ): Promise<{ closed: true } | { closed: false; review: string }> {
   const { data: result, error } = await db.rpc("apply_zoho_order_cancellation", { _order_id: order.id });
   if (!error && result && !result.startsWith("blocked")) {
     await db.from("zoho_sync_outbox")
       .update({ status: "complete", last_error: ZOHO_VOID_CLOSED_NOTE, updated_at: new Date().toISOString() })
       .eq("entity_type", "order").eq("entity_id", order.id).in("status", ["needs_review", "failed"]);
+    // Its invoice copy here follows at once (voided with the sales order, or still open in Books): it must not keep
+    // saying "Issued · unpaid" (13 Nov 2026). Only read from the record already in hand; never fails the close.
+    if (zoho) {
+      try {
+        await recordZohoInvoiceState(db, { ...order, order_status: "Cancelled" }, zoho);
+      } catch {
+        // The order page's invoice check records it the next time it opens.
+      }
+    }
     return { closed: true };
   }
   const why = error?.message
@@ -3427,7 +3441,7 @@ async function applyZohoSalesOrderToApp(
   const status = str(zoho["order_status"] ?? zoho["status"]).toLowerCase();
   let outcome = "recorded";
   if (ZOHO_CLOSED_ORDER_STATES.includes(status) && order.order_status !== "Cancelled") {
-    const closed = await closeOrderVoidedInZoho(db, order, number, status);
+    const closed = await closeOrderVoidedInZoho(db, order, number, status, zoho);
     if (closed.closed) {
       outcome = "cancelled";
     } else {
@@ -3621,7 +3635,7 @@ export const refreshZohoOrderInvoice = createServerFn({ method: "POST" })
     // Opening the order is enough: a sales order voided in Zoho closes it here too (unless money was received here).
     const zohoStatus = str(salesOrder["order_status"] ?? salesOrder["status"]).toLowerCase();
     if (ZOHO_CLOSED_ORDER_STATES.includes(zohoStatus) && order.order_status !== "Cancelled") {
-      const closed = await closeOrderVoidedInZoho(db, order, str(salesOrder["salesorder_number"]), zohoStatus);
+      const closed = await closeOrderVoidedInZoho(db, order, str(salesOrder["salesorder_number"]), zohoStatus, salesOrder);
       if (!closed.closed) await saveZohoReview(db, "order", order.id, closed.review);
       await saveZohoZohoState(db, order.id, salesOrder);
     }
@@ -6781,12 +6795,27 @@ async function billWithLines(db: Awaited<ReturnType<typeof dbAdmin>>, billId: st
     : { data: [] };
   const productOf = new Map(((products ?? []) as { id: string; vendor_id: string | null; payload: Record<string, unknown> | null }[])
     .filter((p) => !str(p.vendor_id).startsWith("zoho:")).map((p) => [p.id, str(p.payload?.["name"]) || p.id]));
+  // Batches whose own bill is gone from Zoho: a line of the same product and quantity is most likely that bill entered
+  // again, so the batch is linked to it rather than a second batch made (13 Nov 2026).
+  const { data: goneRows } = productIds.length
+    ? await db.from("batches").select("batch_code,product_id,quantity").in("product_id", productIds)
+      .in("bill_flag", [...BILL_GONE_FLAGS]).is("parent_batch_id", null).neq("zoho_bill_line_id", "")
+    : { data: [] };
+  const gone = ((goneRows ?? []) as { batch_code: string; product_id: string; quantity: number }[])
+    .map((row) => ({ batchCode: row.batch_code, productId: row.product_id, quantity: Number(row.quantity) || 0 }));
   const lines = plan.lines.map((line) => {
     const link = linkOf.get(line.itemId);
     const productId = link && productOf.has(link.product_id) ? link.product_id : "";
     const batch = doneOf.get(line.lineId);
     const info = { productId, zohoTracksBatches: Boolean(link?.track_batches), batchCode: batch?.batch_code ?? "" };
-    return { ...line, productId, productName: productId ? productOf.get(productId) ?? "" : "", batchId: batch?.id ?? "", batchCode: info.batchCode, blocker: lineBlocker(line, info) };
+    const lookalike = !batch && productId ? goneBillLookalike({ productId, qty: line.qty }, gone) : "";
+    return {
+      ...line, productId, productName: productId ? productOf.get(productId) ?? "" : "", batchId: batch?.id ?? "", batchCode: info.batchCode,
+      lookalikeOf: lookalike,
+      blocker: lineBlocker(line, info) || (lookalike
+        ? `Looks like batch ${lookalike}'s purchase entered again (its bill was deleted in Zoho). Open batch ${lookalike} and link it to this bill, so the units are not counted twice.`
+        : ""),
+    };
   });
   return { plan: { ...plan, lines }, bill: raw };
 }
@@ -6938,6 +6967,42 @@ export const createBatchesFromBill = createServerFn({ method: "POST" })
     });
     if (error) throw new Error(error.message);
     return { made: (made ?? []) as { line_id: string; batch_id: string; batch_code: string }[], billNumber: plan.billNumber, transfer: null as BatchTransfer | null };
+  }));
+
+/**
+ * Moves a batch whose bill is gone from Zoho onto the same purchase entered again (13 Nov 2026): the new bill is read
+ * from Zoho here, so the line, quantity and cost are Zoho's. relink_batch_bill re-checks everything under its locks.
+ */
+export const relinkBatchToBill = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator(z.object({
+    batchId: z.string().uuid(),
+    billId: z.string().trim().min(1).max(40),
+    lineId: z.string().trim().min(1).max(40),
+  }))
+  .handler(async ({ data, context }) => withZohoPurpose("Batches: link to a bill", async () => {
+    await ensureAdmin(context.supabase, context.userId);
+    const db = await dbAdmin();
+    const { data: batch } = await db.from("batches").select("id,batch_code,product_id,quantity,zoho_bill_id,bill_flag,parent_batch_id").eq("id", data.batchId).maybeSingle();
+    if (!batch) throw new Error("Batch not found");
+    const { plan } = await billWithLines(db, data.billId);
+    if (plan.status === "void") throw new Error("This bill is void in Zoho.");
+    const line = plan.lines.find((candidate) => candidate.lineId === data.lineId);
+    if (!line) throw new Error("That line is no longer on the bill. Open the bill again.");
+    const why = relinkBlocker(
+      { productId: batch.product_id, quantity: Number(batch.quantity) || 0, billId: str(batch.zoho_bill_id), billFlag: str(batch.bill_flag) },
+      { productId: line.productId, qty: line.qty, batchCode: line.batchCode }, plan.billId,
+    );
+    if (why) throw new Error(`${batch.batch_code}: ${why}`);
+    const { data: profile } = await db.from("profiles").select("full_name").eq("id", context.userId).maybeSingle();
+    const { data: done, error } = await db.rpc("relink_batch_bill", {
+      _batch_id: batch.id,
+      _bill: { bill_id: plan.billId, bill_number: plan.billNumber, vendor_name: plan.vendorName, modified: plan.modifiedAt, total: plan.total },
+      _line: { line_id: line.lineId, product_id: line.productId, zoho_item_id: line.itemId, qty: Math.round(line.qty * 100) / 100, unit_ex_gst: line.unitExGst, unit_inc_gst: line.unitIncGst },
+      _by: context.userId, _by_name: str(profile?.full_name),
+    });
+    if (error) throw new Error(error.message);
+    return done as { batch_code: string; old_bill: string; new_bill: string; cost_before: number; cost_now: number };
   }));
 
 // ------------------------------------------------------------------ moving stock between godowns (client, 10 Nov 2026)

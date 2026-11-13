@@ -190,6 +190,35 @@ export function billChange(stored: { modifiedAt: string; total: number }, now: {
   return "";
 }
 
+/** The flags the bill check gives when a batch's bill is gone from Zoho (relink_batch_bill accepts only these). */
+export const BILL_GONE_FLAGS = ["Bill deleted in Zoho", "Bill voided in Zoho"] as const;
+export const billGone = (flag: string | null | undefined) => (BILL_GONE_FLAGS as readonly string[]).includes(flag ?? "");
+
+/**
+ * A line of a bill that looks like the purchase of a batch whose own bill is gone from Zoho: the same product and the
+ * same quantity (13 Nov 2026: "YET TO COME" was deleted to be entered again with its real number). Making a new batch
+ * from it would count the units twice; the old batch is linked to it instead. "" when none.
+ */
+export function goneBillLookalike(line: { productId: string; qty: number }, gone: { batchCode: string; productId: string; quantity: number }[]) {
+  const qty = Math.round(line.qty * 100) / 100;
+  return gone.find((batch) => batch.productId === line.productId && Math.abs(batch.quantity - qty) < 0.005)?.batchCode ?? "";
+}
+
+/** Why a bill line can't take over a batch whose bill is gone, or "". Mirrors relink_batch_bill in the database. */
+export function relinkBlocker(
+  batch: { productId: string; quantity: number; billId: string; billFlag: string },
+  line: { productId: string; qty: number; batchCode: string },
+  billId: string,
+) {
+  if (!billGone(batch.billFlag)) return "The batch's own bill is still in Zoho";
+  if (billId === batch.billId) return "That is the batch's own bill";
+  if (line.batchCode) return `Already batch ${line.batchCode}`;
+  if (line.productId !== batch.productId) return "Another product";
+  const qty = Math.round(line.qty * 100) / 100;
+  if (Math.abs(qty - batch.quantity) >= 0.005) return `${qty} on this bill, ${batch.quantity} in the batch`;
+  return "";
+}
+
 /** A flag billLinesChange gave: one of the batches' own bill lines changed in Zoho. */
 export const isBillLineFlag = (flag: string) => /^Bill (line|quantity|cost) (of|for) batch /.test(flag);
 

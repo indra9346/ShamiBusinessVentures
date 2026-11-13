@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { BILL_EDITED, batchDeleteBlocker, billChange, billLinesChange, billPlan, billSummary, costOf, isBillLineFlag, lineBlocker } from "../src/lib/bill-batches.ts";
+import { BILL_EDITED, batchDeleteBlocker, billChange, billGone, billLinesChange, billPlan, billSummary, costOf, goneBillLookalike, isBillLineFlag, lineBlocker, relinkBlocker } from "../src/lib/bill-batches.ts";
 
 // The client's real bills of 3 Nov 2026, in the shape Zoho's GET /bills/:id returns them.
 const line = (id: string, name: string, qty: number, rate: number, itemTotal: number, extra: Record<string, unknown> = {}) => ({
@@ -157,4 +157,22 @@ test("13 Nov review: a 3-decimal bill quantity matches its 2-decimal batch; line
     assert.ok(isBillLineFlag(flag), flag);
   for (const flag of ["", BILL_EDITED, "Bill voided in Zoho", "Bill deleted in Zoho", "Bill total changed in Zoho (₹1.00 → ₹2.00)"])
     assert.ok(!isBillLineFlag(flag), flag);
+});
+
+test("13 Nov: a batch whose bill was deleted in Zoho is linked to the same purchase entered again, never made twice", () => {
+  // Live: CLK-131126-02, Sugar S1 360 from "YET TO COME", deleted in Zoho to be entered with the real bill number.
+  const gone = [{ batchCode: "CLK-131126-02", productId: "SUGAR", quantity: 360 }];
+  assert.equal(goneBillLookalike({ productId: "SUGAR", qty: 360 }, gone), "CLK-131126-02");
+  assert.equal(goneBillLookalike({ productId: "SUGAR", qty: 350 }, gone), "");
+  assert.equal(goneBillLookalike({ productId: "OIL", qty: 360 }, gone), "");
+  assert.ok(billGone("Bill deleted in Zoho") && billGone("Bill voided in Zoho"));
+  assert.ok(!billGone("") && !billGone(BILL_EDITED) && !billGone(null));
+  const batch = { productId: "SUGAR", quantity: 360, billId: "OLD", billFlag: "Bill deleted in Zoho" };
+  const line = { productId: "SUGAR", qty: 360, batchCode: "" };
+  assert.equal(relinkBlocker(batch, line, "NEW"), "");
+  assert.match(relinkBlocker({ ...batch, billFlag: "" }, line, "NEW"), /still in Zoho/);
+  assert.match(relinkBlocker(batch, line, "OLD"), /own bill/);
+  assert.match(relinkBlocker(batch, { ...line, batchCode: "CLK-1" }, "NEW"), /Already batch CLK-1/);
+  assert.match(relinkBlocker(batch, { ...line, productId: "OIL" }, "NEW"), /Another product/);
+  assert.match(relinkBlocker(batch, { ...line, qty: 350 }, "NEW"), /350 on this bill, 360 in the batch/);
 });

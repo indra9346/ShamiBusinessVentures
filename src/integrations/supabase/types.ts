@@ -1513,6 +1513,7 @@ export type Database = {
       record_batch_adjustments: { Args: { _rows: Json; _created_by: string | null; _created_by_name: string }; Returns: number }
       apply_zoho_batches: { Args: { _rows: Json }; Returns: Json }
       create_batches_from_bill: { Args: { _branch_id: string; _bill: Json; _lines: Json; _cost_basis: string; _by: string | null; _by_name: string }; Returns: Json }
+      relink_batch_bill: { Args: { _batch_id: string; _bill: Json; _line: Json; _by: string | null; _by_name: string }; Returns: Json }
       admin_delete_batch: { Args: { _batch_id: string }; Returns: Json }
       flag_batch_bill_changes: { Args: { _rows: Json }; Returns: number }
       begin_batch_split: { Args: { _batch_id: string; _targets: Json; _by: string; _by_name: string; _request: string | null }; Returns: Json }

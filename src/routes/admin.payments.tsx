@@ -63,8 +63,9 @@ function AdminPayments() {
         due: o.paymentDueDate ?? "—",
         method: o.method,
         date: o.date,
-        // A cancelled or expired order with nothing paid owes nothing: no Pending, no Confirm payment.
-        status: paymentClosed(o) ? "Cancelled" :
+        // A cancelled or expired order with nothing paid owes nothing: no Pending, no Confirm payment. A cancelled order
+        // whose money went back reads Refunded (13 Nov 2026: it read Cancelled, and the Refunded card stayed ₹0).
+        status: o.payment === "Refunded" ? "Refunded" : paymentClosed(o) ? "Cancelled" :
           o.paymentDueDate &&
           new Date(`${o.paymentDueDate}T23:59:59`).getTime() < Date.now() &&
           (o.paidAmount ?? 0) < o.amount
@@ -75,9 +76,7 @@ function AdminPayments() {
                 ? o.payment === "Partially Paid"
                   ? "Partially Paid"
                   : "Pending"
-                : o.payment === "Refunded"
-                  ? "Refunded"
-                  : "Failed",
+                : "Failed",
         refund: o.payment === "Refunded" ? "Refunded to source" : "—",
       })),
     [orders],
@@ -260,7 +259,7 @@ function AdminPayments() {
             t.vendor,
             inrPrecise(t.amount),
             inrPrecise(t.paid),
-            t.status === "Cancelled" ? "—" : inrPrecise(Math.max(0, t.amount - t.paid)),
+            t.status === "Cancelled" || t.status === "Refunded" ? "—" : inrPrecise(Math.max(0, t.amount - t.paid)),
             t.utr || "—",
             t.method,
             <StatusBadge status={t.status} />,

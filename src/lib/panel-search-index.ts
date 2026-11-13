@@ -144,6 +144,7 @@ export const PANEL_FEATURES: Record<PanelKey, PanelFeature[]> = {
     { "to": "/admin/batches", "text": "Customers", "kind": "section" },
     { "to": "/admin/batches", "text": "Customer", "kind": "button" },
     { "to": "/admin/batches", "text": "Losses and gains", "kind": "section" },
+    { "to": "/admin/batches", "text": "Link to the new bill", "kind": "button" },
     { "to": "/admin/batches", "text": "Order", "kind": "section" },
     { "to": "/admin/batches", "text": "Open order", "kind": "link" },
     { "to": "/admin/batches", "text": "Find a customer or order", "kind": "section" },
