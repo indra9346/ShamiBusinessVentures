@@ -5786,6 +5786,9 @@ export const kn: Record<string, string> = {
   "{0} items": "{0} ವಸ್ತುಗಳು",
   "UTRs sent: {0}": "ಕಳುಹಿಸಿದ UTR ಗಳು: {0}",
   "Refunded {0}": "{0} ಮರುಪಾವತಿಸಲಾಗಿದೆ",
+  "Placed again on {0} by {1} after its payment was found: it is an order now, not cancelled": "ಪಾವತಿ ಸಿಕ್ಕಿದ ನಂತರ {0} ರಂದು {1} ಅವರು ಮತ್ತೆ ಆರ್ಡರ್ ಮಾಡಿದ್ದಾರೆ: ಇದು ಈಗ ಆರ್ಡರ್, ರದ್ದಾಗಿಲ್ಲ",
+  "Placed again on {0} after its payment was found: it is an order now, not cancelled": "ಪಾವತಿ ಸಿಕ್ಕಿದ ನಂತರ {0} ರಂದು ಮತ್ತೆ ಆರ್ಡರ್ ಮಾಡಲಾಗಿದೆ: ಇದು ಈಗ ಆರ್ಡರ್, ರದ್ದಾಗಿಲ್ಲ",
+  "The checkout had ended on {0}": "ಚೆಕ್‌ಔಟ್ {0} ರಂದು ಕೊನೆಗೊಂಡಿತ್ತು",
   "UTR record": "UTR ದಾಖಲೆ",
   "Use the protected order cancellation workflow": "ರಕ್ಷಿತ ಆರ್ಡರ್ ರದ್ದತಿ ವಿಧಾನವನ್ನೇ ಬಳಸಿ",
   "Orders cannot be cancelled after any vendor has dispatched": "ಯಾವುದೇ ಮಾರಾಟಗಾರರು ರವಾನಿಸಿದ ನಂತರ ಆರ್ಡರ್ ರದ್ದುಮಾಡಲು ಸಾಧ್ಯವಿಲ್ಲ",
@@ -6340,6 +6343,10 @@ export const kn: Record<string, string> = {
   "Open the payment receipt in your UPI app and find the 12-digit UPI reference number (UTR).": "ನಿಮ್ಮ UPI ಆ್ಯಪ್‌ನಲ್ಲಿ ಪಾವತಿಯ ರಸೀದಿ ತೆರೆದು 12 ಅಂಕಿಯ UPI ರೆಫರೆನ್ಸ್ ಸಂಖ್ಯೆ (UTR) ಹುಡುಕಿ.",
   "Come back, type the UTR and tap Send UTR. Do not pay again while we check it.": "ಹಿಂತಿರುಗಿ, UTR ಟೈಪ್ ಮಾಡಿ, UTR ಕಳುಹಿಸಿ ಒತ್ತಿ. ನಾವು ಪರಿಶೀಲಿಸುವಾಗ ಮತ್ತೆ ಪಾವತಿಸಬೇಡಿ.",
   "Once it is confirmed, your order is placed. Follow it in My Orders.": "ಪಾವತಿ ದೃಢಪಟ್ಟ ನಂತರ ನಿಮ್ಮ ಆರ್ಡರ್ ಆಗುತ್ತದೆ. ನನ್ನ ಆರ್ಡರ್‌ಗಳಲ್ಲಿ ಅದನ್ನು ನೋಡಿ.",
+  "UTR {0} already paid order {1}, so there is nothing to refund. If the bank shows this money twice, refund the second transfer under its own UTR.": "UTR {0} ಈಗಾಗಲೇ ಆರ್ಡರ್ {1} ಗೆ ಪಾವತಿಯಾಗಿದೆ, ಆದ್ದರಿಂದ ಹಿಂತಿರುಗಿಸಲು ಏನೂ ಇಲ್ಲ. ಬ್ಯಾಂಕ್‌ನಲ್ಲಿ ಈ ಹಣ ಎರಡು ಬಾರಿ ಕಾಣಿಸಿದರೆ, ಎರಡನೇ ವರ್ಗಾವಣೆಯನ್ನು ಅದರದೇ UTR ಅಡಿಯಲ್ಲಿ ಹಿಂತಿರುಗಿಸಿ.",
+  "The bank alert for UTR {0} is on order {1}. Settle it there first.": "UTR {0} ನ ಬ್ಯಾಂಕ್ ಸೂಚನೆ ಆರ್ಡರ್ {1} ನಲ್ಲಿದೆ. ಮೊದಲು ಅಲ್ಲಿ ಇತ್ಯರ್ಥಗೊಳಿಸಿ.",
+  "This transfer was recorded as refunded, so it cannot pay an order.": "ಈ ವರ್ಗಾವಣೆಯನ್ನು ಹಿಂತಿರುಗಿಸಲಾಗಿದೆ ಎಂದು ದಾಖಲಿಸಲಾಗಿದೆ, ಆದ್ದರಿಂದ ಇದರಿಂದ ಆರ್ಡರ್‌ಗೆ ಪಾವತಿಸಲು ಸಾಧ್ಯವಿಲ್ಲ.",
+  "We are still checking the UTR you sent for this order. We will call you, or you can cancel once it is checked.": "ಈ ಆರ್ಡರ್‌ಗೆ ನೀವು ಕಳುಹಿಸಿದ UTR ಅನ್ನು ನಾವು ಇನ್ನೂ ಪರಿಶೀಲಿಸುತ್ತಿದ್ದೇವೆ. ನಾವು ನಿಮಗೆ ಕರೆ ಮಾಡುತ್ತೇವೆ, ಅಥವಾ ಪರಿಶೀಲನೆ ಮುಗಿದ ನಂತರ ನೀವು ರದ್ದುಗೊಳಿಸಬಹುದು.",
 };
 
 /** Word-level fallbacks for text that isn't in the dictionary (product names, specs from the database). */

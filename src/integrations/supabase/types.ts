@@ -20,7 +20,7 @@ export type Database = {
       partner_payout_events: { Row: { id: string; payout_id: string; event: string; at: string; by_user: string | null; by_name: string; detail: Json }; Insert: never; Update: never; Relationships: [] }
       deleted_payments_log: { Row: { id: string; kind: string; order_no: string; payment: Json; order_paid_before: number; order_paid_after: number; reason: string; deleted_by: string; deleted_by_name: string; deleted_at: string }; Insert: never; Update: never; Relationships: [] }
       deleted_orders_log: { Row: { id: number; order_no: string; order_status: string; total: number; item_count: number; order_created_at: string | null; reason: string; deleted_by: string | null; deleted_by_name: string; deleted_at: string; utrs: string; zoho_salesorder_id: string; zoho_order_status: string; snapshot: Json | null }; Insert: never; Update: never; Relationships: [] }
-      order_cancellations: { Row: { id: string; order_id: string; order_no: string; stage: string; goods_back: boolean | null; refunded: number; reason: string; cancelled_by: string | null; cancelled_by_name: string; cancelled_at: string }; Insert: never; Update: never; Relationships: [] }
+      order_cancellations: { Row: { id: string; order_id: string; order_no: string; stage: string; goods_back: boolean | null; refunded: number; reason: string; cancelled_by: string | null; cancelled_by_name: string; cancelled_at: string; placed_again_at: string | null; placed_again_by_name: string | null; earlier: Json | null }; Insert: never; Update: never; Relationships: [] }
       order_refunds: { Row: { id: string; order_id: string; order_no: string; payment_id: string | null; paid_ref: string; amount: number; mode: string; reference: string; refunded_on: string; created_by: string | null; created_by_name: string; created_at: string; zoho_payment_id: string | null; zoho_refund_id: string | null; zoho_claimed_at: string | null; zoho_refunded_at: string | null; zoho_problem: string | null }; Insert: never; Update: { zoho_payment_id?: string | null; zoho_refund_id?: string | null; zoho_claimed_at?: string | null; zoho_refunded_at?: string | null; zoho_problem?: string | null }; Relationships: [] }
       refunded_transfers: { Row: { id: number; utr: string; order_no: string; amount: number | null; source: string; refunded_at: string }; Insert: never; Update: never; Relationships: [] }
       branches: {
@@ -688,7 +688,7 @@ export type Database = {
         Relationships: []
       }
       upi_payment_submissions: {
-        Row: { late: boolean; sent_by: string | null; sent_by_role: string; id: string; order_id: string; order_no: string; user_id: string | null; customer_name: string; amount: number; utr: string; status: string; note: string | null; submitted_at: string; reviewed_at: string | null; reviewed_by: string | null }
+        Row: { late: boolean; sent_by: string | null; sent_by_role: string; id: string; order_id: string; order_no: string; user_id: string | null; customer_name: string; amount: number; utr: string; status: string; note: string | null; submitted_at: string; reviewed_at: string | null; reviewed_by: string | null; follow_up: string | null; refunded_at: string | null; refunded_by: string | null; refunded_from: string | null }
         Insert: never
         Update: never
         Relationships: []
@@ -1453,7 +1453,7 @@ export type Database = {
       bank_transfer_details: { Args: Record<PropertyKey, never>; Returns: Json }
       cancel_payment_hold: { Args: { _order_no: string }; Returns: boolean }
       record_bank_credit: { Args: { _utr: string; _amount: number; _payer?: string; _raw?: string; _source?: string; _sender?: string }; Returns: Json }
-      settle_bank_credit: { Args: { _credit_id: string; _note: string }; Returns: { id: string; status: string; note: string | null } }
+      settle_bank_credit: { Args: { _credit_id: string; _note: string; _refunded?: boolean }; Returns: { id: string; status: string; note: string | null } }
       reopen_bank_credit: { Args: { _credit_id: string }; Returns: { id: string; status: string; note: string | null } }
       send_payment_utr: { Args: { _order_no: string; _utr: string }; Returns: Json }
       admin_utr_conflicts: { Args: { _days?: number }; Returns: Json }

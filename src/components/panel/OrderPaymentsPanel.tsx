@@ -6,13 +6,16 @@ import { inrPrecise } from "@/lib/data";
 import { supabase } from "@/integrations/supabase/client";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { invoiceBalance, invoicePayments } from "@/lib/invoice-lines";
+import { placedAgainText } from "@/lib/order-cancel";
+import { isMissingInDatabase } from "@/lib/upi-store";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 type Row = { id: string; amount: number; method: string | null; status: string; txn_ref: string | null; created_at: string; zoho_payment_id: string | null };
 type RefundRow = { id: string; amount: number; mode: string; reference: string; refunded_on: string; created_by_name: string; zoho_payment_id: string | null; zoho_refunded_at: string | null; zoho_problem: string | null };
-type CancelRow = { stage: string; goods_back: boolean | null; reason: string; cancelled_by_name: string; cancelled_at: string };
+type CancelRow = { stage: string; goods_back: boolean | null; reason: string; cancelled_by_name: string; cancelled_at: string; placed_again_at?: string | null; placed_again_by_name?: string | null };
+const CANCEL_COLUMNS = "stage,goods_back,reason,cancelled_by_name,cancelled_at";
 
 const day = (iso: string) => new Date(iso.length === 10 ? `${iso}T00:00:00+05:30` : iso).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short", year: "numeric" });
 
@@ -37,11 +40,14 @@ export function OrderPaymentsPanel({ orderNo, total, cancelled: orderCancelled =
     if (STATIC_DATA_MODE) { setRows([]); return; }
     const { data: order } = await supabase.from("orders").select("id").eq("order_no", orderNo).maybeSingle();
     if (!order) { setRows([]); return; }
-    const [{ data }, refundRead, cancelRead] = await Promise.all([
+    const readCancel = (columns: string) => supabase.from("order_cancellations").select(columns).eq("order_id", order.id).maybeSingle() as unknown as PromiseLike<{ data: CancelRow | null; error: { code?: string; message?: string } | null }>;
+    const [{ data }, refundRead, firstCancelRead] = await Promise.all([
       supabase.from("payments").select("id,amount,method,status,txn_ref,created_at,zoho_payment_id").eq("order_id", order.id).order("created_at"),
       supabase.from("order_refunds").select("id,amount,mode,reference,refunded_on,created_by_name,zoho_payment_id,zoho_refunded_at,zoho_problem").eq("order_id", order.id).order("created_at"),
-      supabase.from("order_cancellations").select("stage,goods_back,reason,cancelled_by_name,cancelled_at").eq("order_id", order.id).maybeSingle(),
+      readCancel(`${CANCEL_COLUMNS},placed_again_at,placed_again_by_name`),
     ]);
+    // Before the database change of 13 Nov 2026 there is no placed_again_at: read what there is.
+    const cancelRead = firstCancelRead.error && isMissingInDatabase(firstCancelRead.error) ? await readCancel(CANCEL_COLUMNS) : firstCancelRead;
     setRows((data ?? []).map((row) => ({ ...row, amount: Number(row.amount) })) as Row[]);
     setRefunds((refundRead.data ?? []).map((row) => ({ ...row, amount: Number(row.amount) })) as RefundRow[]);
     setCancelled((cancelRead.data as CancelRow | null) ?? null);
@@ -97,7 +103,16 @@ export function OrderPaymentsPanel({ orderNo, total, cancelled: orderCancelled =
             </ul>
           </div>
         )}
-        {cancelled && (
+        {/* An ended checkout placed again after its payment was found is an order: its ended record stays, not as a cancel. */}
+        {cancelled && placedAgainText(cancelled, day) && (
+          <div className="mt-3 space-y-0.5 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-slate">
+            <p className="font-semibold text-navy">{placedAgainText(cancelled, day)}</p>
+            <p>{`The checkout had ended on ${day(cancelled.cancelled_at)}`}</p>
+            {cancelled.cancelled_by_name && <p>{`Ended by ${cancelled.cancelled_by_name}`}</p>}
+            <p className="break-words">{cancelled.reason ? `Reason: ${cancelled.reason}` : "No reason given"}</p>
+          </div>
+        )}
+        {cancelled && !placedAgainText(cancelled, day) && (
           <div className="mt-3 space-y-0.5 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900">
             <p className="font-semibold">{`Cancelled at ${cancelled.stage} on ${day(cancelled.cancelled_at)}`}</p>
             {cancelled.cancelled_by_name && <p>{`Cancelled by ${cancelled.cancelled_by_name}`}</p>}

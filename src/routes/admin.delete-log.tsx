@@ -7,8 +7,9 @@ import { adminNav } from "@/lib/panel-nav";
 import { inrPrecise } from "@/lib/data";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { supabase } from "@/integrations/supabase/client";
-import { deletedPaymentKind } from "@/lib/order-cancel";
+import { deletedPaymentKind, placedAgainText } from "@/lib/order-cancel";
 import { useApp } from "@/lib/store";
+import { isMissingInDatabase } from "@/lib/upi-store";
 
 export const Route = createFileRoute("/admin/delete-log")({
   head: () => ({ meta: [{ title: "Delete Log | Shami Admin" }, { name: "robots", content: "noindex" }] }),
@@ -17,7 +18,16 @@ export const Route = createFileRoute("/admin/delete-log")({
 
 type DeletedOrder = { id: number; order_no: string; order_status: string; total: number; item_count: number; reason: string; deleted_by_name: string; deleted_at: string; utrs: string; zoho_salesorder_id: string; zoho_order_status: string };
 type RemovedPayment = { id: string; kind: string; order_no: string; payment: Record<string, unknown> | null; reason: string; deleted_by_name: string; deleted_at: string };
-type Cancellation = { id: string; order_no: string; stage: string; goods_back: boolean | null; refunded: number; reason: string; cancelled_by_name: string; cancelled_at: string };
+type Cancellation = { id: string; order_no: string; stage: string; goods_back: boolean | null; refunded: number; reason: string; cancelled_by_name: string; cancelled_at: string; placed_again_at?: string | null; placed_again_by_name?: string | null };
+const CANCELLATION_COLUMNS = "id,order_no,stage,goods_back,refunded,reason,cancelled_by_name,cancelled_at";
+type CancellationRead = { data: Cancellation[] | null; error: { code?: string; message?: string } | null };
+const readCancellations = (columns: string) =>
+  supabase.from("order_cancellations").select(columns).order("cancelled_at", { ascending: false }).limit(200) as unknown as PromiseLike<CancellationRead>;
+/** With who placed an ended checkout again (13 Nov 2026), or without it while the database does not have that yet. */
+async function loadCancellations(): Promise<CancellationRead> {
+  const read = await readCancellations(`${CANCELLATION_COLUMNS},placed_again_at,placed_again_by_name`);
+  return read.error && isMissingInDatabase(read.error) ? readCancellations(CANCELLATION_COLUMNS) : read;
+}
 
 const when = (iso: string) => new Date(iso).toLocaleString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit", timeZone: "Asia/Kolkata" });
 /** When, who and why, each its own piece so each is translated. */
@@ -52,7 +62,7 @@ function AdminDeleteLog() {
     void Promise.all([
       supabase.from("deleted_orders_log").select("id,order_no,order_status,total,item_count,reason,deleted_by_name,deleted_at,utrs,zoho_salesorder_id,zoho_order_status").order("deleted_at", { ascending: false }).limit(200),
       supabase.from("deleted_payments_log").select("id,kind,order_no,payment,reason,deleted_by_name,deleted_at").order("deleted_at", { ascending: false }).limit(200),
-      supabase.from("order_cancellations").select("id,order_no,stage,goods_back,refunded,reason,cancelled_by_name,cancelled_at").order("cancelled_at", { ascending: false }).limit(200),
+      loadCancellations(),
     ]).then(([a, b, c]) => {
       if (a.error || b.error || c.error) setFailed(true);
       setDeleted((a.data ?? []).map((row) => ({ ...row, total: Number(row.total) })) as DeletedOrder[]);
@@ -143,6 +153,7 @@ function AdminDeleteLog() {
                   {row.goods_back !== null && <> · <span>{row.goods_back ? "The goods came back to the godown." : "The goods did not come back."}</span></>}
                 </p>
                 <ByLine at={row.cancelled_at} verb="Cancelled" name={row.cancelled_by_name} reason={row.reason} />
+                {placedAgainText(row, when) && <p className="text-xs font-semibold text-emerald-800">{placedAgainText(row, when)}</p>}
               </li>
             ))}
           </ul>
