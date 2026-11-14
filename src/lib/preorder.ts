@@ -257,6 +257,32 @@ export function matchCostChange({ estimate, bill, sold }: { estimate: number; bi
   return { perUnit, profit, sold };
 }
 
+/**
+ * The date the rest of a short bill is expected by (review fix): the one typed, else the lot's own, and only when it is
+ * today or later (the database refuses an earlier one). "" when a date still has to be chosen.
+ */
+export function restDateIn(typed: string, lotDate: string | null | undefined, todayIst: string) {
+  const date = typed || lotDate || "";
+  return date && date >= todayIst ? date : "";
+}
+
+/** The code the remainder of a partly matched lot gets (match_incoming_line): the base code, -R and the next number. */
+export function remainderCode(code: string) {
+  const base = code.replace(/-R[0-9]+$/, "");
+  const own = Number(/-R([0-9]+)$/.exec(code)?.[1] ?? 0);
+  return `${base}-R${own + 1}`;
+}
+
+/** Receive purchase's button: what pressing it does (review fix: "Create 1 batch" when the only line was a match). */
+export function receiveButtonLabel(matches: number, lines: number, moveTo = "") {
+  const made = Math.max(0, lines - matches);
+  const batches = (count: number) => `${count} batch${count === 1 ? "" : "es"}`;
+  if (moveTo) return made === 0 ? `Move to ${moveTo} and match ${matches} to pre-order` : matches > 0
+    ? `Move to ${moveTo}, match ${matches} and create ${batches(made)}` : `Move to ${moveTo} and create ${batches(made)}`;
+  if (made === 0) return `Match ${matches} to pre-order`;
+  return matches > 0 ? `Match ${matches} and create ${batches(made)}` : `Create ${batches(made)}`;
+}
+
 export type LotAllocation = { orderNo: string; qty: number; awaitingPayment: boolean; createdAt: string; id?: string };
 /**
  * Which orders' units move to the remainder when a short bill leaves "the rest still coming" (move_lot_allocations):
@@ -410,6 +436,32 @@ export function cartLineSplit(qty: number, ready: number) {
 }
 
 /**
+ * What adding qty to a cart line that already holds inCart does (review fix: the picker ignored the cart): of the added
+ * units, how many are ready and how many arrive later.
+ */
+export function addedLineSplit(inCart: number, qty: number, ready: number) {
+  const before = cartLineSplit(Math.max(0, inCart), ready);
+  const after = cartLineSplit(Math.max(0, inCart) + Math.max(0, qty), ready);
+  const preorder = Math.max(0, after.preorder - before.preorder);
+  return { ready: Math.max(0, qty - preorder), preorder };
+}
+
+/**
+ * The date a line's pre-order units arrive by (review fix): take_order_line takes them from the lots earliest first and
+ * records the latest lot it reached, so the date is the one at which the running total of the arriving detail covers
+ * them, not simply the earliest date. Falls back to fallback without detail.
+ */
+export function preorderBy(detail: ArrivingDetail[] | null | undefined, units: number, fallback: string | null = null) {
+  if (!detail?.length || units <= 0) return fallback;
+  let covered = 0;
+  for (const entry of [...detail].sort((a, b) => a.by.localeCompare(b.by))) {
+    covered += entry.qty;
+    if (covered >= units - 1e-9) return entry.by;
+  }
+  return detail.reduce((latest, entry) => (entry.by > latest ? entry.by : latest), detail[0]!.by);
+}
+
+/**
  * The words a shopper reads (spec 11), exactly as src/lib/i18n-kn.ts has them (the keys are the English as rendered;
  * {0}, {1}… stand for these values). Dates come in already formatted ("20 Nov").
  */
@@ -422,34 +474,56 @@ export const preorderText = {
   plusArriving: (qty: number) => `+${qtyText(qty)} arriving`,
   readyAndArriving: (ready: number, arriving: number, by: string) => `${qtyText(ready)} ready to collect · ${qtyText(arriving)} arriving by ${by}`,
   explanation: (godown: string) => `Order and pay now, and collect at the ${godown} godown after the goods arrive. We will tell you when they are ready.`,
+  explanationDelivery: (godown: string) => `Order and pay now. We deliver the whole order after the goods reach the ${godown} godown, and we will tell you when it is on the way.`,
   cartSplit: (ready: number, arriving: number, by: string) => `${qtyText(ready)} ready now · ${qtyText(arriving)} arriving by ${by}`,
   allArriving: (qty: number, by: string) => `All ${qtyText(qty)} arriving by ${by}`,
   limit: (name: string, can: number, godown: string, ready: number, pre: number, have: number) =>
     `${name}: only ${qtyText(can)} can be ordered at the ${godown} godown (${qtyText(ready)} ready, ${qtyText(pre)} on pre-order), you have ${qtyText(have)}`,
   ack: (qty: number, godown: string, by: string) =>
     `I understand that ${qtyText(qty)} of these reach the ${godown} godown by ${by}, that I collect the whole order after they arrive, and that I get a full refund if they do not come.`,
+  ackDelivery: (qty: number, godown: string, by: string) =>
+    `I understand that ${qtyText(qty)} of these reach the ${godown} godown by ${by}, that the whole order is delivered after they arrive, and that I get a full refund if they do not come.`,
+  pickHint: (limit: number, max: number, ready: number, arriving: number, by: string) =>
+    `Tap keypad digits in sequence or type a whole number. Choose 1–${qtyText(limit)} units (configured maximum ${qtyText(max)}; ${qtyText(ready)} ready, ${qtyText(arriving)} arriving by ${by}).`,
+  pickTooMany: (available: number, ready: number, arriving: number) =>
+    `Only ${qtyText(available)} units can be ordered: ${qtyText(ready)} ready and ${qtyText(arriving)} arriving.`,
   needsTick: (name: string, by: string) => `${name} is partly arriving later (by ${by}). Tick the pre-order box to continue.`,
   changed: (name: string) => `Arriving stock of ${name} changed while you were ordering. Refresh and try again.`,
   orderPart: (godown: string, by: string) => `Part of this order is on pre-order. It reaches the ${godown} godown by ${by}. Your pickup QR appears when everything has arrived; we will tell you.`,
+  orderPartDelivery: (godown: string, by: string) => `Part of this order is on pre-order. It reaches the ${godown} godown by ${by}. We deliver the whole order after everything has arrived; we will tell you.`,
+  deliveryAfterArrival: (by: string) => `We deliver the whole order after the goods arrive (by ${by}).`,
   waiting: (by: string) => `Waiting for goods · arriving by ${by}`,
   arrivedOn: (on: string) => `Arrived on ${on} · ready to collect`,
+  arrivedOnly: (on: string) => `Arrived on ${on}`,
   late: "Running late — we will tell you when it arrives",
-  invoiceLater: (amount: string) => `Your tax invoice and pickup QR are made when your goods arrive. We have received your payment of ₹${amount}.`,
+  invoiceLater: (amount: string) => `Your tax invoice and pickup QR are made when your goods arrive. We have received your payment of ${amount}.`,
   someArrive: (qty: number, by: string) => `${qtyText(qty)} of them arrive by ${by}.`,
   notArrived: (codes: string, by: string) => `Goods not arrived yet. Batch ${codes} is expected by ${by}. Do not hand over until head office receives its bill.`,
+  notArrivedPlain: "Goods not arrived yet. Do not hand over until head office receives the bill.",
   comingTitle: "Coming to your godown",
   comingLine: (qty: number, by: string, sold: number) => `${qtyText(qty)} expected by ${by} · ${qtyText(sold)} already sold`,
   countRefused: (name: string, code: string) => `${name} has incoming batch ${code} on its way to this godown. If the lorry has come, ask head office to receive its bill; count again after that.`,
   partnerInvoiceLater: "Invoice comes when the goods arrive",
 } as const;
 
-/** Where an order line stands (order_item_arrivals): waiting, arrived, or late. */
-export function arrivalState(row: { waiting: number; expected_date: string | null; arrived_on: string | null }, todayIst: string) {
+/**
+ * Where an order line stands (order_item_arrivals): waiting, arrived, or late. Review fix: "ready to collect" only for a
+ * pickup order that is paid and not handed over yet; a delivered or cancelled order shows nothing once arrived, and a
+ * delivery order or an unpaid checkout just "Arrived on".
+ */
+export function arrivalState(row: { waiting: number; expected_date: string | null; arrived_on: string | null }, todayIst: string,
+  order?: { status?: string | null; pickup?: boolean }) {
+  const status = order?.status ?? "";
   if (row.waiting > 0) {
     if (row.expected_date && row.expected_date < todayIst) return { state: "late" as const, text: preorderText.late };
     return { state: "waiting" as const, text: preorderText.waiting(dayLabel(row.expected_date, { todayIst })) };
   }
-  if (row.arrived_on) return { state: "arrived" as const, text: preorderText.arrivedOn(dayLabel(row.arrived_on, { todayIst })) };
+  if (row.arrived_on) {
+    if (["Delivered", "Cancelled", "Payment Expired"].includes(status)) return { state: "none" as const, text: "" };
+    const collect = (order?.pickup ?? true) && status !== "Awaiting Payment";
+    const on = dayLabel(row.arrived_on, { todayIst });
+    return { state: "arrived" as const, text: collect ? preorderText.arrivedOn(on) : preorderText.arrivedOnly(on) };
+  }
   return { state: "none" as const, text: "" };
 }
 

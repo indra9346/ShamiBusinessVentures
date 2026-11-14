@@ -14,7 +14,7 @@ export type Database = {
   }
   public: {
     Tables: {
-      preorder_watch: { Row: { branch_id: string; product_id: string; zoho_last: number; held: number; held_since: string | null; opened_at: string; read_at: string; last_waiting: number; last_unbilled: number; last_raw: number | null; updated_at: string; pending_delta: number }; Insert: never; Update: never; Relationships: [] }
+      preorder_watch: { Row: { branch_id: string; product_id: string; zoho_last: number; held: number; held_since: string | null; opened_at: string; read_at: string; last_waiting: number; last_unbilled: number; last_raw: number | null; updated_at: string; pending_delta: number; suspect_lines: string[]; suspect_cap: number; push_pending: number | null; push_delta: number | null; push_started_at: string | null }; Insert: never; Update: never; Relationships: [] }
       batch_lot_events: { Row: { id: number; batch_id: string | null; branch_id: string; product_id: string; kind: string; qty: number | null; detail: Json; by_user: string | null; by_name: string; note: string; created_at: string }; Insert: never; Update: never; Relationships: [] }
       zoho_bill_line_cache: { Row: { bill_id: string; modified: string; bill_number: string; bill_date: string | null; created_time: string; status: string; location_id: string; vendor_name: string; lines: Json; fetched_at: string }; Insert: { bill_id: string; modified: string; bill_number?: string; bill_date?: string | null; created_time?: string; status?: string; location_id?: string; vendor_name?: string; lines?: Json; fetched_at?: string }; Update: { bill_id?: string; modified?: string; bill_number?: string; bill_date?: string | null; created_time?: string; status?: string; location_id?: string; vendor_name?: string; lines?: Json; fetched_at?: string }; Relationships: [] }
       zoho_cost_documents: { Row: { id: number; source: string; zoho_id: string; zoho_line_id: string; doc_number: string; doc_date: string; account_id: string; account_name: string; vendor_name: string; description: string; location_id: string; currency_code: string; amount_before_gst: number; gst_amount: number; gst_claimable: boolean; gst_override: boolean | null; reverse_charge: boolean; rebilled: boolean; cost_amount: number; accepted_cost_amount: number | null; zoho_status: string; zoho_modified: string; flag: string; flag_at: string | null; gone_at: string | null; fetched_at: string; checked_at: string | null }; Insert: never; Update: never; Relationships: [] }
@@ -1464,6 +1464,9 @@ export type Database = {
       admin_move_to_ready: { Args: { _order_item_id: string; _qty: number; _note: string }; Returns: Json }
       apply_preorder_reading: { Args: { _branch_id: string; _product_id: string; _reading: number; _read_at: string; _snapshot: string[]; _explained?: number; _after_push?: boolean }; Returns: Json }
       preorder_push_plan: { Args: { _branch_id: string; _product_id: string; _reading: number; _snapshot: string[] }; Returns: Json }
+      preorder_push_start: { Args: { _branch_id: string; _product_id: string }; Returns: Json }
+      preorder_push_finish: { Args: { _branch_id: string; _product_id: string; _ok: boolean }; Returns: Json }
+      partner_orders_waiting_goods: { Args: Record<string, never>; Returns: { order_no: string; waiting: number; expected_date: string | null }[] }
       release_preorder_hold: { Args: { _branch_id: string; _product_id: string; _qty: number; _note: string; _regular_bills: Json; _reading: number; _snapshot: string[]; _read_at: string; _by: string; _by_name: string }; Returns: Json }
       unmatch_incoming_batch: { Args: { _batch_id: string; _note: string; _readings: Json; _snapshot: Json; _read_at: string; _by: string; _by_name: string }; Returns: Json }
       receive_bill_lines: { Args: { _branch_id: string; _bill: Json; _lines: Json; _cost_basis: string; _readings: Json; _snapshot: Json; _read_at: string; _by: string; _by_name: string }; Returns: Json }
@@ -1474,7 +1477,7 @@ export type Database = {
       refresh_incoming_all: { Args: Record<PropertyKey, never>; Returns: number }
       admin_set_preorder_settings: { Args: { _enabled: boolean; _grace_days: number; _require_ack: boolean }; Returns: Json }
       save_cost_document: { Args: { _doc: Json }; Returns: number }
-      tag_batch_costs: { Args: { _document_id: number; _rows: Json; _confirm_rebilled: boolean; _by: string; _by_name: string }; Returns: Json }
+      tag_batch_costs: { Args: { _document_id: number; _rows: Json; _confirm_rebilled: boolean; _by: string; _by_name: string; _replace?: boolean }; Returns: Json }
       untag_batch_costs: { Args: { _document_id: number; _by: string; _by_name: string }; Returns: number }
       flag_cost_document_changes: { Args: { _rows: Json }; Returns: number }
       accept_cost_document_change: { Args: { _document_id: number; _by?: string | null; _by_name?: string | null }; Returns: Json }

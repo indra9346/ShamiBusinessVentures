@@ -5,7 +5,7 @@ import { z } from "zod";
 import { Check, CreditCard, Loader2, Lock, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { SiteLayout, Breadcrumbs } from "@/components/site/SiteLayout";
-import { getAvailablePurchaseQuantity, inr, inrPrecise } from "@/lib/data";
+import { getAvailablePurchaseQuantity, inr, inrPrecise, readyStockOf } from "@/lib/data";
 import { couponDiscount, gstAfterCoupon, lineGstInside, toPaise } from "@/lib/pricing";
 import { useApp, type Address } from "@/lib/store";
 import { PickupPointCard } from "@/components/site/PickupPointCard";
@@ -191,7 +191,7 @@ function Checkout() {
   const [placedOrders, setPlacedOrders] = useState<{ id: string; amount: number; holdUntil: string | null; method: PayMethod }[]>([]);
   // Pre-order units in this checkout (14 Nov 2026): the customer's tick, and what the placed orders took.
   const [preorderTick, setPreorderTick] = useState(false);
-  const [placedPreorder, setPlacedPreorder] = useState<{ godown: string; by: string } | null>(null);
+  const [placedPreorder, setPlacedPreorder] = useState<{ godown: string; by: string; delivery: boolean } | null>(null);
   // Every held checkout from this visit has been paid and is now an order.
   const allPaid = placedOrders.length > 0 && placedOrders.every((placed) => orders.some((order) => order.id === placed.id));
   // Every held checkout from this visit ended without being paid.
@@ -397,7 +397,7 @@ function Checkout() {
     ? []
     : lineProblems(wantedLines.map((line) => {
       const product = products.find((item) => item.id === line.id);
-      return { id: line.id, qty: line.qty, name: product?.name ?? productNameOf(line.id), available: product ? getAvailablePurchaseQuantity(product) : null, arriving: product?.incoming ?? 0 };
+      return { id: line.id, qty: line.qty, name: product?.name ?? productNameOf(line.id), available: product ? getAvailablePurchaseQuantity(product) : null, arriving: product?.incoming ?? 0, ready: product ? readyStockOf(product) : 0 };
     }));
   useEffect(() => {
     if (placedId || !addressPin) return;
@@ -562,7 +562,7 @@ function Checkout() {
       setPlacedOrders(placed.map((order) => ({ id: order.id, amount: order.amount, holdUntil: order.holdUntil ?? null, method: payMethod })));
       // What the database took for later (its own numbers, not the screen's).
       const laterLines = placed.flatMap((order) => order.preorderLines ?? []);
-      setPlacedPreorder(laterLines.length ? { godown: preorderPart(placedLines).godown || godownLabel, by: laterLines.map((line) => line.by ?? "").sort().at(-1) ?? "" } : null);
+      setPlacedPreorder(laterLines.length ? { godown: preorderPart(placedLines).godown || godownLabel, by: laterLines.map((line) => line.by ?? "").sort().at(-1) ?? "", delivery: fulfil === "Delivery" } : null);
       // Kept in the address, so coming back from the UPI app to a reloaded page lands on this pay step again.
       restoredPay.current = true;
       void navigate({ to: "/checkout", search: (prev) => ({ ...prev, pay: payParam(placed.map((order) => order.id)) }), replace: true });
@@ -1156,14 +1156,16 @@ function Checkout() {
                   const later = preorderPart(checkoutItems);
                   if (later.qty <= 0) return null;
                   const by = dayLabel(later.by);
+                  // Home delivery: the whole order is delivered after the goods arrive, not collected (review fix).
+                  const delivery = fulfil === "Delivery";
                   return (
                     <div id="preorder-tick" className="mt-5 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
                       <p className="font-semibold">{preorderText.someArrive(later.qty, by)}</p>
-                      <p className="mt-1 text-xs">{preorderText.explanation(later.godown || godownLabel)}</p>
+                      <p className="mt-1 text-xs">{delivery ? preorderText.explanationDelivery(later.godown || godownLabel) : preorderText.explanation(later.godown || godownLabel)}</p>
                       {preorderSettings.requireAck && (
                         <label className="mt-2 flex items-start gap-2 text-xs font-semibold">
                           <input type="checkbox" className="mt-0.5 h-4 w-4 shrink-0 accent-amber-700" checked={preorderTick} onChange={(e) => setPreorderTick(e.target.checked)} />
-                          <span className="min-w-0 break-words">{preorderText.ack(later.qty, later.godown || godownLabel, by)}</span>
+                          <span className="min-w-0 break-words">{delivery ? preorderText.ackDelivery(later.qty, later.godown || godownLabel, by) : preorderText.ack(later.qty, later.godown || godownLabel, by)}</span>
                         </label>
                       )}
                     </div>
@@ -1185,12 +1187,18 @@ function Checkout() {
                       : isBankMethod(placedMethod)
                         ? `Total ${inrPrecise(summary.total)}. Prices and stock are held for you: transfer the money and enter the UTR within the time shown. The order is placed once we check it. `
                         : `Total ${inrPrecise(summary.total)}. Prices and stock are held for you while you pay; the order is placed as soon as we confirm the payment in our bank. `}
-                    {fulfil === "Pickup" ? "We will let you know when it is ready to collect." : "Delivery in 2–4 business days after payment."}
+                    {fulfil === "Pickup"
+                      ? "We will let you know when it is ready to collect."
+                      : placedPreorder?.delivery
+                        ? preorderText.deliveryAfterArrival(dayLabel(placedPreorder.by))
+                        : "Delivery in 2–4 business days after payment."}
                   </p>
                 )}
                 {placedPreorder && !allEnded && (
                   <p className="mx-auto mt-3 max-w-2xl rounded-md border border-amber-300 bg-amber-50 p-3 text-left text-sm text-amber-950">
-                    {preorderText.orderPart(placedPreorder.godown, dayLabel(placedPreorder.by))}
+                    {placedPreorder.delivery
+                      ? preorderText.orderPartDelivery(placedPreorder.godown, dayLabel(placedPreorder.by))
+                      : preorderText.orderPart(placedPreorder.godown, dayLabel(placedPreorder.by))}
                   </p>
                 )}
                 {heldAddress && !allEnded && (

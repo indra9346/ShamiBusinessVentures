@@ -25,10 +25,13 @@ type PoLines = Awaited<ReturnType<Awaited<ReturnType<typeof functions>>["getPurc
 const functions = () => import("@/lib/preorder.functions");
 const errorText = (cause: unknown) => (cause instanceof Error ? cause.message : String(cause));
 const money = (n: number) => inrPrecise(n);
+const newRequestId = () => (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID()
+  : "10000000-1000-4000-8000-100000000000".replace(/[018]/g, (c) => (Number(c) ^ (Math.random() * 16) >> (Number(c) / 4)).toString(16)));
 
 export function IncomingBatchDialog({ open, onOpenChange, data, defaultGodown, onReceive, onSaved }: {
   open: boolean; onOpenChange: (open: boolean) => void; data: BatchData; defaultGodown?: string | undefined;
-  onReceive: (godownId: string) => void; onSaved: (batchId: string) => Promise<void>;
+  /** "Receive it" on a bill listed below: that bill at its own godown (the dialog keeps what was typed meanwhile). */
+  onReceive: (godownId: string, billId: string) => void; onSaved: (batchId: string) => Promise<void>;
 }) {
   const today = istToday();
   const godowns = data.godowns.filter((g) => g.active && g.zohoLinked);
@@ -50,6 +53,9 @@ export function IncomingBatchDialog({ open, onOpenChange, data, defaultGodown, o
   const [loading, setLoading] = useState(false);
   const [notThis, setNotThis] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
+  // One id per opening of the dialog (review fix): a press repeated after a lost reply gets the lot it made, not a second.
+  const [requestId, setRequestId] = useState(() => newRequestId());
+  useEffect(() => { if (open) setRequestId(newRequestId()); }, [open]);
 
   const product = products.find((p) => p.id === productId);
   const quantity = Number(qty) || 0;
@@ -118,7 +124,7 @@ export function IncomingBatchDialog({ open, onOpenChange, data, defaultGodown, o
       const { createIncomingBatch } = await functions();
       const made = await createIncomingBatch({ data: {
         branchId, productId, quantity, unitCostExGst: Number(cost), expectedDate: date, holdBack, supplier, notes,
-        po: source === "po" ? poLine : null, notThisPurchase: [...notThis],
+        po: source === "po" ? poLine : null, notThisPurchase: [...notThis], requestId,
       } });
       const heldSomewhere = Object.values(made.heldAtOpen).some((n) => n > 0);
       toast.success(`Pre-order batch ${made.batchCode} made`, {
@@ -154,7 +160,7 @@ export function IncomingBatchDialog({ open, onOpenChange, data, defaultGodown, o
           <div className="grid gap-1 text-xs font-semibold text-slate">Ordered through
             <div className="flex rounded-md border border-input bg-white p-0.5 text-sm">
               {([["po", "A Zoho purchase order"], ["typed", "Typed in"]] as const).map(([key, label]) => (
-                <button key={key} type="button" onClick={() => { setSource(key); if (key === "po" && !pos) void loadPos(); if (key === "typed") setPoLine(null); }}
+                <button key={key} type="button" aria-pressed={source === key} onClick={() => { setSource(key); if (key === "po" && !pos) void loadPos(); if (key === "typed") setPoLine(null); }}
                   className={cn("flex-1 rounded px-2 py-1.5 font-semibold", source === key ? "bg-navy text-white" : "text-slate")}>{label}</button>
               ))}
             </div>
@@ -165,7 +171,7 @@ export function IncomingBatchDialog({ open, onOpenChange, data, defaultGodown, o
           <div className="grid gap-2 rounded-lg border border-border p-3">
             <div className="flex items-center justify-between gap-2">
               <p className="text-xs font-semibold uppercase tracking-wide text-slate">Open purchase orders</p>
-              <Button size="sm" variant="ghost" onClick={() => void loadPos()}><RefreshCw className="h-3.5 w-3.5" /></Button>
+              <Button size="sm" variant="ghost" aria-label="Read purchase orders again" onClick={() => void loadPos()}><RefreshCw className="h-3.5 w-3.5" /></Button>
             </div>
             {pos === null && <p className="text-xs text-slate">Reading Zoho…</p>}
             {pos && pos.length === 0 && <p className="text-xs text-slate">No open purchase order in Zoho. Type the pre-order in instead.</p>}
@@ -250,7 +256,7 @@ export function IncomingBatchDialog({ open, onOpenChange, data, defaultGodown, o
                 <div key={key} className="flex flex-wrap items-center justify-between gap-2 rounded border border-amber-200 bg-white p-2">
                   <span className="min-w-0 break-words">{`Bill ${line.billNumber} · ${qtyText(line.qty)} · ${line.vendorName} · ${dayLabel(line.date)} · ${line.godownName}`}</span>
                   <span className="flex flex-wrap items-center gap-3">
-                    <button type="button" className="font-semibold text-navy underline" onClick={() => onReceive(branchId)}>Receive it</button>
+                    <button type="button" className="font-semibold text-navy underline" onClick={() => onReceive(line.branchId || branchId, line.billId)}>Receive it</button>
                     <label className="flex items-center gap-1 font-semibold">
                       <input type="checkbox" checked={notThis.has(key)} onChange={(e) => setNotThis((all) => { const next = new Set(all); if (e.target.checked) next.add(key); else next.delete(key); return next; })} />
                       Not this purchase

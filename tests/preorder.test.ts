@@ -5,6 +5,7 @@ import {
   deriveSplit, holdStep, incomingDraftProblem, incomingPreview, incomingView, istToday, lotAccepting, lotBadges, lotLabel, lotOverdue, lotSellable,
   matchCandidates, matchCostChange, matchPlan, openPurchaseOrders, openingHold, pairTotal, parsePreorderSettings, pastWindow, poLineOpen,
   preorderGoodsNote, preorderText, purchaseOrderLine, readyAfterOpening, roundTo, takeLine, trimDetail, unitsThatMove, unmatchBlocker, unreceivedLines,
+  addedLineSplit, preorderBy, receiveButtonLabel, remainderCode, restDateIn,
   type CandidateLot, type Lot, type PreorderClock,
 } from "../src/lib/preorder.ts";
 import { loadKannada, translateText } from "../src/lib/i18n-core.ts";
@@ -312,12 +313,20 @@ test("Zoho: an order waiting for pre-order goods keeps a draft sales order, no i
   const { readFileSync } = await import("node:fs");
   const source = readFileSync(new URL("../src/lib/zoho-commerce.functions.ts", import.meta.url), "utf8").replace(/\r\n/g, "\n");
   const sync = source.slice(source.indexOf("async function syncLinkedZohoOrder("), source.indexOf("async function copyZohoAddressToInvoice("));
-  // The confirm is skipped while lot units wait; the invoice, delivery note and packages already skip a draft.
-  assert.match(sync, /const goods = await orderWaitingGoods\(db, order\.id\);/);
-  assert.match(sync, /if \(confirmedInApp && zohoStatus\(\) === "draft" && goods\.waiting > 0\) \{\n\s+\/\/[^\n]*\n\s+zohoOrderNotes\.set\(order\.id, `Waiting for incoming batch/);
+  // The confirm is skipped while lot units wait; so are the invoice, delivery note and packages, also for a sales order
+  // confirmed by hand in Zoho (review fix: that one was invoiced before the goods arrived).
+  assert.match(sync, /: await orderWaitingGoods\(db, order\.id\);\n\s+const goodsWaiting = goods\.waiting > 0;/);
+  assert.ok(sync.indexOf("const goodsWaiting") < sync.indexOf("if (order.order_status === \"Cancelled\") {"), "read once, before every branch");
+  assert.match(sync, /if \(confirmedInApp && zohoStatus\(\) === "draft" && goodsWaiting\) \{\n\s+\/\/[^\n]*\n\s+zohoOrderNotes\.set\(order\.id, waitingNote\(\)\);/);
   assert.match(sync, /\} else if \(confirmedInApp && zohoStatus\(\) === "draft"\) \{\n\s+await inventoryRequest\(region, organizationId, token, `\$\{path\}\/status\/confirmed`, "POST"\);/);
-  assert.match(sync, /if \(orderNeedsZohoInvoice\(order\.order_status\) && !\["draft", \.\.\.ZOHO_CLOSED_ORDER_STATES\]\.includes\(zohoStatus\(\)\)\)/);
-  assert.match(sync, /if \(!\["draft", \.\.\.ZOHO_CLOSED_ORDER_STATES\]\.includes\(zohoStatus\(\)\)\) \{\n\s+zoho = await pushZohoFulfilment/);
+  assert.match(sync, /if \(!goodsWaiting && orderNeedsZohoInvoice\(order\.order_status\) && !\["draft", \.\.\.ZOHO_CLOSED_ORDER_STATES\]\.includes\(zohoStatus\(\)\)\)/);
+  assert.match(sync, /if \(!goodsWaiting && !\["draft", \.\.\.ZOHO_CLOSED_ORDER_STATES\]\.includes\(zohoStatus\(\)\)\) \{\n\s+zoho = await pushZohoFulfilment/);
+  // syncZohoOrderInvoice and releaseDeliveryNoteAfterInvoice are reached only inside the guarded invoice block.
+  const invoiceBlock = sync.slice(sync.indexOf("if (!goodsWaiting && orderNeedsZohoInvoice"), sync.indexOf("// Packed / Dispatched"));
+  assert.ok(invoiceBlock.includes("syncZohoOrderInvoice(") && invoiceBlock.includes("releaseDeliveryNoteAfterInvoice("));
+  assert.equal(sync.split("syncZohoOrderInvoice(").length, 2, "one invoice call, inside the guard");
+  assert.equal(sync.split("releaseDeliveryNoteAfterInvoice(").length, 2, "one delivery-note release, inside the guard");
+  assert.equal(sync.split("pushZohoFulfilment(").length, 2, "one fulfilment call, inside the guard");
   // Finished as "complete", the note kept on the job.
   assert.match(source, /_error: errorMessage \?\? \(status === "complete" \? note \?\? null : null\)/);
   // Every reading path takes the waiting order lines before it reads Zoho (spec 2.5).
@@ -326,4 +335,119 @@ test("Zoho: an order waiting for pre-order goods keeps a draft sales order, no i
   const count = source.slice(source.indexOf("export const submitStockCount"), source.indexOf("export const listZohoPriceLists"));
   assert.ok(count.indexOf("pendingWebsiteOrderQty(") < count.indexOf("`items/${encodeURIComponent(link.zoho_item_id)}`"), "pending orders before the item read");
   assert.ok(count.indexOf("preorderSnapshot(") < count.indexOf("`items/${encodeURIComponent(link.zoho_item_id)}`"));
+});
+
+
+/* ---------------------------------------------------------------- review fixes (14 Nov 2026): the shop and admin screens */
+
+test("review: the add-to-cart note counts the cart; a line's arrival date is where the lots cover it", () => {
+  // 5 ready, the cart holds 5: 3 more all arrive later (it said nothing: 3 <= 5 ready).
+  assert.deepEqual(addedLineSplit(5, 3, 5), { ready: 0, preorder: 3 });
+  assert.deepEqual(addedLineSplit(2, 5, 5), { ready: 3, preorder: 2 });
+  assert.deepEqual(addedLineSplit(0, 4, 10), { ready: 4, preorder: 0 });
+  // Two lots: 10 by 20 Nov and 100 by 30 Nov. 50 arriving units reach the second lot: 30 Nov (was 20 Nov).
+  const detail = [{ by: "2026-11-30", qty: 100 }, { by: "2026-11-20", qty: 10 }];
+  assert.equal(preorderBy(detail, 50, "2026-11-20"), "2026-11-30");
+  assert.equal(preorderBy(detail, 10, "2026-11-20"), "2026-11-20");
+  assert.equal(preorderBy(detail, 200, "2026-11-20"), "2026-11-30", "more than the lots hold: the last date");
+  assert.equal(preorderBy([], 5, "2026-11-20"), "2026-11-20", "no detail: the fallback");
+  assert.equal(preorderBy(detail, 0, null), null);
+});
+
+test("review: \"Arrived on\" says ready to collect only for a paid pickup order still to be handed over", () => {
+  const row = { waiting: 0, expected_date: "2026-11-20", arrived_on: "2026-11-19" };
+  assert.equal(arrivalState(row, TODAY).text, "Arrived on 19 Nov · ready to collect");
+  assert.equal(arrivalState(row, TODAY, { status: "Payment Confirmed", pickup: true }).text, "Arrived on 19 Nov · ready to collect");
+  assert.deepEqual(arrivalState(row, TODAY, { status: "Delivered", pickup: true }), { state: "none", text: "" });
+  assert.deepEqual(arrivalState(row, TODAY, { status: "Cancelled", pickup: true }), { state: "none", text: "" });
+  assert.equal(arrivalState(row, TODAY, { status: "Payment Confirmed", pickup: false }).text, "Arrived on 19 Nov");
+  assert.equal(arrivalState(row, TODAY, { status: "Awaiting Payment", pickup: true }).text, "Arrived on 19 Nov");
+  assert.equal(arrivalState({ ...row, waiting: 5, arrived_on: null }, TODAY, { status: "Delivered" }).state, "waiting");
+});
+
+test("review: Receive purchase wants a date from today for the rest, names the remainder, and labels the button by what it does", () => {
+  assert.equal(restDateIn("", "2026-11-10", TODAY), "", "a late lot's own date is not used");
+  assert.equal(restDateIn("2026-11-25", "2026-11-10", TODAY), "2026-11-25");
+  assert.equal(restDateIn("", "2026-11-20", TODAY), "2026-11-20");
+  assert.equal(restDateIn("", null, TODAY), "");
+  assert.equal(remainderCode("CLK-141126-01"), "CLK-141126-01-R1");
+  assert.equal(remainderCode("CLK-141126-01-R1"), "CLK-141126-01-R2");
+  assert.equal(receiveButtonLabel(1, 1), "Match 1 to pre-order");
+  assert.equal(receiveButtonLabel(1, 3), "Match 1 and create 2 batches");
+  assert.equal(receiveButtonLabel(0, 1), "Create 1 batch");
+  assert.equal(receiveButtonLabel(1, 1, "Hubli Godown"), "Move to Hubli Godown and match 1 to pre-order");
+  assert.equal(receiveButtonLabel(0, 2, "Hubli Godown"), "Move to Hubli Godown and create 2 batches");
+});
+
+test("review: the new shopper and admin texts have Kannada", async () => {
+  await loadKannada();
+  const latin = /[A-Za-z]{3,}/;
+  const samples = [
+    preorderText.explanationDelivery("Challakere"), preorderText.ackDelivery(10, "Challakere", "20 Nov"),
+    preorderText.pickHint(50, 50, 0, 360, "20 Nov"), preorderText.pickTooMany(360, 0, 360), preorderText.orderPartDelivery("Challakere", "20 Nov"),
+    preorderText.deliveryAfterArrival("20 Nov"), preorderText.arrivedOnly("19 Nov"), preorderText.invoiceLater("₹49,338"), preorderText.notArrivedPlain,
+    "CLK-141126-01: Sugar S1 has arrived. Pay to complete your order.",
+    receiveButtonLabel(1, 1), receiveButtonLabel(1, 3), receiveButtonLabel(1, 2, "Hubli"), "Choose when the rest is expected (today or later)",
+    "Expected by 20 Nov 2026 · 3 orders waiting · PO 12", "The match can't be undone: new orders took from it.",
+    closeBlocker({ stage: "incoming", code: "CLK-141126-01", pausedReason: "" }, { waiting: 10, tagged: false }),
+    closeBlocker({ stage: "incoming", code: "CLK-141126-01", pausedReason: "" }, { waiting: 0, tagged: true }),
+    incomingPreview({ zohoNow: 50, godown: "CLK", ready: 50, readyAfter: 50, quantity: 360, holdBack: 0, expectedDate: "2026-11-20", todayIst: TODAY }),
+    "A transfer of Sugar S1 at Challakere is not finished in Zoho. Count again after it is.",
+    "This expense is already split by line; untag its lines first", "Partner commission is not a batch cost (owner's rule)",
+  ];
+  const strip = (value: string) => value.replace(/Sugar S1|Challakere|Hubli|CLK-[0-9-]+|CLK|PO|Zoho|QR|\b(Nov|Jan)\b/g, "");
+  for (const english of samples) {
+    const out = translateText(english, "kn");
+    assert.notEqual(out, english, `no Kannada for "${english}"`);
+    assert.ok(!latin.test(strip(out)), `English left in "${out}"`);
+  }
+  // The paid amount comes formatted (₹49,338.00, not ₹49338.00), so the text carries no ₹ of its own.
+  assert.equal(preorderText.invoiceLater("₹49,338"), "Your tax invoice and pickup QR are made when your goods arrive. We have received your payment of ₹49,338.");
+});
+
+test("review: the screens use the fixes (source checks)", async () => {
+  const { readFileSync } = await import("node:fs");
+  const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
+  // Add to cart: arriving units are never "in stock", and the note counts what the cart holds.
+  const picker = read("src/components/site/AddToCartPicker.tsx");
+  assert.match(picker, /arriving > 0 \? \(\n\s+\/\/[^\n]*\n\s+<p[^>]*>\n\s+\{preorderText\.pickHint\(/);
+  assert.match(picker, /: arriving > 0\n\s+\? preorderText\.pickTooMany\(availableStock, readyStock, arriving\)/);
+  assert.match(picker, /const split = addedLineSplit\(inCart, qty, readyStock\);/);
+  // Checkout: home delivery reads as delivery after arrival, and the limit message has the godown's own ready units.
+  const checkout = read("src/routes/checkout.tsx");
+  assert.match(checkout, /delivery \? preorderText\.ackDelivery\(/);
+  assert.match(checkout, /delivery \? preorderText\.explanationDelivery\(/);
+  assert.match(checkout, /: placedPreorder\?\.delivery\n\s+\? preorderText\.deliveryAfterArrival\(/);
+  assert.match(checkout, /ready: product \? readyStockOf\(product\) : 0 \}/);
+  // The arrival date shown before ordering is the one the order records (the lots covering the line).
+  assert.match(read("src/components/site/PreorderSplit.tsx"), /preorderBy\(product\.incomingDetail, split\.preorder, product\.incomingBy \?\? null\)/);
+  assert.match(read("src/lib/store.tsx"), /incomingDetail: arriving\.detail/);
+  // Order pages pass the order to the arrival note; the paid amount is formatted.
+  for (const page of ["src/routes/account.orders.$id.tsx", "src/routes/admin.orders.$id.tsx"]) assert.match(read(page), /<ItemArrivalNote arrival=\{[^}]+\} order=\{order\} \/>/);
+  assert.match(read("src/routes/account.orders.$id.tsx"), /preorderText\.invoiceLater\(inrPrecise\(order\.amount\)\)/);
+  assert.match(read("src/routes/account.invoices.tsx"), /preorderText\.invoiceLater\(inrPrecise\(o\.amount\)\)/);
+  // Receive purchase: the retry of a transfer is not stopped by a hidden choice; an older bill reply is dropped.
+  const receive = read("src/components/batches/ReceiveFromBill.tsx");
+  assert.match(receive, /if \(firstProblem && !resuming\) \{ toast\.error\(firstProblem\); return; \}/);
+  assert.match(receive, /if \(ask !== picking\.current\) return;/);
+  assert.match(receive, /const answer = await getBatchBill\(\{ data: \{ branchId: godown, billId \} \}\);/);
+  assert.match(receive, /name=\{`action-\$\{line\.lineId\}`\}/);
+  assert.match(receive, /name=\{`rest-\$\{line\.lineId\}`\}/);
+  // New pre-order: one request id per opening; "Receive it" opens that bill at its own godown and keeps the form.
+  const dialog = read("src/components/batches/IncomingBatchDialog.tsx");
+  assert.match(dialog, /notThisPurchase: \[\.\.\.notThis\], requestId,/);
+  assert.match(dialog, /onReceive\(line\.branchId \|\| branchId, line\.billId\)/);
+  assert.match(read("src/lib/preorder.functions.ts"), /\.\.\.\(data\.requestId \? \{ request: data\.requestId \} : \{\}\),/);
+  assert.match(read("src/routes/admin.batches.tsx"), /\(incomingOpen \|\| incomingParked\) && <IncomingBatchDialog/);
+  // Settings: nothing can be saved before the settings are read.
+  assert.match(read("src/routes/admin.settings.tsx"), /disabled=\{saving \|\| !loaded\}/);
+  // The channel partner's confirm list says which orders wait for goods.
+  const partner = read("src/components/partners/PartnerOrdersToConfirm.tsx");
+  assert.match(partner, /supabase\.rpc\("partner_orders_waiting_goods"\)/);
+  assert.match(partner, /preorderText\.partnerInvoiceLater/);
+  // The count waits for an unfinished transfer before anything is written to Zoho.
+  const server = read("src/lib/zoho-commerce.functions.ts");
+  const count = server.slice(server.indexOf("export const submitStockCount"), server.indexOf("export const listZohoPriceLists"));
+  assert.ok(count.indexOf("is not finished in Zoho. Count again after it is.") > 0);
+  assert.ok(count.indexOf("is not finished in Zoho. Count again after it is.") < count.indexOf("inventoryadjustments"), "before the Zoho adjustment");
 });

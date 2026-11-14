@@ -2640,6 +2640,12 @@ async function syncLinkedZohoOrder(
 
   // Problems with the money in Zoho Books, raised once the goods side is done.
   const moneyIssues: ZohoMoneyIssues = { review: [], retry: [] };
+  // Pre-order goods (14 Nov 2026, spec 7.4): while the order holds units of a pre-order batch not matched to its bill,
+  // nothing of it reaches Zoho Books and no delivery note or package is made, whatever Zoho's sales order says (review
+  // fix: one confirmed by hand in Zoho was still invoiced).
+  const goods = order.order_status === "Cancelled" ? { waiting: 0, codes: [] as string[], expectedDate: "" } : await orderWaitingGoods(db, order.id);
+  const goodsWaiting = goods.waiting > 0;
+  const waitingNote = () => `Waiting for incoming batch ${goods.codes.join(", ") || "?"} (expected ${dayLabel(goods.expectedDate, { full: true }) || "soon"}): no invoice, delivery note or package until the bags arrive`;
   if (order.order_status === "Cancelled") {
     // Added 11 Nov 2026: its Books invoices are voided and the refunds recorded there first, so nothing in Books still
     // counts a cancelled order as owed or paid.
@@ -2679,9 +2685,7 @@ async function syncLinkedZohoOrder(
     const invoiced = str(zoho["invoiced_status"]).toLowerCase();
     const hasInvoice = Boolean(invoiced) && invoiced !== "not_invoiced" && invoiced !== "null";
     const paiseOff = Math.round(Math.abs(zohoTotal - Number(order.total)) * 100);
-    // Pre-order goods (14 Nov 2026, spec 7.4): while the order holds units of a pre-order batch not matched to its bill,
-    // the sales order stays a draft, so Zoho makes no invoice, delivery note or package and its stock never goes below 0.
-    const goods = await orderWaitingGoods(db, order.id);
+    // While lot units wait, the sales order stays a draft (goods, above), so Zoho's stock never goes below 0 for them.
     // Arrived: lines still saying "Pre-order, arriving by" are written again before the invoice is made from them.
     const staleLines = goods.waiting <= 0 && !hasInvoice && (Array.isArray(zoho["line_items"]) ? zoho["line_items"] : [])
       .some((line) => str(plainObject(line)["description"]).includes(PREORDER_LINE_WORDS));
@@ -2715,9 +2719,9 @@ async function syncLinkedZohoOrder(
       zoho = await load();
     }
     const confirmedInApp = !["Placed", "Awaiting Payment"].includes(order.order_status);
-    if (confirmedInApp && zohoStatus() === "draft" && goods.waiting > 0) {
+    if (confirmedInApp && zohoStatus() === "draft" && goodsWaiting) {
       // Finished as done, with a note: the match re-queues the order, which confirms it then.
-      zohoOrderNotes.set(order.id, `Waiting for incoming batch ${goods.codes.join(", ") || "?"} (expected ${dayLabel(goods.expectedDate, { full: true }) || "soon"}): the sales order stays a draft until the bags arrive`);
+      zohoOrderNotes.set(order.id, waitingNote());
     } else if (confirmedInApp && zohoStatus() === "draft") {
       await inventoryRequest(region, organizationId, token, `${path}/status/confirmed`, "POST");
       zoho = await load();
@@ -2731,7 +2735,9 @@ async function syncLinkedZohoOrder(
   if (orderAddress.written) zoho = await load();
   // Confirmed by the admin: the Zoho Books invoice, with the verified payments recorded on it.
   let invoiceAddressProblem: string | null = null;
-  if (orderNeedsZohoInvoice(order.order_status) && !["draft", ...ZOHO_CLOSED_ORDER_STATES].includes(zohoStatus())) {
+  // A sales order confirmed by hand in Zoho before the goods arrived: no invoice, payment, delivery note or package yet.
+  if (goodsWaiting && !["draft", ...ZOHO_CLOSED_ORDER_STATES].includes(zohoStatus())) zohoOrderNotes.set(order.id, waitingNote());
+  if (!goodsWaiting && orderNeedsZohoInvoice(order.order_status) && !["draft", ...ZOHO_CLOSED_ORDER_STATES].includes(zohoStatus())) {
     if (await syncZohoOrderInvoice(db, region, organizationId, token, order, zoho, (problem) => { invoiceAddressProblem = problem; }, moneyIssues)) zoho = await load();
     // Now, in case packing below stops the sync first.
     if (moneyIssues.review.length || moneyIssues.retry.length) await tellAdminsOfPaymentReview(db, order, [...moneyIssues.review, ...moneyIssues.retry].join(" "));
@@ -2742,7 +2748,7 @@ async function syncLinkedZohoOrder(
   }
   // Packed / Dispatched / Out for Delivery / Delivered on the website: package, shipment and
   // delivery in Zoho, at the sales order's godown location.
-  if (!["draft", ...ZOHO_CLOSED_ORDER_STATES].includes(zohoStatus())) {
+  if (!goodsWaiting && !["draft", ...ZOHO_CLOSED_ORDER_STATES].includes(zohoStatus())) {
     zoho = await pushZohoFulfilment(db, region, organizationId, token, order, zoho, load);
   }
   await saveZohoZohoState(db, order.id, zoho);
@@ -6471,10 +6477,12 @@ async function syncZohoGodownStock(db: Awaited<ReturnType<typeof dbAdmin>>, regi
 }
 
 /**
- * One godown and product with a pre-order batch, in the stock sync (spec 7.4). A website stock edit still waiting goes to
- * Zoho only while Zoho shows nothing the website can't explain (preorder_push_plan), by the plan's delta (ready + waiting
- * orders not on a lot - Zoho); then, or otherwise, Zoho's number goes through the hold step. false: the pair is not
- * watched any more (its last lot closed meanwhile), so the caller takes today's path.
+ * One godown and product with a pre-order batch, in the stock sync (spec 7.4). Zoho's number always goes through the
+ * hold step first (review fix: a waiting website edit stays in the total, so Zoho's own falls are seen meanwhile). Then
+ * a website stock edit still waiting goes to Zoho, only while nothing is held there (preorder_push_start), as the edit
+ * itself (pending_delta), never a rise where a lot is; preorder_push_finish says whether Zoho took it. Readings of that
+ * godown wait while it is on its way. false: the pair is not watched any more (its last lot closed meanwhile), so the
+ * caller takes today's path.
  */
 async function syncPreorderPair(db: Awaited<ReturnType<typeof dbAdmin>>, region: Region, organizationId: string, token: string, pair: {
   item: Record<string, unknown>; branch: { id: string; zoho_location_id: string }; link: { product_id: string; zoho_item_id: string };
@@ -6484,62 +6492,61 @@ async function syncPreorderPair(db: Awaited<ReturnType<typeof dbAdmin>>, region:
   const { item, branch, link, snapshot, readAt, summary } = pair;
   const reading = zohoAvailableAt(item, branch.zoho_location_id);
   const { data: row } = await db.from("branch_stock").select("stock,zoho_pending,updated_at").eq("branch_id", branch.id).eq("product_id", link.product_id).maybeSingle();
-  let result: Record<string, unknown>;
-  if (row?.zoho_pending) {
-    // Changed since this run began (a transfer, an order): Zoho may already have it; the next run sends the edit.
-    if (Date.parse(row.updated_at) > Date.parse(readAt)) return true;
-    const { data: open, error: openError } = await db.from("batch_transfers").select("product_id,lines")
-      .in("status", ["pending", "in_transit"]).or(`from_branch_id.eq.${branch.id},to_branch_id.eq.${branch.id}`);
-    if (openError || (open ?? []).some((t) => t.product_id === link.product_id || godownTransferLines(t.lines).some((line) => line.product_id === link.product_id))) return true;
-    const { data: planData, error: planError } = await db.rpc("preorder_push_plan", { _branch_id: branch.id, _product_id: link.product_id, _reading: reading, _snapshot: snapshot });
-    if (planError) throw new Error(planError.message);
-    const plan = plainObject(planData);
-    if (plan["watched"] === false) return false;
-    if (plan["blocked"] === true) {
-      summary.preorder.blocked += 1;
-      summary.errors.push(`${pair.sku}: ${str(plan["message"])} Match the bill first.`.slice(0, 300));
-      return true;
-    }
-    const delta = Math.round((Number(plan["delta"]) || 0) * 1000) / 1000;
-    if (delta !== 0) {
-      const batchLine = await batchAwareAdjustment(db, region, organizationId, token, {
-        itemId: link.zoho_item_id, tracked: pair.tracked, locationId: branch.zoho_location_id,
-        branchId: branch.id, productId: link.product_id, delta, gainShares: pair.tracked ? "linked" : false,
-      });
-      const adjustment = await inventoryRequest<{ inventory_adjustment?: Record<string, unknown> }>(region, organizationId, token, "inventoryadjustments", "POST", {
-        date: todayInIndia(),
-        reason: "Grain Bazar godown stock",
-        adjustment_type: "quantity",
-        description: `Set ${pair.sku} stock at this godown to ${row.stock} ready to match Grain Bazar (it has a pre-order batch)`,
-        location_id: branch.zoho_location_id,
-        line_items: [batchLine.line],
-      });
-      if (pair.tracked) await recordBatchShares(db, batchLine.shares, {
-        reason: "correction", note: "Godown stock set by head office", by: null, byName: "Website",
-        zohoAdjustmentId: str(adjustment.inventory_adjustment?.["inventory_adjustment_id"]),
-      });
-      summary.sentToZoho += 1;
-    }
-    // The website's edit is in its total already: Zoho's change from the push is no surprise.
-    const { data, error } = await db.rpc("apply_preorder_reading", {
-      _branch_id: branch.id, _product_id: link.product_id, _reading: Math.round((reading + delta) * 1000) / 1000, _read_at: readAt,
-      _snapshot: snapshot, _explained: Math.max(0, delta), _after_push: true,
-    });
-    if (error) throw new Error(error.message);
-    result = plainObject(data);
-  } else {
-    const { data, error } = await db.rpc("apply_preorder_reading", {
-      _branch_id: branch.id, _product_id: link.product_id, _reading: reading, _read_at: readAt, _snapshot: snapshot,
-    });
-    if (error) throw new Error(error.message);
-    result = plainObject(data);
-    if (result["watched"] === false) return false;
-  }
+  // Changed since this run began (a transfer, an order) while an edit waits: Zoho may already have it; the next run.
+  if (row?.zoho_pending && Date.parse(row.updated_at) > Date.parse(readAt)) return true;
+  const { data, error } = await db.rpc("apply_preorder_reading", {
+    _branch_id: branch.id, _product_id: link.product_id, _reading: reading, _read_at: readAt, _snapshot: snapshot,
+  });
+  if (error) throw new Error(error.message);
+  const result = plainObject(data);
+  if (result["watched"] === false) return false;
   if (result["skipped"]) return true;
   summary.pulled += 1;
   summary.preorder.pairs += 1;
   summary.preorder.held += Number(result["held"]) || 0;
   if ((Number(result["raw"]) || 0) < 0) summary.preorder.oversold += 1;
+  if (!row?.zoho_pending) return true;
+
+  // The waiting edit, after Zoho's reading. Not while a transfer of this product here is unfinished.
+  const { data: open, error: openError } = await db.from("batch_transfers").select("product_id,lines")
+    .in("status", ["pending", "in_transit"]).or(`from_branch_id.eq.${branch.id},to_branch_id.eq.${branch.id}`);
+  if (openError || (open ?? []).some((t) => t.product_id === link.product_id || godownTransferLines(t.lines).some((line) => line.product_id === link.product_id))) return true;
+  const { data: startData, error: startError } = await db.rpc("preorder_push_start", { _branch_id: branch.id, _product_id: link.product_id });
+  if (startError) throw new Error(startError.message);
+  const start = plainObject(startData);
+  if (start["watched"] === false || start["skipped"]) return true;
+  if (start["blocked"] === true) {
+    summary.preorder.blocked += 1;
+    summary.errors.push(`${pair.sku}: ${str(start["message"])}`.slice(0, 300));
+    return true;
+  }
+  const delta = Math.round((Number(start["delta"]) || 0) * 1000) / 1000;
+  if (delta === 0) return true;
+  let sent = false;
+  try {
+    const batchLine = await batchAwareAdjustment(db, region, organizationId, token, {
+      itemId: link.zoho_item_id, tracked: pair.tracked, locationId: branch.zoho_location_id,
+      branchId: branch.id, productId: link.product_id, delta, gainShares: pair.tracked ? "linked" : false,
+    });
+    const adjustment = await inventoryRequest<{ inventory_adjustment?: Record<string, unknown> }>(region, organizationId, token, "inventoryadjustments", "POST", {
+      date: todayInIndia(),
+      reason: "Grain Bazar godown stock",
+      adjustment_type: "quantity",
+      description: `Grain Bazar head office changed ${pair.sku} at this godown by ${delta} (it has a pre-order batch)`,
+      location_id: branch.zoho_location_id,
+      line_items: [batchLine.line],
+    });
+    sent = true;
+    if (pair.tracked) await recordBatchShares(db, batchLine.shares, {
+      reason: "correction", note: "Godown stock set by head office", by: null, byName: "Website",
+      zohoAdjustmentId: str(adjustment.inventory_adjustment?.["inventory_adjustment_id"]),
+    });
+    summary.sentToZoho += 1;
+  } finally {
+    // Zoho took it (the edit waits no more; an edit made meanwhile still does), or not (it keeps waiting).
+    const { error: finishError } = await db.rpc("preorder_push_finish", { _branch_id: branch.id, _product_id: link.product_id, _ok: sent });
+    if (finishError && sent) summary.errors.push(`${pair.sku}: the stock edit went to Zoho but could not be marked sent: ${finishError.message}`.slice(0, 300));
+  }
   return true;
 }
 
@@ -6596,10 +6603,23 @@ export const submitStockCount = createServerFn({ method: "POST" })
     // then taken off twice (errs low), never left out. A product with a pre-order batch: its waiting order lines too.
     const pendingOrders = await pendingWebsiteOrderQty(db, branch.id, product.id);
     const [{ data: watch }, { data: lot }] = await Promise.all([
-      db.from("preorder_watch").select("held").eq("branch_id", branch.id).eq("product_id", product.id).maybeSingle(),
+      db.from("preorder_watch").select("held,push_started_at").eq("branch_id", branch.id).eq("product_id", product.id).maybeSingle(),
       db.from("batches").select("batch_code").eq("product_id", product.id).eq("branch_id", branch.id).eq("stage", "incoming")
         .order("expected_date").order("created_at").limit(1).maybeSingle(),
     ]);
+    // A head-office edit of this stock on its way to Zoho right now: the count waits (review fix), before anything is
+    // written to Zoho, since Zoho may or may not show that edit yet.
+    if (watch?.push_started_at && Date.now() - Date.parse(watch.push_started_at) < 120_000)
+      throw new Error("A stock edit for this product at your godown is being sent to Zoho right now. Try again in a minute.");
+    // A transfer of it at this godown not finished on the website (review fix): Zoho may show it already, and the finish
+    // moves the website's number again, so the count waits (record_stock_count refuses too, but after Zoho is written).
+    if (watch) {
+      const { data: open, error: openError } = await db.from("batch_transfers").select("product_id,lines")
+        .in("status", ["pending", "in_transit"]).or(`from_branch_id.eq.${branch.id},to_branch_id.eq.${branch.id}`);
+      if (openError) throw new Error(openError.message);
+      if ((open ?? []).some((t) => t.product_id === product.id || godownTransferLines(t.lines).some((line) => line.product_id === product.id)))
+        throw new Error(`A transfer of ${productName} at ${branch.name} is not finished in Zoho. Count again after it is.`);
+    }
     const snapshot = watch ? (await preorderSnapshot(db, [product.id]))[`${branch.id}|${product.id}`] ?? [] : [];
     const { region, organizationId, token } = await zohoOrderContext(db);
     const response = await inventoryRequest<{ item?: Record<string, unknown> }>(

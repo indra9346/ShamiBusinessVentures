@@ -131,6 +131,17 @@ assert.equal(await defs(after), await defs(before), "rolled back to today's defi
 const triggers = async (w) => JSON.stringify(await w.q(`SELECT tgname FROM pg_trigger WHERE NOT tgisinternal AND tgrelid IN
   ('public.branch_stock'::regclass, 'public.batches'::regclass, 'public.order_item_batch_allocations'::regclass) ORDER BY 1`));
 assert.equal(await triggers(after), await triggers(before), "the new triggers are gone, batches_stock_state is as before");
+// Review fix: the pre-order functions that change data can't run after the rollback, and the order_items CHECK is gone
+// (the old quantity edit lowers qty without preorder_qty).
+for (const fn of ["public.create_incoming_batch(text,text,numeric,numeric,date,numeric,text,jsonb,text,jsonb,jsonb,jsonb,timestamp with time zone,uuid,text)",
+  "public.unmatch_incoming_batch(uuid,text,jsonb,jsonb,timestamp with time zone,uuid,text)", "public.receive_bill_lines(text,jsonb,jsonb,text,jsonb,jsonb,timestamp with time zone,uuid,text)",
+  "public.admin_set_preorder_settings(boolean,integer,boolean)", "public.release_preorder_hold(text,text,numeric,text,jsonb,numeric,uuid[],timestamp with time zone,uuid,text)",
+  "public.admin_move_to_ready(uuid,numeric,text)", "public.preorder_push_start(text,text)"]) {
+  for (const role of ["authenticated", "service_role"]) {
+    assert.equal((await after.one(`SELECT has_function_privilege('${role}', '${fn}', 'EXECUTE') AS p`)).p, false, `${role} ${fn} after the rollback`);
+  }
+}
+assert.equal((await after.q("SELECT 1 FROM pg_constraint WHERE conname = 'order_items_preorder_qty_check'")).length, 0);
 // And the old site works on it as before.
 await both("after the rollback, an order", async (w) => (await w.order(C1, [[OIL, 1]])).order_no);
 

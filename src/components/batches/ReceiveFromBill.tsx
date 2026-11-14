@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AlertTriangle, CheckCircle2, FileText, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -8,7 +8,7 @@ import { inrPrecise } from "@/lib/data";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { billPlan, billSummary, costOf, lineBlocker, type BillLine, type CostBasis } from "@/lib/bill-batches";
 import { announceTransfer } from "@/components/batches/BatchTransfers";
-import { dayLabel, istToday, matchCostChange, matchPlan, qtyText, unitsThatMove } from "@/lib/preorder";
+import { dayLabel, istToday, matchCostChange, matchPlan, qtyText, receiveButtonLabel, remainderCode, restDateIn, unitsThatMove } from "@/lib/preorder";
 import { apportionPaise, billChargeDocuments, chargeSplitMethod, countedCost, splitByMethod, type SplitBatch } from "@/lib/batch-costs";
 import type { MatchedLine, PreorderCandidate } from "@/lib/zoho-commerce.functions";
 import { cn } from "@/lib/utils";
@@ -74,9 +74,12 @@ export function ReceiveFromBillDialog({ open, onOpenChange, godowns, defaultGodo
     setBranchId((current) => usable(defaultGodown) || usable(current) || godowns.find((g) => g.zohoLinked)?.id || godowns[0]?.id || "");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, defaultGodown]);
-  // A bill named by Match now opens as soon as the dialog does.
+  // A bill named by Match now opens as soon as the dialog does, at the pre-order's godown (review fix: it also opened at
+  // the godown used last time, and that reply could land last).
   useEffect(() => {
-    if (open && initialBillId && branchId && bill?.billId !== initialBillId) void pick(initialBillId);
+    if (!open || !initialBillId || !branchId || bill?.billId === initialBillId) return;
+    if (defaultGodown && godowns.some((g) => g.id === defaultGodown) && branchId !== defaultGodown) return;
+    void pick(initialBillId, branchId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, initialBillId, branchId]);
 
@@ -95,12 +98,16 @@ export function ReceiveFromBillDialog({ open, onOpenChange, godowns, defaultGodo
   }, []);
   useEffect(() => { if (open && branchId) void loadBills(branchId); }, [open, branchId, loadBills]);
 
-  const pick = async (billId: string) => {
+  // Only the newest bill asked for is shown: an older reply (another bill, or the same one at another godown) is dropped.
+  const picking = useRef(0);
+  const pick = async (billId: string, godown: string = branchId) => {
+    const ask = ++picking.current;
     setLoading(true); setBillError(""); setBill(null); setExtras({}); setChoices({});
     try {
       if (STATIC_DATA_MODE) { const demo = demoBill(billId); setBill(demo); tickCharges(demo); setOtherGodown(false); setMovingTo(null); return; }
       const { getBatchBill } = await import("@/lib/zoho-commerce.functions");
-      const answer = await getBatchBill({ data: { branchId, billId } });
+      const answer = await getBatchBill({ data: { branchId: godown, billId } });
+      if (ask !== picking.current) return;
       setBill(answer.bill as Bill);
       tickCharges(answer.bill as Bill);
       // Each line starts as the screen suggests: matched to the best pre-order at this godown, else a new batch.
@@ -111,9 +118,9 @@ export function ReceiveFromBillDialog({ open, onOpenChange, godowns, defaultGodo
       setOtherGodown(answer.otherGodown);
       setMovingTo(answer.movingTo);
     } catch (cause) {
-      setBillError(cause instanceof Error ? cause.message : String(cause));
+      if (ask === picking.current) setBillError(cause instanceof Error ? cause.message : String(cause));
     } finally {
-      setLoading(false);
+      if (ask === picking.current) setLoading(false);
     }
   };
 
@@ -136,9 +143,12 @@ export function ReceiveFromBillDialog({ open, onOpenChange, godowns, defaultGodo
     const lot = c.action === "match" ? here.find((cand) => cand.id === c.matchBatchId) : undefined;
     const qb = Math.round(line.qty * 100) / 100;
     const plan = lot ? matchPlan({ Q: lot.quantity, S: lot.sold, Qb: qb, rest: c.rest }) : null;
+    // A short bill on a late pre-order: the rest needs a date from today on (review fix: the lot's past date was kept).
+    const restDate = lot && qb < lot.quantity && c.rest === "coming" ? restDateIn(c.restExpectedOn, lot.expectedDate, istToday()) : "ok";
     const problem = c.action === "match"
       ? !lot ? "Choose the pre-order batch to match"
         : plan && !plan.ok ? `Bill ${bill?.billNumber ?? ""} has ${qtyText(qb)} of ${line.productName || line.name}, but customers already bought ${qtyText(lot.sold)} on batch ${lot.code}. Choose "the rest is still coming", or cancel and refund ${qtyText(lot.sold - qb)} of those orders first.`
+        : !restDate ? "Choose when the rest is expected (today or later)"
         : !c.allArrived ? `Tick that all ${qtyText(qb)} bags of ${line.productName || line.name} are at ${godownName}` : ""
       : here.length && c.notPreorderNote.trim().length < 10 ? `${line.productName || line.name}: say why it is not pre-order batch ${here[0]!.code} (at least 10 letters)` : "";
     return { line, choice: c, lot, plan, problem, here };
@@ -157,7 +167,9 @@ export function ReceiveFromBillDialog({ open, onOpenChange, godowns, defaultGodo
     try {
       if (STATIC_DATA_MODE) { toast.success("Preview: batches are not saved"); return; }
       const { createBatchesFromBill } = await import("@/lib/zoho-commerce.functions");
-      if (firstProblem) { toast.error(firstProblem); return; }
+      // Trying a transfer again: the server replays the lines it was started with (review fix: a choice the screen hides
+      // while resuming could stop the retry).
+      if (firstProblem && !resuming) { toast.error(firstProblem); return; }
       const result = await createBatchesFromBill({ data: {
         branchId, billId: bill.billId, costBasis: basis,
         lines: open_.map((line) => {
@@ -340,13 +352,16 @@ export function ReceiveFromBillDialog({ open, onOpenChange, godowns, defaultGodo
                 })}
               </div>
             )}
-            {plans.some((p) => p.lot) && (
+            {!resuming && plans.some((p) => p.lot) && (
               <div className="grid gap-1 rounded-lg border border-sky-300 bg-sky-50 p-3 text-xs text-sky-950">
                 <p className="font-semibold">Before you save</p>
                 {plans.filter((p) => p.lot && p.plan?.ok).map(({ line, lot, plan }) => {
                   const change = matchCostChange({ estimate: lot!.estUnitCostExGst ?? 0, bill: line.unitExGst, sold: lot!.sold });
-                  const waitingOrders = new Set(lot!.allocations.map((a) => a.orderNo)).size;
                   const moved = plan && plan.ok && plan.move > 0 ? unitsThatMove(lot!.allocations, plan.move) : [];
+                  // The orders whose goods all arrive with this match: not moved to the rest, not also waiting on another lot.
+                  const elsewhereOrders = new Set((line.preorderCandidates ?? []).filter((c) => c.id !== lot!.id).flatMap((c) => c.allocations.map((a) => a.orderNo)));
+                  const arriving = new Set(lot!.allocations.map((a) => a.orderNo)
+                    .filter((orderNo) => !moved.some((m) => m.orderNo === orderNo) && !elsewhereOrders.has(orderNo))).size;
                   // Its expenses split with the remainder by bags, tag by tag, as the database does (split_lot_tags).
                   const split = plan && plan.ok && plan.remainder ? { here: plan.quantity, rest: plan.remainder.quantity } : null;
                   const tags = split ? lotTags?.(lot!.id) ?? [] : [];
@@ -356,8 +371,8 @@ export function ReceiveFromBillDialog({ open, onOpenChange, godowns, defaultGodo
                   return (
                     <p key={line.lineId} className="break-words">
                       {`${lot!.code}: cost before GST ${money(line.unitExGst)} for all ${qtyText(plan && plan.ok ? plan.quantity : line.qty)} (${change.profit >= 0 ? "+" : "−"}${money(Math.abs(change.profit))} profit on ${qtyText(lot!.sold)} sold)`}
-                      {plan && plan.ok && plan.remainder ? ` · the rest ${qtyText(plan.remainder.quantity)} stays a pre-order (${lot!.code}-R)` : ""}
-                      {` · ${Math.max(0, waitingOrders - moved.length)} waiting order${waitingOrders - moved.length === 1 ? "" : "s"} become ready`}
+                      {plan && plan.ok && plan.remainder ? ` · the rest ${qtyText(plan.remainder.quantity)} stays a pre-order (${remainderCode(lot!.code)})` : ""}
+                      {arriving > 0 ? ` · goods arrived for ${arriving} waiting order${arriving === 1 ? "" : "s"}` : ""}
                       {moved.length ? ` · ${moved.map((m) => `${m.orderNo} (${qtyText(m.qty)})`).join(", ")} wait for the rest` : ""}
                       {tags.length > 0 && <span className="block">{`Its expenses split by bags: ${money(keep)} stay on ${lot!.code}, ${money(go)} go with the rest`}</span>}
                     </p>
@@ -365,7 +380,7 @@ export function ReceiveFromBillDialog({ open, onOpenChange, godowns, defaultGodo
                 })}
               </div>
             )}
-            {firstProblem && <Warning text={firstProblem} />}
+            {firstProblem && !resuming && <Warning text={firstProblem} />}
             {open_.length > 0 && (
               <p className="text-sm font-semibold">{`${open_.length} batch${open_.length === 1 ? "" : "es"} · purchase value ${money(open_.reduce((sum, line) => sum + costOf(line, basis) * line.qty, 0))} without GST`}</p>
             )}
@@ -376,7 +391,8 @@ export function ReceiveFromBillDialog({ open, onOpenChange, godowns, defaultGodo
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
           {bill && (
             <Button className="bg-navy text-white" disabled={busy || blockedBill || open_.length === 0} onClick={() => void create()}>
-              {busy ? (otherGodown ? "Moving in Zoho…" : "Saving…") : resuming && movingTo ? `Try ${movingTo.transferNo} again` : open_.length === 0 ? "All lines done" : otherGodown ? `Move to ${godownName} and create ${open_.length} batch${open_.length === 1 ? "" : "es"}` : `Create ${open_.length} batch${open_.length === 1 ? "" : "es"}`}
+              {busy ? (otherGodown ? "Moving in Zoho…" : "Saving…") : resuming && movingTo ? `Try ${movingTo.transferNo} again` : open_.length === 0 ? "All lines done"
+                : receiveButtonLabel(plans.filter((p) => p.choice.action === "match").length, open_.length, otherGodown ? godownName : "")}
             </Button>
           )}
         </DialogFooter>
@@ -469,7 +485,7 @@ function PreorderChoice({ line, choice, setChoice, godownName, billNumber }: {
       <p className="font-semibold text-navy">What to do</p>
       {here.map((c) => (
         <label key={c.id} className="flex items-start gap-2">
-          <input type="radio" className="mt-0.5" checked={choice.action === "match" && choice.matchBatchId === c.id} disabled={c.pausedReason === "receiving"}
+          <input type="radio" name={`action-${line.lineId}`} className="mt-0.5" checked={choice.action === "match" && choice.matchBatchId === c.id} disabled={c.pausedReason === "receiving"}
             onChange={() => setChoice({ action: "match", matchBatchId: c.id })} />
           <span className="min-w-0 break-words">
             {`Match to pre-order ${c.code} — ${qtyText(c.quantity)} expected by ${dayLabel(c.expectedDate)}, ${qtyText(c.sold)} sold, est. ${money(c.estUnitCostExGst ?? 0)}`}
@@ -478,7 +494,7 @@ function PreorderChoice({ line, choice, setChoice, godownName, billNumber }: {
         </label>
       ))}
       <label className="flex items-start gap-2">
-        <input type="radio" className="mt-0.5" checked={choice.action === "new"} onChange={() => setChoice({ action: "new" })} />
+        <input type="radio" name={`action-${line.lineId}`} className="mt-0.5" checked={choice.action === "new"} onChange={() => setChoice({ action: "new" })} />
         <span>New batch — a different purchase</span>
       </label>
       {choice.action === "new" && here.length > 0 && (
@@ -489,12 +505,14 @@ function PreorderChoice({ line, choice, setChoice, godownName, billNumber }: {
       {lot && short && (
         <div className="grid gap-1 rounded border border-amber-200 bg-white p-2">
           <label className="flex flex-wrap items-center gap-2">
-            <input type="radio" checked={choice.rest === "coming"} onChange={() => setChoice({ rest: "coming" })} />
+            <input type="radio" name={`rest-${line.lineId}`} checked={choice.rest === "coming"} onChange={() => setChoice({ rest: "coming" })} />
             <span>{`The rest (${qtyText(lot.quantity - qb)}) is still coming — expected by`}</span>
-            <Input type="date" className="h-8 w-40" value={choice.restExpectedOn || lot.expectedDate} min={istToday()} onChange={(e) => setChoice({ rest: "coming", restExpectedOn: e.target.value })} />
+            {/* A late lot's own date is past: the box starts empty then, and Save waits for a date (review fix). */}
+            <Input type="date" className="h-8 w-40" aria-label="Expected date of the rest" value={choice.restExpectedOn || (lot.expectedDate >= istToday() ? lot.expectedDate : "")}
+              min={istToday()} onChange={(e) => setChoice({ rest: "coming", restExpectedOn: e.target.value })} />
           </label>
           <label className="flex items-center gap-2">
-            <input type="radio" checked={choice.rest === "none"} disabled={noneRefused} onChange={() => setChoice({ rest: "none" })} />
+            <input type="radio" name={`rest-${line.lineId}`} checked={choice.rest === "none"} disabled={noneRefused} onChange={() => setChoice({ rest: "none" })} />
             <span className={cn(noneRefused && "text-slate")}>Nothing more is coming</span>
           </label>
           {moving.length > 0 && (

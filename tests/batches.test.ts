@@ -401,7 +401,7 @@ test("landed cost: the spec's Sugar S1 — ₹10,800 of freight and hamali on 36
   });
   const a = sugarOrder("o1");
   const input = (docs: ReturnType<typeof costDoc>[]) => ({
-    batches: [sugar], allocations: [{ id: "a1", order_item_id: a.item.id, batch_id: "s1", reserved_quantity: 20, released_quantity: 0, unit_cost: 2527.5, created_at: "" }],
+    batches: [sugar], allocations: [{ id: "a1", order_item_id: a.item.id, batch_id: "s1", reserved_quantity: 20, released_quantity: 0, unit_cost: 2527.5, created_at: "2026-11-16T05:00:00Z" }],
     items: [a.item], orders: [a.order], adjustments: [], godowns: [{ id: "BR-CLK", name: "Challakere" }], today: "2026-11-20",
     // ₹9,000 freight (reverse charge, claimed: not a cost) and ₹1,800 hamali.
     costDocuments: docs, costTags: [costTag(10, 1, "s1", 9000), costTag(11, 2, "s1", 1800)],
@@ -427,14 +427,59 @@ test("landed cost: the spec's Sugar S1 — ₹10,800 of freight and hamali on 36
   const sheets = batchReportSheets(buildBatchReport(input([costDoc(1, 9000, { gst_amount: 450 }), costDoc(2, 1800)])), { generatedAt: "2026-11-20T05:00:00Z", scope: "All godowns" });
   const head = sheets[1]!.rows[0]!;
   const cell = (label: string) => sheets[1]!.rows[1]![head.indexOf(label)];
-  assert.deepEqual(["Expenses (₹)", "Expense per unit (₹)", "Landed cost per unit (₹)", "Expenses on sold (₹)", "Expenses in unsold stock (₹)", "Profit before expenses (₹)",
-    "Profit after expenses (₹)", "Cost variance on sold (₹)", "Cost status", "Matched on"].map(cell), [10800, 30, 2557.5, 600, 10200, 1659.52, 1059.52, 550, "From bill", "20-11-2026"]);
-  assert.ok(!head.includes("Profit (₹)"));
+  assert.deepEqual(["Expenses tagged here (₹)", "Expenses with units received (₹)", "Expense per unit (₹)", "Landed cost per unit (₹)", "Expenses on sold (₹)", "Expenses in unsold stock (₹)", "Profit before expenses (₹)",
+    "Profit after expenses (₹)", "Cost variance on sold (₹)", "Cost status", "Matched on"].map(cell), [10800, 0, 30, 2557.5, 600, 10200, 1659.52, 1059.52, 550, "From bill", "20-11-2026"]);
+  assert.ok(!head.includes("Profit (₹)") && !head.includes("Expenses (₹)"));
   const exp = sheets.find((s) => s.name === "Expenses")!;
   assert.equal(exp.rows.length, 3);
-  assert.deepEqual(exp.rows[0], ["Date", "Account", "Reference", "From", "Before GST (₹)", "GST (₹)", "GST claimable", "Cost (₹)", "Batch no.", "Tagged (₹)", "Counted now (₹)", "Method", "Flag"]);
+  assert.deepEqual(exp.rows[0], ["Date", "Account", "Reference", "From", "Before GST (₹)", "GST (₹)", "GST claimable", "Document cost (₹)", "Batch no.", "Tagged (₹)", "Counted now (₹)", "Method", "Flag"]);
   assert.deepEqual(exp.rows[1]!.slice(2, 12), ["EXP-1", "Zoho Books expense", 9000, 450, "Yes", 9000, "CLK-141126-01", 9000, 9000, "By bags"]);
   assert.match(String(sheets[0]!.rows[2]![0]), /Profit after expenses/);
+});
+
+test("review fixes: cost variance only on units sold before the match; landed cost per unit the expense is spread over; Excel sums", async () => {
+  // B: 20 pre-ordered before the bill (estimate ₹2,500.00), matched at ₹2,527.50, then 300 more sold: the variance is the
+  // 20 bags' ₹550.00, not 320 × ₹27.50.
+  const lot = batch({
+    id: "s1", batch_code: "CLK-141126-01", product_id: "SUGAR", product_name: "Sugar S1", quantity: 360, remaining_quantity: 40, unit_cost: 2527.5,
+    unit_cost_ex_gst: 2527.5, cost_basis: "ex_gst", stage: "received", expected_quantity: 360, est_unit_cost_ex_gst: 2500,
+    matched_at: "2026-11-20T06:00:00Z", status: "Active", depleted_at: null, purchase_date: "2026-11-20",
+  });
+  const early = sugarOrder("o1", "Payment Confirmed", 20), late = sugarOrder("o2", "Delivered", 300);
+  const b = buildBatchReport({
+    batches: [lot], items: [early.item, late.item], orders: [early.order, late.order], adjustments: [], godowns: [{ id: "BR-CLK", name: "Challakere" }], today: "2026-11-22",
+    allocations: [
+      { id: "a1", order_item_id: early.item.id, batch_id: "s1", reserved_quantity: 20, released_quantity: 0, unit_cost: 2527.5, created_at: "2026-11-16T05:00:00Z" },
+      { id: "a2", order_item_id: late.item.id, batch_id: "s1", reserved_quantity: 300, released_quantity: 0, unit_cost: 2527.5, created_at: "2026-11-21T05:00:00Z" }],
+  }).rows[0]!;
+  assert.deepEqual([b.sold, b.costVarianceValue], [320, 550]);
+  // C: 100 bought at ₹100, 50 sold, 5 lost, 3 found, 48 left, ₹1,030 of expenses spread over 103 units: ₹10.00 a unit, and
+  // unsold stock at landed cost is 48 × ₹110.00.
+  const g = batch({ id: "g", batch_code: "CLK-011126-09", quantity: 100, remaining_quantity: 48, unit_cost: 100, unit_cost_ex_gst: 100, cost_basis: "ex_gst", status: "Active", depleted_at: null });
+  const o = sugarOrder("o3", "Delivered", 50);
+  const c = buildBatchReport({
+    batches: [g], items: [o.item], orders: [o.order], godowns: [{ id: "BR-CLK", name: "Challakere" }], today: "2026-11-22",
+    allocations: [{ id: "a3", order_item_id: o.item.id, batch_id: "g", reserved_quantity: 50, released_quantity: 0, unit_cost: 100, created_at: "2026-11-15T05:00:00Z" }],
+    adjustments: [{ id: "x1", batch_id: "g", qty: -5, reason: "damaged", note: "", unit_cost: 100, created_at: "", created_by_name: "" },
+      { id: "x2", batch_id: "g", qty: 3, reason: "stock_count", note: "", unit_cost: 100, created_at: "", created_by_name: "" }],
+    costDocuments: [costDoc(1, 1030)], costTags: [costTag(10, 1, "g", 1030)],
+  }).rows[0]!;
+  assert.deepEqual([c.expensePerUnit, c.landedUnitCost, c.landedStockValue], [10, 110, 5280]);
+  assert.equal(c.landedStockValue, c.available * c.landedUnitCost);
+  // Excel: a document split over two batches shows its own amounts once, so the columns add up to what was spent.
+  const two = batch({ id: "t2", batch_code: "CLK-011126-10", quantity: 100, remaining_quantity: 100, unit_cost: 100, unit_cost_ex_gst: 100, cost_basis: "ex_gst", status: "Active", depleted_at: null });
+  const sheets = batchReportSheets(buildBatchReport({
+    batches: [g, two], items: [o.item], orders: [o.order], godowns: [{ id: "BR-CLK", name: "Challakere" }], today: "2026-11-22", adjustments: [],
+    allocations: [{ id: "a3", order_item_id: o.item.id, batch_id: "g", reserved_quantity: 50, released_quantity: 0, unit_cost: 100, created_at: "2026-11-15T05:00:00Z" }],
+    costDocuments: [costDoc(1, 10800)], costTags: [costTag(10, 1, "g", 5400), costTag(11, 1, "t2", 5400)],
+  }), { generatedAt: "2026-11-22T05:00:00Z", scope: "All godowns" });
+  const exp = sheets.find((s) => s.name === "Expenses")!;
+  const costCol = exp.rows[0]!.indexOf("Document cost (₹)");
+  assert.deepEqual(exp.rows.slice(1).map((r) => r[costCol]), [10800, null]);
+  // The profit text: lost and found with expenses on the lost lowers profit, so it reads "stock lost".
+  const { readFileSync } = await import("node:fs");
+  const page = readFileSync(new URL("../src/routes/admin.batches.tsx", import.meta.url), "utf8").split(String.fromCharCode(13)).join("");
+  assert.match(page, /t\.lossValue \+ t\.expenseOnLostValue < 0\n\s+\? `sales .* \+ stock found/);
 });
 
 test("expenses follow units sent to other godowns, through two transfers, with the part still on the way kept apart", () => {

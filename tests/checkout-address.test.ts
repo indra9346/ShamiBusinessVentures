@@ -183,4 +183,7 @@ test("pre-order units count as available, and a short line says how many are rea
   ]);
   assert.deepEqual(problems.map((p) => p.id), ["S1"], "ready + arriving is what can be ordered");
   assert.equal(lineProblemText(problems[0]!, "Challakere"), "Sugar S1: only 50 can be ordered at the Challakere godown (10 ready, 40 on pre-order), you have 60");
+  // Review fix: the per-order maximum caps available (100 ready + 360 arriving, maximum 50): the godown's own ready units.
+  const capped = lineProblems([{ id: "S1", name: "Sugar S1", qty: 60, available: 50, arriving: 360, ready: 100 }]);
+  assert.equal(lineProblemText(capped[0]!, "Challakere"), "Sugar S1: only 50 can be ordered at the Challakere godown (100 ready, 360 on pre-order), you have 60");
 });

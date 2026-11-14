@@ -18,7 +18,7 @@ import { productImages } from "@/lib/product-images";
 import { ProductGallery } from "@/components/site/ProductGallery";
 import { showCustomerNotification } from "@/components/site/CartFloatingNotification";
 import { AddToCartPicker } from "@/components/site/AddToCartPicker";
-import { dayLabel, preorderText } from "@/lib/preorder";
+import { dayLabel, preorderBy, preorderText } from "@/lib/preorder";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { products as demoProducts } from "@/lib/data";
 import { storeCategorySlug } from "@/lib/category-slug";
@@ -129,7 +129,10 @@ function ProductDetail() {
   const readyStock = Math.max(0, Math.floor((Number(product.stock) || 0) - (Number(product.reserved) || 0)));
   // Pre-order units (14 Nov 2026): on sale after the ready ones, collected once they arrive.
   const arriving = Math.max(0, Number(product.incoming) || 0);
-  const arrivingBy = dayLabel(product.incomingBy);
+  // All the arriving units are in by the date of the last lot they come from (review fix: the earliest date was shown);
+  // with more than one date, each date's units are listed.
+  const arrivingBy = dayLabel(preorderBy(product.incomingDetail, arriving, product.incomingBy ?? null));
+  const arrivingDates = (product.incomingDetail ?? []).filter((entry) => entry.qty > 0);
   const availableStock = readyStock + arriving;
   const purchaseLimit = currentPurchaseLimit;
   const configuredMax = getMaxPurchaseQuantity(product);
@@ -251,6 +254,11 @@ function ProductDetail() {
               <p className="font-semibold">
                 {readyStock > 0 ? preorderText.readyAndArriving(readyStock, arriving, arrivingBy) : preorderText.productLotOnly(arrivingBy)}
               </p>
+              {arrivingDates.length > 1 && (
+                <ul className="mt-1 text-xs">
+                  {arrivingDates.map((entry) => <li key={entry.by}>{preorderText.arrivingByCount(dayLabel(entry.by), entry.qty)}</li>)}
+                </ul>
+              )}
               <p className="mt-1 text-xs">{preorderText.explanation(product.incomingGodown || "nearest")}</p>
             </div>
           ) : (

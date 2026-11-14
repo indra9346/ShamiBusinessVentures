@@ -9,8 +9,8 @@
 --     read-only before the release; identical to the repo's latest migrations apart from whitespace), with its grants;
 --     record_stock_count gets its old 13-argument signature back;
 --   * leaves the new columns and tables (branch_stock.stock keeps its meaning throughout: ready stock; free_total,
---     incoming and incoming_detail simply stop being maintained) and the new pre-order functions (they refuse while
---     pre-orders are off, and no screen of the old zip calls them).
+--     incoming and incoming_detail simply stop being maintained) and the new pre-order functions, with EXECUTE taken
+--     from every role on those that change data; drops the order_items preorder_qty CHECK.
 -- Read at 13 Nov 2026 from project ppziinqjxqpxpmudinfd with: select pg_get_functiondef(p.oid) ... (read-only).
 
 BEGIN;
@@ -1542,6 +1542,33 @@ END $function$;
 -- The order guard asked private.order_waiting_goods; nothing does now.
 REVOKE EXECUTE ON FUNCTION private.order_waiting_goods(uuid) FROM authenticated, service_role;
 REVOKE EXECUTE ON FUNCTION private.preorder_zoho_moved_alert(uuid, text, text) FROM authenticated, service_role;
+
+-- Review fix (14 Nov 2026): the pre-order functions that change data can't run any more. The functions put back above do
+-- not know lots: an undo of a match would turn a received batch into a lot that the old checkout sells as ready stock.
+DO $revoke$
+DECLARE f text;
+BEGIN
+  FOREACH f IN ARRAY ARRAY[
+    'public.create_incoming_batch(text,text,numeric,numeric,date,numeric,text,jsonb,text,jsonb,jsonb,jsonb,timestamp with time zone,uuid,text)',
+    'public.admin_update_incoming_batch(uuid,numeric,date,numeric,numeric,boolean,text,text,text)',
+    'public.admin_cancel_incoming_batch(uuid,text)',
+    'public.admin_join_incoming_batches(uuid,uuid,text)',
+    'public.admin_move_to_ready(uuid,numeric,text)',
+    'public.receive_bill_lines(text,jsonb,jsonb,text,jsonb,jsonb,timestamp with time zone,uuid,text)',
+    'public.unmatch_incoming_batch(uuid,text,jsonb,jsonb,timestamp with time zone,uuid,text)',
+    'public.release_preorder_hold(text,text,numeric,text,jsonb,numeric,uuid[],timestamp with time zone,uuid,text)',
+    'public.apply_preorder_reading(text,text,numeric,timestamp with time zone,uuid[],numeric,boolean)',
+    'public.preorder_push_start(text,text)',
+    'public.preorder_push_finish(text,text,boolean)',
+    'public.admin_set_preorder_settings(boolean,integer,boolean)',
+    'public.refresh_incoming_all()'] LOOP
+    IF to_regprocedure(f) IS NOT NULL THEN
+      EXECUTE format('REVOKE EXECUTE ON FUNCTION %s FROM PUBLIC, anon, authenticated, service_role', f);
+    END IF;
+  END LOOP;
+END $revoke$;
+-- The old admin_update_order_item lowers a quantity without lowering preorder_qty.
+ALTER TABLE public.order_items DROP CONSTRAINT IF EXISTS order_items_preorder_qty_check;
 
 COMMIT;
 

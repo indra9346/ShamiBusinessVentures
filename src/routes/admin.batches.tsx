@@ -83,6 +83,8 @@ function AdminBatches() {
   // Receive purchase opened from a pre-order (Match now): at the lot's godown, with the bill when one was found.
   const [receiveAt, setReceiveAt] = useState<{ godown?: string | undefined; billId?: string | undefined }>({});
   const [incomingOpen, setIncomingOpen] = useState(false);
+  // New pre-order put aside while one of its listed bills is received (review fix): it comes back with what was typed.
+  const [incomingParked, setIncomingParked] = useState(false);
   const openReceive = useCallback((godown?: string, billId?: string) => { setReceiveAt({ godown, billId }); setReceiveOpen(true); }, []);
   const [editRow, setEditRow] = useState<BatchReportRow | null>(null);
   const [status, setStatus] = useState<BatchStatus>("all");
@@ -234,7 +236,8 @@ function AdminBatches() {
               </>
       )}
 
-      {data && <ReceiveFromBillDialog open={receiveOpen} onOpenChange={setReceiveOpen} godowns={data.godowns.filter((g) => g.active)} defaultGodown={receiveAt.godown ?? search.godown}
+      {data && <ReceiveFromBillDialog open={receiveOpen} godowns={data.godowns.filter((g) => g.active)} defaultGodown={receiveAt.godown ?? search.godown}
+        onOpenChange={(next) => { setReceiveOpen(next); if (!next && incomingParked) { setIncomingParked(false); setIncomingOpen(true); } }}
         initialBillId={receiveAt.billId}
         chargeTagged={(billId, lineId) => {
           const doc = data.costDocuments.find((d) => d.source === "bill" && d.zoho_id === billId && d.zoho_line_id === lineId);
@@ -242,8 +245,8 @@ function AdminBatches() {
         }}
         lotTags={(batchId) => data.costTags.filter((t) => t.batch_id === batchId).map((t) => t.amount)}
         onSaved={async (batchId) => { await load(); if (batchId) go({ tab: undefined, batch: batchId, order: undefined, customer: undefined }); }} />}
-      {data && incomingOpen && <IncomingBatchDialog open={incomingOpen} onOpenChange={setIncomingOpen} data={data} defaultGodown={search.godown}
-        onReceive={(godown) => { setIncomingOpen(false); openReceive(godown); }}
+      {data && (incomingOpen || incomingParked) && <IncomingBatchDialog open={incomingOpen} onOpenChange={setIncomingOpen} data={data} defaultGodown={search.godown}
+        onReceive={(godown, billId) => { setIncomingOpen(false); setIncomingParked(true); openReceive(godown, billId); }}
         onSaved={async (batchId) => { await load(); if (batchId) go({ tab: undefined, batch: batchId, order: undefined, customer: undefined }); }} />}
       {editRow && <EditDialog row={editRow} onClose={() => setEditRow(null)} onSaved={async () => { setEditRow(null); await load(); }} />}
     </PanelLayout>
@@ -435,8 +438,9 @@ const average = (rows: BatchReportRow[]) => {
  * − expenses on sold − stock lost (with its expenses), before GST (spec 9.3).
  */
 const profitBreakup = (t: { sales: number; costOfSold: number; lossValue: number; expenseOnSoldValue: number; expenseOnLostValue: number }) =>
-  // Two whole sentences (not a word in the middle), so each reads in Kannada.
-  t.lossValue < 0
+  // Two whole sentences (not a word in the middle), so each reads in Kannada. The sign of loss plus its expenses decides
+  // (review fix: 10 lost and 11 found with expenses on the lost read "+ stock found" while it lowered profit).
+  t.lossValue + t.expenseOnLostValue < 0
     ? `sales ${money(t.sales)} − purchase cost ${money(t.costOfSold)} − expenses on sold ${money(t.expenseOnSoldValue)} + stock found ${money(Math.abs(t.lossValue + t.expenseOnLostValue))}, before GST`
     : `sales ${money(t.sales)} − purchase cost ${money(t.costOfSold)} − expenses on sold ${money(t.expenseOnSoldValue)} − stock lost ${money(t.lossValue + t.expenseOnLostValue)}, before GST`;
 
@@ -1232,7 +1236,10 @@ function LotFlowBar({ batch, data }: { batch: BatchData["batches"][number]; data
         <span className="bg-sky-300" style={{ width: part(open) }} title={`Open to pre-order ${units(open)}`} />
         <span className="bg-slate-300" style={{ width: part(holdBack) }} title={`Held back ${units(holdBack)}`} />
       </div>
-      <p className="mt-1 text-xs text-slate">{`Expected ${units(batch.quantity)} · ${units(sold)} sold · ${units(open)} open${holdBack ? ` · ${units(holdBack)} held back` : ""}${held ? ` · ${units(held)} held in Zoho` : ""}`}</p>
+      <p className="mt-1 text-xs text-slate">
+        {[`Expected ${units(batch.quantity)}`, `${units(sold)} sold`, `${units(open)} open`, ...(holdBack ? [`${units(holdBack)} held back`] : []), ...(held ? [`${units(held)} held in Zoho`] : [])]
+          .map((part, index) => <span key={part}>{index ? " · " : ""}{part}</span>)}
+      </p>
     </div>
   );
 }

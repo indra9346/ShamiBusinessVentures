@@ -1,5 +1,5 @@
 import type { Product } from "@/lib/data";
-import { cartLineSplit, dayLabel, preorderText } from "@/lib/preorder";
+import { cartLineSplit, dayLabel, preorderBy, preorderText } from "@/lib/preorder";
 
 /**
  * A cart or checkout line that takes pre-order units (14 Nov 2026): how many are ready now and how many arrive later,
@@ -10,7 +10,8 @@ export function PreorderSplit({ product, qty, className }: { product: Product; q
   if (arriving <= 0) return null;
   const split = cartLineSplit(qty, Math.max(0, Math.floor((Number(product.stock) || 0) - (Number(product.reserved) || 0))));
   if (split.preorder <= 0) return null;
-  const by = dayLabel(product.incomingBy);
+  // The lots are taken earliest first: the line's units are in by the date where the arriving detail covers them.
+  const by = dayLabel(preorderBy(product.incomingDetail, split.preorder, product.incomingBy ?? null));
   return (
     <p className={className ?? "max-w-[14rem] text-[11px] font-semibold text-amber-800"}>
       {split.ready > 0 ? preorderText.cartSplit(split.ready, split.preorder, by) : preorderText.allArriving(split.preorder, by)}
@@ -29,7 +30,8 @@ export function preorderPart(lines: { product: Product; qty: number }[]) {
     const split = cartLineSplit(line.qty, Math.max(0, Math.floor((Number(line.product.stock) || 0) - (Number(line.product.reserved) || 0))));
     if (split.preorder <= 0) continue;
     qty += split.preorder;
-    if ((line.product.incomingBy ?? "") > by) by = line.product.incomingBy ?? "";
+    const lineBy = preorderBy(line.product.incomingDetail, split.preorder, line.product.incomingBy ?? null) ?? "";
+    if (lineBy > by) by = lineBy;
     godown ||= line.product.incomingGodown ?? "";
   }
   return { qty, by, godown };

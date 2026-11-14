@@ -70,11 +70,18 @@ const two = (await order(C3, [[SUGAR, 2]])).order_no;               // ready onl
 assert.deepEqual(await split("BR-HBL"), [3, 100, 103]);
 await pull({ "BR-CLK": 340, "BR-HBL": 3 }, { between: async () => invoiceInZoho(two) });  // Zoho took the 2 out
 assert.deepEqual(await split("BR-HBL"), [1, 100, 101], "the 2 are subtracted twice once: never above the truth");
-// The next pull can't tell a double subtraction from a bill typed in Zoho: the 2 come back as held stock (never a guess
-// upward), and an admin who knows releases them.
-await pull({ "BR-CLK": 340, "BR-HBL": 3 });
-assert.deepEqual([...(await split("BR-HBL")), (await watch("BR-HBL")).held], [1, 100, 101, 2]);
-await serverOne("SELECT public.release_preorder_hold('BR-HBL', $1, 2, 'the invoice of order two, counted twice', '[]'::jsonb, 3, '{}'::uuid[], $2::timestamptz, $3, 'TEST Admin')", [SUGAR, now(), ADMIN]);
+// Review fix (held leak): the 2 were counted only through the snapshot (suspect). They have left W since, so at the next
+// pull they come back unheld: the total is the truth again and nothing is held (before the fix, 2 stayed held until the
+// last Sugar lot closed, and head office could not edit Hubli's stock).
+r = await pull({ "BR-CLK": 340, "BR-HBL": 3 });
+assert.deepEqual([...(await split("BR-HBL")), (await watch("BR-HBL")).held, n(r["BR-HBL"].healed)], [3, 100, 103, 0, 2]);
+assert.equal((await notes("Zoho shows stock the website can't explain")).filter((x) => /Hubli/.test(x.message)).length, 0, "no false alert");
+// A real rise the website can't explain (a credit note in Zoho) is held; an admin who knows releases it.
+await pull({ "BR-CLK": 340, "BR-HBL": 5 });
+assert.deepEqual([...(await split("BR-HBL")), (await watch("BR-HBL")).held], [3, 100, 103, 2]);
+await serverOne("SELECT public.release_preorder_hold('BR-HBL', $1, 2, 'credit note CN-2 from a customer return', '[]'::jsonb, 5, '{}'::uuid[], $2::timestamptz, $3, 'TEST Admin')", [SUGAR, now(), ADMIN]);
+assert.deepEqual([...(await split("BR-HBL")), (await watch("BR-HBL")).held], [5, 100, 105, 0]);
+await pull({ "BR-CLK": 340, "BR-HBL": 3 });                      // and 2 sold at the Hubli counter
 assert.deepEqual([...(await split("BR-HBL")), (await watch("BR-HBL")).held], [3, 100, 103, 0]);
 // A reading older than the watch's last change is skipped.
 r = (await serverOne("SELECT public.apply_preorder_reading('BR-HBL', $1, 99, $2::timestamptz, '{}'::uuid[]) AS r", [SUGAR, new Date(Date.now() - 3600_000).toISOString()])).r;
@@ -84,12 +91,36 @@ await refuses(() => adminOne("SELECT public.admin_set_branch_stock('BR-HBL', $1,
   new RegExp(`^Pre-order batch ${HCODE} is on its way to Hubli Godown\\. Its bags come into stock with its Zoho bill, so don't type them in\\. You can still lower this stock\\.$`), "I3 increase");
 await adminOne("SELECT public.admin_set_branch_stock('BR-HBL', $1, 2)", [SUGAR]);
 assert.deepEqual([...(await split("BR-HBL")), (await pair("BR-HBL")).pending], [2, 100, 102, true], "typed ready stock + arriving = total");
+// Review fix: the waiting edit no longer stops the pull's reading (it stays in the total), so Zoho's falls are seen.
 r = await pull({ "BR-CLK": 340, "BR-HBL": 3 });
-assert.deepEqual(r["BR-HBL"], { skipped: "pending" });
-// The push plan: ready + (waiting - lot units in it) - Zoho = 2 + 0 - 3 = -1 to Zoho, then the reading after the push.
+assert.deepEqual([n(r["BR-HBL"].T), n(r["BR-HBL"].held)], [102, 0]);
+// The push: the edit itself (-1) goes to Zoho, then it waits no more; the total does not move.
 const plan = (await serverOne("SELECT public.preorder_push_plan('BR-HBL', $1, 3, '{}'::uuid[]) AS r", [SUGAR])).r;
 assert.deepEqual([plan.blocked, n(plan.delta)], [false, -1]);
-await serverOne("SELECT public.apply_preorder_reading('BR-HBL', $1, 2, $2::timestamptz, '{}'::uuid[], 0, true) AS r", [SUGAR, now()]);
+let st = (await serverOne("SELECT public.preorder_push_start('BR-HBL', $1) AS r", [SUGAR])).r;
+assert.deepEqual([st.blocked, n(st.delta)], [false, -1]);
+// While it is on its way, readings of that godown wait (Zoho may or may not show it yet).
+assert.deepEqual((await pull({ "BR-CLK": 340, "BR-HBL": 2 }))["BR-HBL"], { skipped: "pushing" });
+await refuses(() => serverOne("SELECT public.release_preorder_hold('BR-HBL', $1, 1, 'checking the in-flight guard', '[]'::jsonb, 2, '{}'::uuid[], $2::timestamptz, $3, 'TEST Admin')", [SUGAR, now(), ADMIN]),
+  /^A stock edit for Sugar S1 at Hubli Godown is being sent to Zoho right now\. Try again in a minute\.$/, "reading while pushing");
+// An admin edit while it is on its way stays waiting (review fix: it used to be cleared and become a false hold).
+await adminOne("SELECT public.admin_set_branch_stock('BR-HBL', $1, 1)", [SUGAR]);
+st = (await serverOne("SELECT public.preorder_push_finish('BR-HBL', $1, true) AS r", [SUGAR])).r;
+assert.deepEqual([n(st.sent), n(st.pending)], [-1, -1]);
+assert.deepEqual(await pair("BR-HBL").then((p) => [p.ready, p.arriving, p.total, p.pending]), [1, 100, 101, true]);
+r = await pull({ "BR-CLK": 340, "BR-HBL": 2 });                   // Zoho took the -1 (3 -> 2): no rise, nothing held
+assert.deepEqual([n(r["BR-HBL"].T), n(r["BR-HBL"].held)], [101, 0]);
+st = (await serverOne("SELECT public.preorder_push_start('BR-HBL', $1) AS r", [SUGAR])).r;
+assert.equal(n(st.delta), -1);
+await serverOne("SELECT public.preorder_push_finish('BR-HBL', $1, false) AS r", [SUGAR]);   // Zoho refused: still waiting
+assert.equal((await pair("BR-HBL")).pending, true);
+st = (await serverOne("SELECT public.preorder_push_start('BR-HBL', $1) AS r", [SUGAR])).r;
+await serverOne("SELECT public.preorder_push_finish('BR-HBL', $1, true) AS r", [SUGAR]);
+r = await pull({ "BR-CLK": 340, "BR-HBL": 1 });
+assert.deepEqual(await pair("BR-HBL").then((p) => [p.ready, p.arriving, p.total, p.pending]), [1, 100, 101, false]);
+// Back to 2 ready for what follows: a Zoho receipt of 1 (unexplained, held) released by an admin.
+await pull({ "BR-CLK": 340, "BR-HBL": 2 });
+await serverOne("SELECT public.release_preorder_hold('BR-HBL', $1, 1, 'credit note CN-3 from a customer return', '[]'::jsonb, 2, '{}'::uuid[], $2::timestamptz, $3, 'TEST Admin')", [SUGAR, now(), ADMIN]);
 assert.deepEqual(await pair("BR-HBL").then((p) => [p.ready, p.arriving, p.total, p.pending]), [2, 100, 102, false]);
 
 /* ---------- 9. a bill typed at the wrong place: held there; received through a transfer (L6) ---------- */

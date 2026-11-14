@@ -85,8 +85,10 @@ export type CheckoutLine = {
   id: string; name: string; qty: number;
   /** How many this godown can sell now (ready + pre-order units on sale); null = it does not sell this item. */
   available: number | null;
-  /** Of available, the units that arrive later (pre-order batches, 14 Nov 2026). */
+  /** The units that arrive later at this godown (pre-order batches, 14 Nov 2026). */
   arriving?: number | undefined;
+  /** The ready units there (in the godown now). available may be less than ready + arriving: the per-order maximum. */
+  ready?: number | undefined;
 };
 export type LineProblem = CheckoutLine & { kind: "not_sold" | "short" };
 
@@ -103,7 +105,9 @@ export function lineProblemText(problem: LineProblem, godown: string): string {
   if (problem.kind === "not_sold") return `${name}: not sold at the ${godown} godown, so it is not in this total`;
   if (!problem.available) return `${name}: out of stock at the ${godown} godown`;
   const arriving = Math.max(0, problem.arriving ?? 0);
-  if (arriving > 0) return preorderText.limit(name, problem.available, godown, Math.max(0, problem.available - arriving), arriving, problem.qty);
+  // Ready and arriving as the godown has them (review fix: worked out from a capped available, 100 ready read as 0).
+  const ready = problem.ready ?? Math.max(0, problem.available - arriving);
+  if (arriving > 0) return preorderText.limit(name, problem.available, godown, Math.max(0, ready), arriving, problem.qty);
   return `${name}: only ${problem.available} available at the ${godown} godown, you have ${problem.qty}`;
 }
 

@@ -7,7 +7,7 @@ import { billPlan, billSummary } from "@/lib/bill-batches";
 import { costBeforeGst } from "@/lib/batches";
 import {
   billChargeDocuments, chargeSplitMethod, costDocChange, countedCost, expenseDocuments, expenseListRow, expensesNotAllowed, parseKg, REAUTHORIZE_HINT,
-  replacesStaleSplit, splitByMethod, zohoSaysGone, type ChargeBill, type CostDoc, type SplitBatch, type SplitMethod, type StoredCostDoc,
+  NOT_BATCH_COST_NOTE, notBatchCost, replacesStaleSplit, splitByMethod, zohoSaysGone, type ChargeBill, type CostDoc, type SplitBatch, type SplitMethod, type StoredCostDoc,
 } from "@/lib/batch-costs";
 
 /*
@@ -113,15 +113,18 @@ async function splitInputs(db: Db, picks: { batchId: string; typed?: number | nu
 
 /** Saves the document as Zoho has it now and replaces its tags with the split: one transaction per database call. */
 async function saveAndTag(db: Db, doc: CostDoc & { gst_override?: boolean | null }, picks: SplitBatch[], method: SplitMethod,
-  who: { id: string; name: string; confirmRebilled: boolean; note: string }) {
+  who: { id: string; name: string; confirmRebilled: boolean; note: string; replace?: boolean }) {
+  if (doc.source === "expense" && notBatchCost(doc.account_name)) throw new Error(NOT_BATCH_COST_NOTE);
   const { data: docId, error: saveError } = await db.rpc("save_cost_document", { _doc: doc as unknown as Json });
   if (saveError || docId === null) throw new Error(saveError?.message ?? "Could not save the expense");
   const { data: row, error: readError } = await db.from("zoho_cost_documents").select("id,cost_amount,flag,gone_at").eq("id", Number(docId)).single();
   if (readError || !row) throw new Error("Could not read the expense back");
   const split = splitByMethod(n(row.cost_amount), picks, method);
   if (split.problem) throw new Error(split.problem);
+  // A stale split (Zoho changed the document) is replaced in the same database call (review fix: untag first, in a call
+  // of its own, could leave the document untagged when the second call failed).
   const { error } = await db.rpc("tag_batch_costs", {
-    _document_id: row.id, _confirm_rebilled: who.confirmRebilled, _by: who.id, _by_name: who.name,
+    _document_id: row.id, _confirm_rebilled: who.confirmRebilled, _by: who.id, _by_name: who.name, _replace: who.replace ?? false,
     _rows: split.rows.map((r) => ({ batch_id: r.batchId, amount: r.amount, method, weight: r.weight, note: who.note })) as unknown as Json,
   });
   if (error) throw new Error(error.message);
@@ -240,18 +243,11 @@ export const tagBatchCosts = createServerFn({ method: "POST" })
       const row = stored.docs.find((d) => d.zoho_line_id === data.lineId);
       const override = data.gstOverride !== undefined ? data.gstOverride : row?.gst_override ?? null;
       const tagged = row ? stored.tags.filter((t) => t.document_id === row.id).reduce((sum, t) => sum + t.amount, 0) : 0;
-      if (row && replacesStaleSplit({ ...row, tagged }, countedCost(doc, override))) {
-        // A new split of a document Zoho changed (or whose GST choice changed): everything is read and checked first, and
-        // only then the old split comes off (untag clears the flag and the accepted amount), so the new one is checked
-        // against Zoho's amount now.
-        const check = splitByMethod(countedCost(doc, override), picks, data.method);
-        if (check.problem) throw new Error(check.problem);
-        if (doc.rebilled && !data.confirmRebilled) throw new Error("This expense was charged on to a customer; tick to count it as your cost");
-        const { error } = await k.db.rpc("untag_batch_costs", { _document_id: row.id, _by: context.userId, _by_name: name });
-        if (error) throw new Error(error.message);
-      }
+      // A new split of a document Zoho changed (or whose GST choice changed) replaces the old one in one call, checked
+      // against Zoho's amount now; if anything is refused the old split and its flag stay.
+      const replace = Boolean(row && replacesStaleSplit({ ...row, tagged }, countedCost(doc, override)));
       return saveAndTag(k.db, { ...doc, ...(data.gstOverride !== undefined ? { gst_override: data.gstOverride } : {}) }, picks, data.method,
-        { id: context.userId, name, confirmRebilled: data.confirmRebilled, note: data.note });
+        { id: context.userId, name, confirmRebilled: data.confirmRebilled, note: data.note, replace });
     });
   });
 
@@ -301,11 +297,8 @@ export async function tagBillCharges(db: Db, plan: ChargeBill, raw: Record<strin
       // Ticked again after the bill was edited in Zoho: the new split over all of the bill's batches replaces the old one.
       const row = stored.docs.find((d) => d.zoho_line_id === doc.zoho_line_id);
       const tagged = row ? stored.tags.filter((t) => t.document_id === row.id).reduce((sum, t) => sum + t.amount, 0) : 0;
-      if (row && replacesStaleSplit({ ...row, tagged }, countedCost(doc, row.gst_override))) {
-        const { error } = await db.rpc("untag_batch_costs", { _document_id: row.id, _by: by.id, _by_name: by.name });
-        if (error) throw new Error(error.message);
-      }
-      await saveAndTag(db, doc, picks, chargeSplitMethod(doc.zoho_line_id), { ...by, confirmRebilled: false, note: `Bill ${plan.billNumber}` });
+      const replace = Boolean(row && replacesStaleSplit({ ...row, tagged }, countedCost(doc, row.gst_override)));
+      await saveAndTag(db, doc, picks, chargeSplitMethod(doc.zoho_line_id), { ...by, confirmRebilled: false, note: `Bill ${plan.billNumber}`, replace });
     } catch (cause) {
       warnings.push(`${doc.description} on bill ${plan.billNumber} was not tagged: ${errorText(cause)}`);
     }

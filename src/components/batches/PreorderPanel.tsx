@@ -328,7 +328,11 @@ export function PreorderPanel({ batch, data, onChanged, onMatch }: {
           <Fig label="Purchase order" value={batch.zoho_po_number || "Typed in"} />
           <Fig label="Cost before GST" value={`${money(batch.est_unit_cost_ex_gst ?? batch.unit_cost)} (estimate until the bill)`} />
         </dl>
-        <p className="mt-2 text-xs text-slate">{`${lotLabel(lot, clock.todayIst)} · ${godown}${batch.supplier ? ` · from ${batch.supplier}` : ""}${batch.received_by_name ? ` · made by ${batch.received_by_name}` : ""}`}</p>
+        <p className="mt-2 text-xs text-slate">
+          <span>{lotLabel(lot, clock.todayIst)}</span><span>{` · ${godown}`}</span>
+          {batch.supplier && <span>{` · supplier ${batch.supplier}`}</span>}
+          {batch.received_by_name && <span>{` · made by ${batch.received_by_name}`}</span>}
+        </p>
         <div className="mt-3 flex flex-wrap gap-2">
           <Button size="sm" variant="outline" disabled={batch.paused_reason === "receiving"} onClick={() => setEditOpen(true)}><Pencil className="mr-1.5 h-3.5 w-3.5" />Edit pre-order</Button>
           {batch.selling_paused
@@ -344,7 +348,7 @@ export function PreorderPanel({ batch, data, onChanged, onMatch }: {
 
       {batch.branch_id && <HoldBox data={data} branchId={batch.branch_id} productId={batch.product_id} productName={batch.product_name} onMatch={onMatch} onChanged={changed} />}
 
-      <Panel title={`Stock maths at ${godown}`} action={<Button size="sm" variant="ghost" onClick={() => setMathsKey((k) => k + 1)}><RefreshCw className="h-3.5 w-3.5" /></Button>}>
+      <Panel title={`Stock maths at ${godown}`} action={<Button size="sm" variant="ghost" aria-label="Read the stock maths again" onClick={() => setMathsKey((k) => k + 1)}><RefreshCw className="h-3.5 w-3.5" /></Button>}>
         {batch.branch_id && <StockMaths branchId={batch.branch_id} productId={batch.product_id} godown={godown} refreshKey={mathsKey} />}
       </Panel>
 
@@ -466,7 +470,7 @@ function JoinDialog({ batch, others, onClose, onDone }: { batch: BatchRecord; ot
           <DialogTitle>{`Join a pre-order batch into ${batch.batch_code}`}</DialogTitle>
           <DialogDescription>When one bill line covers two pre-orders: the other's units, orders and expenses move here, and it is closed as joined.</DialogDescription>
         </DialogHeader>
-        <select value={from} onChange={(e) => setFrom(e.target.value)} className="h-10 w-full rounded-md border border-input bg-white px-2 text-sm">
+        <select value={from} aria-label="Pre-order to join" onChange={(e) => setFrom(e.target.value)} className="h-10 w-full rounded-md border border-input bg-white px-2 text-sm">
           {others.map((b) => <option key={b.id} value={b.id}>{`${b.batch_code} · ${qtyText(b.quantity)} by ${dayLabel(b.expected_date)}`}</option>)}
         </select>
         <label className="grid gap-1 text-xs font-semibold text-slate">Why<Input value={note} maxLength={300} onChange={(e) => setNote(e.target.value)} /></label>
@@ -531,7 +535,12 @@ export function MatchedLotNote({ batch, data, onChanged }: { batch: BatchRecord;
     <div className="rounded-md border border-sky-300 bg-sky-50 p-3 text-xs text-sky-950">
       <p className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <CalendarClock className="h-4 w-4 shrink-0" />
-        <span>{`From pre-order · bill ${batch.zoho_bill_number || batch.purchase_ref}${batch.matched_at ? ` · matched ${when(batch.matched_at)}` : ""}${batch.matched_by_name ? ` by ${batch.matched_by_name}` : ""}`}</span>
+        <span>
+          <span>{`From pre-order · bill ${batch.zoho_bill_number || batch.purchase_ref}`}</span>
+          {(batch.matched_at || batch.matched_by_name) && <span>{batch.matched_at
+            ? ` · matched ${when(batch.matched_at)}${batch.matched_by_name ? ` by ${batch.matched_by_name}` : ""}`
+            : ` · matched by ${batch.matched_by_name}`}</span>}
+        </span>
         <span>{`Estimate ${money(batch.est_unit_cost_ex_gst ?? 0)} → bill ${money(batch.unit_cost_ex_gst ?? batch.unit_cost)} before GST (${variance >= 0 ? "+" : "−"}${money(Math.abs(variance))} per unit)`}</span>
         {remainder && <span>{`The rest: ${remainder.batch_code} (${remainder.stage})`}</span>}
       </p>

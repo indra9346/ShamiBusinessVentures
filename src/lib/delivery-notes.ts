@@ -239,7 +239,10 @@ export function gateWords(gate: DeliveryGate): GateWords {
     case "no_items":
       return words("No items", "This order has no items to deliver.");
     case "not_arrived":
-      return words("Goods not arrived", preorderText.notArrived((gate.waiting_batches ?? []).join(", ") || "of this order", dayLabel(gate.expected_date, { full: true }) || "soon"), "wait");
+      // No batch codes or date (review fix: it read "Batch of this order is expected by soon"): a sentence of its own.
+      return words("Goods not arrived", (gate.waiting_batches ?? []).length && gate.expected_date
+        ? preorderText.notArrived((gate.waiting_batches ?? []).join(", "), dayLabel(gate.expected_date, { full: true }))
+        : preorderText.notArrivedPlain, "wait");
     case "not_found":
       return words("Order not found", "This order could not be found.");
     default:

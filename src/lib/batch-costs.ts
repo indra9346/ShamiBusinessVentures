@@ -160,6 +160,25 @@ export const countedCost = (doc: Pick<CostDoc, "amount_before_gst" | "gst_amount
 const ineligible = (value: unknown) => /^ineligible/i.test(text(value).trim());
 
 /**
+ * The Expense # (EXP-00126). A list row carries it as cf_expense; one expense read alone (GET expenses/:id) only inside
+ * custom_field_hash.cf_expense or custom_fields[] (api_name cf_expense), live 14 Nov 2026. Else the bank reference.
+ */
+export function expenseNumber(raw: Record<string, unknown>) {
+  const hash = raw["custom_field_hash"] && typeof raw["custom_field_hash"] === "object" ? (raw["custom_field_hash"] as Record<string, unknown>) : {};
+  const fields = Array.isArray(raw["custom_fields"]) ? (raw["custom_fields"] as Record<string, unknown>[]) : [];
+  const field = fields.find((f) => text(f?.["api_name"]) === "cf_expense" || text(f?.["placeholder"]) === "cf_expense");
+  return text(raw["cf_expense"]) || text(hash["cf_expense"]) || text(field?.["value"]) || text(raw["reference_number"]);
+}
+
+/**
+ * The owner's rule (open question 5): a channel partner's commission is not deducted from a batch's profit (the partner
+ * reports count it). Books books it under a "Channel Partner - <godown> - ..." expense account, so those can't be tagged.
+ */
+export const NOT_BATCH_COST_ACCOUNT = /^\s*channel\s*partner\b/i;
+export const NOT_BATCH_COST_NOTE = "Partner commission is not a batch cost (owner's rule)";
+export const notBatchCost = (accountName: unknown) => NOT_BATCH_COST_ACCOUNT.test(text(accountName));
+
+/**
  * A Books expense (GET expenses/:id) as cost documents: one for the whole expense, or one per line when it is itemized
  * (more than one line). `mode` forces one or the other, so a document keeps its identity when Zoho's line count changes.
  * Documents with no counted cost are left out.
@@ -178,7 +197,7 @@ export function expenseDocuments(raw: Record<string, unknown>, mode: "auto" | "w
   const status = text(raw["status"]).toLowerCase();
   const common = {
     source: "expense" as const, zoho_id: id,
-    doc_number: (text(raw["cf_expense"]) || text(raw["reference_number"])).slice(0, 80),
+    doc_number: expenseNumber(raw).slice(0, 80),
     doc_date: text(raw["date"]).slice(0, 10),
     vendor_name: text(raw["vendor_name"]).slice(0, 120),
     location_id: text(raw["location_id"] ?? raw["branch_id"]),
@@ -229,6 +248,8 @@ export function expenseDocuments(raw: Record<string, unknown>, mode: "auto" | "w
 export type ExpenseListRow = {
   expenseId: string; date: string; number: string; account: string; description: string; vendor: string;
   beforeGst: number; gst: number; total: number; status: string; rebilled: boolean; modifiedAt: string; locationId: string;
+  /** A channel partner's commission: never a batch cost, nor overhead of the batches. */
+  notBatchCost: boolean;
 };
 export function expenseListRow(raw: Record<string, unknown>): ExpenseListRow {
   const foreign = (text(raw["currency_code"]) || "INR").toUpperCase() !== "INR";
@@ -238,10 +259,11 @@ export function expenseListRow(raw: Record<string, unknown>): ExpenseListRow {
   const status = text(raw["status"]).toLowerCase();
   return {
     expenseId: text(raw["expense_id"]), date: text(raw["date"]).slice(0, 10),
-    number: text(raw["cf_expense"]) || text(raw["reference_number"]), account: text(raw["account_name"]),
+    number: expenseNumber(raw), account: text(raw["account_name"]),
     description: text(raw["description"]), vendor: text(raw["vendor_name"]),
     beforeGst: before, gst: paise(Math.max(0, total - before)), total, status, rebilled: status === "invoiced",
     modifiedAt: text(raw["last_modified_time"]), locationId: text(raw["location_id"] ?? raw["branch_id"]),
+    notBatchCost: notBatchCost(raw["account_name"]),
   };
 }
 

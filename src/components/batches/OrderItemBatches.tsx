@@ -133,10 +133,15 @@ export function orderWaiting(arrivals: Map<string, ItemArrival>) {
   return { waiting, by };
 }
 
-/** "Waiting for goods · arriving by 20 Nov", "Arrived on 19 Nov · ready to collect" or "Running late" under a line. */
-export function ItemArrivalNote({ arrival }: { arrival: ItemArrival | undefined }) {
+/**
+ * "Waiting for goods · arriving by 20 Nov", "Arrived on 19 Nov · ready to collect" or "Running late" under a line. With
+ * the order (review fix): nothing once it is delivered or cancelled, and just "Arrived on 19 Nov" for home delivery or an
+ * unpaid checkout.
+ */
+export function ItemArrivalNote({ arrival, order }: { arrival: ItemArrival | undefined; order?: { status?: string | null; delivery?: string | null } }) {
   if (!arrival) return null;
-  const state = arrivalState({ waiting: arrival.waiting, expected_date: arrival.expectedDate, arrived_on: arrival.arrivedOn }, istToday());
+  const state = arrivalState({ waiting: arrival.waiting, expected_date: arrival.expectedDate, arrived_on: arrival.arrivedOn }, istToday(),
+    order ? { status: order.status ?? "", pickup: /^pickup/i.test(order.delivery ?? "") } : undefined);
   if (state.state === "none") return null;
   return (
     <p className={`mt-0.5 text-[11px] font-semibold ${state.state === "arrived" ? "text-emerald-700" : "text-amber-800"}`}>{state.text}</p>

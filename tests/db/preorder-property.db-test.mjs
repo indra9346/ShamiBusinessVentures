@@ -15,7 +15,11 @@
 // One limit, from Zoho giving only its net number: a counter sale in Zoho and a rise the website has not read yet at the
 // same godown within one pull interval net out (a lot's bill typed in Zoho; or the units of an order invoiced while the
 // website was reading, which it subtracted twice and sees come back at the next reading), so the sale is not seen until
-// the bill is matched. The generator keeps a reading between those two.
+// the bill is matched. The generator keeps a reading between those two. The same holds the other way round (review fix,
+// 14 Nov 2026): an order invoiced in Zoho just after the read but before the website wrote (counted once, rightly) may
+// come back unheld at the next reading, so a rise in that interval waits for that reading too.
+// Liveness (review fix): a reading race alone never leaves units held: half the pulls (raced or not) are followed by two
+// quiet pulls, and at every godown that had nothing unread before the raced pull, no more is held than before it.
 //
 //   PGLITE_PATH=<folder with @electric-sql/pglite> [PREORDER_SEQ=20] [PREORDER_STEPS=40] [PREORDER_SEED=1] \
 //     node tests/db/preorder-property.db-test.mjs
@@ -71,9 +75,10 @@ for (let seq = 0; seq < SEQ; seq++) {
   await begin();
   const txnNow = new Date((await one("SELECT now() AS t")).t);
   const sim = { Z: { "BR-CLK": 50, "BR-HBL": 0 }, X: { "BR-CLK": 0, "BR-HBL": 0 }, unseen: { "BR-CLK": 0, "BR-HBL": 0 },
-    billRise: { "BR-CLK": 0, "BR-HBL": 0 }, fall: { "BR-CLK": 0, "BR-HBL": 0 }, netted: new Set(), bills: [], lastMatched: null, billNo: 0 };
+    billRise: { "BR-CLK": 0, "BR-HBL": 0 }, fall: { "BR-CLK": 0, "BR-HBL": 0 }, lateRace: { "BR-CLK": 0, "BR-HBL": 0 },
+    rose: { "BR-CLK": 0, "BR-HBL": 0 }, netted: new Set(), bills: [], lastMatched: null, billNo: 0 };
   const hist = [];
-  const read = (gs = G) => { for (const g of gs) { sim.unseen[g] = 0; sim.billRise[g] = 0; sim.fall[g] = 0; } };
+  const read = (gs = G) => { for (const g of gs) { sim.unseen[g] = 0; sim.billRise[g] = 0; sim.fall[g] = 0; sim.lateRace[g] = 0; sim.rose[g] = 0; } };
   await pull({ ...sim.Z }); read();
 
   const lots = () => q("SELECT * FROM public.batches WHERE stage = 'incoming' AND product_id = $1 ORDER BY batch_code", [SUGAR]);
@@ -135,10 +140,11 @@ for (let seq = 0; seq < SEQ; seq++) {
     sim.bills.push(bill);
     return bill;
   };
-  const doPull = async ({ invoiceBetween = false } = {}) => {
+  const doPull = async ({ invoiceBetween = false, invoiceAfterRead = false } = {}) => {
     const readAt = now();
     const snap = await snapshot([SUGAR]);
     const raced = {};
+    const late = {};
     if (invoiceBetween) {
       const cand = (await liveOrders()).filter((o) => n(o.waiting) === 0 && !sim.netted.has(o.order_no));
       if (cand.length) {
@@ -146,16 +152,33 @@ for (let seq = 0; seq < SEQ; seq++) {
         raced[o.branch_id] = (raced[o.branch_id] ?? 0) + o.qty;
       }
     }
+    // Zoho's numbers as read now; an order invoiced after the read but before the website writes is counted once, rightly.
+    const readZ = { ...sim.Z };
+    if (invoiceAfterRead) {
+      const cand = (await liveOrders()).filter((o) => n(o.waiting) === 0 && !sim.netted.has(o.order_no));
+      if (cand.length) {
+        const o = pick(cand); await invoiceInZoho(o.order_no); sim.Z[o.branch_id] -= o.qty; sim.netted.add(o.order_no);
+        late[o.branch_id] = (late[o.branch_id] ?? 0) + o.qty;
+      }
+    }
     for (const g of G) {
       const watched = !!(await watch(g));
       if (await pendingAt(g)) {
-        // The server sends a waiting website edit first (only when Zoho shows nothing unexplained), then reads again.
+        // Review fix: Zoho's reading first (the waiting edit stays in the total), then the edit itself goes to Zoho, only
+        // while nothing is held there.
         if (watched) {
-          const plan = (await serverOne("SELECT public.preorder_push_plan($1, $2, $3, $4::uuid[]) AS r", [g, SUGAR, sim.Z[g], snap[`${g}|${SUGAR}`] ?? []])).r;
-          if (plan.blocked) continue;
-          sim.Z[g] += n(plan.delta);
-          await serverOne("SELECT public.apply_preorder_reading($1, $2, $3, $4::timestamptz, $5::uuid[], $6, true)", [g, SUGAR, sim.Z[g], readAt, snap[`${g}|${SUGAR}`] ?? [], Math.max(0, n(plan.delta))]);
-        } else {
+          const res = (await serverOne("SELECT public.apply_preorder_reading($1, $2, $3, $4::timestamptz, $5::uuid[]) AS r", [g, SUGAR, readZ[g], readAt, snap[`${g}|${SUGAR}`] ?? []])).r;
+          if (res.skipped) continue;
+          if (res.watched !== false) {
+            read([g]);
+            const st = (await serverOne("SELECT public.preorder_push_start($1, $2) AS r", [g, SUGAR])).r;
+            if (st.blocked || st.skipped) continue;
+            sim.Z[g] += n(st.delta);
+            await serverOne("SELECT public.preorder_push_finish($1, $2, true)", [g, SUGAR]);
+            continue;
+          }
+        }
+        {
           const waiting = n((await one("SELECT private.batch_transfer_orders_waiting($1, $2) AS w", [g, SUGAR])).w);
           const site = (await pair(g)).ready;
           sim.Z[g] += site + waiting - sim.Z[g];
@@ -164,16 +187,28 @@ for (let seq = 0; seq < SEQ; seq++) {
         read([g]);
         continue;
       }
-      const res = (await serverOne("SELECT public.apply_preorder_reading($1, $2, $3, $4::timestamptz, $5::uuid[]) AS r", [g, SUGAR, sim.Z[g], readAt, snap[`${g}|${SUGAR}`] ?? []])).r;
+      const res = (await serverOne("SELECT public.apply_preorder_reading($1, $2, $3, $4::timestamptz, $5::uuid[]) AS r", [g, SUGAR, readZ[g], readAt, snap[`${g}|${SUGAR}`] ?? []])).r;
       if (res.watched === false) {
         const waiting = n((await one("SELECT private.batch_transfer_orders_waiting($1, $2) AS w", [g, SUGAR])).w);
-        await serverOne("SELECT public.apply_zoho_branch_stock($1, $2, $3, $4::timestamptz)", [g, SUGAR, Math.max(0, sim.Z[g] - waiting), readAt]);
+        await serverOne("SELECT public.apply_zoho_branch_stock($1, $2, $3, $4::timestamptz)", [g, SUGAR, Math.max(0, readZ[g] - waiting), readAt]);
       } else if (res.skipped) continue;
       read([g]);
     }
     // Subtracted twice now (in the snapshot and gone from Zoho), so the next reading sees it come back like a rise: the
     // same documented limit as a bill (no counter sale until that reading).
     for (const [g, k] of Object.entries(raced)) sim.billRise[g] += k;
+    for (const [g, k] of Object.entries(late)) sim.lateRace[g] += k;
+  };
+  /** Liveness (review fix): a reading race alone never leaves units held. At each godown that had nothing unread before the
+   * raced pull (no bill, rise or sale, no edit waiting), two quiet pulls later nothing more is held than before it. */
+  const checkHealed = async (before, label) => {
+    for (const [g, heldBefore] of Object.entries(before)) {
+      const wa = await watch(g);
+      if (!wa) continue;
+      if (!(wa.held <= heldBefore + 1e-6) && process.env.PREORDER_DEBUG) console.error(JSON.stringify({ g, wa, heldBefore, history: hist.slice(-12),
+        events: (await q("SELECT kind, branch_id, qty, detail - 'before' AS d FROM public.batch_lot_events WHERE branch_id = $1 ORDER BY id", [g])).slice(-8) }));
+      assert.ok(wa.held <= heldBefore + 1e-6, `seed ${seed} ${label}: ${g} held ${wa.held} after a raced pull and two quiet ones, ${heldBefore} before`);
+    }
   };
   const matchBill = async (bill, rest) => {
     const lot = await one("SELECT * FROM public.batches WHERE id = $1", [bill.lot]);
@@ -230,7 +265,7 @@ for (let seq = 0; seq < SEQ; seq++) {
         if (!free.length) break;
         const lot = pick(free);
         const g = rand() < 0.85 ? lot.branch_id : other(lot.branch_id);
-        if (sim.fall[g] > 0) { await step("pull", () => doPull()); }
+        if (sim.fall[g] > 0 || sim.lateRace[g] > 0) { await step("pull", () => doPull()); }
         const Q = n(lot.quantity);
         const qty = pick([Q, Q, Q, Math.max(1, Q - int(1, Math.max(1, Q - 1))), Q + int(1, 10)]);
         typeBill(lot, g, qty);
@@ -242,7 +277,7 @@ for (let seq = 0; seq < SEQ; seq++) {
         if (!wrong.length) break;
         const b = pick(wrong);
         const right = allLots.find((l) => l.id === b.lot).branch_id;
-        if (sim.fall[right] > 0) { await step("pull", () => doPull()); }
+        if (sim.fall[right] > 0 || sim.lateRace[right] > 0) { await step("pull", () => doPull()); }
         sim.Z[b.g] -= b.qty; sim.X[b.g] -= b.qty; sim.billRise[b.g] = Math.max(0, sim.billRise[b.g] - b.qty);
         sim.Z[right] += b.qty; sim.X[right] += b.qty; sim.billRise[right] += b.qty;
         b.g = right;
@@ -261,11 +296,26 @@ for (let seq = 0; seq < SEQ; seq++) {
       }
       case "rise": {
         const g = pick(G);
-        sim.Z[g] += int(1, 10);
+        if (sim.lateRace[g] > 0) { await step("pull", () => doPull()); }
+        const k = int(1, 10);
+        sim.Z[g] += k; sim.rose[g] += k;
         await check("unrelated rise");
         break;
       }
-      case "pull": await step("pull", () => doPull({ invoiceBetween: rand() < 0.4 })); break;
+      case "pull": {
+        const x = rand();
+        const clean = {};
+        for (const g of G) {
+          const wa = await watch(g);
+          // (and no line from an earlier reading still counted as possibly out of Zoho already: a sales order confirmed by
+          // hand in the same interval as a bill nets out in Zoho, which a reading can't see; that is not a race)
+          const leftOver = (await one("SELECT cardinality(suspect_lines) AS c FROM public.preorder_watch WHERE branch_id = $1 AND product_id = $2", [g, SUGAR]))?.c ?? 0;
+          if (wa && !leftOver && !sim.billRise[g] && !sim.fall[g] && !sim.lateRace[g] && !sim.rose[g] && !(await pendingAt(g))) clean[g] = wa.held;
+        }
+        await step("pull", () => doPull({ invoiceBetween: x < 0.3, invoiceAfterRead: x >= 0.3 && x < 0.5 }));
+        if (rand() < 0.5) { await step("pull", () => doPull()); await step("pull", () => doPull()); await checkHealed(clean, "quiet pulls"); }
+        break;
+      }
       case "invoice": {
         const cand = (await liveOrders()).filter((o) => n(o.waiting) === 0 && !sim.netted.has(o.order_no));
         if (!cand.length) break;
@@ -377,9 +427,10 @@ for (let seq = 0; seq < SEQ; seq++) {
         const free = Math.floor(wa.held - sim.X[g]);
         if (free <= 0 || sim.fall[g] > 0 || sim.billRise[g] > 0) break;
         const snap = await snapshot([SUGAR]);
+        const k = int(1, free);
         await step("release", async () => {
           await serverOne("SELECT public.release_preorder_hold($1, $2, $3, 'other stock, checked in Zoho', '[]'::jsonb, $4, $5::uuid[], $6::timestamptz, $7, 'TEST Admin')",
-            [g, SUGAR, int(1, free), sim.Z[g], snap[`${g}|${SUGAR}`] ?? [], now(), ADMIN]);
+            [g, SUGAR, k, sim.Z[g], snap[`${g}|${SUGAR}`] ?? [], now(), ADMIN]);
           read([g]);
         });
         break;

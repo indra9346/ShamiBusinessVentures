@@ -30,12 +30,34 @@
 --      bill held forever: the push waits for the match and the match waited for the push).
 --   Limit (Zoho gives net numbers only): a counter sale in Zoho and an unread rise at the same godown in one pull
 --   interval net out; the sale shows when that bill is matched.
+-- Review fixes (14 Nov 2026):
+--   * Change 1 no longer makes a low reading permanent. The lines a reading counts in W although Zoho may already have
+--     taken them out (only in the snapshot; an order whose push to Zoho is running; a sales order past draft kept only
+--     by rule (b)) are remembered (preorder_watch.suspect_lines), with how many of their units Zoho's own number really
+--     fell by (suspect_cap: never more than Zoho's fall at that reading, beyond the website's own changes). At a later
+--     reading, the units of those lines that have left W since (not cancelled or expired) may come back into the total
+--     unheld, up to that cap. Same class of limit as above: a counter sale in that reading's interval can stand in for
+--     the fall.
+--   * A website stock edit goes to Zoho as its own change (pending_delta), after Zoho's reading is applied and only while
+--     nothing is held: preorder_push_start / preorder_push_finish. While it is on its way, readings of that godown wait.
+--   * Readings are taken at the total's precision (2 decimals, rounded down).
 -- Ships with settings.preorder.enabled = false: until an administrator switches it on no lot can be made, and every
 -- changed function gives today's results (the old site keeps working). Safe to run twice.
 -- Every replaced function is the live definition of 13 Nov 2026 (checked equal to the repo, whitespace aside) with only
 -- the lines marked "14 Nov 2026" changed. Rollback: supabase/rollback/20261114_preorder_rollback.sql.
+-- Apply 20261114100000_batch_expenses.sql first, outside the cron minute (hh:00): the ALTER TABLEs below wait at most 5
+-- seconds for the shop's locks and then fail (run it again) instead of stalling checkouts.
 
 BEGIN;
+
+SET LOCAL lock_timeout = '5s';
+
+DO $guard$
+BEGIN
+  IF to_regclass('public.batch_cost_tags') IS NULL OR to_regprocedure('private.cost_tags_json(bigint)') IS NULL THEN
+    RAISE EXCEPTION 'Apply 20261114100000_batch_expenses.sql first';
+  END IF;
+END $guard$;
 
 INSERT INTO public.settings (key, value, is_public)
 VALUES ('preorder', '{"enabled":false,"graceDays":0,"requireAck":true}'::jsonb, true)
@@ -81,6 +103,9 @@ CREATE INDEX IF NOT EXISTS batches_incoming_idx ON public.batches (product_id, b
 CREATE UNIQUE INDEX IF NOT EXISTS batches_incoming_po_line_unique ON public.batches (zoho_po_id, zoho_po_line_id)
   WHERE stage = 'incoming' AND zoho_po_line_id <> '';
 CREATE INDEX IF NOT EXISTS batches_split_from_idx ON public.batches (split_from_batch_id) WHERE split_from_batch_id IS NOT NULL;
+-- One lot per "Make pre-order batch" press (the dialog's request id), so a retried request returns the same lot.
+CREATE UNIQUE INDEX IF NOT EXISTS batches_preorder_request_unique ON public.batches ((preorder_checks->>'request'))
+  WHERE preorder_checks ? 'request';
 
 /** Sold out = Depleted with the moment it happened; stock back = Active again. 14 Nov 2026: a lot is always Active. */
 CREATE OR REPLACE FUNCTION private.batch_stock_state()
@@ -145,6 +170,15 @@ CREATE TABLE IF NOT EXISTS public.preorder_watch (
 -- The website's own stock edits there not yet sent to Zoho (admin_set_branch_stock while zoho_pending): readings keep
 -- them in the total, and the hold step does not take them for a rise in Zoho.
 ALTER TABLE public.preorder_watch ADD COLUMN IF NOT EXISTS pending_delta numeric(14,2) NOT NULL DEFAULT 0;
+-- The lines the last reading counted as waiting although Zoho may already have taken them out (private.reading_lines).
+ALTER TABLE public.preorder_watch ADD COLUMN IF NOT EXISTS suspect_lines uuid[] NOT NULL DEFAULT '{}'::uuid[];
+-- At most this many of their units may come back unheld: what Zoho's own number fell by while they were counted.
+ALTER TABLE public.preorder_watch ADD COLUMN IF NOT EXISTS suspect_cap numeric(14,2) NOT NULL DEFAULT 0;
+-- A website stock edit on its way to Zoho (preorder_push_start .. preorder_push_finish): the part of pending_delta sent,
+-- the change posted, when.
+ALTER TABLE public.preorder_watch ADD COLUMN IF NOT EXISTS push_pending numeric(14,2);
+ALTER TABLE public.preorder_watch ADD COLUMN IF NOT EXISTS push_delta numeric(14,3);
+ALTER TABLE public.preorder_watch ADD COLUMN IF NOT EXISTS push_started_at timestamptz;
 CREATE INDEX IF NOT EXISTS preorder_watch_product_idx ON public.preorder_watch (product_id);
 
 CREATE TABLE IF NOT EXISTS public.batch_lot_events (   -- append-only audit
@@ -341,6 +375,61 @@ RETURNS numeric LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public'
   SELECT COALESCE(sum(item_qty), 0)::numeric FROM private.waiting_lines(_branch, _product, _snapshot)
 $function$;
 
+/*
+ * Added 14 Nov 2026 (review): W at a reading, the lines it counts, and the "suspect" ones among them: counted although
+ * Zoho may already have taken them out, so the website may have subtracted them twice. They are the lines
+ *   * only in the snapshot (they left W while the server read Zoho),
+ *   * of an order whose push to Zoho is running (it may have confirmed or invoiced in Zoho before the read),
+ *   * with a sales order past draft, kept only by rule (b) (confirmed by hand in Zoho before the goods arrived).
+ */
+CREATE OR REPLACE FUNCTION private.reading_lines(_branch text, _product text, _snapshot uuid[])
+RETURNS TABLE (w numeric, ids uuid[], suspect uuid[])
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public' AS $function$
+  WITH x AS (SELECT item_id, item_qty FROM private.waiting_lines(_branch, _product, _snapshot)),
+       now_rule AS (SELECT item_id FROM private.waiting_lines(_branch, _product, NULL))
+  SELECT COALESCE(sum(x.item_qty), 0)::numeric,
+         COALESCE(array_agg(x.item_id ORDER BY x.item_id), '{}'::uuid[]),
+         COALESCE(array_agg(x.item_id ORDER BY x.item_id) FILTER (WHERE
+              x.item_id NOT IN (SELECT item_id FROM now_rule)
+           OR EXISTS (SELECT 1 FROM public.order_items oi JOIN public.zoho_order_push_claims c ON c.order_id = oi.order_id
+                       WHERE oi.id = x.item_id AND c.locked_until > now())
+           OR EXISTS (SELECT 1 FROM public.order_items oi JOIN public.orders o ON o.id = oi.order_id
+                       WHERE oi.id = x.item_id AND COALESCE(o.zoho_salesorder_id, '') <> ''
+                         AND lower(COALESCE(o.zoho_order_status, '')) NOT IN ('', 'draft'))), '{}'::uuid[])
+    FROM x
+$function$;
+
+/** The units of the last reading's suspect lines that have left W since (not cancelled or expired: those gave their
+ * units back through the release path already). At most this much may come back into the total unheld. */
+CREATE OR REPLACE FUNCTION private.reading_heal_cap(_product text, _prev uuid[], _now uuid[])
+RETURNS numeric LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public' AS $function$
+  SELECT COALESCE(sum(oi.qty), 0)::numeric
+    FROM public.order_items oi JOIN public.orders o ON o.id = oi.order_id
+   WHERE oi.id = ANY (COALESCE(_prev, '{}'::uuid[])) AND NOT (oi.id = ANY (COALESCE(_now, '{}'::uuid[])))
+     AND oi.product_id = _product AND o.order_status NOT IN ('Cancelled', 'Payment Expired')
+$function$;
+
+/**
+ * Added 14 Nov 2026 (review): a transfer of the product between godowns (touching _branch, or any when NULL) that the
+ * website has not finished. Zoho may show it already: a reading taken now would hold (or take off) units the finish then
+ * moves again, so readings other than the finish's own wait for it, as the hourly pull does (holdBack).
+ */
+CREATE OR REPLACE FUNCTION private.transfer_unfinished(_product text, _branch text DEFAULT NULL)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public' AS $function$
+  SELECT EXISTS (SELECT 1 FROM public.batch_transfers t
+                  WHERE t.status IN ('pending', 'in_transit')
+                    AND (t.product_id = _product OR (jsonb_typeof(t.lines) = 'array'
+                         AND EXISTS (SELECT 1 FROM jsonb_array_elements(t.lines) l WHERE l->>'product_id' = _product)))
+                    AND (_branch IS NULL OR t.from_branch_id = _branch OR t.to_branch_id = _branch))
+$function$;
+
+/** Raised while a website stock edit of the pair is on its way to Zoho (Zoho may or may not show it yet). */
+CREATE OR REPLACE FUNCTION private.push_in_flight(_branch text, _product text)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public' AS $function$
+  SELECT EXISTS (SELECT 1 FROM public.preorder_watch WHERE branch_id = _branch AND product_id = _product
+                  AND push_started_at IS NOT NULL AND push_started_at > now() - interval '2 minutes')
+$function$;
+
 /** The lot units inside W (their bags are not in Zoho yet): the push plan leaves them out. */
 CREATE OR REPLACE FUNCTION private.lot_units_waiting(_branch text, _product text, _snapshot uuid[])
 RETURNS numeric LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public' AS $function$
@@ -359,10 +448,19 @@ RETURNS uuid[] LANGUAGE sql IMMUTABLE SET search_path TO 'public' AS $function$
                                         THEN _snapshot -> (_branch || '|' || _product) ELSE '[]'::jsonb END) x
 $function$;
 
+/**
+ * A Zoho reading at the total's precision: 2 decimals, rounded down (12.344 kg -> 12.34), so a gram the total can't hold
+ * is never taken for a rise. Rounding down errs low.
+ */
+CREATE OR REPLACE FUNCTION private.zoho_units(_reading numeric)
+RETURNS numeric LANGUAGE sql IMMUTABLE SET search_path TO 'public' AS $function$
+  SELECT floor(round(COALESCE(_reading, 0), 3) * 100) / 100
+$function$;
+
 /** Zoho's number for a godown (and product) in [{branch_id, product_id?, zoho | stock, waiting?}]; NULL when not given. */
 CREATE OR REPLACE FUNCTION private.reading_for(_readings jsonb, _branch text, _product text)
 RETURNS numeric LANGUAGE sql IMMUTABLE SET search_path TO 'public' AS $function$
-  SELECT round(CASE WHEN jsonb_typeof(r->'zoho') = 'number' THEN (r->>'zoho')::numeric ELSE (r->>'stock')::numeric END, 3)
+  SELECT private.zoho_units(CASE WHEN jsonb_typeof(r->'zoho') = 'number' THEN (r->>'zoho')::numeric ELSE (r->>'stock')::numeric END)
     FROM jsonb_array_elements(CASE WHEN jsonb_typeof(_readings) = 'array' THEN _readings ELSE '[]'::jsonb END) r
    WHERE r->>'branch_id' = _branch AND (NULLIF(r->>'product_id', '') IS NULL OR r->>'product_id' = _product)
      AND (jsonb_typeof(r->'zoho') = 'number' OR jsonb_typeof(r->'stock') = 'number')
@@ -411,7 +509,12 @@ RETURNS text LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public' AS
     '(none open)')
 $function$;
 
-/** As private.batch_transfer_total: the product's total follows its godowns. The caller's flags are put back after. */
+/**
+ * As private.batch_transfer_total: the product's total follows its godowns. The caller's flags are put back after.
+ * While a pre-order function is still moving the numbers (app.preorder_write, private.preorder_write_begin) it waits:
+ * the function syncs once at its end, so no "out of stock" or "low stock" alert goes out for a number that only exists
+ * half-way through it.
+ */
 CREATE OR REPLACE FUNCTION private.sync_product_total(_product text)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public' AS $function$
 DECLARE
@@ -419,6 +522,7 @@ DECLARE
   prev_inbound text := COALESCE(current_setting('app.zoho_inbound', true), '');
   prev_sync text := COALESCE(current_setting('app.branch_stock_sync', true), '');
 BEGIN
+  IF COALESCE(current_setting('app.preorder_write', true), '') = 'on' THEN RETURN; END IF;
   SELECT COALESCE(sum(stock), 0) INTO total FROM public.branch_stock WHERE product_id = _product;
   IF EXISTS (SELECT 1 FROM public.catalog_products WHERE id = _product
               AND COALESCE(payload->>'stock', '') ~ '^-?[0-9]+(\.[0-9]+)?$' AND (payload->>'stock')::numeric = total) THEN
@@ -460,6 +564,28 @@ BEGIN
   IF _branch IS NULL OR _product IS NULL THEN RETURN; END IF;
   UPDATE public.branch_stock SET free_total = free_total WHERE branch_id = _branch AND product_id = _product;
   PERFORM private.sync_product_total(_product);
+END $function$;
+
+/** A pre-order function starts moving numbers: the products' totals wait until private.preorder_write_end. Returns the
+ * flag as it was (a nested call leaves the outer one's flag alone). */
+CREATE OR REPLACE FUNCTION private.preorder_write_begin()
+RETURNS text LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public' AS $function$
+DECLARE prev text := COALESCE(current_setting('app.preorder_write', true), '');
+BEGIN
+  PERFORM set_config('app.preorder_write', 'on', true);
+  RETURN prev;
+END $function$;
+
+/** ... and ends: the flag as it was, and (outermost call) each product's total once, from its godowns' final numbers. */
+CREATE OR REPLACE FUNCTION private.preorder_write_end(_prev text, _products text[])
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public' AS $function$
+DECLARE p text;
+BEGIN
+  PERFORM set_config('app.preorder_write', COALESCE(_prev, ''), true);
+  IF COALESCE(_prev, '') = 'on' THEN RETURN; END IF;
+  FOR p IN SELECT DISTINCT x FROM unnest(COALESCE(_products, '{}'::text[])) x WHERE x IS NOT NULL ORDER BY 1 LOOP
+    PERFORM private.sync_product_total(p);
+  END LOOP;
 END $function$;
 
 /** {waiting: lot units the order holds, codes: [...], products: [...], expected_date: latest}. */
@@ -525,37 +651,58 @@ END $function$;
  * units of orders that reached Zoho since the last reading (invoiced or confirmed, so out of W and out of Z) counted
  * back in. With Zoho's number alone, a bill typed in Zoho and an invoice of q bags in the same hour net out: q of the
  * bill's bags would not be held and the website would count q bags it does not have until the match.
+ * Changed 14 Nov 2026 (review): that alone made any low reading permanent (a line Zoho took out before the read but the
+ * website still counted came back as a "rise" and was held). The last reading's suspect lines that have left W since
+ * may now come back unheld, up to their units (private.reading_lines, private.reading_heal_cap). Readings wait while a
+ * stock edit of the pair is on its way to Zoho.
  */
 CREATE OR REPLACE FUNCTION private.apply_reading(_branch text, _product text, _reading numeric, _read_at timestamptz,
   _snapshot uuid[], _explained numeric)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public' AS $function$
 DECLARE
   bs public.branch_stock%ROWTYPE;
+  wa public.preorder_watch%ROWTYPE;
   step jsonb;
+  rl record;
   w_units numeric;
   l record;
   t numeric;
   prev_raw numeric;
   after_row public.branch_stock%ROWTYPE;
-  z numeric := round(COALESCE(_reading, 0), 3);
+  z numeric := private.zoho_units(_reading);
   pd numeric;
+  base numeric;
+  heal numeric;
+  suspect_units numeric;
 BEGIN
   PERFORM 1 FROM public.catalog_products WHERE id = _product FOR UPDATE;
-  SELECT last_raw INTO prev_raw FROM public.preorder_watch WHERE branch_id = _branch AND product_id = _product FOR UPDATE;
+  SELECT * INTO wa FROM public.preorder_watch WHERE branch_id = _branch AND product_id = _product FOR UPDATE;
   IF NOT FOUND THEN RETURN jsonb_build_object('watched', false); END IF;
+  prev_raw := wa.last_raw;
+  IF private.push_in_flight(_branch, _product) THEN
+    RAISE EXCEPTION 'A stock edit for % at % is being sent to Zoho right now. Try again in a minute.',
+      private.product_name(_product), private.godown_name(_branch);
+  END IF;
   SELECT * INTO bs FROM public.branch_stock WHERE branch_id = _branch AND product_id = _product FOR UPDATE;
-  -- A website edit still waiting to go to Zoho (pending_delta) stays in the total and is no rise in Zoho. (The hourly
-  -- pull itself skips such a pair, apply_preorder_reading; a match, a count or a transfer reads it here.)
-  SELECT pending_delta INTO pd FROM public.preorder_watch WHERE branch_id = _branch AND product_id = _product;
-  pd := CASE WHEN COALESCE(bs.zoho_pending, false) THEN COALESCE(pd, 0) ELSE 0 END;
-  w_units := private.waiting_units(_branch, _product, _snapshot);
+  -- A website edit still waiting to go to Zoho (pending_delta) stays in the total and is no rise in Zoho.
+  pd := CASE WHEN COALESCE(bs.zoho_pending, false) THEN COALESCE(wa.pending_delta, 0) ELSE 0 END;
+  SELECT * INTO rl FROM private.reading_lines(_branch, _product, _snapshot);
+  w_units := rl.w;
   SELECT * INTO l FROM private.pair_lots(_branch, _product);
-  step := private.watch_step(_branch, _product, z, _explained,
-    z - (SELECT held FROM public.preorder_watch WHERE branch_id = _branch AND product_id = _product) - w_units + l.u - (COALESCE(bs.free_total, 0) - pd));
+  base := COALESCE(bs.free_total, 0) - pd;
+  heal := LEAST(wa.suspect_cap, private.reading_heal_cap(_product, wa.suspect_lines, rl.ids),
+    GREATEST(0, round(z - wa.held - w_units + l.u - base, 2)));
+  step := private.watch_step(_branch, _product, z, _explained, z - wa.held - w_units + l.u - base - heal);
   t := round(z - (step->>'held')::numeric - w_units + l.u + pd, 2);
   PERFORM private.set_pair_total(_branch, _product, t);
+  -- The suspect lines now, and how many of their units may come back later: what is left of the cap plus Zoho's own fall
+  -- at this reading (zoho_last already moved by the website's own changes in Zoho: pushes, counts, transfers).
+  SELECT COALESCE(sum(oi.qty), 0) INTO suspect_units FROM public.order_items oi WHERE oi.id = ANY (rl.suspect);
   UPDATE public.preorder_watch
-     SET read_at = COALESCE(_read_at, now()), last_waiting = w_units, last_unbilled = l.u, last_raw = round(t - l.i, 2), updated_at = now()
+     SET read_at = COALESCE(_read_at, now()), last_waiting = w_units, last_unbilled = l.u, last_raw = round(t - l.i, 2),
+         suspect_lines = rl.suspect,
+         suspect_cap = LEAST(suspect_units, GREATEST(0, wa.suspect_cap - heal) + GREATEST(0, round(wa.zoho_last - z, 2))),
+         updated_at = now()
    WHERE branch_id = _branch AND product_id = _product;
   IF t - l.i < 0 AND COALESCE(prev_raw, 0) >= 0 THEN
     PERFORM private.lot_event(NULL, _branch, _product, 'oversold', l.i - t,
@@ -571,16 +718,18 @@ BEGIN
   SELECT * INTO after_row FROM public.branch_stock WHERE branch_id = _branch AND product_id = _product;
   RETURN jsonb_build_object('T', after_row.free_total, 'ready', after_row.stock, 'incoming', after_row.incoming,
     'held', (step->>'held')::numeric, 'raw', round(t - l.i, 2), 'left', (step->>'left')::numeric,
-    'waiting', w_units, 'unbilled', l.u, 'arriving', l.i, 'zoho', z);
+    'waiting', w_units, 'unbilled', l.u, 'arriving', l.i, 'zoho', z, 'healed', heal);
 END $function$;
 
-/** The rise a reading would hold (read-only): (Z - held - W + U) - T now. */
+/** The rise a reading would hold (read-only): (Z - held - W + U) - T now, less what may come back unheld. */
 CREATE OR REPLACE FUNCTION private.reading_rise(_branch text, _product text, _reading numeric, _snapshot uuid[])
 RETURNS numeric LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public' AS $function$
-  SELECT round(COALESCE(_reading, 0), 3) - w.held - private.waiting_units(_branch, _product, _snapshot)
+  SELECT private.zoho_units(_reading) - w.held - rl.w
          + (SELECT u FROM private.pair_lots(_branch, _product))
          - (COALESCE(bs.free_total, 0) - CASE WHEN COALESCE(bs.zoho_pending, false) THEN w.pending_delta ELSE 0 END)
+         - LEAST(w.suspect_cap, private.reading_heal_cap(_product, w.suspect_lines, rl.ids))
     FROM public.preorder_watch w
+    CROSS JOIN LATERAL private.reading_lines(_branch, _product, _snapshot) rl
     LEFT JOIN public.branch_stock bs ON bs.branch_id = w.branch_id AND bs.product_id = w.product_id
    WHERE w.branch_id = _branch AND w.product_id = _product
 $function$;
@@ -599,6 +748,7 @@ DECLARE
   snap uuid[];
   t_before numeric;
   w_units numeric;
+  rl record;
   h numeric;
   l record;
   t numeric;
@@ -616,10 +766,11 @@ BEGIN
       CONTINUE;
     END IF;
     SELECT free_total INTO t_before FROM public.branch_stock WHERE branch_id = g.id AND product_id = _product FOR UPDATE;
-    w_units := private.waiting_units(g.id, _product, snap);
-    h := GREATEST(0, round(z - (COALESCE(t_before, 0) + w_units), 3));
-    INSERT INTO public.preorder_watch (branch_id, product_id, zoho_last, held, held_since, opened_at, read_at, updated_at)
-      VALUES (g.id, _product, z, h, CASE WHEN h > 0 THEN now() END, now(), COALESCE(_read_at, now()), now());
+    SELECT * INTO rl FROM private.reading_lines(g.id, _product, snap);
+    w_units := rl.w;
+    h := GREATEST(0, round(z - (COALESCE(t_before, 0) + w_units), 2));
+    INSERT INTO public.preorder_watch (branch_id, product_id, zoho_last, held, held_since, opened_at, read_at, updated_at, suspect_lines)
+      VALUES (g.id, _product, z, h, CASE WHEN h > 0 THEN now() END, now(), COALESCE(_read_at, now()), now(), rl.suspect);
     IF h > 0 THEN
       PERFORM private.lot_event(NULL, g.id, _product, 'hold_seen', h,
         jsonb_build_object('zoho_now', z, 'website_before', COALESCE(t_before, 0), 'waiting', w_units, 'opening', true), 'Held at opening');
@@ -897,7 +1048,8 @@ BEGIN
     RAISE EXCEPTION 'Bill % has % of %, but customers already bought % on batch %. Choose "the rest is still coming", or cancel and refund % of those orders first.',
       bill_no, private.qty_text(qb), _lot.product_name, private.qty_text(s), _lot.batch_code, private.qty_text(s - qb);
   END IF;
-  IF qb < q AND rest = 'coming' AND COALESCE(_rest_expected, _lot.expected_date) < private.ist_today() THEN
+  -- (Review, 14 Nov 2026: checked when the match is asked for; a transfer finishing it on a later day is not refused.)
+  IF qb < q AND rest = 'coming' AND _transfer_id IS NULL AND COALESCE(_rest_expected, _lot.expected_date) < private.ist_today() THEN
     RAISE EXCEPTION 'Choose when the rest should arrive';
   END IF;
 END $function$;
@@ -1110,10 +1262,14 @@ BEGIN
       arrived := arrived || o.order_no;
       IF o.order_status NOT IN ('Awaiting Payment', 'Payment Expired', 'Cancelled') THEN
         PERFORM public.enqueue_zoho_sync('order', o.id::text);
+        PERFORM private.notify_customer(o.id, 'Your goods have arrived',
+          format('%s: %s has arrived at the %s godown. Your invoice and pickup QR follow shortly.', o.order_no, lot.product_name,
+            private.godown_name(lot.branch_id)));
+      ELSIF o.order_status = 'Awaiting Payment' THEN
+        -- Review fix: an unpaid checkout gets no invoice or QR until it is paid.
+        PERFORM private.notify_customer(o.id, 'Your goods have arrived',
+          format('%s: %s has arrived. Pay to complete your order.', o.order_no, lot.product_name));
       END IF;
-      PERFORM private.notify_customer(o.id, 'Your goods have arrived',
-        format('%s: %s has arrived at the %s godown. Your invoice and pickup QR follow shortly.', o.order_no, lot.product_name,
-          private.godown_name(lot.branch_id)));
     END IF;
   END LOOP;
   FOR m IN SELECT value FROM jsonb_array_elements(moved) LOOP
@@ -1182,6 +1338,8 @@ DECLARE
   opening jsonb;
   bs public.branch_stock%ROWTYPE;
   pending_at text;
+  dup public.batches%ROWTYPE;
+  prev_write text;
 BEGIN
   IF NOT private.batch_transfer_admin(_by) THEN RAISE EXCEPTION 'Only administrators can create pre-order batches'; END IF;
   IF NOT COALESCE((SELECT lower(COALESCE(value->>'enabled', '')) = 'true' FROM public.settings WHERE key = 'preorder'), false) THEN
@@ -1201,6 +1359,15 @@ BEGIN
   SELECT * INTO p FROM public.catalog_products WHERE id = _product_id FOR UPDATE;
   IF NOT FOUND OR p.status <> 'approved' OR NOT p.active OR COALESCE(p.vendor_id, '') LIKE 'zoho:%' THEN
     RAISE EXCEPTION '% is not a website product', COALESCE(p.payload->>'name', _product_id);
+  END IF;
+  -- Added 14 Nov 2026 (review): a retried press of "Make pre-order batch" (same request id) gets the lot it made.
+  IF COALESCE(_checks->>'request', '') <> '' THEN
+    SELECT b.* INTO dup FROM public.batches b WHERE b.preorder_checks->>'request' = _checks->>'request';
+    IF FOUND THEN
+      SELECT * INTO bs FROM public.branch_stock WHERE branch_id = dup.branch_id AND product_id = dup.product_id;
+      RETURN jsonb_build_object('batch_id', dup.id, 'batch_code', dup.batch_code, 'ready', bs.stock, 'incoming', bs.incoming,
+        'total', bs.free_total, 'held_at_open', COALESCE(dup.preorder_checks->'opening', '{}'::jsonb), 'repeated', true);
+    END IF;
   END IF;
   SELECT * INTO link FROM public.zoho_item_links WHERE product_id = p.id;
   IF NOT FOUND OR COALESCE(link.zoho_item_id, '') = '' THEN
@@ -1249,6 +1416,7 @@ BEGIN
   -- 2.-3. The lot, numbered as any purchase that day.
   gst := COALESCE(CASE WHEN COALESCE(p.payload->>'gst', '') ~ '^[0-9]+(\.[0-9]+)?$' THEN (p.payload->>'gst')::numeric END, 0);
   code := public.next_batch_code(g.id, private.ist_today());
+  prev_write := private.preorder_write_begin();
   BEGIN
     INSERT INTO public.batches (batch_code, product_id, product_name, vendor, vendor_id, quantity, remaining_quantity, unit,
       unit_cost, unit_cost_ex_gst, unit_cost_inc_gst, cost_basis, purchase_date, warehouse, branch_id, source, supplier,
@@ -1262,8 +1430,9 @@ BEGIN
       CASE WHEN jsonb_typeof(_checks) = 'object' THEN _checks ELSE '{}'::jsonb END)
     RETURNING id INTO new_id;
   EXCEPTION WHEN unique_violation THEN
-    SELECT batch_code INTO taken FROM public.batches WHERE stage = 'incoming' AND zoho_po_id = po_id AND zoho_po_line_id = po_line;
-    RAISE EXCEPTION 'PO % line is already pre-order batch %', COALESCE(NULLIF(po_no, ''), po_id), COALESCE(taken, '?');
+    SELECT batch_code INTO taken FROM public.batches WHERE stage = 'incoming' AND zoho_po_id = po_id AND zoho_po_line_id = po_line AND po_line <> '';
+    IF taken IS NULL THEN RAISE EXCEPTION 'This pre-order batch was made already. Refresh the list.'; END IF;
+    RAISE EXCEPTION 'PO % line is already pre-order batch %', COALESCE(NULLIF(po_no, ''), po_id), taken;
   END;
 
   -- 4.-5. Watch rows at every godown (the new lot is already in U, so T rises by its quantity here).
@@ -1277,6 +1446,7 @@ BEGIN
   PERFORM private.lot_event(new_id, g.id, p.id, 'created', q,
     jsonb_build_object('cost', c, 'expected_date', _expected_date, 'hold_back', hb, 'po', _po, 'opening', opening), left(btrim(COALESCE(_notes, '')), 300),
     _by, _by_name);
+  PERFORM private.preorder_write_end(prev_write, ARRAY[p.id]);
   SELECT * INTO bs FROM public.branch_stock WHERE branch_id = g.id AND product_id = p.id;
   RETURN jsonb_build_object('batch_id', new_id, 'batch_code', code, 'ready', bs.stock, 'incoming', bs.incoming, 'total', bs.free_total,
     'held_at_open', opening);
@@ -1304,6 +1474,7 @@ DECLARE
   me uuid := auth.uid();
   my_name text;
   changed jsonb := '{}'::jsonb;
+  prev_write text;
 BEGIN
   IF me IS NULL OR NOT public.has_role(me, 'admin') THEN RAISE EXCEPTION 'Only administrators can edit pre-order batches'; END IF;
   SELECT product_id INTO pid FROM public.batches WHERE id = _batch_id;
@@ -1335,6 +1506,7 @@ BEGIN
   delta := q - b.quantity;
   gst := COALESCE((SELECT CASE WHEN COALESCE(payload->>'gst', '') ~ '^[0-9]+(\.[0-9]+)?$' THEN (payload->>'gst')::numeric END
     FROM public.catalog_products WHERE id = b.product_id), 0);
+  prev_write := private.preorder_write_begin();
   UPDATE public.batches SET
       quantity = q, expected_quantity = q, remaining_quantity = remaining_quantity + delta, hold_back = hb, expected_date = d,
       unit_cost = c, unit_cost_ex_gst = c, est_unit_cost_ex_gst = c,
@@ -1372,6 +1544,7 @@ BEGIN
   IF _paused IS NOT NULL AND _paused IS DISTINCT FROM b.selling_paused THEN
     PERFORM private.lot_event(b.id, b.branch_id, b.product_id, CASE WHEN _paused THEN 'paused' ELSE 'resumed' END, NULL, '{}'::jsonb, _note, me, my_name);
   END IF;
+  PERFORM private.preorder_write_end(prev_write, ARRAY[b.product_id]);
   RETURN (SELECT jsonb_build_object('batch_id', x.id, 'batch_code', x.batch_code, 'quantity', x.quantity, 'remaining', x.remaining_quantity,
     'expected_date', x.expected_date, 'hold_back', x.hold_back, 'paused', x.selling_paused, 'cost', x.est_unit_cost_ex_gst)
     FROM public.batches x WHERE x.id = b.id);
@@ -1390,6 +1563,7 @@ DECLARE
   my_name text;
   closed boolean;
   bill_no text;
+  prev_write text;
 BEGIN
   IF me IS NULL OR NOT public.has_role(me, 'admin') THEN RAISE EXCEPTION 'Only administrators can cancel pre-order batches'; END IF;
   SELECT product_id INTO pid FROM public.batches WHERE id = _batch_id;
@@ -1411,12 +1585,14 @@ BEGIN
     RAISE EXCEPTION 'Batch % is being received from bill %; wait for that to finish', b.batch_code, COALESCE(bill_no, '?');
   END IF;
   SELECT left(COALESCE(full_name, ''), 120) INTO my_name FROM public.profiles WHERE id = me;
+  prev_write := private.preorder_write_begin();
   UPDATE public.batches SET stage = 'cancelled', quantity = 0, remaining_quantity = 0, hold_back = 0, selling_paused = false,
       paused_reason = '', closed_at = now(), closed_note = left(btrim(_note), 300)
     WHERE id = b.id;
   PERFORM private.shift_pair_total(b.branch_id, b.product_id, -b.quantity);
   PERFORM private.lot_event(b.id, b.branch_id, b.product_id, 'cancelled', b.quantity, jsonb_build_object('quantity', b.quantity), _note, me, my_name);
   closed := private.watch_close_if_done(b.product_id, NULL, NULL, NULL);
+  PERFORM private.preorder_write_end(prev_write, ARRAY[b.product_id]);
   RETURN jsonb_build_object('batch_id', b.id, 'batch_code', b.batch_code, 'cancelled', b.quantity, 'watch_closed', closed);
 END $function$;
 REVOKE ALL ON FUNCTION public.admin_cancel_incoming_batch(uuid, text) FROM PUBLIC, anon;
@@ -1432,6 +1608,7 @@ DECLARE
   net numeric;
   me uuid := auth.uid();
   my_name text;
+  prev_write text;
 BEGIN
   IF me IS NULL OR NOT public.has_role(me, 'admin') THEN RAISE EXCEPTION 'Only administrators can join pre-order batches'; END IF;
   IF _into IS NULL OR _from IS NULL OR _into = _from THEN RAISE EXCEPTION 'Choose two different pre-order batches'; END IF;
@@ -1451,6 +1628,7 @@ BEGIN
   END IF;
   IF length(btrim(COALESCE(_note, ''))) < 4 THEN RAISE EXCEPTION 'Say why the batches are joined'; END IF;
   SELECT left(COALESCE(full_name, ''), 120) INTO my_name FROM public.profiles WHERE id = me;
+  prev_write := private.preorder_write_begin();
 
   -- The orders on _from move with it.
   FOR al IN SELECT * FROM public.order_item_batch_allocations WHERE batch_id = f.id AND reserved_quantity > released_quantity ORDER BY created_at, id FOR UPDATE LOOP
@@ -1473,6 +1651,7 @@ BEGIN
   PERFORM private.merge_lot_tags(f.id, a.id, 'join', me, my_name);
   PERFORM private.lot_event(a.id, a.branch_id, a.product_id, 'joined', f.quantity, jsonb_build_object('from', f.batch_code, 'from_id', f.id), _note, me, my_name);
   PERFORM private.lot_event(f.id, f.branch_id, f.product_id, 'joined', f.quantity, jsonb_build_object('into', a.batch_code, 'into_id', a.id), _note, me, my_name);
+  PERFORM private.preorder_write_end(prev_write, ARRAY[a.product_id]);
   RETURN (SELECT jsonb_build_object('batch_id', x.id, 'batch_code', x.batch_code, 'quantity', x.quantity, 'remaining', x.remaining_quantity,
     'joined', f.batch_code) FROM public.batches x WHERE x.id = a.id);
 END $function$;
@@ -1495,13 +1674,18 @@ DECLARE
   me uuid := auth.uid();
   my_name text;
   now_waiting numeric;
+  prev_write text;
 BEGIN
   IF me IS NULL OR NOT public.has_role(me, 'admin') THEN RAISE EXCEPTION 'Only administrators can move an order to ready stock'; END IF;
   SELECT * INTO it FROM public.order_items WHERE id = _order_item_id;
   IF NOT FOUND THEN RAISE EXCEPTION 'Order item not found'; END IF;
-  PERFORM 1 FROM public.catalog_products WHERE id = it.product_id FOR UPDATE;
+  -- The order first, then the product: the order every cancel and release path locks them in (review fix).
   SELECT * INTO o FROM public.orders WHERE id = it.order_id FOR UPDATE;
+  PERFORM 1 FROM public.catalog_products WHERE id = it.product_id FOR UPDATE;
+  SELECT * INTO it FROM public.order_items WHERE id = _order_item_id;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Order item not found'; END IF;
   IF o.order_status IN ('Cancelled', 'Payment Expired') THEN RAISE EXCEPTION 'Order % is %', o.order_no, lower(o.order_status); END IF;
+  prev_write := private.preorder_write_begin();
   SELECT COALESCE(sum(a.reserved_quantity - a.released_quantity), 0) INTO waiting
     FROM public.order_item_batch_allocations a JOIN public.batches b ON b.id = a.batch_id
    WHERE a.order_item_id = it.id AND b.stage = 'incoming';
@@ -1526,78 +1710,156 @@ BEGIN
   IF now_waiting = 0 THEN
     IF o.order_status NOT IN ('Awaiting Payment', 'Payment Expired', 'Cancelled') THEN
       PERFORM public.enqueue_zoho_sync('order', o.id::text);
+      PERFORM private.notify_customer(o.id, 'Your goods are ready',
+        format('%s: %s has arrived at the %s godown. Your invoice and pickup QR follow shortly.', o.order_no, it.product_name, private.godown_name(o.branch_id)));
+    ELSIF o.order_status = 'Awaiting Payment' THEN
+      PERFORM private.notify_customer(o.id, 'Your goods are ready',
+        format('%s: %s has arrived. Pay to complete your order.', o.order_no, it.product_name));
     END IF;
-    PERFORM private.notify_customer(o.id, 'Your goods are ready',
-      format('%s: %s has arrived at the %s godown. Your invoice and pickup QR follow shortly.', o.order_no, it.product_name, private.godown_name(o.branch_id)));
   END IF;
   PERFORM private.lot_event(lot_ids[1], o.branch_id, it.product_id, 'moved_to_ready', q,
     jsonb_build_object('order_no', o.order_no, 'order_item_id', it.id, 'lots', to_jsonb(lot_ids), 'still_waiting', now_waiting), _note, me, my_name);
+  PERFORM private.preorder_write_end(prev_write, ARRAY[it.product_id]);
   RETURN jsonb_build_object('order_no', o.order_no, 'moved', q, 'still_waiting', now_waiting);
 END $function$;
 REVOKE ALL ON FUNCTION public.admin_move_to_ready(uuid, numeric, text) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.admin_move_to_ready(uuid, numeric, text) TO authenticated;
 
 /*
- * 5.4.6 A Zoho reading of a watched pair (hourly pull, Sync godowns now, after a stock push). {watched:false}: not
- * watched, use the old path. {skipped:'newer'}: something newer than this reading was applied. _after_push: the website's
- * stock edit was just sent to Zoho; its rise (_explained) is real stock.
+ * 5.4.6 A Zoho reading of a watched pair (hourly pull, Sync godowns now). {watched:false}: not watched, use the old path.
+ * {skipped:'newer'}: a newer reading was applied. {skipped:'pushing'}: a stock edit of the pair is on its way to Zoho.
+ * Changed 14 Nov 2026 (review): a website stock edit still waiting (zoho_pending) no longer stops the reading: it stays
+ * in the total (pending_delta), so a counter sale in Zoho is seen while the edit waits. The edit itself goes to Zoho through
+ * preorder_push_start / preorder_push_finish; _after_push (older servers) is read as a plain reading.
  */
 CREATE OR REPLACE FUNCTION public.apply_preorder_reading(_branch_id text, _product_id text, _reading numeric, _read_at timestamptz,
   _snapshot uuid[], _explained numeric DEFAULT 0, _after_push boolean DEFAULT false)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public' AS $function$
 DECLARE
   w public.preorder_watch%ROWTYPE;
-  pend boolean;
 BEGIN
   PERFORM 1 FROM public.catalog_products WHERE id = _product_id FOR UPDATE;
   SELECT * INTO w FROM public.preorder_watch WHERE branch_id = _branch_id AND product_id = _product_id FOR UPDATE;
   IF NOT FOUND THEN RETURN jsonb_build_object('watched', false); END IF;
-  IF _read_at IS NOT NULL AND w.updated_at > _read_at THEN RETURN jsonb_build_object('skipped', 'newer'); END IF;
-  SELECT zoho_pending INTO pend FROM public.branch_stock WHERE branch_id = _branch_id AND product_id = _product_id FOR UPDATE;
-  IF COALESCE(_after_push, false) THEN
-    IF NOT COALESCE(pend, false) THEN RETURN jsonb_build_object('skipped', 'not_pending'); END IF;
-    UPDATE public.branch_stock SET zoho_pending = false WHERE branch_id = _branch_id AND product_id = _product_id;
-    UPDATE public.preorder_watch SET pending_delta = 0 WHERE branch_id = _branch_id AND product_id = _product_id;
-    -- The website's edit is in its total already, so Zoho's change from the push is no surprise: nothing to explain.
-    RETURN private.apply_reading(_branch_id, _product_id, _reading, _read_at, _snapshot, 0);
-  END IF;
-  IF COALESCE(pend, false) THEN RETURN jsonb_build_object('skipped', 'pending'); END IF;
-  RETURN private.apply_reading(_branch_id, _product_id, _reading, _read_at, _snapshot, GREATEST(0, COALESCE(_explained, 0)));
+  IF private.push_in_flight(_branch_id, _product_id) THEN RETURN jsonb_build_object('skipped', 'pushing'); END IF;
+  IF _read_at IS NOT NULL AND w.read_at > _read_at THEN RETURN jsonb_build_object('skipped', 'newer'); END IF;
+  RETURN private.apply_reading(_branch_id, _product_id, _reading, _read_at, _snapshot,
+    CASE WHEN COALESCE(_after_push, false) THEN 0 ELSE GREATEST(0, COALESCE(_explained, 0)) END);
 END $function$;
 REVOKE ALL ON FUNCTION public.apply_preorder_reading(text, text, numeric, timestamptz, uuid[], numeric, boolean) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.apply_preorder_reading(text, text, numeric, timestamptz, uuid[], numeric, boolean) TO service_role;
 
+/** Why a waiting edit can't go to Zoho now: Zoho shows units the website can't explain (held), or it would raise Zoho's
+ * stock where a lot is (I3). NULL: it may go. */
+CREATE OR REPLACE FUNCTION private.push_blocker(_branch text, _product text, _held numeric, _delta numeric)
+RETURNS text LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public' AS $function$
+  SELECT CASE
+    WHEN COALESCE(_held, 0) > 0 THEN format('Zoho shows %s unexplained %s at %s; the stock edit waits until it is matched or explained.',
+      private.qty_text(_held), private.product_name(_product), private.godown_name(_branch))
+    WHEN COALESCE(_delta, 0) > 0 AND EXISTS (SELECT 1 FROM public.batches b WHERE b.product_id = _product AND b.branch_id = _branch AND b.stage = 'incoming')
+      THEN format('%s has a pre-order batch at %s, so the website never raises its stock in Zoho there; the edit waits.',
+        private.product_name(_product), private.godown_name(_branch))
+  END
+$function$;
+
 /*
- * 5.4.7 Read-only: may a website stock edit waiting for Zoho on a watched pair be sent, and by how much
- * (delta = ready + (W - lot units in W) - Zoho)? Blocked while Zoho shows a rise the website has not explained.
+ * 5.4.7 Read-only: may the website stock edit waiting for Zoho on a watched pair be sent now, and by how much?
+ * Changed 14 Nov 2026 (review): the change sent is the edit itself (pending_delta), not "ready + waiting - Zoho": the
+ * floored ready stock of an oversold pair made that a stock increase in Zoho. Blocked while Zoho shows a rise the website
+ * has not explained (held, or this reading's rise), and never a rise in Zoho where a lot is (I3).
  */
 CREATE OR REPLACE FUNCTION public.preorder_push_plan(_branch_id text, _product_id text, _reading numeric, _snapshot uuid[])
 RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path TO 'public' AS $function$
 DECLARE
   w public.preorder_watch%ROWTYPE;
-  ready numeric;
-  w_units numeric;
-  lot_units numeric;
+  pend boolean;
   unexplained numeric;
+  d numeric;
+  why text;
 BEGIN
   SELECT * INTO w FROM public.preorder_watch WHERE branch_id = _branch_id AND product_id = _product_id;
   IF NOT FOUND THEN RETURN jsonb_build_object('watched', false); END IF;
-  -- Zoho's own change since the last reading (spec 2.4): the website's total already holds the edit waiting to go, so
-  -- it can't be compared with that here; any rise in Zoho is unexplained.
-  unexplained := w.held + GREATEST(0, round(COALESCE(_reading, 0), 3) - w.zoho_last);
-  IF unexplained > 0 THEN
-    RETURN jsonb_build_object('watched', true, 'blocked', true, 'unexplained', unexplained,
-      'message', format('Zoho shows %s unexplained %s at %s; the stock edit waits until it is matched or explained.',
-        private.qty_text(unexplained), private.product_name(_product_id), private.godown_name(_branch_id)));
+  SELECT zoho_pending INTO pend FROM public.branch_stock WHERE branch_id = _branch_id AND product_id = _product_id;
+  d := CASE WHEN COALESCE(pend, false) THEN w.pending_delta ELSE 0 END;
+  unexplained := w.held + CASE WHEN _reading IS NULL THEN 0
+    ELSE GREATEST(0, COALESCE(private.reading_rise(_branch_id, _product_id, _reading, _snapshot), 0)) END;
+  why := private.push_blocker(_branch_id, _product_id, unexplained, d);
+  IF why IS NOT NULL THEN
+    RETURN jsonb_build_object('watched', true, 'blocked', true, 'unexplained', unexplained, 'message', why, 'pending', d);
   END IF;
-  SELECT COALESCE(stock, 0) INTO ready FROM public.branch_stock WHERE branch_id = _branch_id AND product_id = _product_id;
-  w_units := private.waiting_units(_branch_id, _product_id, _snapshot);
-  lot_units := private.lot_units_waiting(_branch_id, _product_id, _snapshot);
-  RETURN jsonb_build_object('watched', true, 'blocked', false, 'ready', COALESCE(ready, 0), 'waiting', w_units, 'lot_units', lot_units,
-    'reading', _reading, 'delta', round(COALESCE(ready, 0) + (w_units - lot_units) - COALESCE(_reading, 0), 3));
+  RETURN jsonb_build_object('watched', true, 'blocked', false, 'pending', d, 'delta', d, 'reading', _reading,
+    'in_flight', private.push_in_flight(_branch_id, _product_id));
 END $function$;
 REVOKE ALL ON FUNCTION public.preorder_push_plan(text, text, numeric, uuid[]) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.preorder_push_plan(text, text, numeric, uuid[]) TO service_role;
+
+/*
+ * Added 14 Nov 2026 (review). The server sends a waiting website stock edit of a watched pair to Zoho after applying
+ * Zoho's reading (apply_preorder_reading): start, post the adjustment by delta, finish. Until finish (or 2 minutes) the
+ * pair's readings wait, since Zoho may or may not show the change yet. Returns {watched, blocked, message?, delta,
+ * pending} or {skipped}. delta 0: nothing to send (the edit is done).
+ */
+CREATE OR REPLACE FUNCTION public.preorder_push_start(_branch_id text, _product_id text)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public' AS $function$
+DECLARE
+  w public.preorder_watch%ROWTYPE;
+  bs public.branch_stock%ROWTYPE;
+  why text;
+BEGIN
+  PERFORM 1 FROM public.catalog_products WHERE id = _product_id FOR UPDATE;
+  SELECT * INTO w FROM public.preorder_watch WHERE branch_id = _branch_id AND product_id = _product_id FOR UPDATE;
+  IF NOT FOUND THEN RETURN jsonb_build_object('watched', false); END IF;
+  SELECT * INTO bs FROM public.branch_stock WHERE branch_id = _branch_id AND product_id = _product_id FOR UPDATE;
+  IF NOT COALESCE(bs.zoho_pending, false) THEN RETURN jsonb_build_object('watched', true, 'skipped', 'not_pending'); END IF;
+  IF private.push_in_flight(_branch_id, _product_id) THEN RETURN jsonb_build_object('watched', true, 'skipped', 'pushing'); END IF;
+  why := private.push_blocker(_branch_id, _product_id, w.held, w.pending_delta);
+  IF why IS NOT NULL THEN
+    UPDATE public.preorder_watch SET push_pending = NULL, push_delta = NULL, push_started_at = NULL
+     WHERE branch_id = _branch_id AND product_id = _product_id AND push_started_at IS NOT NULL;
+    RETURN jsonb_build_object('watched', true, 'blocked', true, 'message', why, 'pending', w.pending_delta);
+  END IF;
+  IF w.pending_delta = 0 THEN
+    -- Marked waiting without a change the website still owes Zoho: nothing to send.
+    UPDATE public.branch_stock SET zoho_pending = false WHERE branch_id = _branch_id AND product_id = _product_id;
+    UPDATE public.preorder_watch SET push_pending = NULL, push_delta = NULL, push_started_at = NULL
+     WHERE branch_id = _branch_id AND product_id = _product_id;
+    RETURN jsonb_build_object('watched', true, 'blocked', false, 'delta', 0, 'pending', 0);
+  END IF;
+  UPDATE public.preorder_watch SET push_pending = w.pending_delta, push_delta = w.pending_delta, push_started_at = now()
+   WHERE branch_id = _branch_id AND product_id = _product_id;
+  RETURN jsonb_build_object('watched', true, 'blocked', false, 'delta', w.pending_delta, 'pending', w.pending_delta);
+END $function$;
+REVOKE ALL ON FUNCTION public.preorder_push_start(text, text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.preorder_push_start(text, text) TO service_role;
+
+/*
+ * Zoho took the change (_ok) or did not. Taken: the part of the edit that was sent waits no more (an edit made while it
+ * was on its way still does), and Zoho's last number moves by it; the total does not move (it held the edit already).
+ * Not taken: the edit keeps waiting.
+ */
+CREATE OR REPLACE FUNCTION public.preorder_push_finish(_branch_id text, _product_id text, _ok boolean)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public' AS $function$
+DECLARE
+  w public.preorder_watch%ROWTYPE;
+  left_over numeric;
+BEGIN
+  PERFORM 1 FROM public.catalog_products WHERE id = _product_id FOR UPDATE;
+  SELECT * INTO w FROM public.preorder_watch WHERE branch_id = _branch_id AND product_id = _product_id FOR UPDATE;
+  IF NOT FOUND OR w.push_started_at IS NULL THEN RETURN jsonb_build_object('skipped', 'not_pushing'); END IF;
+  IF NOT COALESCE(_ok, false) THEN
+    UPDATE public.preorder_watch SET push_pending = NULL, push_delta = NULL, push_started_at = NULL
+     WHERE branch_id = _branch_id AND product_id = _product_id;
+    RETURN jsonb_build_object('pending', w.pending_delta, 'sent', 0);
+  END IF;
+  left_over := w.pending_delta - COALESCE(w.push_pending, 0);
+  UPDATE public.preorder_watch SET pending_delta = left_over, zoho_last = zoho_last + COALESCE(push_delta, 0),
+      push_pending = NULL, push_delta = NULL, push_started_at = NULL, updated_at = now()
+   WHERE branch_id = _branch_id AND product_id = _product_id;
+  UPDATE public.branch_stock SET zoho_pending = (left_over <> 0) WHERE branch_id = _branch_id AND product_id = _product_id;
+  RETURN jsonb_build_object('pending', left_over, 'sent', COALESCE(w.push_delta, 0));
+END $function$;
+REVOKE ALL ON FUNCTION public.preorder_push_finish(text, text, boolean) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.preorder_push_finish(text, text, boolean) TO service_role;
 
 /*
  * 5.4.8 An administrator says what held units are (other stock, not a pre-order's bill): they become stock. The server
@@ -1618,6 +1880,13 @@ BEGIN
   SELECT * INTO w FROM public.preorder_watch WHERE branch_id = _branch_id AND product_id = _product_id FOR UPDATE;
   IF NOT FOUND THEN RAISE EXCEPTION 'Only 0 is held at %', private.godown_name(_branch_id); END IF;
   IF _reading IS NULL OR _read_at IS NULL OR _read_at <= now() - interval '10 minutes' THEN RAISE EXCEPTION 'Zoho''s stock reading is too old; try again'; END IF;
+  IF private.push_in_flight(_branch_id, _product_id) THEN
+    RAISE EXCEPTION 'A stock edit for % at % is being sent to Zoho right now. Try again in a minute.',
+      private.product_name(_product_id), private.godown_name(_branch_id);
+  END IF;
+  IF private.transfer_unfinished(_product_id, _branch_id) THEN
+    RAISE EXCEPTION 'A transfer of % between godowns is not finished. Finish or cancel it first.', private.product_name(_product_id);
+  END IF;
   held_after_step := GREATEST(0, w.held + GREATEST(0, private.reading_rise(_branch_id, _product_id, _reading, _snapshot)));
   IF q <= 0 OR q > held_after_step THEN RAISE EXCEPTION 'Only % is held at %', private.qty_text(held_after_step), private.godown_name(_branch_id); END IF;
   res := private.apply_reading(_branch_id, _product_id, _reading, _read_at, _snapshot, q);
@@ -1652,6 +1921,11 @@ DECLARE
   readings_out jsonb := '{}'::jsonb;
   reopened boolean := false;
   u_before numeric;
+  pending_at text;
+  cd record;
+  cd_before jsonb;
+  untagged numeric := 0;
+  prev_write text;
 BEGIN
   IF NOT private.batch_transfer_admin(_by) THEN RAISE EXCEPTION 'Only administrators can undo a match'; END IF;
   SELECT product_id INTO pid FROM public.batches WHERE id = _batch_id;
@@ -1687,6 +1961,28 @@ BEGIN
   IF why IS NOT NULL THEN
     RAISE EXCEPTION 'Batch % has moved on since its match (%), so it can''t be undone. Correct it with the bill flags instead.', b.batch_code, why;
   END IF;
+  -- Added 14 Nov 2026 (review): an order on it whose push to Zoho is running (or got no clear answer in the last 10
+  -- minutes) may be confirmed or invoiced in Zoho any moment: its goods can't become "not arrived" again now.
+  PERFORM 1 FROM public.orders o WHERE o.id IN (SELECT oi.order_id FROM public.order_item_batch_allocations a
+      JOIN public.order_items oi ON oi.id = a.order_item_id WHERE a.batch_id IN (b.id, r.id)) ORDER BY o.id FOR SHARE;
+  IF EXISTS (SELECT 1 FROM public.order_item_batch_allocations a JOIN public.order_items oi ON oi.id = a.order_item_id
+               JOIN public.zoho_order_push_claims c ON c.order_id = oi.order_id
+              WHERE a.batch_id IN (b.id, r.id)
+                AND ((c.locked_until IS NOT NULL AND c.locked_until > now()) OR c.write_unanswered_at > now() - interval '10 minutes'))
+     OR EXISTS (SELECT 1 FROM public.order_item_batch_allocations a JOIN public.order_items oi ON oi.id = a.order_item_id
+               JOIN public.zoho_sync_outbox q ON q.entity_type = 'order' AND q.entity_id = oi.order_id::text AND q.status = 'processing'
+              WHERE a.batch_id IN (b.id, r.id)) THEN
+    RAISE EXCEPTION 'Batch % has moved on since its match (an order on it is being sent to Zoho), so it can''t be undone now. Try again in a few minutes.', b.batch_code;
+  END IF;
+  -- Added 14 Nov 2026 (review): a website stock edit of this product still waiting for Zoho first (as for a new lot), so
+  -- the watch this may reopen starts with nothing pending.
+  SELECT branch_id INTO pending_at FROM public.branch_stock WHERE product_id = b.product_id AND zoho_pending ORDER BY branch_id LIMIT 1;
+  IF pending_at IS NOT NULL THEN
+    RAISE EXCEPTION 'A stock edit for % at % is waiting to go to Zoho. Press Sync godowns now first.', b.product_name, private.godown_name(pending_at);
+  END IF;
+  IF private.transfer_unfinished(b.product_id, NULL) THEN
+    RAISE EXCEPTION 'A transfer of % between godowns is not finished. Finish or cancel it first.', b.product_name;
+  END IF;
   IF length(btrim(COALESCE(_note, ''))) < 4 THEN RAISE EXCEPTION 'Say why the match is undone'; END IF;
   IF _read_at IS NULL OR _read_at <= now() - interval '10 minutes' OR EXISTS (
        SELECT 1 FROM public.branches x WHERE x.active AND x.vendor_id IS NULL AND COALESCE(x.zoho_location_id, '') <> ''
@@ -1695,6 +1991,7 @@ BEGIN
   END IF;
   qb := b.quantity;
   q := COALESCE((ev.detail->>'Q')::numeric, (bef->>'quantity')::numeric);
+  prev_write := private.preorder_write_begin();
 
   SELECT u INTO u_before FROM private.pair_lots(b.branch_id, b.product_id);
   -- 1.-2. Moved orders come back; the remainder goes, its expenses come back.
@@ -1717,6 +2014,22 @@ BEGIN
         paused_reason = '', closed_at = now(), closed_note = left(format('Match of %s undone: %s', b.batch_code, btrim(_note)), 300)
       WHERE id = r.id;
   END IF;
+
+  -- Added 14 Nov 2026 (review): the charges of the bill being undone (freight, discount, round-off: tagged with it at
+  -- Receive purchase) are that bill's, not the lot's: they come off it (they go to the batch the bill really becomes).
+  FOR cd IN SELECT DISTINCT d.id, d.doc_number, d.zoho_id FROM public.zoho_cost_documents d JOIN public.batch_cost_tags t ON t.document_id = d.id
+              WHERE t.batch_id = b.id AND d.source = 'bill' AND d.zoho_id = b.zoho_bill_id AND b.zoho_bill_id <> '' ORDER BY d.id LOOP
+    PERFORM pg_advisory_xact_lock(hashtext('batch_cost:' || cd.id));
+    PERFORM 1 FROM public.zoho_cost_documents WHERE id = cd.id FOR UPDATE;
+    cd_before := private.cost_tags_json(cd.id);
+    untagged := untagged + COALESCE((SELECT sum(amount) FROM public.batch_cost_tags WHERE document_id = cd.id AND batch_id = b.id), 0);
+    DELETE FROM public.batch_cost_tags WHERE document_id = cd.id AND batch_id = b.id;
+    IF NOT EXISTS (SELECT 1 FROM public.batch_cost_tags WHERE document_id = cd.id) THEN
+      UPDATE public.zoho_cost_documents SET accepted_cost_amount = NULL, flag = '', flag_at = NULL WHERE id = cd.id;
+    END IF;
+    INSERT INTO public.batch_cost_tag_events (document_id, action, before, after, by_id, by_name)
+      VALUES (cd.id, 'untag', cd_before, private.cost_tags_json(cd.id), _by, left(COALESCE(_by_name, ''), 120));
+  END LOOP;
 
   -- 3.-4. The lot again, as it was before the match.
   SELECT COALESCE(sum(reserved_quantity - released_quantity), 0) INTO net_now FROM public.order_item_batch_allocations WHERE batch_id = b.id;
@@ -1755,9 +2068,10 @@ BEGIN
   END LOOP;
   PERFORM private.lot_event(b.id, b.branch_id, b.product_id, 'unmatched', qb,
     jsonb_build_object('bill_number', ev.detail->'bill'->>'bill_number', 'quantity', q, 'remainder', r.batch_code, 'reopened', reopened,
-      'readings', readings_out), _note, _by, _by_name);
+      'readings', readings_out, 'charges_untagged', untagged), _note, _by, _by_name);
+  PERFORM private.preorder_write_end(prev_write, ARRAY[b.product_id]);
   RETURN jsonb_build_object('batch_id', b.id, 'batch_code', b.batch_code, 'quantity', q, 'held_again', qb,
-    'remainder_cancelled', r.batch_code, 'readings', readings_out);
+    'remainder_cancelled', r.batch_code, 'readings', readings_out, 'charges_untagged', untagged);
 END $function$;
 REVOKE ALL ON FUNCTION public.unmatch_incoming_batch(uuid, text, jsonb, jsonb, timestamptz, uuid, text) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.unmatch_incoming_batch(uuid, text, jsonb, jsonb, timestamptz, uuid, text) TO service_role;
@@ -1789,6 +2103,8 @@ DECLARE
   readings_out jsonb := '{}'::jsonb;
   closed jsonb := '[]'::jsonb;
   opened timestamptz;
+  prev_write text;
+  moving text;
 BEGIN
   IF NOT private.batch_transfer_admin(_by) THEN RAISE EXCEPTION 'Only administrators can receive purchases'; END IF;
   IF jsonb_typeof(_lines) <> 'array' OR jsonb_array_length(_lines) = 0 THEN RAISE EXCEPTION 'No bill lines to make batches from'; END IF;
@@ -1809,7 +2125,13 @@ BEGIN
        OR EXISTS (SELECT 1 FROM unnest(watched) x(pid) WHERE private.reading_for(_readings, _branch_id, x.pid) IS NULL) THEN
       RAISE EXCEPTION 'Zoho''s stock reading is too old; try again';
     END IF;
+    -- Added 14 Nov 2026 (review): not while a transfer of one of them is unfinished (its readings would count it twice).
+    SELECT x.pid INTO moving FROM unnest(watched) x(pid) WHERE private.transfer_unfinished(x.pid, NULL) ORDER BY 1 LIMIT 1;
+    IF moving IS NOT NULL THEN
+      RAISE EXCEPTION 'A transfer of % between godowns is not finished. Finish or cancel it first.', private.product_name(moving);
+    END IF;
   END IF;
+  prev_write := private.preorder_write_begin();
 
   FOR line IN SELECT value FROM jsonb_array_elements(_lines) LOOP
     IF lower(COALESCE(line->>'action', 'new')) = 'match' OR COALESCE(line->>'match_batch_id', '') <> '' THEN
@@ -1840,6 +2162,7 @@ BEGIN
     END LOOP;
     IF private.watch_close_if_done(p, _readings, _snapshot, _read_at) THEN closed := closed || to_jsonb(p); END IF;
   END LOOP;
+  PERFORM private.preorder_write_end(prev_write, products);
   RETURN jsonb_build_object('made', made, 'matched', matched, 'readings', readings_out, 'watch_closed', closed);
 END $function$;
 REVOKE ALL ON FUNCTION public.receive_bill_lines(text, jsonb, jsonb, text, jsonb, jsonb, timestamptz, uuid, text) FROM PUBLIC, anon, authenticated;
@@ -1883,6 +2206,32 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public' AS $function$
 $function$;
 REVOKE ALL ON FUNCTION public.order_item_arrivals(uuid) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.order_item_arrivals(uuid) TO authenticated;
+
+/**
+ * Added 14 Nov 2026 (review): the channel partner's orders (as partner_orders_to_confirm lists them) that wait for goods
+ * still on a pre-order: their invoice and pickup QR come when the goods arrive. No codes or costs.
+ */
+CREATE OR REPLACE FUNCTION public.partner_orders_waiting_goods()
+RETURNS TABLE (order_no text, waiting numeric, expected_date date)
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path TO 'public' AS $function$
+DECLARE
+  me public.channel_partners%ROWTYPE;
+BEGIN
+  IF auth.uid() IS NOT NULL THEN
+    SELECT * INTO me FROM public.channel_partners p WHERE p.user_id = auth.uid() AND p.status = 'active';
+  END IF;
+  IF me.id IS NULL THEN RAISE EXCEPTION 'Only an active channel partner can see these orders'; END IF;
+  RETURN QUERY
+  SELECT o.order_no, (g->>'waiting')::numeric, NULLIF(g->>'expected_date', '')::date
+    FROM public.orders o
+    CROSS JOIN LATERAL private.order_waiting_goods(o.id) g
+   WHERE o.branch_id = me.branch_id AND o.order_status IN ('Placed', 'Payment Confirmed', 'Accepted')
+     AND COALESCE((g->>'waiting')::numeric, 0) > 0
+   ORDER BY o.created_at
+   LIMIT 200;
+END $function$;
+REVOKE ALL ON FUNCTION public.partner_orders_waiting_goods() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.partner_orders_waiting_goods() TO authenticated;
 
 /** "Coming to your godown": its lots for its staff, its channel partner and admins. No costs, suppliers or bills. */
 CREATE OR REPLACE FUNCTION public.godown_incoming_lots(_branch_id text)
@@ -1992,6 +2341,17 @@ BEGIN
   -- branch_stock works out ready and arriving from it. Anywhere else, exactly as before.
   IF EXISTS (SELECT 1 FROM public.batches b WHERE b.product_id = NEW.id AND b.branch_id = target AND b.stage = 'incoming')
      OR EXISTS (SELECT 1 FROM public.preorder_watch w WHERE w.product_id = NEW.id AND w.branch_id = target) THEN
+    -- Review fix: a manual stock change (a receipt typed on the website) is never a rise where a lot is on its way, and a
+    -- watched godown remembers it until it is in Zoho, as admin_set_branch_stock does.
+    IF COALESCE(current_setting('app.stock_manual', true), '') = 'on' THEN
+      IF new_total > old_total AND EXISTS (SELECT 1 FROM public.batches b WHERE b.product_id = NEW.id AND b.branch_id = target AND b.stage = 'incoming') THEN
+        RAISE EXCEPTION 'Pre-order batch % is on its way to %. Its bags come into stock with its Zoho bill, so don''t type them in. You can still lower this stock.',
+          (SELECT b.batch_code FROM public.batches b WHERE b.product_id = NEW.id AND b.branch_id = target AND b.stage = 'incoming'
+            ORDER BY b.expected_date, b.created_at LIMIT 1), private.godown_name(target);
+      END IF;
+      UPDATE public.preorder_watch SET pending_delta = pending_delta + (new_total - old_total)
+       WHERE product_id = NEW.id AND branch_id = target;
+    END IF;
     INSERT INTO public.branch_stock (branch_id, product_id, stock, free_total, zoho_pending)
       VALUES (target, NEW.id, 0, new_total - old_total, COALESCE(current_setting('app.stock_manual', true), '') = 'on')
     ON CONFLICT (branch_id, product_id) DO UPDATE
@@ -2161,6 +2521,10 @@ BEGIN
   -- The order number names its godown, the delivery PIN and the moment it was placed (IST),
   -- e.g. CLK-577522-261026-143215. _order_no from older app versions is no longer used.
   final_order_no := public.next_godown_order_no(target_branch, _shipping_address->>'pin');
+
+  -- Added 14 Nov 2026 (review): every product of the cart locked first, in id order, as every pre-order path locks them
+  -- (refresh_incoming_all, Receive purchase), so a checkout and those never wait on each other in a circle.
+  PERFORM private.lock_products(ARRAY(SELECT DISTINCT value->>'product_id' FROM jsonb_array_elements(_items) WHERE value->>'product_id' IS NOT NULL));
 
   FOR line IN SELECT value FROM jsonb_array_elements(_items)
   LOOP
@@ -2668,8 +3032,16 @@ BEGIN
   -- reading (or with a website edit still waiting) the total moves by the quantity and so does the watch's last Zoho
   -- number.
   IF EXISTS (SELECT 1 FROM public.preorder_watch w WHERE w.branch_id = _branch AND w.product_id = _product) THEN
-    IF reading IS NOT NULL AND NOT COALESCE(waiting, false) THEN
-      IF NOT _reading_only AND COALESCE(_delta, 0) <> 0 THEN PERFORM private.shift_pair_total(_branch, _product, _delta); END IF;
+    -- (Review, 14 Nov 2026: the shift stays. Explaining the move instead (e = moved units, no shift) lets the transfer's
+    -- own fall at the sending godown net out an unread bill there, and a counter sale at the receiving one eat units held
+    -- for a lot's bill: both above the truth. A reading that saw the move before this finish holds those units until an
+    -- administrator releases them: below the truth, never above.) A website edit still waiting stays in the total.
+    IF reading IS NOT NULL THEN
+      IF NOT _reading_only AND COALESCE(_delta, 0) <> 0 THEN
+        PERFORM private.shift_pair_total(_branch, _product, _delta);
+        -- Zoho's number moves by the website's own transfer too (it is no fall of Zoho's own).
+        UPDATE public.preorder_watch SET zoho_last = zoho_last + _delta WHERE branch_id = _branch AND product_id = _product;
+      END IF;
       PERFORM private.apply_reading(_branch, _product, reading, now(), private.reading_waiting(_readings, _branch, _product), 0);
     ELSIF NOT _reading_only AND COALESCE(_delta, 0) <> 0 THEN
       PERFORM private.shift_pair_total(_branch, _product, _delta);
@@ -2709,6 +3081,7 @@ DECLARE
   total numeric;
   new_id uuid;
   after_stock numeric := _site_after;
+  pd numeric;
 BEGIN
   IF _counted IS NULL OR _counted < 0 OR _site_after IS NULL OR _site_after < 0 THEN RAISE EXCEPTION 'Invalid stock count'; END IF;
   IF NOT EXISTS (SELECT 1 FROM public.branches WHERE id = _branch_id) THEN RAISE EXCEPTION 'Unknown godown'; END IF;
@@ -2722,12 +3095,27 @@ BEGIN
     IF _zoho_after IS NULL THEN
       RAISE EXCEPTION '% has a pre-order batch, so this count needs Zoho''s stock after it. Count again.', COALESCE(product_payload->>'name', _product_id);
     END IF;
+    -- Review fix: not while a transfer of it at this godown is unfinished (Zoho may show it already; the finish moves the
+    -- total again). The server checks this before it writes to Zoho.
+    IF private.transfer_unfinished(_product_id, _branch_id) THEN
+      RAISE EXCEPTION 'A transfer of % at % is not finished in Zoho. Count again after it is.', COALESCE(product_payload->>'name', _product_id),
+        private.godown_name(_branch_id);
+    END IF;
+    -- Review fix: a website edit still waiting for Zoho is replaced by the count (the floor is the truth now), so it comes
+    -- out of the total first; else the same bags would come off twice and the count's reading look like a rise.
+    SELECT w.pending_delta INTO pd FROM public.preorder_watch w WHERE w.branch_id = _branch_id AND w.product_id = _product_id FOR UPDATE;
+    pd := CASE WHEN COALESCE((SELECT zoho_pending FROM public.branch_stock WHERE branch_id = _branch_id AND product_id = _product_id), false)
+               THEN COALESCE(pd, 0) ELSE 0 END;
+    IF pd <> 0 THEN PERFORM private.shift_pair_total(_branch_id, _product_id, -pd); END IF;
     UPDATE public.branch_stock SET zoho_pending = false WHERE branch_id = _branch_id AND product_id = _product_id AND zoho_pending;
     UPDATE public.preorder_watch SET pending_delta = 0 WHERE branch_id = _branch_id AND product_id = _product_id;
     -- A count that found fewer is the website's own change in Zoho (the server posted it): the total falls by it first. A
-    -- count that found more explains nothing (spec 2.4): its rise is held like any other.
+    -- count that found more explains nothing (spec 2.4): its rise is held like any other, except the part that carries a
+    -- head-office increase that was waiting (a godown with no lot).
     IF COALESCE(_zoho_delta, 0) < 0 THEN PERFORM private.shift_pair_total(_branch_id, _product_id, _zoho_delta); END IF;
-    PERFORM private.apply_reading(_branch_id, _product_id, _zoho_after, now(), _snapshot, 0);
+    -- Zoho's number moved by the count's own adjustment (no fall or rise of Zoho's own).
+    UPDATE public.preorder_watch SET zoho_last = zoho_last + COALESCE(_zoho_delta, 0) WHERE branch_id = _branch_id AND product_id = _product_id;
+    PERFORM private.apply_reading(_branch_id, _product_id, _zoho_after, now(), _snapshot, GREATEST(0, LEAST(pd, COALESCE(_zoho_delta, 0))));
     SELECT stock INTO after_stock FROM public.branch_stock WHERE branch_id = _branch_id AND product_id = _product_id;
   ELSE
   INSERT INTO public.branch_stock (branch_id, product_id, stock, zoho_pending) VALUES (_branch_id, _product_id, _site_after, false)
@@ -3119,6 +3507,7 @@ DECLARE
   status_now text := lower(btrim(COALESCE(_zoho_status, '')));
   new_lines jsonb := '[]'::jsonb;
   pid text;
+  prev_write text;
 BEGIN
   SELECT * INTO t FROM public.batch_transfers WHERE id = _transfer_id FOR UPDATE;
   IF NOT FOUND THEN RAISE EXCEPTION 'Transfer not found'; END IF;
@@ -3180,6 +3569,7 @@ BEGIN
     receiver := jsonb_build_object('role', 'admin', 'name', t.created_by_name);
     -- Changed 14 Nov 2026: match lines become their pre-order batch (at the unloading godown, through this transfer);
     -- the other lines make batches as before. Both before the readings, so the readings see the lots gone.
+    prev_write := private.preorder_write_begin();
     made := '[]'::jsonb;
     FOR line IN SELECT value FROM jsonb_array_elements(t.lines) LOOP
       IF lower(COALESCE(line->>'action', 'new')) = 'match' OR COALESCE(line->>'match_batch_id', '') <> '' THEN
@@ -3214,6 +3604,7 @@ BEGIN
           WHERE r->>'product_id' = pid),
         now());
     END LOOP;
+    PERFORM private.preorder_write_end(prev_write, ARRAY(SELECT DISTINCT l->>'product_id' FROM jsonb_array_elements(t.lines) l));
   END IF;
 
   UPDATE public.batch_transfers SET status = 'done', zoho_transfer_order_id = _zoho_transfer_order_id, zoho_status = status_now,
@@ -3607,7 +3998,10 @@ BEGIN
               'refresh_pair', 'order_waiting_goods', 'watch_step', 'apply_reading', 'reading_rise', 'watch_open', 'watch_close_if_done',
               'branch_stock_derive', 'lot_allocation_changed', 'lot_row_changed', 'take_order_line', 'match_line_check',
               'move_lot_allocations', 'split_lot_tags', 'merge_lot_tags', 'match_incoming_line', 'lock_products',
-              'preorder_zoho_moved_alert') LOOP
+              'preorder_zoho_moved_alert',
+              -- review fixes (14 Nov 2026)
+              'reading_lines', 'reading_heal_cap', 'push_in_flight', 'zoho_units', 'preorder_write_begin', 'preorder_write_end',
+              'push_blocker', 'transfer_unfinished') LOOP
     EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC, anon, authenticated, service_role', f.sig);
   END LOOP;
 END $grants$;

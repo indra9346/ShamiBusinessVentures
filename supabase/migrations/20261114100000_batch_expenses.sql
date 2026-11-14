@@ -15,6 +15,8 @@
 
 BEGIN;
 
+SET LOCAL lock_timeout = '5s';
+
 -- ---------------------------------------------------------------- tables
 CREATE TABLE IF NOT EXISTS public.zoho_cost_documents (
   id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -234,8 +236,14 @@ GRANT EXECUTE ON FUNCTION public.save_cost_document(jsonb) TO service_role;
 /**
  * _rows = [{batch_id, amount, method, weight, note}]: the whole split of this document, replacing the one before.
  * The server re-read the document from Zoho (save_cost_document) and worked out the amounts to the paisa.
+ * _replace (review fix, 14 Nov 2026): the admin re-split a document Zoho changed (flagged): the flag goes and the new
+ * split replaces the old one in this one call, so a failure can never leave it untagged.
+ * The batches are locked before the document (a cancel or a match of a pre-order batch runs to the end first), and an
+ * expense is tagged either whole or by line, never both.
  */
-CREATE OR REPLACE FUNCTION public.tag_batch_costs(_document_id bigint, _rows jsonb, _confirm_rebilled boolean, _by uuid, _by_name text)
+DROP FUNCTION IF EXISTS public.tag_batch_costs(bigint, jsonb, boolean, uuid, text);
+CREATE OR REPLACE FUNCTION public.tag_batch_costs(_document_id bigint, _rows jsonb, _confirm_rebilled boolean, _by uuid, _by_name text,
+  _replace boolean DEFAULT false)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public' AS $function$
 DECLARE
   d public.zoho_cost_documents%ROWTYPE;
@@ -246,14 +254,33 @@ DECLARE
   seen uuid[] := '{}';
   before_tags jsonb;
   after_tags jsonb;
+  ids uuid[];
 BEGIN
   IF NOT private.cost_actor_is_admin(_by) THEN RAISE EXCEPTION 'Only administrators can tag expenses to batches'; END IF;
   IF jsonb_typeof(_rows) <> 'array' OR jsonb_array_length(_rows) = 0 THEN RAISE EXCEPTION 'Choose at least one batch'; END IF;
   PERFORM pg_advisory_xact_lock(hashtext('batch_cost:' || _document_id));
-  SELECT * INTO d FROM public.zoho_cost_documents WHERE id = _document_id FOR UPDATE;
+  SELECT * INTO d FROM public.zoho_cost_documents WHERE id = _document_id;
   IF NOT FOUND THEN RAISE EXCEPTION 'Expense not found'; END IF;
+  -- One expense, whole or by line: both at once would count it twice.
+  IF d.source = 'expense' THEN
+    PERFORM pg_advisory_xact_lock(hashtext('batch_cost_expense:' || d.zoho_id));
+    IF d.zoho_line_id = '' AND EXISTS (SELECT 1 FROM public.zoho_cost_documents x JOIN public.batch_cost_tags t ON t.document_id = x.id
+                                        WHERE x.source = 'expense' AND x.zoho_id = d.zoho_id AND x.zoho_line_id <> '') THEN
+      RAISE EXCEPTION 'This expense is already split by line; untag its lines first';
+    END IF;
+    IF d.zoho_line_id <> '' AND EXISTS (SELECT 1 FROM public.zoho_cost_documents x JOIN public.batch_cost_tags t ON t.document_id = x.id
+                                         WHERE x.source = 'expense' AND x.zoho_id = d.zoho_id AND x.zoho_line_id = '') THEN
+      RAISE EXCEPTION 'This expense is already tagged as a whole; untag it first';
+    END IF;
+  END IF;
+  -- The batches first (listed now and tagged before), so a cancel or a bill match of one of them finishes first and
+  -- what follows sees its result (a cancelled batch, a remainder's tag).
+  ids := ARRAY(SELECT DISTINCT NULLIF(x.value->>'batch_id', '')::uuid FROM jsonb_array_elements(_rows) x WHERE NULLIF(x.value->>'batch_id', '') IS NOT NULL
+               UNION SELECT t.batch_id FROM public.batch_cost_tags t WHERE t.document_id = d.id);
+  PERFORM 1 FROM public.batches WHERE id = ANY (ids) ORDER BY id FOR SHARE;
+  SELECT * INTO d FROM public.zoho_cost_documents WHERE id = _document_id FOR UPDATE;
   IF d.gone_at IS NOT NULL THEN RAISE EXCEPTION 'This expense is no longer in Zoho'; END IF;
-  IF d.flag <> '' THEN RAISE EXCEPTION 'Zoho changed this expense: review it first'; END IF;
+  IF d.flag <> '' AND NOT COALESCE(_replace, false) THEN RAISE EXCEPTION 'Zoho changed this expense: review it first'; END IF;
   IF d.rebilled AND NOT COALESCE(_confirm_rebilled, false) THEN
     RAISE EXCEPTION 'This expense was charged on to a customer; tick to count it as your cost';
   END IF;
@@ -274,7 +301,10 @@ BEGIN
 
   before_tags := private.cost_tags_json(d.id);
   DELETE FROM public.batch_cost_tags WHERE document_id = d.id;
-  UPDATE public.zoho_cost_documents SET accepted_cost_amount = cost_amount WHERE id = d.id;
+  UPDATE public.zoho_cost_documents SET accepted_cost_amount = cost_amount,
+      flag = CASE WHEN COALESCE(_replace, false) THEN '' ELSE flag END,
+      flag_at = CASE WHEN COALESCE(_replace, false) THEN NULL ELSE flag_at END
+    WHERE id = d.id;
   INSERT INTO public.batch_cost_tags (document_id, batch_id, amount, method, weight, note, tagged_by, tagged_by_name)
   SELECT d.id, (x.value->>'batch_id')::uuid, round((x.value->>'amount')::numeric, 2),
          COALESCE(NULLIF(x.value->>'method', ''), 'amount'), COALESCE(NULLIF(x.value->>'weight', '')::numeric, 0),
@@ -286,8 +316,8 @@ BEGIN
   RETURN jsonb_build_object('document_id', d.id, 'cost_amount', d.cost_amount, 'tagged', total,
     'untagged', d.cost_amount - total, 'tags', after_tags);
 END $function$;
-REVOKE ALL ON FUNCTION public.tag_batch_costs(bigint, jsonb, boolean, uuid, text) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.tag_batch_costs(bigint, jsonb, boolean, uuid, text) TO service_role;
+REVOKE ALL ON FUNCTION public.tag_batch_costs(bigint, jsonb, boolean, uuid, text, boolean) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.tag_batch_costs(bigint, jsonb, boolean, uuid, text, boolean) TO service_role;
 
 -- ---------------------------------------------------------------- 3. untag (server only; allowed in any state)
 CREATE OR REPLACE FUNCTION public.untag_batch_costs(_document_id bigint, _by uuid, _by_name text)

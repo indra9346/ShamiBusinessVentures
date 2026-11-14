@@ -27,7 +27,7 @@ const OLD = (await batch("CLK-011126-01")).id, OILB = (await batch("CLK-011126-0
 
 /* ---------- rights ---------- */
 const priv = async (role, fn) => (await one(`SELECT has_function_privilege('${role}', '${fn}', 'EXECUTE') AS p`)).p;
-for (const fn of ["public.save_cost_document(jsonb)", "public.tag_batch_costs(bigint,jsonb,boolean,uuid,text)", "public.untag_batch_costs(bigint,uuid,text)", "public.flag_cost_document_changes(jsonb)"]) {
+for (const fn of ["public.save_cost_document(jsonb)", "public.tag_batch_costs(bigint,jsonb,boolean,uuid,text,boolean)", "public.untag_batch_costs(bigint,uuid,text)", "public.flag_cost_document_changes(jsonb)"]) {
   assert.deepEqual([await priv("anon", fn), await priv("authenticated", fn), await priv("service_role", fn)], [false, false, true], fn);
 }
 assert.deepEqual([await priv("anon", "public.accept_cost_document_change(bigint,uuid,text)"), await priv("authenticated", "public.accept_cost_document_change(bigint,uuid,text)")], [false, true]);
@@ -128,6 +128,42 @@ await receive("BR-CLK", { bill_id: "B-P1", bill_number: "P1", vendor_name: "V", 
   [{ line_id: "PL1", product_id: SUGAR, zoho_item_id: "I-SUGAR", qty: 200, unit_ex_gst: 2527.5, unit_inc_gst: 2653.88, action: "match", match_batch_id: lot.batch_id, rest: "coming" }], { "BR-CLK": 250, "BR-HBL": 0 });
 assert.deepEqual(await tags(advance), [[lot.batch_code, 555.56], [`${lot.batch_code}-R1`, 444.45]]);
 assert.ok((await q("SELECT 1 FROM public.batch_cost_tag_events WHERE document_id = $1 AND action = 'split_on_match'", [advance])).length === 1);
+// Review fix: the bill's own charges (freight line, tagged at Receive purchase) come off the lot when its match is undone;
+// the lot's own expenses (paid before the bill) stay, with the remainder's share back.
+const charge = await doc({ source: "bill", zoho_id: "B-P1", zoho_line_id: "CH-1", doc_number: "P1", amount_before_gst: 900 });
+await tag(charge, [{ batch_id: lot.batch_id, amount: 900, method: "bags" }]);
+const undone = (await serverOne("SELECT public.unmatch_incoming_batch($1, 'wrong bill', $2::jsonb, '{}'::jsonb, $3::timestamptz, $4, 'TEST Admin') AS r",
+  [lot.batch_id, JSON.stringify([{ branch_id: "BR-CLK", zoho: 250 }, { branch_id: "BR-HBL", zoho: 0 }]), new Date().toISOString(), ADMIN])).r;
+assert.equal(n(undone.charges_untagged), 900);
+assert.deepEqual(await tags(charge), []);
+assert.deepEqual([(await docRow(charge)).flag, (await docRow(charge)).accepted_cost_amount], ["", null]);
+assert.deepEqual(await tags(advance), [[lot.batch_code, 1000.01]]);
+assert.deepEqual((await q("SELECT action FROM public.batch_cost_tag_events WHERE document_id = $1 ORDER BY id", [charge])).map((x) => x.action), ["tag", "untag"]);
+// Matched again to its real bill: the charge of P1 is free to go to the batch P1 really becomes.
+await receive("BR-CLK", { bill_id: "B-P2", bill_number: "P2", vendor_name: "V", date: istDay(0), created_time: new Date(Date.now() + 3600_000).toISOString(), modified: "m", total: 1, status: "open" },
+  [{ line_id: "PL2", product_id: SUGAR, zoho_item_id: "I-SUGAR", qty: 360, unit_ex_gst: 2527.5, unit_inc_gst: 2653.88, action: "match", match_batch_id: lot.batch_id }], { "BR-CLK": 250, "BR-HBL": 0 });
+
+/* ---------- review fixes: a re-split in one call; one expense whole or by line, never both ---------- */
+await doc({ zoho_id: "E-FREIGHT", doc_number: "EXP-101", account_name: "Freight Inward", amount_before_gst: 7000, gst_amount: 0 });
+assert.match((await docRow(freight)).flag, /^Expense changed in Zoho/);
+const retag = (id, rows) => serverOne("SELECT public.tag_batch_costs($1, $2::jsonb, false, $3, 'TEST Admin', true) AS r", [id, JSON.stringify(rows), ADMIN]).then((x) => x.r);
+// A re-split that fails changes nothing: the old split and the flag stay (it used to be untagged first, in its own call).
+await refuses(() => retag(freight, [{ batch_id: OLD, amount: 7000.01, method: "amount" }]), /^₹7000\.01 is more than this expense \(₹7000\.00\)$/, "re-split over");
+assert.deepEqual(await tags(freight), [["CLK-011126-01", 8000]]);
+assert.match((await docRow(freight)).flag, /^Expense changed in Zoho/);
+await retag(freight, [{ batch_id: OLD, amount: 7000, method: "amount" }]);
+assert.deepEqual(await tags(freight), [["CLK-011126-01", 7000]]);
+assert.deepEqual([(await docRow(freight)).flag, n((await docRow(freight)).accepted_cost_amount)], ["", 7000]);
+const itemWhole = await doc({ zoho_id: "E-ITEMS", doc_number: "EXP-300", amount_before_gst: 300 });
+const itemLine = await doc({ zoho_id: "E-ITEMS", zoho_line_id: "LI-1", doc_number: "EXP-300", amount_before_gst: 100 });
+await tag(itemWhole, [{ batch_id: OLD, amount: 300, method: "amount" }]);
+await refuses(() => tag(itemLine, [{ batch_id: OLD, amount: 100, method: "amount" }]), /^This expense is already tagged as a whole; untag it first$/, "line after whole");
+await serverOne("SELECT public.untag_batch_costs($1, $2, 'TEST Admin')", [itemWhole, ADMIN]);
+await tag(itemLine, [{ batch_id: OLD, amount: 100, method: "amount" }]);
+await refuses(() => tag(itemWhole, [{ batch_id: OLD, amount: 300, method: "amount" }]), /^This expense is already split by line; untag its lines first$/, "whole after line");
+// The batches are locked before the document (a cancel or a match of the lot finishes first).
+assert.match((await one("SELECT pg_get_functiondef('public.tag_batch_costs(bigint,jsonb,boolean,uuid,text,boolean)'::regprocedure) AS d")).d,
+  /FROM public\.batches WHERE id = ANY \(ids\) ORDER BY id FOR SHARE;\s+SELECT \* INTO d FROM public\.zoho_cost_documents WHERE id = _document_id FOR UPDATE;/);
 // A cancelled lot takes no expenses.
 const gone = await createLot({ qty: 5, cost: 2500, zoho: { "BR-CLK": 250, "BR-HBL": 0 } });
 await adminOne("SELECT public.admin_cancel_incoming_batch($1, 'supplier cancelled')", [gone.batch_id]);

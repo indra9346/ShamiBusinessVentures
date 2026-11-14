@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Building2, Percent, Save, ShieldCheck, Truck } from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
@@ -416,14 +416,24 @@ function SiteDetailsPanel() {
 function PreorderSettingsPanel() {
   const [value, setValue] = useState<PreorderSettings>(DEFAULT_PREORDER_SETTINGS);
   const [saving, setSaving] = useState(false);
-  useEffect(() => {
+  // Nothing can be changed or saved until the settings are read (review fix: the defaults showed "off" meanwhile, and a
+  // save could write them).
+  const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const read = useCallback(() => {
     let active = true;
+    setLoadError("");
     void supabase.from("settings").select("value").eq("key", PREORDER_SETTING_KEY).maybeSingle().then(({ data, error }) => {
-      if (active && !error) setValue(parsePreorderSettings(data?.value));
+      if (!active) return;
+      if (error) { setLoadError(error.message); return; }
+      setValue(parsePreorderSettings(data?.value));
+      setLoaded(true);
     });
     return () => { active = false; };
   }, []);
+  useEffect(() => read(), [read]);
   const save = async () => {
+    if (!loaded) return;
     setSaving(true);
     const { data, error } = await supabase.rpc("admin_set_preorder_settings", { _enabled: value.enabled, _grace_days: value.graceDays, _require_ack: value.requireAck });
     setSaving(false);
@@ -440,27 +450,34 @@ function PreorderSettingsPanel() {
         <p className="text-sm text-slate">
           Sell goods ordered from a supplier before they reach the godown. Make a pre-order batch in Admin › Batches › New pre-order; when the bill comes, match it in Receive purchase. Needs Zoho as the stock master and godown matching by PIN.
         </p>
+        {!loaded && !loadError && <p className="text-xs text-slate">Reading the pre-order settings…</p>}
+        {loadError && (
+          <div className="flex flex-wrap items-center gap-2 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+            <span className="min-w-0 break-words">{`Could not read the pre-order settings: ${loadError}`}</span>
+            <Button size="sm" variant="outline" onClick={() => read()}>Try again</Button>
+          </div>
+        )}
         <div className="flex items-center justify-between gap-4 rounded-md border border-border p-4">
           <div>
             <p className="text-sm font-bold text-navy">Pre-orders on</p>
             <p className="text-xs text-slate">Customers can order units of pre-order batches. Switching off is refused while pre-order batches are open.</p>
           </div>
-          <Switch checked={value.enabled} onCheckedChange={(checked) => setValue((current) => ({ ...current, enabled: checked }))} aria-label="Pre-orders on" />
+          <Switch checked={value.enabled} disabled={!loaded} onCheckedChange={(checked) => setValue((current) => ({ ...current, enabled: checked }))} aria-label="Pre-orders on" />
         </div>
         <div className="flex items-center justify-between gap-4 rounded-md border border-border p-4">
           <div>
             <p className="text-sm font-bold text-navy">Customers tick the pre-order box</p>
             <p className="text-xs text-slate">At checkout they confirm they collect the whole order after the goods arrive, with a full refund if they don't come.</p>
           </div>
-          <Switch checked={value.requireAck} onCheckedChange={(checked) => setValue((current) => ({ ...current, requireAck: checked }))} aria-label="Customers tick the pre-order box" />
+          <Switch checked={value.requireAck} disabled={!loaded} onCheckedChange={(checked) => setValue((current) => ({ ...current, requireAck: checked }))} aria-label="Customers tick the pre-order box" />
         </div>
         <label className="grid gap-1 rounded-md border border-border p-4 text-sm">
           <span className="font-bold text-navy">Grace days after the expected date</span>
           <span className="text-xs text-slate">Pre-orders stop this many days after a batch's expected date when its bill has not come (0 to 14).</span>
-          <Input type="number" min={0} max={14} className="w-28" value={value.graceDays}
+          <Input type="number" min={0} max={14} className="w-28" value={value.graceDays} disabled={!loaded}
             onChange={(e) => setValue((current) => ({ ...current, graceDays: Math.min(14, Math.max(0, Math.floor(Number(e.target.value) || 0))) }))} />
         </label>
-        <Button className="bg-navy text-white hover:bg-navy/90 sm:w-fit" disabled={saving} onClick={() => void save()}>
+        <Button className="bg-navy text-white hover:bg-navy/90 sm:w-fit" disabled={saving || !loaded} onClick={() => void save()}>
           <Save className="mr-1 h-4 w-4" /> {saving ? "Saving…" : "Save pre-orders"}
         </Button>
       </div>

@@ -9,7 +9,7 @@ import { inrPrecise } from "@/lib/data";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import type { BatchData } from "@/lib/batches.functions";
 import { COST_STATUS_NAMES, costBeforeGst, costMethodName, type BatchExpenseRow, type BatchReport, type BatchReportRow } from "@/lib/batches";
-import type { StoredCostDoc } from "@/lib/batch-costs";
+import { NOT_BATCH_COST_NOTE, type StoredCostDoc } from "@/lib/batch-costs";
 import { CostError, ExpensePickerDialog, SplitEditor, presetRange, type SplitDoc } from "@/components/batches/ExpensePicker";
 import { BillChargesDialog } from "@/components/batches/BillChargesPicker";
 import { cn } from "@/lib/utils";
@@ -239,7 +239,11 @@ export function ExpensesOverview({ report, data, godownId, onChanged }: { report
       setLoading(false);
     }
   };
-  const overhead = Math.round((untagged ?? []).reduce((total, r) => total + Math.max(0, r.beforeGst - r.tagged), 0) * 100) / 100;
+  // A channel partner's commission is not a batch cost (owner's rule): shown apart, never in the overhead.
+  const commission = (untagged ?? []).filter((r) => r.notBatchCost);
+  const overheadRows = (untagged ?? []).filter((r) => !r.notBatchCost);
+  const overhead = Math.round(overheadRows.reduce((total, r) => total + Math.max(0, r.beforeGst - r.tagged), 0) * 100) / 100;
+  const commissionTotal = Math.round(commission.reduce((total, r) => total + r.beforeGst, 0) * 100) / 100;
   return (
     <div className="grid min-w-0 gap-4 [&>*]:min-w-0">
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -264,8 +268,9 @@ export function ExpensesOverview({ report, data, godownId, onChanged }: { report
             <Button size="sm" variant="outline" disabled={loading} onClick={() => void loadUntagged()}><RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", loading && "animate-spin")} />Show untagged expenses</Button>
           </div>
           <CostError text={problem} />
-          {untagged && <p className="text-sm font-semibold">{`${untagged.length} expenses · ${money(overhead)} before GST not on any batch`}</p>}
-          {untagged?.map((r) => (
+          {untagged && <p className="text-sm font-semibold">{`${overheadRows.length} expenses · ${money(overhead)} before GST not on any batch`}</p>}
+          {commission.length > 0 && <p className="text-xs text-slate">{`${NOT_BATCH_COST_NOTE}: ${money(commissionTotal)} left out`}</p>}
+          {untagged && overheadRows.map((r) => (
             <button key={r.expenseId} type="button" onClick={() => setPicker({ open: true, expenseId: r.expenseId })}
               className="grid min-w-0 grid-cols-[1fr_auto] gap-x-3 rounded-md border border-border bg-white px-3 py-2 text-left text-sm hover:border-gold">
               <span className="truncate font-semibold text-navy">{r.account || "Expense"}</span>

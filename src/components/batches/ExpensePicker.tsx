@@ -9,7 +9,7 @@ import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import type { BatchData } from "@/lib/batches.functions";
 import { costBeforeGst, istDate } from "@/lib/batches";
 import {
-  REAUTHORIZE_HINT, SPLIT_METHODS, countedCost, defaultSplitMethod, expensesNotAllowed, splitByMethod, type SplitBatch, type SplitMethod,
+  NOT_BATCH_COST_NOTE, REAUTHORIZE_HINT, SPLIT_METHODS, countedCost, defaultSplitMethod, expensesNotAllowed, splitByMethod, type SplitBatch, type SplitMethod,
 } from "@/lib/batch-costs";
 import { cn } from "@/lib/utils";
 
@@ -114,7 +114,8 @@ export function ExpensePickerDialog({ open, onOpenChange, data, presetBatchIds, 
 
   const accounts = [...new Set((rows ?? []).map((r) => r.account).filter(Boolean))].sort();
   const shown = (rows ?? []).filter((r) => (!untaggedOnly || Math.abs(r.tagged) < Math.abs(r.beforeGst) - 0.004) && (!account || r.account === account));
-  const untaggedTotal = shown.reduce((sum, r) => sum + Math.max(0, r.beforeGst - r.tagged), 0);
+  // A channel partner's commission is never a batch cost (owner's rule), nor the batches' overhead.
+  const untaggedTotal = shown.filter((r) => !r.notBatchCost).reduce((sum, r) => sum + Math.max(0, r.beforeGst - r.tagged), 0);
   const close = () => onOpenChange(false);
 
   return (
@@ -168,14 +169,16 @@ export function ExpensePickerDialog({ open, onOpenChange, data, presetBatchIds, 
             {rows && shown.length === 0 && <p className="text-sm text-slate">No expenses match. Widen the dates or untick Untagged only.</p>}
             <div className="grid gap-2">
               {shown.map((r) => (
-                <button key={r.expenseId} type="button" disabled={loading} onClick={() => void openExpense(r.expenseId)}
-                  className="grid min-w-0 grid-cols-[1fr_auto] gap-x-3 gap-y-0.5 rounded-lg border border-border bg-white p-3 text-left text-sm transition hover:border-gold">
+                <button key={r.expenseId} type="button" disabled={loading || r.notBatchCost} onClick={() => void openExpense(r.expenseId)}
+                  title={r.notBatchCost ? NOT_BATCH_COST_NOTE : undefined}
+                  className={cn("grid min-w-0 grid-cols-[1fr_auto] gap-x-3 gap-y-0.5 rounded-lg border border-border bg-white p-3 text-left text-sm transition",
+                    r.notBatchCost ? "cursor-not-allowed opacity-60" : "hover:border-gold")}>
                   <span className="truncate font-semibold text-navy"><ReceiptText className="mr-1 inline h-3.5 w-3.5" />{r.account || "Expense"}</span>
                   <span className="text-right font-semibold">{money(r.beforeGst)}</span>
                   <span className="truncate text-xs text-slate">{[day(r.date), r.number, r.description].filter(Boolean).join(" · ")}</span>
                   <span className="text-right text-xs text-slate">{r.gst ? `+ GST ${money(r.gst)}` : "No GST"}</span>
                   <span className={cn("col-span-2 text-xs", r.tagged ? "text-emerald-700" : "text-slate")}>
-                    {r.tagged ? `${money(r.tagged)} tagged · ${money(Math.max(0, r.beforeGst - r.tagged))} untagged` : "Not tagged"}
+                    {r.notBatchCost ? NOT_BATCH_COST_NOTE : r.tagged ? `${money(r.tagged)} tagged · ${money(Math.max(0, r.beforeGst - r.tagged))} untagged` : "Not tagged"}
                     {r.rebilled ? " · charged on to a customer" : ""}
                   </span>
                 </button>
@@ -363,7 +366,7 @@ export function SplitEditor({ data, doc, presetBatchIds, onCancel, onSaved }: {
 function demoRows(): ListRow[] {
   const row = (id: string, date: string, account: string, description: string, amount: number, tagged = 0): ListRow => ({
     expenseId: id, date, number: `EXP-${id}`, account, description, vendor: "", beforeGst: amount, gst: 0, total: amount, status: "nonbillable",
-    rebilled: false, modifiedAt: "", locationId: "", tagged,
+    rebilled: false, modifiedAt: "", locationId: "", notBatchCost: false, tagged,
   });
   return [
     row("00131", todayIst(), "Transportation Charges Freight Charges", "Lorry freight for sugar", 9000, 9000),

@@ -315,7 +315,7 @@ function AccountOrderDetail() {
           <ZohoInvoiceStatus orderNo={order.id} audience="customer" className="mt-3" />
           {goods.waiting > 0 && (
             <p className="mt-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-950">
-              {order.payment === "Paid" ? preorderText.invoiceLater(order.amount.toFixed(2)) : preorderText.waiting(dayLabel(goods.by))}
+              {order.payment === "Paid" ? preorderText.invoiceLater(inrPrecise(order.amount)) : preorderText.waiting(dayLabel(goods.by))}
             </p>
           )}
           {returns.filter((item) => item.order === order.id).map((item) => (
@@ -354,7 +354,7 @@ function AccountOrderDetail() {
                           <p className="font-medium text-navy">{it.product.name}</p>
                           <p className="text-xs text-slate">Qty {it.qty}</p>
                           <ItemBatchCodes batches={it.dbItemId ? itemBatches.get(it.dbItemId) : undefined} />
-                          <ItemArrivalNote arrival={it.dbItemId ? arrivals.get(it.dbItemId) : undefined} />
+                          <ItemArrivalNote arrival={it.dbItemId ? arrivals.get(it.dbItemId) : undefined} order={order} />
                         </div>
                       </div>
                     </td>

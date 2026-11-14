@@ -91,6 +91,8 @@ export type Product = {
    */
   incoming?: number | undefined;
   incomingBy?: string | null | undefined;
+  /** The arriving units by date, earliest first (branch_stock.incoming_detail): a line's own date is where they run out. */
+  incomingDetail?: { by: string; qty: number }[] | undefined;
   incomingGodown?: string | undefined;
 };
 

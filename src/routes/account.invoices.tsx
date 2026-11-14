@@ -4,7 +4,7 @@ import { Download, FileText, IndianRupee, Receipt } from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { DataTable, Panel, scrollToSection, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { accountNav } from "@/lib/account-nav";
-import { inr } from "@/lib/data";
+import { inr, inrPrecise } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { downloadCSV } from "@/lib/export-utils";
@@ -115,7 +115,7 @@ function AccountInvoices() {
             zohoNumbers.get(o.id)
               ? <span className="font-semibold text-navy">{zohoNumbers.get(o.id)}</span>
               : o.dbOrderId && waitingGoods.has(o.dbOrderId)
-                ? <span className="block max-w-[16rem] text-xs text-amber-800">{preorderText.invoiceLater(o.amount.toFixed(2))}</span>
+                ? <span className="block max-w-[16rem] text-xs text-amber-800">{preorderText.invoiceLater(inrPrecise(o.amount))}</span>
                 : <span className="text-xs text-slate">Being issued</span>,
             <Link
               to="/account/orders/$id"

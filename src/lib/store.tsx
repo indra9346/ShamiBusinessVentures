@@ -1107,7 +1107,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         // A stored per-kg/litre rate belongs to the base price; let it follow the godown price.
         ...(price !== product.price ? { ratePricing: undefined } : {}),
         stock: branchStockOf(branchState, product.id, shopperGodown.id),
-        ...(arriving.qty > 0 ? { incoming: arriving.qty, incomingBy: arriving.by, incomingGodown: shopperGodown.city || shopperGodown.name } : {}),
+        ...(arriving.qty > 0 ? { incoming: arriving.qty, incomingBy: arriving.by, incomingDetail: arriving.detail, incomingGodown: shopperGodown.city || shopperGodown.name } : {}),
       });
     }
     return view;

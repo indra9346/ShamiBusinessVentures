@@ -43,6 +43,25 @@ as before.
 Worked example (Sugar S1 at CLK): Z 50 → lot 360 (T 410, ready 50, arriving 360) → order of 70 (T 340, ready 0,
 arriving 340) → bill typed (Z 410, held 360, T 340) → match (held 0, T 340, ready 340) → invoiced (Z 340, T 340).
 
+### Review fixes (14 Nov 2026)
+
+- **A low reading heals.** Lines a reading counted in W although Zoho may already have taken them out (only in the
+  snapshot, an order whose Zoho push was running, a sales order confirmed by hand) are remembered; when they leave W
+  their units come back into T unheld, never more than Zoho's own fall at that reading.
+- **Website stock edits at a watched godown** wait in `preorder_watch.pending_delta` and stay in T. The hourly pull
+  applies Zoho's reading first (so counter sales are seen), then sends the edit itself (`preorder_push_start` /
+  `preorder_push_finish`), never a rise where a lot is, and only while nothing is held. Readings of that godown wait
+  while the edit is on its way (2 minutes at most). A staff count replaces a waiting edit.
+- **Readings wait for transfers:** a staff count, Receive purchase, a release of held stock or an undo of a match is
+  refused while a transfer of the product (at that godown) is not finished, as the hourly pull holds those pairs back.
+- **One lot per press** of Make pre-order batch (`preorder_checks.request`); an undo of a match is refused while an
+  order on it is being sent to Zoho or a stock edit waits; the bill's own charges come off the lot when its match is
+  undone. Zoho readings are taken at 2 decimals. Pre-order functions sync the product total once at their end, so no
+  "out of stock" alert goes out half-way.
+- **Expenses:** a changed expense is re-split in one call (`tag_batch_costs(..., _replace)`); an expense is tagged
+  whole or by line, never both; "Channel Partner - …" accounts are not batch costs (owner's rule); the Expense # comes
+  from `custom_field_hash.cf_expense` on a single read. Cost variance counts only units sold before the match.
+
 ## Where things are
 
 | What | Where |

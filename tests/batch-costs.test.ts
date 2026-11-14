@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   apportionPaise, billChargeDocuments, chargeSplitMethod, costDocChange, countedCost, defaultSplitMethod, effectiveTagAmounts, effectiveTagsById,
   expenseDocuments, expenseListRow, expensesNotAllowed, parseKg, replacesStaleSplit, splitByMethod, zohoSaysGone,
+  expenseNumber, notBatchCost, NOT_BATCH_COST_NOTE,
 } from "../src/lib/batch-costs.ts";
 import { billPlan } from "../src/lib/bill-batches.ts";
 
@@ -109,8 +110,28 @@ test("expenseListRow: a row of the Books list, as the live list gives it", () =>
   assert.deepEqual(row, {
     expenseId: "E-FR", date: "2026-08-14", number: "EXP-00040", account: "Transportation Charges Freight Charges", description: "Transport freight PO 92",
     vendor: "", beforeGst: 43050, gst: 0, total: 43050, status: "nonbillable", rebilled: false, modifiedAt: "2026-09-11T18:25:29+0530", locationId: "L-CLK",
+    notBatchCost: false,
   });
   assert.deepEqual([expenseListRow({ expense_id: "x", total: 1180, total_without_tax: 1000 }).gst], [180]);
+});
+
+test("review fixes: the Expense # of one expense read alone; a channel partner's commission is not a batch cost", () => {
+  // GET expenses/:id (live shape, 14 Nov 2026): no top-level cf_expense, the number is in custom_field_hash / custom_fields.
+  const detail = {
+    expense_id: "3579709000001843851", date: "2026-08-14", account_id: "A-1", account_name: "Transportation Charges Freight Charges", total: 500,
+    sub_total: 500, tax_amount: 0, reference_number: "IDFB6236M3180855", status: "nonbillable", line_items: [],
+    custom_field_hash: { cf_expense: "EXP-00027", cf_expense_unformatted: "EXP-00027" },
+    custom_fields: [{ api_name: "cf_expense", label: "Expense #", value: "EXP-00027" }],
+  };
+  assert.equal(expenseNumber(detail), "EXP-00027");
+  assert.equal(expenseDocuments(detail)[0]!.doc_number, "EXP-00027", "not the bank reference");
+  assert.equal(expenseNumber({ custom_fields: [{ api_name: "cf_expense", value: "EXP-00101" }], reference_number: "1026270434504" }), "EXP-00101");
+  assert.equal(expenseNumber({ reference_number: "NEFT-9" }), "NEFT-9", "no Expense #: the reference");
+  // The live Books account for partner commission at Challakere.
+  for (const name of ["Channel Partner - Challakere - Commission", "channel partner payouts"]) assert.equal(notBatchCost(name), true, name);
+  for (const name of ["Transportation Charges Freight Charges", "Hamali", "Partner lunch"]) assert.equal(notBatchCost(name), false, name);
+  assert.equal(expenseListRow({ expense_id: "x", account_name: "Channel Partner - Challakere - Commission", total: 575 }).notBatchCost, true);
+  assert.equal(NOT_BATCH_COST_NOTE, "Partner commission is not a batch cost (owner's rule)");
 });
 
 test("billChargeDocuments: freight and other non-stock lines, the bill discount (negative) and the round-off", () => {

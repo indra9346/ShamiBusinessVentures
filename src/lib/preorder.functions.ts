@@ -203,6 +203,8 @@ export const createIncomingBatch = createServerFn({ method: "POST" })
     po: z.object({ poId: z.string().trim().regex(/^\d{1,30}$/), lineId: z.string().trim().min(1).max(40) }).nullable().default(null),
     /** Bill lines the admin ticked "Not this purchase" ("billId|lineId"). */
     notThisPurchase: z.array(z.string().trim().max(90)).max(100).default([]),
+    /** One per opening of the dialog: a repeated press (a lost reply) gets the lot it made (review fix). */
+    requestId: z.string().uuid().optional(),
   }))
   .handler(async ({ data, context }) => {
     await ensureAdmin(context.supabase, context.userId);
@@ -229,6 +231,7 @@ export const createIncomingBatch = createServerFn({ method: "POST" })
           ack: ticked.has(`${line.billId}|${line.lineId}`),
         })),
         checked_at: now.readAt,
+        ...(data.requestId ? { request: data.requestId } : {}),
       };
       const { data: made, error } = await k.db.rpc("create_incoming_batch", {
         _branch_id: branch.id, _product_id: product.id, _quantity: data.quantity, _unit_cost_ex_gst: data.unitCostExGst,

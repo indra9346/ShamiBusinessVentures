@@ -743,7 +743,7 @@ function AdminOrderDetail() {
                             <p className="font-semibold text-navy">{it.product.name}</p>
                             <span className="text-xs text-slate">{it.product.category}</span>
                             <ItemBatchCodes admin batches={it.dbItemId ? itemBatches.get(it.dbItemId) : undefined} />
-                            <ItemArrivalNote arrival={it.dbItemId ? arrivals.get(it.dbItemId) : undefined} />
+                            <ItemArrivalNote arrival={it.dbItemId ? arrivals.get(it.dbItemId) : undefined} order={order} />
                             {it.dbItemId && (arrivals.get(it.dbItemId)?.waiting ?? 0) > 0 && !isCancelled && (
                               <MoveToReadyButton orderItemId={it.dbItemId} waiting={arrivals.get(it.dbItemId)?.waiting ?? 0} productName={it.product.name}
                                 onMoved={() => setArrivalsKey((k) => k + 1)} />

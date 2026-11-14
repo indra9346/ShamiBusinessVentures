@@ -510,10 +510,23 @@ export function buildBatchReport(input: {
     t.profitBeforeExpenses = paise(t.sales - t.costOfSold - t.lossValue);
     t.profit = t.profitBeforeExpenses;
     if (isLot) t.estimatedCostValue = t.costOfSold;
-    // A matched pre-order: its sold units were costed with the estimate until the bill, and with the bill's cost since.
+    // A matched pre-order: the units sold before its bill was matched were costed with the estimate, and take the bill's
+    // cost now; the difference on those is the cost variance (spec 2.7). Units sold after the match never had an estimate
+    // (review fix: they were counted too).
     if (!isLot && batch.expected_quantity !== null && batch.expected_quantity !== undefined && batch.matched_at
-      && batch.est_unit_cost_ex_gst !== null && batch.est_unit_cost_ex_gst !== undefined)
-      t.costVarianceValue = paise(t.sold * (costBeforeGst(batch) - num(batch.est_unit_cost_ex_gst)));
+      && batch.est_unit_cost_ex_gst !== null && batch.est_unit_cost_ex_gst !== undefined) {
+      const matchedAt = Date.parse(batch.matched_at);
+      let preMatch = 0;
+      for (const a of input.allocations) {
+        if (a.batch_id !== batch.id || !(Date.parse(a.created_at) <= matchedAt)) continue;
+        const net = qty(num(a.reserved_quantity) - num(a.released_quantity));
+        const item = itemById.get(a.order_item_id);
+        const order = item ? orderById.get(item.order_id) : undefined;
+        if (net <= 0 || !order || VOID_STATUSES.includes(order.order_status) || HELD_STATUSES.includes(order.order_status)) continue;
+        preMatch = qty(preMatch + net);
+      }
+      t.costVarianceValue = paise(Math.min(preMatch, t.sold) * (costBeforeGst(batch) - num(batch.est_unit_cost_ex_gst)));
+    }
     const purchaseDate = batch.purchase_date ?? istDate(batch.created_at);
     const ledger = qty(t.purchased + t.expected + t.received - t.sent - t.sold - t.held - t.lost + t.gained);
     const handled = t.purchased + t.expected + t.received - t.sent;
@@ -626,8 +639,12 @@ function spreadExpenses(rows: BatchReportRow[], docs: StoredCostDoc[], tags: Sto
     }
     row.profit = paise(row.profitBeforeExpenses - onSold - onLost);
     row.landedStockValue = paise(row.stockValue + inStock);
-    row.expensePerUnit = row.unitBase > 0 ? paise(total / row.unitBase) : 0;
-    row.landedUnitCost = paise(c + (row.unitBase > 0 ? total / row.unitBase : 0));
+    // Per unit the expense is actually spread over (sold, held, sent, lost and in stock: units found in a count too), so
+    // unsold stock at landed cost = available × landed cost (review fix: it divided by the units bought).
+    const spreadOver = weights.reduce((sum, w) => sum + w, 0);
+    const perUnitBase = spreadOver > 0 ? spreadOver : row.unitBase;
+    row.expensePerUnit = perUnitBase > 0 ? paise(total / perUnitBase) : 0;
+    row.landedUnitCost = paise(c + (perUnitBase > 0 ? total / perUnitBase : 0));
     // Money in = money out when every unit is accounted for: the difference is the ledger gap at cost.
     const isLot = (row.batch.stage ?? "received") === "incoming";
     const moneyIn = row.purchaseValue + paise(row.received * c) + paise(row.expected * c) + total;
@@ -790,7 +807,9 @@ export const BATCH_COLUMNS: [string, (row: BatchReportRow) => string | number | 
   ["Cost of sold excl. GST (₹)", (r) => r.costOfSold],
   ["Loss value excl. GST (₹)", (r) => r.lossValue],
   ["Profit before expenses (₹)", (r) => r.profitBeforeExpenses],
-  ["Expenses (₹)", (r) => paise(r.expenseValue + r.inheritedExpenseValue)],
+  // Two columns, so each adds up across batches (review fix: own + inherited counted a sent unit's expense twice).
+  ["Expenses tagged here (₹)", (r) => r.expenseValue],
+  ["Expenses with units received (₹)", (r) => r.inheritedExpenseValue],
   ["Expense per unit (₹)", (r) => r.expensePerUnit],
   ["Landed cost per unit (₹)", (r) => r.landedUnitCost],
   ["Expenses on sold (₹)", (r) => r.expenseOnSoldValue],
@@ -881,11 +900,16 @@ export function batchReportSheets(report: BatchReport, meta: { generatedAt: stri
   const codes = new Set(report.rows.map((r) => r.batch.id));
   const expenses: XlsxSheet = {
     name: "Expenses",
-    rows: [["Date", "Account", "Reference", "From", "Before GST (₹)", "GST (₹)", "GST claimable", "Cost (₹)", "Batch no.", "Tagged (₹)", "Counted now (₹)", "Method", "Flag"],
-      ...report.expenses.filter((e) => codes.has(e.batchId)).map((e) => [
-        dmy(e.date), e.account, e.reference, e.source === "bill" ? "Supplier bill" : "Zoho Books expense", e.beforeGst, e.gst, e.claimable ? "Yes" : "No",
-        e.gone ? 0 : e.cost, e.batchCode, e.tagged, e.effective, costMethodName(e.method), e.flag || (e.gone ? "Deleted in Zoho" : ""),
-      ])],
+    // The document's own amounts on its first row only, so a column adds up to what was spent (review fix).
+    rows: [["Date", "Account", "Reference", "From", "Before GST (₹)", "GST (₹)", "GST claimable", "Document cost (₹)", "Batch no.", "Tagged (₹)", "Counted now (₹)", "Method", "Flag"],
+      ...report.expenses.filter((e) => codes.has(e.batchId)).map((e, i, all) => {
+        const first = all.findIndex((x) => x.documentId === e.documentId) === i;
+        return [
+          dmy(e.date), e.account, e.reference, e.source === "bill" ? "Supplier bill" : "Zoho Books expense", first ? e.beforeGst : null, first ? e.gst : null,
+          e.claimable ? "Yes" : "No", first ? (e.gone ? 0 : e.cost) : null, e.batchCode, e.tagged, e.effective, costMethodName(e.method),
+          e.flag || (e.gone ? "Deleted in Zoho" : ""),
+        ];
+      })],
     boldRows: [0],
     widths: [11, 28, 16, 18, 12, 10, 10, 12, 16, 12, 12, 14, 40],
   };

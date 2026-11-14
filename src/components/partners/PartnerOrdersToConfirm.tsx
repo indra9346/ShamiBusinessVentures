@@ -15,6 +15,7 @@ import {
   PARTNER_CONFIRM_WORDS, confirmQuestion, confirmedNote, partnerOrderInvoice, partnerOrderRows, rowConfirmState, type PartnerOrderRow,
 } from "@/lib/partner-confirm";
 import { TONE_CLASSES } from "@/lib/order-status-tone";
+import { dayLabel, preorderText } from "@/lib/preorder";
 import { pushOrderToZohoInBackground } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
@@ -34,14 +35,21 @@ export function PartnerOrdersToConfirm() {
   const [confirming, setConfirming] = useState("");
   const [opening, setOpening] = useState("");
   const [shown, setShown] = useState<{ order: Order; facts: InvoiceFacts } | null>(null);
+  // Orders whose goods are still on a pre-order (review fix): their invoice and pickup QR come when the goods arrive.
+  const [goodsWaiting, setGoodsWaiting] = useState<Map<string, string | null>>(new Map());
 
   const load = async () => {
     if (STATIC_DATA_MODE) { setRows([]); return; }
     setLoading(true);
     try {
-      const { data, error } = await supabase.rpc("partner_orders_to_confirm");
+      const [{ data, error }, waitingGoods] = await Promise.all([
+        supabase.rpc("partner_orders_to_confirm"),
+        supabase.rpc("partner_orders_waiting_goods"),
+      ]);
       if (error) throw new Error(error.message);
       setRows(partnerOrderRows(data));
+      // Before the pre-order release the function is not there: nothing waits then.
+      setGoodsWaiting(new Map((waitingGoods.error ? [] : waitingGoods.data ?? []).map((row) => [row.order_no, row.expected_date])));
       setFailed("");
     } catch (cause) {
       setFailed(cause instanceof Error ? cause.message : "Could not load the orders");
@@ -100,6 +108,12 @@ export function PartnerOrdersToConfirm() {
             <p className="break-all font-mono text-xs font-semibold text-navy">{row.order_no}</p>
             <p className="text-xs text-slate"><span>{row.customer}</span> · <span>{when(row.placed_at)}</span> · <span>{row.order_status}</span></p>
             {row.items && <p className="text-[11px] text-slate">{row.items}</p>}
+            {goodsWaiting.has(row.order_no) && (
+              <p className="mt-0.5 text-[11px] font-semibold text-amber-800">
+                <span>{preorderText.partnerInvoiceLater}</span>
+                {goodsWaiting.get(row.order_no) && <span> · {preorderText.waiting(dayLabel(goodsWaiting.get(row.order_no)))}</span>}
+              </p>
+            )}
           </div>
           <div className="text-right">
             <p className="font-bold tabular-nums text-navy">{inrPrecise(row.total)}</p>
