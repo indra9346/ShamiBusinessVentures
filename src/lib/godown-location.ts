@@ -3,11 +3,15 @@
  * will be uploaded in admin panel for godown location) and show Collect goods from here and rest details").
  *
  * The admin pastes each godown's Google Maps link in Admin > Godowns (branches.map_url). An order collected from a godown
- * then prints, under its notes, a "Collect goods from here" block: a QR of that link, and beside it the godown's name,
- * address and "Scan for the godown location". Without a link the block prints without the QR. The godown's phone and
- * pickup instructions are already in the invoice's PICKUP FROM card at the top, so the block does not print them again
- * (review, 13 Nov 2026: repeating them pushed the delivery QR onto a second page). The QR is drawn with the same code as
- * the invoice's delivery QR (pdf-qr.ts), and on a phone the PDF's QR can also be tapped.
+ * then prints, under its notes, a "Collect goods from here" block with the godown's name and address. The godown's phone
+ * and pickup instructions are already in the invoice's PICKUP FROM card at the top, so the block does not print them
+ * again (review, 13 Nov 2026: repeating them pushed the delivery QR onto a second page).
+ *
+ * The QR of the link prints at the top right of the first page, beside the invoice dates, with "Scan for the godown
+ * location" under it (the owner, 14 Nov 2026, circling that empty space on a live invoice: "Add scan for godown location
+ * in the invoice here... and qr code for godown location"). It used to sit inside the block under the notes
+ * (collectFromBlock still draws it there when given a link; the invoice now passes none). The QR is drawn with the same
+ * code as the invoice's delivery QR (pdf-qr.ts), and on a phone the PDF's QR can also be tapped.
  *
  * Kept free of app imports so the node tests can load it.
  */
@@ -158,4 +162,43 @@ export function collectFromBlock(pdf: CollectSurface, point: CollectPoint, width
     return top + height;
   };
   return { height, link, qrSize: qr, rows: rows.map((row) => row.lines.join(" ")), draw };
+}
+
+/** Only these drawing calls are used by the corner QR, so a test can record them without a real PDF. */
+export type CornerSurface = CollectSurface & Pick<JsPdf, "getTextWidth">;
+
+/** The label's size and where its baseline sits under the QR, in mm. */
+const CORNER_LABEL_SIZE = 6.6;
+const CORNER_LABEL_DROP = 2.7;
+
+/**
+ * The godown's location QR at the top right of the invoice (owner, 14 Nov 2026): the QR with its right edge on `right`,
+ * and "Scan for the godown location" under it, right-aligned. Null when the godown has no working link, so nothing is
+ * drawn there. `size` is the QR's side (16-24 mm, collectQrSize), `width` the widest thing drawn (the label is wider
+ * than the QR), `height` from the QR's top to just under the label. Tapping the QR or its label in the PDF opens the
+ * location.
+ */
+export function locationQrCorner(pdf: CornerSurface, mapUrl: string | null | undefined, style: CollectStyle) {
+  const link = printableMapLink(mapUrl);
+  if (!link) return null;
+  const size = collectQrSize(link);
+  pdf.setFont("helvetica", "bold");
+  pdf.setFontSize(CORNER_LABEL_SIZE);
+  const labelW = pdf.getTextWidth(COLLECT_QR_LABEL);
+  const height = size + CORNER_LABEL_DROP + 0.9;
+  const draw = (right: number, top: number) => {
+    const x = right - size;
+    drawPdfQr(pdf, link, x, top, size);
+    pdf.setDrawColor(...style.rule);
+    pdf.rect(x, top, size, size);
+    pdf.link(x, top, size, size, { url: link });
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(CORNER_LABEL_SIZE);
+    pdf.setTextColor(...style.navy);
+    const baseline = top + size + CORNER_LABEL_DROP;
+    pdf.text(COLLECT_QR_LABEL, right, baseline, { align: "right" });
+    pdf.link(right - labelW, baseline - 2.4, labelW, 3.1, { url: link });
+    return top + height;
+  };
+  return { link, size, width: Math.max(size, labelW), height, draw };
 }

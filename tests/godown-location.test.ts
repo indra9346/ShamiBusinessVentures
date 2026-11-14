@@ -5,7 +5,7 @@ import * as jspdf from "jspdf";
 import { encode } from "uqr";
 import {
   COLLECT_HEADING, COLLECT_QR_LABEL, MAP_LINK_MAX, collectAddressLine, collectFromBlock, collectQrSize, isGoogleMapsLink,
-  mapLinkProblem, printableMapLink, type CollectPoint,
+  locationQrCorner, mapLinkProblem, printableMapLink, type CollectPoint,
 } from "../src/lib/godown-location.ts";
 
 // 13 Nov 2026, the owner on the invoice's notes: "Add Location QR here (location link will be uploaded in admin panel
@@ -87,18 +87,19 @@ test("the QR is about 0.45 mm a module, from 16 to 24 mm, never under 0.42 mm fo
 function recorder() {
   const real = new jspdf.jsPDF({ unit: "mm", format: "a4" });
   const rects: { fill: number[]; rect: [number, number, number, number, string | undefined] }[] = [];
-  const texts: { text: string; x: number; y: number }[] = [];
+  const texts: { text: string; x: number; y: number; align?: string }[] = [];
   const links: { x: number; y: number; w: number; h: number; url: string }[] = [];
   let fill: number[] = [];
   const pdf = {
     setFont: (...args: [string, string]) => real.setFont(...args),
     setFontSize: (size: number) => real.setFontSize(size),
+    getTextWidth: (text: string) => real.getTextWidth(text),
     splitTextToSize: (text: string, width: number) => real.splitTextToSize(text, width),
     setTextColor: () => undefined,
     setDrawColor: () => undefined,
     setFillColor: (...rgb: number[]) => { fill = rgb; },
     rect: (x: number, y: number, w: number, h: number, style?: string) => { rects.push({ fill, rect: [x, y, w, h, style] }); },
-    text: (text: string | string[], x: number, y: number) => { texts.push({ text: String(text), x, y }); },
+    text: (text: string | string[], x: number, y: number, options?: { align?: string }) => { texts.push({ text: String(text), x, y, align: options?.align }); },
     link: (x: number, y: number, w: number, h: number, options: { url: string }) => { links.push({ x, y, w, h, url: options.url }); },
   };
   return { pdf: pdf as never, rects, texts, links };
@@ -190,10 +191,10 @@ test("in a real PDF the block is compact and its QR is a link", () => {
 
 test("the invoice prints the block under its notes on every copy of a collect-from-godown order", () => {
   const source = read("src/lib/invoice.ts");
-  assert.match(source, /import \{ collectAddressLine, collectFromBlock, type CollectPoint \} from "@\/lib\/godown-location";/);
+  assert.match(source, /import \{ collectAddressLine, collectFromBlock, locationQrCorner, type CollectPoint \} from "@\/lib\/godown-location";/);
   assert.match(source, /instructions: orderBranch\.instructions, mapUrl: orderBranch\.mapUrl \}/, "the godown's link from Admin > Godowns");
-  assert.match(source, /const collectPoint: CollectPoint \| null = !pickupPoint \? null : \{\n\s+name: pickupPoint\.name,\n\s+address: orderBranch \? collectAddressLine\(orderBranch\) : pickupPoint\.address,\n\s+mapUrl: pickupPoint\.mapUrl,\n\s+\};/,
-    "only for an order collected from a godown; name, address and link (the phone and instructions are in PICKUP FROM)");
+  assert.match(source, /const collectPoint: CollectPoint \| null = !pickupPoint \? null : \{\n\s+name: pickupPoint\.name,\n\s+address: orderBranch \? collectAddressLine\(orderBranch\) : pickupPoint\.address,\n\s+mapUrl: "",\n\s+\};/,
+    "only for an order collected from a godown; name and address (the phone and instructions are in PICKUP FROM), no QR: it is at the top right");
   // PICKUP FROM at the top still prints the phone and the instructions.
   assert.match(source, /\? \[pickupPoint\.name, pickupPoint\.address, pickupPoint\.phone \? `Phone \$\{pickupPoint\.phone\}` : "", pickupPoint\.instructions\]/);
   assert.match(source, /const collect = collectPoint \? collectFromBlock\(pdf, collectPoint, leftW, \{ ink, muted, navy, rule \}\) : null;/);
@@ -205,8 +206,72 @@ test("the invoice prints the block under its notes on every copy of a collect-fr
   assert.ok(!/copy === "office"[^\n]*collect|collect[^\n]*copy ===/.test(source), "the same on the customer, office and partner copies");
   // The note no longer names the godown: the block says where to collect.
   assert.ok(!source.includes("`Collect from ${pickupPoint.name}."));
-  // The location QR may sit right under the notes: the note names the DELIVERY QR band at the bottom.
+  // Two QRs on the invoice: the note names the DELIVERY QR band at the bottom as the one for the counter.
   assert.match(source, /\? "At the godown counter, show the DELIVERY QR at the bottom\."/);
+});
+
+test("the invoice prints the location QR at the top right, beside the dates, on every copy of a collect-from-godown order", () => {
+  const source = read("src/lib/invoice.ts");
+  // Owner, 14 Nov 2026, circling the empty space right of the invoice dates: "Add scan for godown location in the invoice
+  // here... and qr code for godown location".
+  assert.match(source, /const locationQr = pickupPoint \? locationQrCorner\(pdf, pickupPoint\.mapUrl, \{ ink, muted, navy, rule \}\) : null;/,
+    "only for an order collected from a godown, from its Admin > Godowns link");
+  assert.ok(!/copy === "office"[^\n]*locationQr|locationQr[^\n]*copy ===/.test(source), "the same on the customer, office and partner copies");
+  const metaAt = source.indexOf('["Invoice Date", zohoNumber ? invoiceDateText : "To be issued"]');
+  const drawAt = source.indexOf("if (locationQr) y = Math.max(y, locationQr.draw(R, qrTop) + 1.6);");
+  const cardsAt = source.indexOf("// Address cards");
+  assert.ok(metaAt > 0 && drawAt > metaAt && cardsAt > drawAt, "drawn with the invoice details, before the address cards (first page only)");
+  // Its right edge on the page margin, its top just under the gold rule; the cards start under its label when it is taller.
+  assert.match(source, /const qrTop = y - 3\.4;/);
+  // The right column's values stop short of the QR and never wrap into the next row.
+  assert.match(source, /const rightStop = locationQr \? R - locationQr\.size - 3 : R;/);
+  assert.match(source, /const room = Math\.min\(colW - 30, rightStop - \(x \+ 27\)\);/);
+  assert.match(source, /if \(locationQr && index % 2 === 1 && width > room\) pdf\.setFontSize\(Math\.max\(6\.5, \(8\.5 \* room \* 0\.98\) \/ width\)\);/);
+  assert.match(source, /pdf\.text\(text, x \+ 27, rowY, \{ maxWidth: room \}\);/);
+});
+
+test("the corner QR reads back as the link, right edge on the margin, its label right-aligned under it, both tappable", () => {
+  const { pdf, rects, texts, links } = recorder();
+  const corner = locationQrCorner(pdf, `  ${SHORT}  `, STYLE as never);
+  assert.ok(corner);
+  assert.equal(corner.link, SHORT);
+  assert.equal(corner.size, collectQrSize(SHORT));
+  const right = 196, top = 34.6;
+  const bottom = corner.draw(right, top);
+  assert.equal(bottom, top + corner.height);
+  const size = corner.size;
+  const x = right - size;
+  const { data } = encode(SHORT, { ecc: "M", border: 4 });
+  const n = data.length;
+  const cell = size / n;
+  assert.deepEqual(rects[0]!.rect, [x, top, size, size, "F"]);
+  const grid = Array.from({ length: n }, () => Array<boolean>(n).fill(false));
+  for (const { rect: [rx, ry, w] } of rects.filter((r) => r.rect[4] === "F" && r.fill.join() === "0,0,0")) {
+    const row = Math.round((ry - top) / cell);
+    const col = Math.round((rx - x) / cell);
+    for (let c = col; c < col + Math.round((w - 0.02) / cell); c += 1) grid[row]![c] = true;
+  }
+  assert.deepEqual(grid, data, "the location QR is the admin's link");
+  assert.ok(rects.some((r) => r.rect[4] === undefined && r.rect[0] === x && r.rect[2] === size), "a thin frame round it");
+  // One line of text: the label, right-aligned on the margin, under the QR and inside the height.
+  assert.deepEqual(texts.map((t) => [t.text, t.x, t.align]), [[COLLECT_QR_LABEL, right, "right"]]);
+  assert.ok(texts[0]!.y > top + size && texts[0]!.y < bottom);
+  assert.ok(corner.width >= size && corner.width < 40, `label width ${corner.width.toFixed(1)} mm`);
+  // Tapping the QR or the label opens the location.
+  assert.deepEqual(links.map((l) => l.url), [SHORT, SHORT]);
+  assert.deepEqual([links[0]!.x, links[0]!.y, links[0]!.w, links[0]!.h], [x, top, size, size]);
+  assert.ok(links[1]!.x + links[1]!.w <= right + 0.01 && links[1]!.y < texts[0]!.y && links[1]!.y + links[1]!.h > texts[0]!.y, "the label");
+  // The owner's real link (Share > Copy link, with its ?g_st tail) prints; the longest link kept stays at 24 mm.
+  assert.equal(locationQrCorner(recorder().pdf, "https://maps.app.goo.gl/CjGbDJHSCN7UtdCB9?g_st=ac", STYLE as never)?.size, 18.5);
+  assert.equal(locationQrCorner(recorder().pdf, MAX, STYLE as never)?.size, 24);
+});
+
+test("no working link, no corner QR: nothing is drawn there", () => {
+  for (const none of ["", "  ", null, undefined, "http://maps.app.goo.gl/x", LONG, "https://maps.app.goo.gl/a b"]) {
+    const { pdf, rects, texts, links } = recorder();
+    assert.equal(locationQrCorner(pdf, none, STYLE as never), null, String(none));
+    assert.equal(rects.length + texts.length + links.length, 0);
+  }
 });
 
 test("the admin enters the link in Admin > Godowns, checked before it is saved; the database refuses others", () => {
