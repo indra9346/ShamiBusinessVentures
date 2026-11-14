@@ -109,9 +109,16 @@ test("the database does the confirm, with the same UPDATE as the admin's and the
     "who confirmed: the partner's id, not only their name");
   assert.match(sql, /REVOKE ALL ON FUNCTION public\.partner_confirm_order\(text\) FROM PUBLIC, anon;\nGRANT EXECUTE ON FUNCTION public\.partner_confirm_order\(text\) TO authenticated;/);
   assert.match(sql, /REVOKE ALL ON FUNCTION public\.partner_orders_to_confirm\(\) FROM PUBLIC, anon;/);
-  // The triggers know the flag: the guard lets only this step through, the fulfilments move as for an admin.
+  // The guard knows the flag and lets only this step through.
   assert.match(sql, /IF current_setting\('app\.partner_confirm', true\) = 'on'\n\s+AND OLD\.order_status IN \('Placed', 'Payment Confirmed'\) AND NEW\.order_status = 'Accepted'\n\s+AND OLD\.payment_status = 'Paid'\n\s+AND OLD\.branch_id IS NOT NULL AND OLD\.branch_id = public\.current_partner_branch\(\)/);
-  assert.match(sql, /ELSIF public\.has_role\(auth\.uid\(\), 'admin'\) OR current_setting\('app\.partner_confirm', true\) = 'on' THEN/);
+  // The seller rows move on a partner's confirm (Placed or Payment Confirmed -> Accepted) through the payment migration's
+  // copy, which moves them forward for any role and never back. This migration must not replace that function with the
+  // older admin-only copy (review, 13 Nov 2026: an earlier draft did, which would have undone the payment fix).
+  assert.ok(!/CREATE OR REPLACE FUNCTION public\.sync_order_vendor_fulfillments/.test(sql), "sync_order_vendor_fulfillments is left as the payment migration made it");
+  const payment = read("supabase/migrations/20261113200000_payment_stale_states.sql");
+  const sync = payment.slice(payment.indexOf("CREATE OR REPLACE FUNCTION public.sync_order_vendor_fulfillments"));
+  assert.match(sync, /stage text\[\] := ARRAY\['Placed', 'Payment Confirmed', 'Accepted',/);
+  assert.match(sync, /ELSIF array_position\(stage, NEW\.order_status\) IS NOT NULL THEN[\s\S]*?AND array_position\(stage, status\) < array_position\(stage, NEW\.order_status\);/);
 });
 
 test("who confirmed cannot be made up from the site (review, 13 Nov 2026)", () => {
