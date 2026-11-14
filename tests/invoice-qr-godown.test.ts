@@ -242,6 +242,31 @@ test("the screens: the scan shows the buttons by permission and makes the PDF; t
   assert.match(read("src/routes/staff.index.tsx"), /me\.is_incharge && <p[^>]*>.*Godown in-charge<\/p>/);
 });
 
+test("released delivery notes: the customer's shop name, name, phone and address behind a button (owner, 14 Nov 2026)", () => {
+  const sql = read("supabase/migrations/20261114120000_released_notes_customer_details.sql");
+  // The same rule as printing the full delivery note (delivery_invoice_scan's can_note).
+  assert.match(sql, /details := who->>'role' IN \('admin', 'incharge'\)\n\s+OR \(who->>'role' = 'staff' AND COALESCE\(\(rules->>'staff_print_note'\)::boolean, false\)\)\n\s+OR \(who->>'role' = 'partner' AND COALESCE\(\(rules->>'partner_print_note'\)::boolean, false\)\);/);
+  for (const column of ["shop", "contact", "phone", "address"]) assert.match(sql, new RegExp(`${column} text`), column);
+  assert.equal((sql.match(/CASE WHEN details THEN/g) ?? []).length, 4, "every detail is empty for anyone else");
+  // Own godown only (admins every godown), as before; anon cannot call it.
+  assert.match(sql, /AND \(who->>'role' = 'admin' OR NULLIF\(n\.snapshot->'godown'->>'id', ''\) = who->>'branch_id'\)/);
+  assert.match(sql, /REVOKE ALL ON FUNCTION public\.godown_released_notes\(\) FROM PUBLIC, anon;\nGRANT EXECUTE ON FUNCTION public\.godown_released_notes\(\) TO authenticated;/);
+
+  const button = read("src/components/panel/ReleasedNoteCustomer.tsx");
+  assert.match(button, /if \(!shop && !contact && !phone && !address\) return null;/, "no button when the database sent nothing");
+  assert.match(button, /\{open \? "Hide customer details" : "Customer details"\}/);
+  assert.match(button, /<dt className="text-slate">Shop name<\/dt>/);
+  assert.match(button, /href=\{`tel:\$\{dial\}`\}/, "the phone can be tapped to call");
+  const panel = read("src/components/panel/DeliveryNotePanel.tsx");
+  assert.match(panel, /import \{ ReleasedNoteCustomer \} from "@\/components\/panel\/ReleasedNoteCustomer";/);
+  assert.match(panel, /<ReleasedNoteCustomer row=\{row\} \/>/);
+  assert.match(panel, /matchesSearch\(\[row\.order_no, row\.customer, row\.note_no, row\.godown, row\.shop \?\? "", row\.contact \?\? "", row\.phone \?\? ""\], query\)/);
+  const types = read("src/integrations/supabase/types.ts");
+  assert.match(types, /godown_released_notes: \{ Args: Record<string, never>; Returns: \{ [^}]*godown: string; shop: string; contact: string; phone: string; address: string \}\[\] \}/);
+  // The privacy policy says it.
+  assert.ok(privacyPolicyText().some((line) => line.includes("your phone number and address also show to them in their list of released orders")));
+});
+
 test("the privacy policy says who scans the invoice QR and what they see", () => {
   const text = privacyPolicyText().join(" ");
   assert.match(text, /godown in-charge/);

@@ -292,6 +292,40 @@ assert.ok(listed.some((x) => x.order_no === "TEST-INV-2" && x.to_go === 3 && x.r
 assert.equal((await as(HBL_USER, "authenticated", () => q("SELECT * FROM public.godown_released_notes() WHERE order_no LIKE 'TEST-INV-%'"))).length, 0, "another godown's list");
 await refuses(() => as(CUSTOMER, "authenticated", () => q("SELECT * FROM public.godown_released_notes()")), /Only godown staff/, "customer");
 
+// ---- 20261114120000 (owner, 14 Nov 2026: "need option to view shop name & phone number & address"): the list carries
+// the customer's shop name, name, phone and address for whoever may print the full delivery note, and nothing for others.
+{
+  const before = (await q("SELECT value FROM public.settings WHERE key = 'delivery_qr_rules'"))[0]?.value ?? null;
+  const setRules = (value) => q("INSERT INTO public.settings (key, value) VALUES ('delivery_qr_rules', $1::jsonb) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", [JSON.stringify(value)]);
+  const details = async (user) => (await as(user, "authenticated", () => q("SELECT customer, shop, contact, phone, address FROM public.godown_released_notes() WHERE order_no = 'TEST-INV-2'")))[0];
+  // The order has no phone of its own: the address's phone is the one to call. The address reads as one line.
+  const FULL = { customer: "TEST Customer", shop: "", contact: "TEST Customer", phone: "9000000099", address: "1 Test Street, Challakere, Karnataka 577522" };
+  const NONE = { customer: "TEST Customer", shop: "", contact: "", phone: "", address: "" };
+  await setRules({ staff_print_note: false, partner_print_note: false });
+  assert.deepEqual(await details(IN_CHARGE), FULL, "the in-charge always");
+  assert.deepEqual(await details(ADMIN), FULL, "an admin always");
+  assert.deepEqual(await details(CLK_USER), NONE, "ordinary staff only when they may print the full note");
+  assert.deepEqual(await details(P_CLK), NONE, "the channel partner only when they may print the full note");
+  await setRules({ staff_print_note: true, partner_print_note: true });
+  assert.deepEqual(await details(CLK_USER), FULL, "staff who may print the full note");
+  assert.deepEqual(await details(P_CLK), FULL, "the partner who may print the full note (live rules, 14 Nov 2026)");
+  assert.equal(await details(P_HBL), undefined, "never another godown's customers");
+  assert.equal(await details(HBL_USER), undefined, "never another godown's customers");
+  // A business order: the shop name is the business name the note recorded (the list's title shows it too).
+  await q("ALTER TABLE public.delivery_notes DISABLE TRIGGER delivery_notes_permanent");
+  const snap = (await q("SELECT snapshot FROM public.delivery_notes WHERE order_no = 'TEST-INV-2'"))[0].snapshot;
+  await q("UPDATE public.delivery_notes SET snapshot = jsonb_set(jsonb_set(snapshot, '{customer,business_name}', '\"Sri Vinayaka Bread and Bun\"'), '{customer,phone}', '\" 98450 12345 \"') WHERE order_no = 'TEST-INV-2'");
+  assert.deepEqual(await details(P_CLK), { ...FULL, customer: "Sri Vinayaka Bread and Bun", shop: "Sri Vinayaka Bread and Bun", phone: "98450 12345" },
+    "the shop name, and the customer's own phone before the address's");
+  await q("UPDATE public.delivery_notes SET snapshot = $1::jsonb WHERE order_no = 'TEST-INV-2'", [JSON.stringify(snap)]);
+  await q("ALTER TABLE public.delivery_notes ENABLE TRIGGER delivery_notes_permanent");
+  await refuses(() => as(CUSTOMER, "authenticated", () => q("SELECT phone FROM public.godown_released_notes()")), /Only godown staff/, "customer, still");
+  const grants = (await q("SELECT has_function_privilege('anon', 'public.godown_released_notes()', 'EXECUTE') AS anon, has_function_privilege('authenticated', 'public.godown_released_notes()', 'EXECUTE') AS auth"))[0];
+  assert.deepEqual(grants, { anon: false, auth: true });
+  if (before === null) await q("DELETE FROM public.settings WHERE key = 'delivery_qr_rules'");
+  else await setRules(before);
+}
+
 // ---- 20261112150000: the invoice keeps the order's own channel partner (whose signature it carries) after the
 // godown changes partner; the scan screen shows the partner running the godown today.
 const P_NEW = uid("b4");

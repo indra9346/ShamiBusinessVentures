@@ -13,6 +13,7 @@ import { paperKindWords, releasedHowLabel, releasedWords, scanIsRefusal, scanned
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { ListFilters } from "@/components/panel/ListFilters";
+import { ReleasedNoteCustomer } from "@/components/panel/ReleasedNoteCustomer";
 import { RELEASED_FILTERS, filterCounts, matchesReleasedFilter, matchesSearch } from "@/lib/list-search";
 
 const TONES = {
@@ -385,6 +386,9 @@ export function DeliveryNotePanel({ orderNo, className = "", readOnly = false }:
 
 type ReleasedNoteRow = {
   note_no: string; order_no: string; customer: string; items: number; to_go: number; released_at: string; released_how: string; delivered: boolean; godown: string;
+  // The customer's details as the note recorded them (20261114120000): empty unless this person may print the full note.
+  // Shown behind a button by ReleasedNoteCustomer.
+  shop?: string; contact?: string; phone?: string; address?: string;
 };
 
 /**
@@ -421,7 +425,8 @@ export function ReleasedDeliveryNotes({ showGodown = false }: { showGodown?: boo
     return () => clearInterval(timer);
   }, [load]);
 
-  const found = useMemo(() => (rows ?? []).filter((row) => matchesSearch([row.order_no, row.customer, row.note_no, row.godown], query)), [rows, query]);
+  // The shop name and phone can be searched too (when this person may see them).
+  const found = useMemo(() => (rows ?? []).filter((row) => matchesSearch([row.order_no, row.customer, row.note_no, row.godown, row.shop ?? "", row.contact ?? "", row.phone ?? ""], query)), [rows, query]);
   const matching = useMemo(() => found.filter((row) => matchesReleasedFilter(row, view)), [found, view]);
   const counts = useMemo(() => filterCounts(found, RELEASED_FILTERS.map((item) => item.key), (row, key) => matchesReleasedFilter(row, key)), [found]);
   const filtering = Boolean(query.trim()) || view !== "all";
@@ -460,6 +465,7 @@ export function ReleasedDeliveryNotes({ showGodown = false }: { showGodown?: boo
                   row.delivered || row.to_go === 0 ? "bg-emerald-50 text-emerald-800" : "bg-amber-50 text-amber-900")}>
                   {row.delivered ? "Delivered" : row.to_go === 0 ? "All handed over" : `${row.to_go} of ${row.items} items to go`}
                 </span>
+                <ReleasedNoteCustomer row={row} />
               </li>
             ))}
           </ul>

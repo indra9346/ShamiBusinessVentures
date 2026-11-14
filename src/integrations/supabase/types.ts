@@ -1594,7 +1594,7 @@ export type Database = {
       issue_delivery_note_auto: { Args: { _order_no: string; _zoho: Json; _actor?: string | null; _how?: string }; Returns: Json }
       delivery_invoice_scan: { Args: { _code: string; _action: string; _zoho: Json | null; _actor: string; _lines?: number[] | null; _device?: string | null }; Returns: Json }
       delivery_admin_release_print: { Args: { _order_no: string; _note: boolean; _slip_lines: number[]; _zoho: Json | null; _actor: string }; Returns: Json }
-      godown_released_notes: { Args: Record<string, never>; Returns: { note_no: string; order_no: string; customer: string; items: number; to_go: number; released_at: string; released_how: string; delivered: boolean; godown: string }[] }
+      godown_released_notes: { Args: Record<string, never>; Returns: { note_no: string; order_no: string; customer: string; items: number; to_go: number; released_at: string; released_how: string; delivered: boolean; godown: string; shop: string; contact: string; phone: string; address: string }[] }
       my_delivery_role: { Args: Record<string, never>; Returns: Json }
       partner_confirm_order: { Args: { _order_no: string }; Returns: Json }
       partner_orders_to_confirm: { Args: Record<string, never>; Returns: { order_no: string; placed_at: string; order_status: string; payment_status: string; payment_method: string; shipping_method: string; total: number; paid_amount: number; customer: string; items: string | null; zoho_void: boolean; invoice_number: string | null; invoice_mine: boolean; confirmed_at: string | null }[] }
