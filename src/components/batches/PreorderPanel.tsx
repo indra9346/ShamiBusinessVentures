@@ -293,7 +293,8 @@ export function PreorderPanel({ batch, data, onChanged, onMatch }: {
   const [mathsKey, setMathsKey] = useState(0);
   const changed = async () => { setMathsKey((k) => k + 1); await onChanged(); };
   const others = data.batches.filter((b) => b.id !== batch.id && b.stage === "incoming" && b.product_id === batch.product_id && b.branch_id === batch.branch_id);
-  const cancelWhy = closeBlocker(lot, { waiting, tagged: false });
+  // Expenses tagged to it (freight paid ahead) stay for the profit: untag them, or join the lot into another, first.
+  const cancelWhy = closeBlocker(lot, { waiting, tagged: data.costTags.some((t) => t.batch_id === batch.id) });
   const setPaused = async (paused: boolean) => {
     setBusy(true);
     try {
@@ -463,7 +464,7 @@ function JoinDialog({ batch, others, onClose, onDone }: { batch: BatchRecord; ot
       <DialogContent className="w-[calc(100vw-1rem)] max-w-md">
         <DialogHeader>
           <DialogTitle>{`Join a pre-order batch into ${batch.batch_code}`}</DialogTitle>
-          <DialogDescription>When one bill line covers two pre-orders: the other's units and orders move here, and it is closed as joined.</DialogDescription>
+          <DialogDescription>When one bill line covers two pre-orders: the other's units, orders and expenses move here, and it is closed as joined.</DialogDescription>
         </DialogHeader>
         <select value={from} onChange={(e) => setFrom(e.target.value)} className="h-10 w-full rounded-md border border-input bg-white px-2 text-sm">
           {others.map((b) => <option key={b.id} value={b.id}>{`${b.batch_code} · ${qtyText(b.quantity)} by ${dayLabel(b.expected_date)}`}</option>)}

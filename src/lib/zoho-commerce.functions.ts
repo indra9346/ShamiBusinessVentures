@@ -5032,7 +5032,13 @@ async function processZohoSyncOutboxRun(
     ? await withZohoPurpose("Hourly check: batch bills", () => checkBatchBillsRun(db))
       .catch((cause: unknown) => ({ checked: false as const, flagged: 0, error: errorText(cause).slice(0, 300) }))
     : { checked: false as const, flagged: 0 };
-  // Hook for the batch expenses build (spec 7.5 step 4): checkBatchCosts here, only when expenses are tagged.
+  // Expenses and bill charges tagged to batches, edited, deleted or voided in Zoho (spec 8.3): flagged hourly, only when
+  // something is tagged (30-minute throttle shared with the Batches page).
+  const { count: costTags, error: costTagsError } = await db.from("batch_cost_tags").select("id", { count: "exact", head: true });
+  const batchCosts = !costTagsError && costTags
+    ? await import("@/lib/batch-costs.functions").then((costs) => costs.checkBatchCostsNow())
+      .catch((cause: unknown) => ({ checked: false as const, flagged: 0, error: errorText(cause).slice(0, 300) }))
+    : { checked: false as const, flagged: 0 };
   // Rice sample purchase orders cancelled or removed in Zoho, so a sample comes back even if nobody has the page open.
   const ricePurchaseOrders = await import("@/lib/rice-samples.functions").then((desk) => desk.syncRiceSamplePos())
     .catch((cause: unknown) => ({ failed: 1, errors: [cause instanceof Error ? cause.message : String(cause)] }));
@@ -5046,6 +5052,7 @@ async function processZohoSyncOutboxRun(
     godownPrices,
     godownStock,
     batchBills,
+    batchCosts,
   };
 }
 
@@ -7135,16 +7142,22 @@ export const createBatchesFromBill = createServerFn({ method: "POST" })
       restExpectedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().default(null),
       notPreorderNote: z.string().trim().max(300).default(""),
       allArrived: z.boolean().default(false),
-      // Hook for the batch expenses build: the bill's charge lines (freight, hamali…) tagged to the batches made or
-      // matched here (save_cost_document + tag_batch_costs, spec 8.2) are added to this line list's sibling, chargeTags.
     })).min(1).max(200),
+    // Batch expenses (14 Nov 2026, spec 8.2): the bill's own charge lines (freight, hamali…), its discount and round-off
+    // that the admin ticked, tagged to every batch made or matched from this bill (src/lib/batch-costs.functions.ts).
+    chargeTags: z.array(z.object({ lineId: z.string().trim().min(1).max(40) })).max(50).default([]),
   }))
   .handler(async ({ data, context }) => {
     await ensureAdmin(context.supabase, context.userId);
     const db = await dbAdmin();
     return preorderZohoWork(db, data.lines.some((line) => line.action === "match") ? "Pre-orders: match" : "Batches: from a bill", async () => {
       const branch = await batchGodown(db, data.branchId);
-      const { plan } = await billWithLines(db, data.billId, branch.id);
+      const { plan, bill: rawBill } = await billWithLines(db, data.billId, branch.id);
+      // After the batches are saved: never fails the receive, only adds warnings (the bill was read from Zoho just now).
+      const chargeWarnings = async (name: string) => data.chargeTags.length
+        ? (await import("@/lib/batch-costs.functions")).tagBillCharges(db, plan, rawBill, data.chargeTags.map((c) => c.lineId), { id: context.userId, name })
+          .catch((cause: unknown) => [`The bill's freight and other lines were not tagged: ${errorText(cause)}`])
+        : [];
       if (plan.status === "void") throw new Error("This bill is void in Zoho. Batches cannot be made from it.");
       const moveFrom = plan.locationId && branch.zoho_location_id && plan.locationId !== branch.zoho_location_id ? plan.locationId : "";
       const byId = new Map(plan.lines.map((line) => [line.lineId, line]));
@@ -7185,7 +7198,7 @@ export const createBatchesFromBill = createServerFn({ method: "POST" })
         const transfer = await runBatchTransfer(db, begun as unknown as BatchTransfer);
         return {
           made: transfer.status === "done" ? (transfer.result ?? []).map((m) => ({ line_id: m.line_id ?? "", batch_id: m.batch_id, batch_code: m.batch_code })) : [],
-          matched: [] as MatchedLine[], warnings: [] as string[], billNumber: plan.billNumber, transfer,
+          matched: [] as MatchedLine[], warnings: transfer.status === "cancelled" ? [] : await chargeWarnings(str(profile?.full_name)), billNumber: plan.billNumber, transfer,
         };
       }
       // Products with a pre-order batch (watched): the bill's own godown takes Zoho's numbers with what this bill explains,
@@ -7200,7 +7213,7 @@ export const createBatchesFromBill = createServerFn({ method: "POST" })
           _lines: rows, _cost_basis: data.costBasis, _by: context.userId, _by_name: str(profile?.full_name),
         });
         if (error) throw new Error(error.message);
-        return { made: (made ?? []) as { line_id: string; batch_id: string; batch_code: string }[], matched: [] as MatchedLine[], warnings: [] as string[], billNumber: plan.billNumber, transfer: null as BatchTransfer | null };
+        return { made: (made ?? []) as { line_id: string; batch_id: string; batch_code: string }[], matched: [] as MatchedLine[], warnings: await chargeWarnings(str(profile?.full_name)), billNumber: plan.billNumber, transfer: null as BatchTransfer | null };
       }
       const readAt = new Date().toISOString();
       const snapshot = await preorderSnapshot(db, watchedProducts);
@@ -7231,7 +7244,7 @@ export const createBatchesFromBill = createServerFn({ method: "POST" })
       });
       return {
         made: (Array.isArray(answer["made"]) ? answer["made"] : []) as { line_id: string; batch_id: string; batch_code: string }[],
-        matched, warnings, billNumber: plan.billNumber, transfer: null as BatchTransfer | null,
+        matched, warnings: [...warnings, ...await chargeWarnings(str(profile?.full_name))], billNumber: plan.billNumber, transfer: null as BatchTransfer | null,
       };
     });
   });
@@ -8067,6 +8080,11 @@ export async function preorderZohoKit() {
     get: async <T>(resource: string, query: Record<string, string> = {}) => {
       const { region, organizationId, token } = await ctx();
       return inventoryRequest<T>(region, organizationId, token, resource, "GET", undefined, query);
+    },
+    /** Zoho Books reads (batch expenses, 14 Nov 2026: GET expenses and expenses/:id, scope ZohoBooks.expenses.READ). */
+    books: async <T>(resource: string, query: Record<string, string> = {}) => {
+      const { region, organizationId, token } = await ctx();
+      return booksRequest<T>(region, organizationId, token, resource, "GET", undefined, query);
     },
     snapshot: (productIds: string[]) => preorderSnapshot(db, productIds),
     godowns: () => zohoLinkedGodowns(db),

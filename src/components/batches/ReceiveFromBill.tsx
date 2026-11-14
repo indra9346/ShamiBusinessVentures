@@ -9,6 +9,7 @@ import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { billPlan, billSummary, costOf, lineBlocker, type BillLine, type CostBasis } from "@/lib/bill-batches";
 import { announceTransfer } from "@/components/batches/BatchTransfers";
 import { dayLabel, istToday, matchCostChange, matchPlan, qtyText, unitsThatMove } from "@/lib/preorder";
+import { apportionPaise, billChargeDocuments, chargeSplitMethod, countedCost, splitByMethod, type SplitBatch } from "@/lib/batch-costs";
 import type { MatchedLine, PreorderCandidate } from "@/lib/zoho-commerce.functions";
 import { cn } from "@/lib/utils";
 
@@ -41,13 +42,20 @@ const money = (n: number) => inrPrecise(n);
 const pct = (n: number) => `${Number.isInteger(n) ? n : n.toFixed(2)}%`;
 const day = (iso: string) => (iso ? new Date(`${iso.slice(0, 10)}T00:00:00Z`).toLocaleDateString("en-IN", { timeZone: "UTC", day: "2-digit", month: "short", year: "numeric" }) : "—");
 
-export function ReceiveFromBillDialog({ open, onOpenChange, godowns, defaultGodown, initialBillId, onSaved }: {
+export function ReceiveFromBillDialog({ open, onOpenChange, godowns, defaultGodown, initialBillId, chargeTagged, lotTags, onSaved }: {
   open: boolean; onOpenChange: (open: boolean) => void; godowns: Godown[]; defaultGodown?: string | undefined;
   /** Opened from a pre-order's Match now with the one bill found: that bill opens at once. */
   initialBillId?: string | undefined;
+  /** How much of a charge line of a bill is tagged to batches already (those are not ticked again by themselves). */
+  chargeTagged?: ((billId: string, lineId: string) => number) | undefined;
+  /** The expense tags on a pre-order batch (amounts): a partial match splits them with its remainder, by bags. */
+  lotTags?: ((batchId: string) => number[]) | undefined;
   onSaved: (firstBatchId: string) => Promise<void>;
 }) {
   const [choices, setChoices] = useState<Record<string, Choice>>({});
+  // The bill's charge lines to tag to its batches on save (spec 8.2): pre-ticked unless tagged already.
+  const [charges, setCharges] = useState<Record<string, boolean>>({});
+  const tickCharges = (b: Bill) => setCharges(Object.fromEntries(billChargeDocuments(b).map((doc) => [doc.zoho_line_id, !(chargeTagged?.(b.billId, doc.zoho_line_id) ?? 0)])));
   const [branchId, setBranchId] = useState("");
   const [bills, setBills] = useState<BillRow[] | null>(null);
   const [listError, setListError] = useState("");
@@ -90,10 +98,11 @@ export function ReceiveFromBillDialog({ open, onOpenChange, godowns, defaultGodo
   const pick = async (billId: string) => {
     setLoading(true); setBillError(""); setBill(null); setExtras({}); setChoices({});
     try {
-      if (STATIC_DATA_MODE) { setBill(demoBill(billId)); setOtherGodown(false); setMovingTo(null); return; }
+      if (STATIC_DATA_MODE) { const demo = demoBill(billId); setBill(demo); tickCharges(demo); setOtherGodown(false); setMovingTo(null); return; }
       const { getBatchBill } = await import("@/lib/zoho-commerce.functions");
       const answer = await getBatchBill({ data: { branchId, billId } });
       setBill(answer.bill as Bill);
+      tickCharges(answer.bill as Bill);
       // Each line starts as the screen suggests: matched to the best pre-order at this godown, else a new batch.
       setChoices(Object.fromEntries((answer.bill.lines as Line[]).map((line) => [line.lineId, {
         action: line.defaultAction?.action ?? "new", matchBatchId: line.defaultAction?.matchBatchId ?? "", rest: "coming" as const,
@@ -135,6 +144,11 @@ export function ReceiveFromBillDialog({ open, onOpenChange, godowns, defaultGodo
     return { line, choice: c, lot, plan, problem, here };
   });
   const firstProblem = plans.find((p) => p.problem)?.problem ?? "";
+  // The bill's own charges (spec 8.2): split over the bill's goods lines that are or become batches, as the server will.
+  const chargeDocs = bill ? billChargeDocuments(bill) : [];
+  const goodsLines = bill?.lines.filter((line) => !line.chargeLine && (line.batchCode || open_.some((o) => o.lineId === line.lineId))) ?? [];
+  const chargeBatches: SplitBatch[] = goodsLines.map((line) => ({ batchId: line.lineId, bags: line.qty, unitCostExGst: line.unitExGst, kgPerUnit: null }));
+  const chargeNames = new Map(goodsLines.map((line) => [line.lineId, line.batchCode || line.productName || line.name]));
 
   const create = async (): Promise<void> => {
     if (!bill || blockedBill) return;
@@ -154,10 +168,12 @@ export function ReceiveFromBillDialog({ open, onOpenChange, godowns, defaultGodo
             notPreorderNote: c.action === "new" ? c.notPreorderNote.trim() : "", allArrived: c.allArrived,
           };
         }),
+        chargeTags: chargeDocs.filter((doc) => charges[doc.zoho_line_id]).map((doc) => ({ lineId: doc.zoho_line_id })),
       } });
       if (result.transfer) {
         // Moved from the bill's Zoho location first: done, waiting for Zoho, or refused (nothing moved).
         announceTransfer(result.transfer);
+        for (const warning of result.warnings) toast.warning(warning, { duration: 15000 });
         if (result.transfer.status === "cancelled") return;
       } else {
         if (result.made.length) toast.success(`${result.made.length} batch${result.made.length === 1 ? "" : "es"} made from bill ${result.billNumber}`, {
@@ -297,16 +313,31 @@ export function ReceiveFromBillDialog({ open, onOpenChange, godowns, defaultGodo
               ))}
             </div>
 
-            {bill.lines.some((line) => line.chargeLine) && (
-              // Freight, hamali and other charges on the supplier's bill (spec 8.1). Hook for the batch expenses build:
-              // pre-ticked here and tagged to the batches made or matched from this bill (chargeTags).
-              <div className="rounded-lg border border-border p-3 text-xs">
+            {chargeDocs.length > 0 && (
+              // Freight, hamali and other charges on the supplier's bill, its discount and round-off (spec 8.1, 8.2): ticked ones
+              // are tagged to every batch made or matched from this bill when you save, the charges by bags, the discount by value.
+              <div className="grid gap-1.5 rounded-lg border border-border p-3 text-xs">
                 <p className="font-semibold text-navy">Freight and other lines on this bill</p>
-                {bill.lines.filter((line) => line.chargeLine).map((line) => (
-                  <p key={line.lineId} className="mt-1 text-slate">{`${line.name || line.accountName || "Charge"}${line.accountName ? ` (${line.accountName})` : ""}: ${money(line.taxable)} before GST`}</p>
-                ))}
-                {bill.billDiscount !== 0 && <p className="mt-1 text-slate">{`Discount on the whole bill: −${money(bill.billDiscount)}`}</p>}
-                {bill.adjustment !== 0 && <p className="mt-1 text-slate">{`Adjustment / round-off: ${money(bill.adjustment)}`}</p>}
+                <p className="text-slate">Ticked lines become expenses of this bill's batches (landed cost). Untick one that is not a cost of these goods.</p>
+                {chargeDocs.map((doc) => {
+                  const tagged = chargeTagged?.(bill.billId, doc.zoho_line_id) ?? 0;
+                  const preview = splitByMethod(countedCost(doc), chargeBatches, chargeSplitMethod(doc.zoho_line_id));
+                  return (
+                    <label key={doc.zoho_line_id} className="flex items-start gap-2">
+                      <input type="checkbox" className="mt-0.5" checked={charges[doc.zoho_line_id] ?? false} disabled={resuming}
+                        onChange={(e) => setCharges((all) => ({ ...all, [doc.zoho_line_id]: e.target.checked }))} />
+                      <span className="min-w-0 break-words">
+                        <span className="font-semibold">{`${doc.description}${doc.account_name && doc.account_name !== doc.description ? ` (${doc.account_name})` : ""}: ${money(countedCost(doc))}`}</span>
+                        {doc.gst_amount > 0 && <span className="text-slate">{` (before GST ${money(doc.amount_before_gst)}, GST ${money(doc.gst_amount)} ${doc.gst_claimable ? "claimed back" : "not claimable"})`}</span>}
+                        {tagged !== 0
+                          ? <span className="block text-emerald-700">{`Already tagged: ${money(tagged)}. Ticking splits it again over all of this bill's batches.`}</span>
+                          : charges[doc.zoho_line_id] && !preview.problem && chargeBatches.length > 0 && (
+                            <span className="block text-slate">{preview.rows.map((r) => `${chargeNames.get(r.batchId) ?? ""} ${money(r.amount)}`).join(" · ")}</span>
+                          )}
+                      </span>
+                    </label>
+                  );
+                })}
               </div>
             )}
             {plans.some((p) => p.lot) && (
@@ -316,12 +347,19 @@ export function ReceiveFromBillDialog({ open, onOpenChange, godowns, defaultGodo
                   const change = matchCostChange({ estimate: lot!.estUnitCostExGst ?? 0, bill: line.unitExGst, sold: lot!.sold });
                   const waitingOrders = new Set(lot!.allocations.map((a) => a.orderNo)).size;
                   const moved = plan && plan.ok && plan.move > 0 ? unitsThatMove(lot!.allocations, plan.move) : [];
+                  // Its expenses split with the remainder by bags, tag by tag, as the database does (split_lot_tags).
+                  const split = plan && plan.ok && plan.remainder ? { here: plan.quantity, rest: plan.remainder.quantity } : null;
+                  const tags = split ? lotTags?.(lot!.id) ?? [] : [];
+                  const parts = split ? tags.map((amount) => apportionPaise(amount, [split.here, split.rest])) : [];
+                  const keep = Math.round(parts.reduce((sum, p) => sum + (p[0] ?? 0), 0) * 100) / 100;
+                  const go = Math.round(parts.reduce((sum, p) => sum + (p[1] ?? 0), 0) * 100) / 100;
                   return (
                     <p key={line.lineId} className="break-words">
                       {`${lot!.code}: cost before GST ${money(line.unitExGst)} for all ${qtyText(plan && plan.ok ? plan.quantity : line.qty)} (${change.profit >= 0 ? "+" : "−"}${money(Math.abs(change.profit))} profit on ${qtyText(lot!.sold)} sold)`}
                       {plan && plan.ok && plan.remainder ? ` · the rest ${qtyText(plan.remainder.quantity)} stays a pre-order (${lot!.code}-R)` : ""}
                       {` · ${Math.max(0, waitingOrders - moved.length)} waiting order${waitingOrders - moved.length === 1 ? "" : "s"} become ready`}
                       {moved.length ? ` · ${moved.map((m) => `${m.orderNo} (${qtyText(m.qty)})`).join(", ")} wait for the rest` : ""}
+                      {tags.length > 0 && <span className="block">{`Its expenses split by bags: ${money(keep)} stay on ${lot!.code}, ${money(go)} go with the rest`}</span>}
                     </p>
                   );
                 })}

@@ -25,6 +25,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { ReceiveFromBillDialog } from "@/components/batches/ReceiveFromBill";
 import { IncomingBatchDialog } from "@/components/batches/IncomingBatchDialog";
 import { MatchedLotNote, PreorderPanel, clockOf, lotOf, lotOrders, watchOf } from "@/components/batches/PreorderPanel";
+import { BatchExpensesPanel, BatchProfitPanel, ExpensesOverview } from "@/components/batches/BatchExpenses";
 import { dayLabel, lotBadges, lotLabel, lotOverdue, lotSellable, qtyText } from "@/lib/preorder";
 import { SendToGodownsDialog, TransferList } from "@/components/batches/BatchTransfers";
 import { transferProgress } from "@/lib/batch-transfers";
@@ -32,8 +33,8 @@ import { batchDeleteBlocker, billGone, relinkBlocker } from "@/lib/bill-batches"
 import type { BatchBillLine } from "@/lib/zoho-commerce.functions";
 import { cn } from "@/lib/utils";
 
-// Tabs: Batches, Pre-orders (14 Nov 2026), Trace. Hook for the batch expenses build: an "expenses" tab (spec 10).
-type Search = { godown?: string | undefined; batch?: string | undefined; order?: string | undefined; customer?: string | undefined; tab?: "batches" | "trace" | "preorders" | undefined; q?: string | undefined };
+// Tabs: Batches, Pre-orders and Expenses (14 Nov 2026), Trace.
+type Search = { godown?: string | undefined; batch?: string | undefined; order?: string | undefined; customer?: string | undefined; tab?: "batches" | "trace" | "preorders" | "expenses" | undefined; q?: string | undefined };
 
 export const Route = createFileRoute("/admin/batches")({
   validateSearch: (search: Record<string, unknown>): Search => ({
@@ -41,7 +42,7 @@ export const Route = createFileRoute("/admin/batches")({
     ...(typeof search["batch"] === "string" && search["batch"] ? { batch: search["batch"] } : {}),
     ...(typeof search["order"] === "string" && search["order"] ? { order: search["order"] } : {}),
     ...(typeof search["customer"] === "string" && search["customer"] ? { customer: search["customer"] } : {}),
-    ...(search["tab"] === "trace" ? { tab: "trace" as const } : search["tab"] === "preorders" ? { tab: "preorders" as const } : {}),
+    ...(search["tab"] === "trace" ? { tab: "trace" as const } : search["tab"] === "preorders" ? { tab: "preorders" as const } : search["tab"] === "expenses" ? { tab: "expenses" as const } : {}),
     ...(typeof search["q"] === "string" && search["q"] ? { q: search["q"] } : {}),
   }),
   head: () => ({ meta: [{ title: "Batches | Grain Bazar Admin" }, { name: "robots", content: "noindex" }] }),
@@ -112,6 +113,17 @@ function AdminBatches() {
       } catch { /* the flags wait for the next visit; the page works without them */ }
     })();
   }, [load]);
+  // Expenses and bill charges tagged to batches, edited or deleted in Zoho: flagged the same way (spec 8.3, 30-minute throttle).
+  useEffect(() => {
+    if (STATIC_DATA_MODE) return;
+    void (async () => {
+      try {
+        const { checkBatchCosts } = await import("@/lib/batch-costs.functions");
+        const result = await checkBatchCosts();
+        if (result.checked && result.read) await load();
+      } catch { /* checked again on the next visit or by the hourly run */ }
+    })();
+  }, [load]);
   useEffect(() => {
     if (STATIC_DATA_MODE) return;
     let timer: number | null = null;
@@ -149,6 +161,7 @@ function AdminBatches() {
   const steps: { label: string; onClick?: () => void }[] = [{ label: "All batches", onClick: () => go({ godown: undefined, batch: undefined, order: undefined, customer: undefined, tab: undefined }) }];
   if (search.tab === "trace") steps.push({ label: "Trace customer / order", onClick: () => go({ batch: undefined, order: undefined, customer: undefined }) });
   if (search.tab === "preorders") steps.push({ label: "Pre-orders", onClick: () => go({ batch: undefined, order: undefined, customer: undefined }) });
+  if (search.tab === "expenses") steps.push({ label: "Expenses", onClick: () => go({ batch: undefined, order: undefined, customer: undefined }) });
   if (search.godown && search.tab !== "trace") steps.push({ label: godownName(search.godown), onClick: () => go({ batch: undefined, order: undefined, customer: undefined }) });
   if (search.customer && search.tab === "trace") {
     const c = report?.customers.find((x) => x.key === search.customer);
@@ -161,7 +174,7 @@ function AdminBatches() {
     <PanelLayout items={adminNav} tone="admin" title="Batches" subtitle="Stock numbers per purchase: sales, profit and customers of every batch, per godown">
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <div className="flex rounded-lg border border-border bg-white p-0.5 text-sm">
-          {([["batches", "Batches"], ["preorders", "Pre-orders"], ["trace", "Trace customer / order"]] as const).map(([key, label]) => (
+          {([["batches", "Batches"], ["preorders", "Pre-orders"], ["expenses", "Expenses"], ["trace", "Trace customer / order"]] as const).map(([key, label]) => (
             <button key={key} type="button" onClick={() => go({ tab: key === "batches" ? undefined : key, batch: undefined, order: undefined, customer: undefined })}
               className={cn("rounded-md px-3 py-1.5 font-semibold transition", (search.tab ?? "batches") === key ? "bg-navy text-white" : "text-slate hover:text-navy")}>{label}</button>
           ))}
@@ -208,6 +221,8 @@ function AdminBatches() {
                 onDeleted={async () => { go({ batch: undefined, order: undefined }); await load(); }} onChanged={load} onMatch={openReceive} />
             : search.tab === "preorders"
               ? <PreorderList data={data} search={search} go={go} onNew={() => setIncomingOpen(true)} />
+            : search.tab === "expenses"
+              ? <ExpensesOverview report={report} data={data} godownId={search.godown} onChanged={load} />
             : <>
                 <BatchList report={report} data={data} search={search} go={go} status={status} setStatus={setStatus}
                   productFilter={productFilter} setProductFilter={setProductFilter} />
@@ -221,6 +236,11 @@ function AdminBatches() {
 
       {data && <ReceiveFromBillDialog open={receiveOpen} onOpenChange={setReceiveOpen} godowns={data.godowns.filter((g) => g.active)} defaultGodown={receiveAt.godown ?? search.godown}
         initialBillId={receiveAt.billId}
+        chargeTagged={(billId, lineId) => {
+          const doc = data.costDocuments.find((d) => d.source === "bill" && d.zoho_id === billId && d.zoho_line_id === lineId);
+          return doc ? data.costTags.filter((t) => t.document_id === doc.id).reduce((sum, t) => sum + t.amount, 0) : 0;
+        }}
+        lotTags={(batchId) => data.costTags.filter((t) => t.batch_id === batchId).map((t) => t.amount)}
         onSaved={async (batchId) => { await load(); if (batchId) go({ tab: undefined, batch: batchId, order: undefined, customer: undefined }); }} />}
       {data && incomingOpen && <IncomingBatchDialog open={incomingOpen} onOpenChange={setIncomingOpen} data={data} defaultGodown={search.godown}
         onReceive={(godown) => { setIncomingOpen(false); openReceive(godown); }}
@@ -269,7 +289,7 @@ function BatchList({ report, data, search, go, status, setStatus, productFilter,
         <StatCard onClick={() => openList("stock")} compact label="Batches in stock" value={`${totals.active} / ${totals.batches}`} icon={Layers} description="with units left / all" />
         <StatCard onClick={() => openList("stock")} compact label="Units available" value={units(totals.available)} icon={PackageCheck} description={`of ${units(totals.purchased)} purchased`} />
         <StatCard onClick={() => openList("all")} compact label="Sales (excl. GST)" value={money(totals.sales)} icon={ShoppingCart} description={`${units(totals.sold)} units sold`} />
-        <StatCard onClick={() => openList("all")} compact label={totals.profit < 0 ? "Loss" : "Profit"} value={money(Math.abs(totals.profit))} icon={totals.profit < 0 ? TrendingDown : TrendingUp} highlight
+        <StatCard onClick={() => openList("all")} compact label={totals.profit < 0 ? "Loss after expenses" : "Profit after expenses"} value={money(Math.abs(totals.profit))} icon={totals.profit < 0 ? TrendingDown : TrendingUp} highlight
           description={profitBreakup(totals)} />
         <StatCard onClick={() => openList(totals.lossValue < 0 ? "found" : "lost")} compact label={totals.lossValue < 0 ? "Stock found" : "Stock lost"} value={money(Math.abs(totals.lossValue))} icon={totals.lossValue < 0 ? TrendingUp : TrendingDown}
           description={`${units(totals.lost)} units lost, ${units(totals.gained)} found (counts, damage), at cost before GST`} />
@@ -278,7 +298,10 @@ function BatchList({ report, data, search, go, status, setStatus, productFilter,
           <StatCard onClick={() => go({ tab: "preorders" })} compact label="Arriving (pre-order)" value={units(arriving.expected)} icon={CalendarClock}
             description={`${units(arriving.sold)} sold ahead · ${units(arriving.open)} open · ${lots.length} pre-order batch${lots.length === 1 ? "" : "es"}`} />
         )}
-        {/* Hook for the batch expenses build: the "Expenses tagged" card (spec 10) goes here. */}
+        {(totals.expenseValue !== 0 || data.costTags.length > 0) && (
+          <StatCard onClick={() => go({ tab: "expenses" })} compact label="Expenses tagged" value={money(totals.expenseValue)} icon={IndianRupee}
+            description={`${money(totals.expenseInStockValue + totals.expenseInTransitValue)} in unsold stock · ${money(totals.expenseOnSoldValue)} on sold`} />
+        )}
       </div>
 
       <StockCheck report={report} data={data} godownId={search.godown} onProduct={(productId) => { setQuery(""); setStatus("all"); setProductFilter(productId); scrollToSection("batch-list"); }} />
@@ -407,9 +430,15 @@ const average = (rows: BatchReportRow[]) => {
   return done.length ? Math.round((done.reduce((s, r) => s + (r.daysToSellOut ?? 0), 0) / done.length) * 10) / 10 : null;
 };
 
-/** How the profit card's figure is made, so a loss or gain of stock can't look like trading profit. */
-const profitBreakup = (t: { sales: number; costOfSold: number; lossValue: number }) =>
-  `sales ${money(t.sales)} − cost of units sold ${money(t.costOfSold)} ${t.lossValue < 0 ? "+ stock found" : "− stock lost"} ${money(Math.abs(t.lossValue))}, before GST`;
+/**
+ * How the profit card's figure is made, so a loss or gain of stock can't look like trading profit: sales − purchase cost
+ * − expenses on sold − stock lost (with its expenses), before GST (spec 9.3).
+ */
+const profitBreakup = (t: { sales: number; costOfSold: number; lossValue: number; expenseOnSoldValue: number; expenseOnLostValue: number }) =>
+  // Two whole sentences (not a word in the middle), so each reads in Kannada.
+  t.lossValue < 0
+    ? `sales ${money(t.sales)} − purchase cost ${money(t.costOfSold)} − expenses on sold ${money(t.expenseOnSoldValue)} + stock found ${money(Math.abs(t.lossValue + t.expenseOnLostValue))}, before GST`
+    : `sales ${money(t.sales)} − purchase cost ${money(t.costOfSold)} − expenses on sold ${money(t.expenseOnSoldValue)} − stock lost ${money(t.lossValue + t.expenseOnLostValue)}, before GST`;
 
 /** The scheduled Zoho check reads Zoho's godown stock every hour (every 15 minutes the job runs; hourly the stock). */
 const ZOHO_CHECK_LATE_MINUTES = 90;
@@ -574,7 +603,9 @@ function BatchDetail({ row, report, data, adjustments, orderId, go, onEdit, onDe
   const deleteBlocker = batchDeleteBlocker(row.batch, batchAllocations,
     adjustments.filter((a) => a.batch_id === row.batch.id).length, orderOf,
     // Any transfer that names it as the super batch keeps it, even a cancelled one (as admin_delete_batch).
-    Boolean(row.batch.transfer_id || row.batch.parent_batch_id || myTransfers.some((t) => t.parent_batch_id === row.batch.id)));
+    Boolean(row.batch.transfer_id || row.batch.parent_batch_id || myTransfers.some((t) => t.parent_batch_id === row.batch.id)),
+    // Expenses tagged to it stay for the profit: untag them first (spec 14.25).
+    { tagged: data.costTags.some((t) => t.batch_id === row.batch.id) });
   const remove = async (): Promise<void> => {
     setDeleting(true);
     const { data: gone, error } = await supabase.rpc("admin_delete_batch", { _batch_id: row.batch.id });
@@ -716,7 +747,7 @@ function BatchDetail({ row, report, data, adjustments, orderId, go, onEdit, onDe
             <Figure label="Sales (excl. GST)" value={money(row.sales)} />
             <Figure label="Cost of sold (excl. GST)" value={money(row.costOfSold)} />
             <Figure label="Stock lost (excl. GST)" value={money(row.lossValue)} tone={row.lossValue > 0 ? "bad" : undefined} />
-            <Figure label={row.profit < 0 ? "Loss" : "Profit"} value={money(row.profit)} tone={row.profit < 0 ? "bad" : "good"} />
+            <Figure label={row.profit < 0 ? "Loss after expenses" : "Profit after expenses"} value={money(row.profit)} tone={row.profit < 0 ? "bad" : "good"} />
           </div>
           <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
             <Figure label={row.daysToSellOut === null ? "Days in stock" : "Days to sell out"} value={String(row.daysToSellOut ?? row.ageDays ?? "—")} />
@@ -732,6 +763,9 @@ function BatchDetail({ row, report, data, adjustments, orderId, go, onEdit, onDe
           )}
         </div>
       </Panel>
+
+      <BatchProfitPanel row={row} />
+      <BatchExpensesPanel row={row} report={report} data={data} onChanged={onChanged} />
 
       {order ? <div id="batch-order-customer" className="scroll-mt-4"><OrderCustomer sale={order} report={report} go={go} /></div> : null}
 
@@ -1103,7 +1137,20 @@ function demoData(): BatchData {
   });
   return {
     generatedAt: now, zohoStockMaster: true, zohoStock: { at: now, read: true, items: 18, failed: 0, error: "" }, godowns, transfers: [],
-    products: [{ id: "P023", name: "Groundnut Oil 5L Can", sku: "SBV-OI-1022", unit: "", purchasePrice: 820, zohoLinked: true, zohoTracksBatches: true, stock: { "BR-CLK": 30 } }],
+    products: [{ id: "P023", name: "Groundnut Oil 5L Can", sku: "SBV-OI-1022", unit: "", purchasePrice: 820, zohoLinked: true, zohoTracksBatches: true, stock: { "BR-CLK": 30 }, weightKg: null }],
+    // Expenses (14 Nov 2026): lorry freight on the oil batch, and hamali paid ahead on the sugar pre-order.
+    costDocuments: [
+      { id: 1, source: "expense", zoho_id: "E1", zoho_line_id: "", doc_number: "EXP-00131", doc_date: "2026-10-30", account_id: "", account_name: "Transportation Charges Freight Charges",
+        vendor_name: "", description: "Lorry freight", amount_before_gst: 1500, gst_amount: 0, gst_claimable: true, gst_override: null, reverse_charge: false, rebilled: false,
+        cost_amount: 1500, accepted_cost_amount: 1500, zoho_status: "nonbillable", zoho_modified: "", flag: "", flag_at: null, gone_at: null, checked_at: null },
+      { id: 2, source: "expense", zoho_id: "E2", zoho_line_id: "", doc_number: "EXP-00132", doc_date: todayIst(), account_id: "", account_name: "Amali Charges - Loading and Unloading",
+        vendor_name: "", description: "Hamali, 360 bags", amount_before_gst: 1800, gst_amount: 0, gst_claimable: true, gst_override: null, reverse_charge: false, rebilled: false,
+        cost_amount: 1800, accepted_cost_amount: 1800, zoho_status: "nonbillable", zoho_modified: "", flag: "", flag_at: null, gone_at: null, checked_at: null },
+    ],
+    costTags: [
+      { id: 1, document_id: 1, batch_id: "b2", amount: 1500, method: "bags", weight: 50, note: "", tagged_by_name: "Head office", tagged_at: now },
+      { id: 2, document_id: 2, batch_id: "b4", amount: 1800, method: "bags", weight: 360, note: "", tagged_by_name: "Head office", tagged_at: now },
+    ],
     batches: [
       batch("b1", "CLK-201026-01", "BR-CLK", "P023", "Groundnut Oil 5L Can", 50, 0, 800, "2026-10-20", "2026-10-29T08:00:00Z"),
       batch("b2", "CLK-301026-01", "BR-CLK", "P023", "Groundnut Oil 5L Can", 50, 30, 820, "2026-10-30", null),

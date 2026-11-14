@@ -22,8 +22,16 @@
  * order lines and stock counts copy that cost. Until 10 Nov 2026 profit took it as it was, so the
  * GST showed as a loss: Ekadantha oil bought at ₹130 with GST (₹123.81 without) and sold at ₹130
  * with GST (₹123.81 without) showed a ₹6.19 loss. The GST paid is claimed back, so it is not a cost.
+ *
+ * Expenses and landed cost (14 Nov 2026, spec section 9): Zoho Books expenses and bill charges tagged to a batch
+ * (src/lib/batch-costs.ts) are spread over its units in paise — sold, awaiting payment, sent to other godowns, lost and
+ * still in stock. Profit after expenses = sales − cost of the sold units − the expense share of the sold units − stock
+ * lost (with its expense share). Expenses on unsold bags stay with the unsold stock; units sent to another godown take
+ * their share with them. A pre-order batch (stage 'incoming') has bought nothing yet: its sales are costed with the
+ * estimate and marked "Estimated" until its bill is matched, after which the change shows as cost variance.
  */
 import type { XlsxSheet } from "./xlsx.ts";
+import { apportionPaise, effectiveTagsById, type StoredCostDoc, type StoredCostTag } from "./batch-costs.ts";
 
 export const BATCH_CODE_RE = /^[A-Z0-9][A-Z0-9/_.-]{1,39}$/;
 export const normalizeBatchCode = (code: string) => code.trim().toUpperCase();
@@ -303,8 +311,31 @@ export type BatchSale = {
 export type BatchTotals = {
   /** received: units that came from another godown's batch (not a purchase); sent: units sent from this batch to other godowns. */
   purchased: number; received: number; sent: number; sold: number; delivered: number; held: number; lost: number; gained: number; available: number;
-  purchaseValue: number; sales: number; costOfSold: number; lossValue: number; profit: number; stockValue: number;
+  /** A pre-order batch's units still to come (its quantity while it waits for its bill); 0 for every other batch. */
+  expected: number;
+  purchaseValue: number; sales: number; costOfSold: number; lossValue: number; stockValue: number;
+  /** sales − cost of sold − stock lost: the profit before any expense. */
+  profitBeforeExpenses: number;
+  /** Profit after expenses: profitBeforeExpenses − expenses on the sold units − expenses on the units lost. */
+  profit: number;
+  /** Expenses tagged to this batch itself (the totals add only these: the money tagged). */
+  expenseValue: number;
+  /** Expenses that came with units sent here from another godown's batch. */
+  inheritedExpenseValue: number;
+  /** The batch's expenses (own + inherited) spread over its units, to the paisa. */
+  expenseOnSoldValue: number; expenseOnHeldValue: number; expenseOnSentValue: number; expenseOnLostValue: number; expenseInStockValue: number;
+  /** Of the expenses on units sent on: the part on units still on the way (no batch at the other godown yet). */
+  expenseInTransitValue: number;
+  /** Unsold stock at landed cost: stock value + the expenses on it. */
+  landedStockValue: number;
+  /** A matched pre-order: sold × (bill cost − estimate), before GST. Above 0 = the bill cost more than estimated. */
+  costVarianceValue: number;
+  /** A pre-order still waiting for its bill: the cost of its sold units at the estimate. */
+  estimatedCostValue: number;
 };
+
+/** Where a batch's cost comes from: its estimate (a pre-order waiting for its bill), a Zoho bill, or typed in. */
+export type BatchCostStatus = "estimated" | "bill" | "typed";
 
 export type BatchReportRow = BatchTotals & {
   batch: BatchRecord;
@@ -320,6 +351,22 @@ export type BatchReportRow = BatchTotals & {
   ledgerGap: number;
   /** Zoho balance minus what Zoho should hold (website available + units on unpacked orders); null = not in Zoho. */
   zohoGap: number | null;
+  costStatus: BatchCostStatus;
+  /** The units the expenses are spread over per unit: expected (pre-order), received (sent here) or purchased. */
+  unitBase: number;
+  /** (own + inherited expenses) / unitBase, and the cost per unit before GST plus that. */
+  expensePerUnit: number;
+  landedUnitCost: number;
+  /** Orders holding units of a pre-order batch (counts only). */
+  waitingOrders: number;
+  /** Money in (purchase, received, expected, expenses) minus money out (sold, held, sent, lost, stock, expenses): 0 when the ledger agrees. */
+  costCheckGap: number;
+};
+
+/** One expense tag with its document, for the Expenses sheet and screens. */
+export type BatchExpenseRow = {
+  tagId: number; documentId: number; batchId: string; batchCode: string; source: string; date: string; account: string; reference: string;
+  description: string; beforeGst: number; gst: number; claimable: boolean; cost: number; tagged: number; effective: number; method: string; flag: string; gone: boolean;
 };
 
 export type BatchCustomer = {
@@ -328,9 +375,15 @@ export type BatchCustomer = {
 };
 
 const emptyTotals = (): BatchTotals => ({
-  purchased: 0, received: 0, sent: 0, sold: 0, delivered: 0, held: 0, lost: 0, gained: 0, available: 0,
-  purchaseValue: 0, sales: 0, costOfSold: 0, lossValue: 0, profit: 0, stockValue: 0,
+  purchased: 0, received: 0, sent: 0, sold: 0, delivered: 0, held: 0, lost: 0, gained: 0, available: 0, expected: 0,
+  purchaseValue: 0, sales: 0, costOfSold: 0, lossValue: 0, stockValue: 0, profitBeforeExpenses: 0, profit: 0,
+  expenseValue: 0, inheritedExpenseValue: 0, expenseOnSoldValue: 0, expenseOnHeldValue: 0, expenseOnSentValue: 0, expenseOnLostValue: 0,
+  expenseInStockValue: 0, expenseInTransitValue: 0, landedStockValue: 0, costVarianceValue: 0, estimatedCostValue: 0,
 });
+
+/** Money keys that are not named …Value: summed and rounded as money, not as quantities. */
+const MONEY_KEYS = ["sales", "costOfSold", "profit", "profitBeforeExpenses"];
+export const isMoneyKey = (key: string) => key.endsWith("Value") || MONEY_KEYS.includes(key);
 
 export function addressLine(address: unknown) {
   if (!address || typeof address !== "object") return "";
@@ -345,7 +398,7 @@ export function sumTotals(list: BatchReportRow[]) {
   const total = emptyTotals();
   for (const row of list)
     for (const key of Object.keys(total) as (keyof BatchTotals)[])
-      total[key] = key.endsWith("Value") || ["sales", "costOfSold", "profit"].includes(key) ? paise(total[key] + row[key]) : qty(total[key] + row[key]);
+      total[key] = isMoneyKey(key) ? paise(total[key] + row[key]) : qty(total[key] + row[key]);
   return total;
 }
 
@@ -362,6 +415,9 @@ export function buildBatchReport(input: {
   today: string;
   /** Transfers between godowns (10 Nov 2026); without them every batch is a purchase. */
   transfers?: BatchTransferRow[];
+  /** Zoho expenses and bill charges (14 Nov 2026) and their tags to batches; without them no batch has expenses. */
+  costDocuments?: StoredCostDoc[];
+  costTags?: StoredCostTag[];
 }) {
   const godownName = new Map(input.godowns.map((g) => [g.id, g.name]));
   const itemById = new Map(input.items.map((item) => [item.id, item]));
@@ -369,6 +425,8 @@ export function buildBatchReport(input: {
   const sales: BatchSale[] = [];
   const rows: BatchReportRow[] = [];
   const unpackedByBatch = new Map<string, number>();
+  const heldCostByBatch = new Map<string, number>();
+  const waitingByBatch = new Map<string, Set<string>>();
 
   // Units each super batch sent to other godowns: done, or kept aside while Zoho is asked. A cancelled one came back.
   const sentFrom = new Map<string, number>();
@@ -381,14 +439,17 @@ export function buildBatchReport(input: {
     // A batch sent from another godown's batch received its units: the purchase is counted once, on the super batch.
     // Order lines and stock counts copied the batch's stored cost; costCopyBeforeGst takes any GST back out of it.
     const fromTransfer = Boolean(batch.parent_batch_id);
-    t.purchased = fromTransfer ? 0 : num(batch.quantity);
+    // A pre-order batch has bought nothing yet: its units are expected, and it holds no stock value until its bill.
+    const isLot = (batch.stage ?? "received") === "incoming";
+    t.purchased = fromTransfer || isLot ? 0 : num(batch.quantity);
+    t.expected = isLot ? num(batch.quantity) : 0;
     t.received = fromTransfer ? num(batch.quantity) : 0;
     // From the batch row when it has it: the same row as remaining_quantity, so a transfer made or cancelled while the
     // page loads can't show as a gap. Summed from the transfers otherwise.
     t.sent = batch.sent_quantity !== undefined && batch.sent_quantity !== null ? qty(num(batch.sent_quantity)) : sentFrom.get(batch.id) ?? 0;
     t.available = num(batch.remaining_quantity);
     t.purchaseValue = paise(t.purchased * costBeforeGst(batch));
-    t.stockValue = paise(t.available * costBeforeGst(batch));
+    t.stockValue = isLot ? 0 : paise(t.available * costBeforeGst(batch));
     const orderIds = new Set<string>();
     const customers = new Set<string>();
     let firstSale: string | null = null, lastSale: string | null = null;
@@ -425,8 +486,10 @@ export function buildBatchReport(input: {
         profit: held ? 0 : paise(value - cost),
         holdUntil: held ? order.payment_hold_until ?? null : null,
       });
+      if (isLot) waitingByBatch.set(batch.id, (waitingByBatch.get(batch.id) ?? new Set<string>()).add(order.id));
       if (held) {
         t.held = qty(t.held + net);
+        heldCostByBatch.set(batch.id, paise((heldCostByBatch.get(batch.id) ?? 0) + cost));
         continue;
       }
       t.sold = qty(t.sold + net);
@@ -444,14 +507,27 @@ export function buildBatchReport(input: {
       else t.gained = qty(t.gained + change);
       t.lossValue = paise(t.lossValue - change * costCopyBeforeGst(batch, adjustment.unit_cost));
     }
-    t.profit = paise(t.sales - t.costOfSold - t.lossValue);
+    t.profitBeforeExpenses = paise(t.sales - t.costOfSold - t.lossValue);
+    t.profit = t.profitBeforeExpenses;
+    if (isLot) t.estimatedCostValue = t.costOfSold;
+    // A matched pre-order: its sold units were costed with the estimate until the bill, and with the bill's cost since.
+    if (!isLot && batch.expected_quantity !== null && batch.expected_quantity !== undefined && batch.matched_at
+      && batch.est_unit_cost_ex_gst !== null && batch.est_unit_cost_ex_gst !== undefined)
+      t.costVarianceValue = paise(t.sold * (costBeforeGst(batch) - num(batch.est_unit_cost_ex_gst)));
     const purchaseDate = batch.purchase_date ?? istDate(batch.created_at);
-    const ledger = qty(t.purchased + t.received - t.sent - t.sold - t.held - t.lost + t.gained);
-    const handled = t.purchased + t.received - t.sent;
+    const ledger = qty(t.purchased + t.expected + t.received - t.sent - t.sold - t.held - t.lost + t.gained);
+    const handled = t.purchased + t.expected + t.received - t.sent;
     // Sold out means the units it kept were sold: a batch emptied by sending everything to other godowns is not.
-    const soldOut = batch.depleted_at && handled > 0.0005 ? istDate(batch.depleted_at) : null;
+    const soldOut = batch.depleted_at && handled > 0.0005 && !isLot ? istDate(batch.depleted_at) : null;
+    const unitBase = isLot ? t.expected : fromTransfer ? t.received : t.purchased;
     rows.push({
       ...t,
+      costStatus: isLot || batch.stage === "cancelled" ? "estimated" : batchCostBasis(batch) === "typed" ? "typed" : "bill",
+      unitBase,
+      expensePerUnit: 0,
+      landedUnitCost: paise(costBeforeGst(batch)),
+      waitingOrders: waitingByBatch.get(batch.id)?.size ?? 0,
+      costCheckGap: 0,
       batch,
       godown: godownName.get(batch.branch_id ?? "") ?? (batch.branch_id || "No godown"),
       orders: orderIds.size,
@@ -467,6 +543,7 @@ export function buildBatchReport(input: {
         : null,
     });
   }
+  const expenses = spreadExpenses(rows, input.costDocuments ?? [], input.costTags ?? [], heldCostByBatch);
   rows.sort((a, b) => (b.batch.purchase_date ?? "").localeCompare(a.batch.purchase_date ?? "") || b.batch.batch_code.localeCompare(a.batch.batch_code));
   sales.sort((a, b) => b.orderDate.localeCompare(a.orderDate));
 
@@ -499,9 +576,83 @@ export function buildBatchReport(input: {
     rows,
     sales,
     godowns,
+    expenses,
     all: sumTotals(rows),
     customers: [...customerMap.values()].sort((a, b) => b.lastOrder.localeCompare(a.lastOrder)),
   };
+}
+
+/**
+ * Each batch's expenses spread over its units (spec 9.2), and its profit after expenses, landed cost and cost check
+ * (9.3). A batch's own tags (at most Zoho's current amount, effectiveTagAmounts) plus what came with units sent to it
+ * are split in paise over [sold, awaiting payment, sent on, lost, in stock]; with no units at all it all stays in stock.
+ * The part on units sent on goes to the batches made from them by units received, and the rest is in transit. Parents
+ * are done before the batches they sent to. Fills in the rows; returns one row per tag.
+ */
+function spreadExpenses(rows: BatchReportRow[], docs: StoredCostDoc[], tags: StoredCostTag[], heldCost: Map<string, number>): BatchExpenseRow[] {
+  const byId = new Map(rows.map((row) => [row.batch.id, row]));
+  const effective = effectiveTagsById(docs, tags);
+  const own = new Map<string, number>();
+  for (const tag of tags)
+    if (byId.has(tag.batch_id)) own.set(tag.batch_id, paise((own.get(tag.batch_id) ?? 0) + (effective.get(tag.id) ?? 0)));
+  const children = new Map<string, BatchReportRow[]>();
+  for (const row of rows) {
+    const parent = row.batch.parent_batch_id;
+    if (parent && byId.has(parent)) children.set(parent, [...(children.get(parent) ?? []), row]);
+  }
+  const inherited = new Map<string, number>();
+  const done = new Set<string>();
+  const visit = (row: BatchReportRow) => {
+    if (done.has(row.batch.id)) return;
+    done.add(row.batch.id);
+    const c = costBeforeGst(row.batch);
+    row.expenseValue = own.get(row.batch.id) ?? 0;
+    row.inheritedExpenseValue = inherited.get(row.batch.id) ?? 0;
+    const total = paise(row.expenseValue + row.inheritedExpenseValue);
+    const weights = [row.sold, row.held, row.sent, row.lost, row.available].map((w) => Math.max(0, w));
+    const [onSold = 0, onHeld = 0, onSent = 0, onLost = 0, inStock = 0] = total === 0 ? [0, 0, 0, 0, 0]
+      : weights.every((w) => w === 0) ? [0, 0, 0, 0, total] : apportionPaise(total, weights);
+    row.expenseOnSoldValue = onSold;
+    row.expenseOnHeldValue = onHeld;
+    row.expenseOnSentValue = onSent;
+    row.expenseOnLostValue = onLost;
+    row.expenseInStockValue = inStock;
+    const kids = children.get(row.batch.id) ?? [];
+    if (onSent !== 0) {
+      const inTransit = Math.max(0, qty(row.sent - kids.reduce((sum, kid) => sum + kid.received, 0)));
+      const parts = apportionPaise(onSent, [...kids.map((kid) => kid.received), inTransit]);
+      kids.forEach((kid, i) => inherited.set(kid.batch.id, paise((inherited.get(kid.batch.id) ?? 0) + parts[i]!)));
+      row.expenseInTransitValue = parts[kids.length] ?? 0;
+    }
+    row.profit = paise(row.profitBeforeExpenses - onSold - onLost);
+    row.landedStockValue = paise(row.stockValue + inStock);
+    row.expensePerUnit = row.unitBase > 0 ? paise(total / row.unitBase) : 0;
+    row.landedUnitCost = paise(c + (row.unitBase > 0 ? total / row.unitBase : 0));
+    // Money in = money out when every unit is accounted for: the difference is the ledger gap at cost.
+    const isLot = (row.batch.stage ?? "received") === "incoming";
+    const moneyIn = row.purchaseValue + paise(row.received * c) + paise(row.expected * c) + total;
+    const moneyOut = row.costOfSold + (heldCost.get(row.batch.id) ?? 0) + paise(row.sent * c) + row.lossValue
+      + (isLot ? paise(row.available * c) : row.stockValue) + onSold + onHeld + onSent + onLost + inStock;
+    row.costCheckGap = paise(moneyIn - moneyOut);
+    for (const kid of kids) visit(kid);
+  };
+  for (const row of rows) if (!row.batch.parent_batch_id || !byId.has(row.batch.parent_batch_id)) visit(row);
+  for (const row of rows) visit(row);
+
+  const docOf = new Map(docs.map((d) => [d.id, d]));
+  const out: BatchExpenseRow[] = [];
+  for (const tag of tags) {
+    const row = byId.get(tag.batch_id);
+    const doc = docOf.get(tag.document_id);
+    if (!row || !doc) continue;
+    out.push({
+      tagId: tag.id, documentId: doc.id, batchId: row.batch.id, batchCode: row.batch.batch_code, source: doc.source, date: doc.doc_date,
+      account: doc.account_name, reference: doc.doc_number, description: doc.description, beforeGst: num(doc.amount_before_gst), gst: num(doc.gst_amount),
+      claimable: doc.gst_override ?? doc.gst_claimable, cost: num(doc.cost_amount), tagged: num(tag.amount), effective: effective.get(tag.id) ?? 0,
+      method: tag.method, flag: doc.flag, gone: Boolean(doc.gone_at),
+    });
+  }
+  return out.sort((a, b) => b.date.localeCompare(a.date) || a.documentId - b.documentId || a.batchCode.localeCompare(b.batchCode));
 }
 
 export type BatchReport = ReturnType<typeof buildBatchReport>;
@@ -523,7 +674,8 @@ export function godownStockChecks(rows: BatchReportRow[], stockOf: (productId: s
   const groups = new Map<string, GodownStockCheck>();
   for (const row of rows) {
     const godownId = row.batch.branch_id ?? "";
-    if (!godownId) continue;
+    // Received batches only (14 Nov 2026): a pre-order batch's bags are not at the godown yet, and a cancelled one has none.
+    if (!godownId || (row.batch.stage ?? "received") !== "received") continue;
     const key = `${godownId}|${row.batch.product_id}`;
     const seen = groups.get(key) ?? {
       godownId, godown: row.godown, productId: row.batch.product_id, productName: row.batch.product_name,
@@ -601,6 +753,11 @@ const istStamp = (iso: string) => {
 };
 const dmy = (iso: string | null) => (iso ? iso.slice(0, 10).split("-").reverse().join("-") : "");
 
+const STAGE_NAMES: Record<string, string> = { incoming: "Pre-order (waiting for its bill)", received: "Received", cancelled: "Cancelled pre-order" };
+export const COST_STATUS_NAMES: Record<BatchCostStatus, string> = { estimated: "Estimated", bill: "From bill", typed: "Typed" };
+const METHOD_NAMES: Record<string, string> = { amount: "Typed amount", percent: "Percent", bags: "By bags", value: "By value", weight: "By weight", split: "Split at match" };
+export const costMethodName = (method: string) => METHOD_NAMES[method] ?? method;
+
 export const BATCH_COLUMNS: [string, (row: BatchReportRow) => string | number | null][] = [
   ["Batch no.", (r) => r.batch.batch_code],
   ["Product", (r) => r.batch.product_name],
@@ -611,7 +768,14 @@ export const BATCH_COLUMNS: [string, (row: BatchReportRow) => string | number | 
   ["Cost per unit excl. GST (₹)", (r) => costBeforeGst(r.batch)],
   ["Cost per unit incl. GST (₹)", (r) => costWithGst(r.batch)],
   ["Cost shown on the batch", (r) => costBasisName(r.batch)],
+  ["Stage", (r) => STAGE_NAMES[r.batch.stage ?? "received"] ?? r.batch.stage ?? ""],
+  ["Expected qty", (r) => (r.batch.expected_quantity === null || r.batch.expected_quantity === undefined ? null : num(r.batch.expected_quantity))],
+  ["Expected by", (r) => dmy(r.batch.expected_date ?? null)],
+  ["Matched on", (r) => dmy(r.batch.matched_at ? istDate(r.batch.matched_at) : null)],
+  ["Est. cost/unit excl. GST (₹)", (r) => (r.batch.est_unit_cost_ex_gst === null || r.batch.est_unit_cost_ex_gst === undefined ? null : num(r.batch.est_unit_cost_ex_gst))],
+  ["Cost status", (r) => COST_STATUS_NAMES[r.costStatus]],
   ["Purchased", (r) => r.purchased],
+  ["Expected (pre-order)", (r) => r.expected],
   ["Received from another godown", (r) => r.received],
   ["Sent to other godowns", (r) => r.sent],
   ["Sold", (r) => r.sold],
@@ -625,8 +789,17 @@ export const BATCH_COLUMNS: [string, (row: BatchReportRow) => string | number | 
   ["Sales excl. GST (₹)", (r) => r.sales],
   ["Cost of sold excl. GST (₹)", (r) => r.costOfSold],
   ["Loss value excl. GST (₹)", (r) => r.lossValue],
-  ["Profit (₹)", (r) => r.profit],
+  ["Profit before expenses (₹)", (r) => r.profitBeforeExpenses],
+  ["Expenses (₹)", (r) => paise(r.expenseValue + r.inheritedExpenseValue)],
+  ["Expense per unit (₹)", (r) => r.expensePerUnit],
+  ["Landed cost per unit (₹)", (r) => r.landedUnitCost],
+  ["Expenses on sold (₹)", (r) => r.expenseOnSoldValue],
+  ["Expenses on lost (₹)", (r) => r.expenseOnLostValue],
+  ["Expenses in unsold stock (₹)", (r) => r.expenseInStockValue],
+  ["Profit after expenses (₹)", (r) => r.profit],
   ["Stock value excl. GST (₹)", (r) => r.stockValue],
+  ["Unsold stock at landed cost (₹)", (r) => r.landedStockValue],
+  ["Cost variance on sold (₹)", (r) => r.costVarianceValue],
   ["Orders", (r) => r.orders],
   ["Customers", (r) => r.customers],
   ["First sale", (r) => dmy(r.firstSale ? istDate(r.firstSale) : null)],
@@ -634,7 +807,7 @@ export const BATCH_COLUMNS: [string, (row: BatchReportRow) => string | number | 
   ["Sold out on", (r) => dmy(r.batch.depleted_at && r.daysToSellOut !== null ? istDate(r.batch.depleted_at) : null)],
   ["Days to sell out", (r) => r.daysToSellOut],
   ["Age (days)", (r) => r.ageDays],
-  ["Status", (r) => (r.available > 0 ? "In stock" : "Sold out")],
+  ["Status", (r) => (r.batch.stage === "incoming" ? "Pre-order" : r.batch.stage === "cancelled" ? "Cancelled" : r.available > 0 ? "In stock" : "Sold out")],
   ["Made in", (r) => (r.batch.source === "zoho" ? "Zoho" : "Website")],
   ["Zoho batch", (r) => (r.batch.zoho_batch_id ? "Linked" : "Website only")],
   ["Zoho balance", (r) => r.batch.zoho_balance],
@@ -646,15 +819,18 @@ export function batchReportSheets(report: BatchReport, meta: { generatedAt: stri
   const intro = (title: string) => [
     [title],
     [`${meta.scope}`, null, null, `Generated: ${istStamp(meta.generatedAt)} IST`],
-    ["Amounts in ₹, all before GST. Sales less discounts. Profit = sales − cost of the sold units − value of stock lost, at the batch's cost without GST (GST paid on purchases is claimed back)."],
+    ["Amounts in ₹, all before GST. Sales less discounts. Profit after expenses = sales − cost of the sold units (the bill's cost without GST; GST paid on purchases is claimed back) − the expenses on the sold units − value of stock lost with its expenses. Expenses tagged from Zoho Books and supplier bills are spread over each batch's units: those on unsold units stay with the unsold stock. A pre-order batch's sales are costed with its estimate until its bill is matched."],
     [],
   ];
   const dashHead = intro("Batch report · dashboard");
   const dashCols: [string, (r: BatchTotals & { batches?: number; active?: number; averageDaysToSellOut?: number | null }) => string | number | null][] = [
-    ["Batches", (r) => r.batches ?? null], ["In stock", (r) => r.active ?? null], ["Purchased", (r) => r.purchased], ["Sold", (r) => r.sold],
+    ["Batches", (r) => r.batches ?? null], ["In stock", (r) => r.active ?? null], ["Purchased", (r) => r.purchased], ["Expected (pre-order)", (r) => r.expected], ["Sold", (r) => r.sold],
     ["Delivered", (r) => r.delivered], ["Awaiting payment", (r) => r.held], ["Lost", (r) => r.lost], ["Available", (r) => r.available],
     ["Purchase value excl. GST (₹)", (r) => r.purchaseValue], ["Sales excl. GST (₹)", (r) => r.sales], ["Cost of sold excl. GST (₹)", (r) => r.costOfSold],
-    ["Loss value excl. GST (₹)", (r) => r.lossValue], ["Profit (₹)", (r) => r.profit], ["Stock value excl. GST (₹)", (r) => r.stockValue],
+    ["Loss value excl. GST (₹)", (r) => r.lossValue], ["Profit before expenses (₹)", (r) => r.profitBeforeExpenses],
+    ["Expenses tagged (₹)", (r) => r.expenseValue], ["Expenses on sold (₹)", (r) => r.expenseOnSoldValue], ["Expenses in unsold stock (₹)", (r) => r.expenseInStockValue],
+    ["Profit after expenses (₹)", (r) => r.profit], ["Stock value excl. GST (₹)", (r) => r.stockValue], ["Unsold stock at landed cost (₹)", (r) => r.landedStockValue],
+    ["Cost variance on sold (₹)", (r) => r.costVarianceValue],
     ["Avg. days to sell out", (r) => r.averageDaysToSellOut ?? null],
   ];
   const dashboard: XlsxSheet = {
@@ -701,7 +877,39 @@ export function batchReportSheets(report: BatchReport, meta: { generatedAt: stri
     boldRows: [0],
     widths: [16, 36, 22, 14, 26, 48, 30, 7, 12],
   };
-  return [dashboard, batches, salesSheet, customers];
+  // One row per tag (spec 9.4): the Zoho document, the batch, what was tagged and what it counts for now.
+  const codes = new Set(report.rows.map((r) => r.batch.id));
+  const expenses: XlsxSheet = {
+    name: "Expenses",
+    rows: [["Date", "Account", "Reference", "From", "Before GST (₹)", "GST (₹)", "GST claimable", "Cost (₹)", "Batch no.", "Tagged (₹)", "Counted now (₹)", "Method", "Flag"],
+      ...report.expenses.filter((e) => codes.has(e.batchId)).map((e) => [
+        dmy(e.date), e.account, e.reference, e.source === "bill" ? "Supplier bill" : "Zoho Books expense", e.beforeGst, e.gst, e.claimable ? "Yes" : "No",
+        e.gone ? 0 : e.cost, e.batchCode, e.tagged, e.effective, costMethodName(e.method), e.flag || (e.gone ? "Deleted in Zoho" : ""),
+      ])],
+    boldRows: [0],
+    widths: [11, 28, 16, 18, 12, 10, 10, 12, 16, 12, 12, 14, 40],
+  };
+  // Pre-order batches and their remainders (spec 9.4): counts of waiting orders only, no customer details.
+  const lots = report.rows.filter((r) => r.batch.expected_quantity !== null && r.batch.expected_quantity !== undefined)
+    .sort((a, b) => (a.batch.expected_date ?? "").localeCompare(b.batch.expected_date ?? "") || a.batch.batch_code.localeCompare(b.batch.batch_code));
+  const codeOf = new Map(report.rows.map((r) => [r.batch.id, r.batch.batch_code]));
+  const preorders: XlsxSheet = {
+    name: "Pre-orders",
+    rows: [["Batch no.", "Product", "Godown", "Stage", "First expected qty", "Quantity now", "Expected by", "Sold ahead", "Waiting orders", "Est. cost/unit excl. GST (₹)",
+      "Bill cost/unit excl. GST (₹)", "Matched on", "Bill no.", "Remainder of", "Cost variance on sold (₹)"],
+      ...lots.map((r) => {
+        const b = r.batch;
+        const lot = b.stage === "incoming";
+        return [b.batch_code, b.product_name, r.godown, STAGE_NAMES[b.stage ?? "received"] ?? b.stage ?? "", num(b.expected_quantity), num(b.quantity), dmy(b.expected_date ?? null),
+          lot ? qty(num(b.quantity) - num(b.remaining_quantity)) : r.sold, r.waitingOrders,
+          b.est_unit_cost_ex_gst === null || b.est_unit_cost_ex_gst === undefined ? null : num(b.est_unit_cost_ex_gst),
+          lot || b.stage === "cancelled" ? null : costBeforeGst(b), dmy(b.matched_at ? istDate(b.matched_at) : null),
+          lot ? "" : b.zoho_bill_number || "", b.split_from_batch_id ? codeOf.get(b.split_from_batch_id) ?? "" : "", r.costVarianceValue];
+      })],
+    boldRows: [0],
+    widths: [18, 36, 22, 22, 10, 10, 12, 10, 10, 12, 12, 12, 14, 18, 12],
+  };
+  return [dashboard, batches, salesSheet, customers, expenses, preorders];
 }
 
 /** Losses / gains sheet (the server adds it: it needs the adjustment rows). */

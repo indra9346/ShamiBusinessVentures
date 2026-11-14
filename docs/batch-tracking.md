@@ -124,7 +124,12 @@ twice and shows **Match now**. In Receive purchase each bill line is set to "Mat
 reason); tick that every bag is at the godown and save. The batch takes the bill's cost and the waiting orders go on to
 Zoho. Details, formulas and the worked example: `docs/preorder-batches.md`.
 
-**Batch expenses and P&L:** expenses from Zoho Books tagged to batches (landed cost) come with the next build.
+**Batch expenses and P&L:** Zoho Books expenses (freight, hamali, unloading…) and the charge lines of supplier bills are
+tagged to batches (Expenses › Add from Zoho Books, or Bill charges; Receive purchase ticks the bill's own charges). Each
+batch spreads them in paise over its sold, unsold, lost and sent units: profit after expenses = sales − cost of sold −
+expenses on sold − stock lost (with its expenses), all before GST; expenses on unsold bags stay with the stock (landed
+cost). Changes in Zoho are flagged hourly and the profit never counts more than Zoho's amount. Details: the "Batch
+expenses and profit and loss" section of `docs/preorder-batches.md`.
 
 ## Database
 
