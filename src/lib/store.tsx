@@ -20,6 +20,8 @@ import { costBeforeGst } from "@/lib/batches";
 import type { Database } from "@/integrations/supabase/types";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { branchForPin, branchStockOf, defaultBranchOf, godownPriceOf, useAdminBranch, useBranches, useShopperPin } from "@/lib/branches";
+import { godownArrivingOf } from "@/lib/godown-rules";
+import { istToday } from "@/lib/preorder";
 import { isOutsideServiceArea, OUT_OF_AREA_EVENT } from "@/lib/godown-rules";
 import { afterPageLoad, snapshotIsFresh, useStorefrontSnapshot, type StorefrontSnapshot } from "@/lib/storefront-snapshot";
 
@@ -214,7 +216,9 @@ type AppState = {
     payFirst?: boolean;
     /** Buying for a business (B2B): the buyer's GSTIN and legal name; isB2b false = a personal purchase. */
     business?: { isB2b: boolean; gstin?: string; legalName?: string };
-  }) => Promise<Order>;
+    /** The customer ticked the pre-order box: lines may take units that arrive later (14 Nov 2026). */
+    acceptPreorder?: boolean;
+  }) => Promise<Order & { preorderLines?: { productId: string; qty: number; by: string | null }[] }>;
   /** Checkouts waiting for payment (and recently expired ones). Not orders: kept out of `orders`. */
   paymentHolds: PaymentHold[];
   /** This customer's orders and checkouts have been read (a page can tell "loading" from "not found"). */
@@ -459,7 +463,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const orderRows = ordersResult.data;
         const orderError = ordersResult.error;
         if (!batchError) {
-          setBatches(batchRows.map((row) => ({
+          // Pre-order batches (14 Nov 2026) have no bags in a godown yet, and cancelled ones never will: kept out of the
+          // stock valuation, which counts received batches only.
+          setBatches(batchRows.filter((row) => ((row as { stage?: string }).stage ?? "received") === "received").map((row) => ({
             id: row.id,
             batchCode: row.batch_code,
             productId: row.product_id,
@@ -1080,6 +1086,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const shopperGodown = isShopper && branchState.ready && branchState.features.branchRouting
     ? branchForPin(branchState.branches, chosenPin || fallbackPin)
     : null;
+  // Pre-order dates are India's days; recomputed with the view (a page left open over midnight catches up on its next change).
+  const todayIst = istToday();
   const viewProducts = useMemo(() => {
     if (!isShopper || !branchState.ready || (!shopperGodown && branchState.vendorPoints.size === 0)) return products;
     const view: Product[] = [];
@@ -1090,6 +1098,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (!shopperGodown) { view.push(product); continue; }
       const price = godownPriceOf(branchState, shopperGodown, product.id, product.price);
       if (price === null) continue; // not sold at this godown
+      // Pre-order units of this godown's lots (14 Nov 2026): sold after the ready units, collected once they arrive.
+      const arriving = godownArrivingOf(branchState, product.id, shopperGodown.id, todayIst);
       view.push({
         ...product,
         price,
@@ -1097,10 +1107,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
         // A stored per-kg/litre rate belongs to the base price; let it follow the godown price.
         ...(price !== product.price ? { ratePricing: undefined } : {}),
         stock: branchStockOf(branchState, product.id, shopperGodown.id),
+        ...(arriving.qty > 0 ? { incoming: arriving.qty, incomingBy: arriving.by, incomingDetail: arriving.detail, incomingGodown: shopperGodown.city || shopperGodown.name } : {}),
       });
     }
     return view;
-  }, [isShopper, branchState, shopperGodown, products]);
+  }, [isShopper, branchState, shopperGodown, products, todayIst]);
 
   const wholeCatalogue = products;
   const value = useMemo<AppState>(() => {
@@ -1549,7 +1560,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       getAverageSellingPrice: (product) => getProductAverageSellingPrice(product, orders),
 
       orders,
-      placeOrder: async ({ lines, method, payment, coupon, customerIndex = 0, customerOverride, shippingAddress, delivery, subtotal, discount, tax, shipping, source, paymentDueDate, payFirst = false, business }) => {
+      placeOrder: async ({ lines, method, payment, coupon, customerIndex = 0, customerOverride, shippingAddress, delivery, subtotal, discount, tax, shipping, source, paymentDueDate, payFirst = false, business, acceptPreorder = false }) => {
         if (method === "Cash on Delivery" || method === "COD") {
           throw new Error("Cash on delivery is not enabled for this store. Please select an online payment method (UPI, NEFT or RTGS).");
         }
@@ -1640,7 +1651,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
             _shipping_address: addressPayload,
             _shipping_method: delivery?.toLowerCase().startsWith("pickup") ? "Pickup" : delivery?.toLowerCase().includes("express") ? "Express" : "Standard",
             _payment_method: method,
-            _items: lines.map((line) => ({ product_id: line.product.id, qty: line.qty })),
+            // accept_preorder: the customer's tick, per line; place_marketplace_order takes arriving units only with it.
+            _items: lines.map((line) => ({ product_id: line.product.id, qty: line.qty, ...(acceptPreorder ? { accept_preorder: true } : {}) })),
             _coupon: coupon ?? null,
             ...(payFirst && business ? {
               _is_b2b: business.isB2b,
@@ -1653,8 +1665,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
             toast.error("Order was not placed", { description: message });
             throw new Error(message);
           }
-          const saved = data as { order_no?: string; subtotal: number; discount: number; gst_amount: number; shipping: number; total: number; items: Array<{ product_id: string; unit_price: number }>; order_status?: string; hold_until?: string | null };
+          const saved = data as { order_no?: string; subtotal: number; discount: number; gst_amount: number; shipping: number; total: number; items: Array<{ product_id: string; unit_price: number; preorder_qty?: number; preorder_by?: string | null }>; order_status?: string; hold_until?: string | null };
           if (saved.order_no) order.id = saved.order_no;
+          const preorderLines = (saved.items ?? []).filter((item) => Number(item.preorder_qty) > 0)
+            .map((item) => ({ productId: item.product_id, qty: Number(item.preorder_qty), by: item.preorder_by ?? null }));
+          if (preorderLines.length) Object.assign(order, { preorderLines });
           // A held checkout is not an order yet: Zoho gets it when the payment is matched.
           if (saved.order_status !== AWAITING_PAYMENT) pushOrderToZohoInBackground(order.id);
           if (saved.order_status === AWAITING_PAYMENT) order.holdUntil = saved.hold_until ?? null;
@@ -2219,7 +2234,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
       orders: value.orders.filter((order) => (order.branchId ?? defaultBranch?.id) === adminBranchId),
       products: value.products.map((product) => product.vendorId.startsWith("zoho:")
         ? product
-        : { ...product, stock: branchStockOf(branchState, product.id, adminBranchId) }),
+        : {
+          ...product, stock: branchStockOf(branchState, product.id, adminBranchId),
+          // Arriving units of this godown's pre-order batches (read-only here: they come in with their bill).
+          ...((branchState.incoming.get(product.id)?.get(adminBranchId)?.qty ?? 0) > 0
+            ? { incoming: branchState.incoming.get(product.id)?.get(adminBranchId)?.qty ?? 0 } : {}),
+        }),
     };
   }, [value, user?.role, adminBranchId, branchState]);
 

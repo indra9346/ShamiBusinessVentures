@@ -19,7 +19,8 @@ export type StorefrontSnapshot = {
   /** store_categories.payload, in their order */
   categories: Json[];
   branches: { [column: string]: Json }[];
-  branchStock: { branch_id: string; product_id: string; stock: number }[];
+  /** incoming / incoming_detail: pre-order units on sale now and their dates (absent before that migration). */
+  branchStock: { branch_id: string; product_id: string; stock: number; incoming?: number | null; incoming_detail?: Json }[];
   branchPrices: { branch_id: string; product_id: string; price: number; listed: boolean | null; pending: boolean | null }[];
   vendorPoints: { vendor_id: string; branch_id: string }[];
   /** The public settings rows the storefront reads, by key. */

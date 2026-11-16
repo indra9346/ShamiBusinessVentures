@@ -63,6 +63,10 @@ export function OrderUpiPay({ orderNo, status, payment, method, balance, custome
     );
   }
   if (!settings || status === "Cancelled") return null;
+  // Paid (or refunded) some other way: nothing to pay, whatever became of a UTR sent earlier (13 Nov 2026: a paid,
+  // delivered order showed "Pay by UPI ₹0.00 · Unpaid" and "UTR … could not be matched"). A confirmed UTR still shows
+  // its own "Payment received" box in the panel below.
+  if (sent?.status !== "confirmed" && (payment === "Paid" || payment === "Refunded" || balance <= 0)) return null;
   if (!sent && (!on || payment === "Paid" || balance <= 0 || !/upi/i.test(method))) return null;
   return <div className="mb-6"><UpiPayPanel settings={settings} orderNo={orderNo} amount={sent && sent.status !== "rejected" ? sent.amount : balance} customer={customer} /></div>;
 }

@@ -13,6 +13,7 @@ import { showCartNotification } from "@/components/site/CartFloatingNotification
 import { useApp } from "@/lib/store";
 import { getAvailablePurchaseQuantity, getMaxPurchaseQuantity, type Product } from "@/lib/data";
 import { setCartPreview } from "@/lib/cart-preview";
+import { addedLineSplit, dayLabel, preorderBy, preorderText } from "@/lib/preorder";
 
 export function AddToCartPicker({
   product,
@@ -33,10 +34,17 @@ export function AddToCartPicker({
   const [typedQty, setTypedQty] = useState(String(Math.max(1, initialQty)));
   const [keypadEntryStarted, setKeypadEntryStarted] = useState(false);
   const inCart = cart.find((line) => line.id === product.id)?.qty ?? 0;
-  const availableStock = Math.max(
+  const readyStock = Math.max(
     0,
     Math.floor((Number(product.stock) || 0) - (Number(product.reserved) || 0)),
   );
+  // Pre-order units (14 Nov 2026) can be bought too, after the ready ones.
+  const arriving = Math.max(0, Number(product.incoming) || 0);
+  const availableStock = readyStock + arriving;
+  // Of the units this adds (on top of what the cart holds already), how many are ready and how many arrive later.
+  const split = addedLineSplit(inCart, qty, readyStock);
+  // The date the line's arriving units reach the godown by: the lots are taken earliest first.
+  const arrivingBy = dayLabel(preorderBy(product.incomingDetail, addedLineSplit(0, inCart + qty, readyStock).preorder, product.incomingBy ?? null));
   const purchaseLimit = getAvailablePurchaseQuantity(product);
   const configuredMax = getMaxPurchaseQuantity(product);
   const bagWeight = Number.parseFloat(product.weight.replace(/[^\d.]/g, "")) || 0;
@@ -225,21 +233,35 @@ export function AddToCartPicker({
           <Plus className="h-4 w-4" />
         </button>
       </div>
-      <p className="mt-1 text-[11px] text-slate">
-        Tap keypad digits in sequence or type a whole number. Choose 1–{purchaseLimit} units
-        (configured maximum {configuredMax}; {availableStock} in stock).
-      </p>
+      {arriving > 0 ? (
+        // Arriving units are not in the godown yet: never "in stock" (review fix).
+        <p className="mt-1 text-[11px] text-slate">
+          {preorderText.pickHint(purchaseLimit, configuredMax, readyStock, arriving, dayLabel(preorderBy(product.incomingDetail, arriving, product.incomingBy ?? null)))}
+        </p>
+      ) : (
+        <p className="mt-1 text-[11px] text-slate">
+          Tap keypad digits in sequence or type a whole number. Choose 1–{purchaseLimit} units
+          (configured maximum {configuredMax}; {availableStock} in stock).
+        </p>
+      )}
       {Number(typedQty) > purchaseLimit && (
         <p role="alert" className="mt-1 text-xs font-medium text-danger">
           {purchaseLimit < availableStock
             ? `The maximum purchase for this product is ${purchaseLimit} units.`
-            : `Only ${availableStock} units are available in stock.`}{" "}
+            : arriving > 0
+              ? preorderText.pickTooMany(availableStock, readyStock, arriving)
+              : `Only ${availableStock} units are available in stock.`}{" "}
           Reduce the quantity to add this item to your cart.
         </p>
       )}
       <p className="mt-2 text-xs text-slate">
         {product.weight} per bag · {selectedWeight || qty} {unit} total
       </p>
+      {split.preorder > 0 && arriving > 0 && (
+        <p className="mt-1 text-xs font-semibold text-amber-800">
+          {split.ready > 0 ? preorderText.cartSplit(split.ready, split.preorder, arrivingBy) : preorderText.allArriving(split.preorder, arrivingBy)}
+        </p>
+      )}
       <button
         type="button"
         disabled={

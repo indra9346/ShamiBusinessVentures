@@ -52,12 +52,27 @@ export const isMissingInDatabase = (error: { code?: string; message?: string } |
 type SubmissionRow = {
   order_no: string; amount: number | string; utr: string; customer_name: string; submitted_at: string;
   status: string; reviewed_at: string | null; note: string | null; late?: boolean | null; sent_by_role?: string | null;
+  reviewed_by?: string | null;
+  follow_up?: string | null; refunded_at?: string | null; refunded_by?: string | null; refunded_from?: string | null;
 };
-const fromRow = (row: SubmissionRow): UpiSubmission => ({
+/** A UTR approved by the godown's channel partner (16 Nov 2026): partner_approve_payment writes this into its note. */
+export const PARTNER_APPROVAL_NOTE = "Approved by channel partner ";
+const approvedByPartner = (note: string | null | undefined) => (note ?? "").includes(PARTNER_APPROVAL_NOTE);
+const reviewerName = (row: SubmissionRow, names: Map<string, string>, partners: Map<string, string>) => {
+  const id = row.reviewed_by ?? "";
+  if (approvedByPartner(row.note) && partners.get(id)) return `${partners.get(id)} (channel partner)`;
+  return names.get(id) || (approvedByPartner(row.note) ? "A channel partner" : "Unknown admin");
+};
+const fromRow = (row: SubmissionRow, names: Map<string, string> = new Map(), partners: Map<string, string> = new Map()): UpiSubmission => ({
   orderNo: row.order_no, amount: Number(row.amount), utr: row.utr, customer: row.customer_name, submittedAt: row.submitted_at,
   status: row.status as UpiSubmission["status"], ...(row.reviewed_at ? { reviewedAt: row.reviewed_at } : {}), ...(row.note ? { note: row.note } : {}),
   ...(row.late ? { late: true } : {}),
   ...(row.sent_by_role === "partner" || row.sent_by_role === "admin" ? { sentByRole: row.sent_by_role } : {}),
+  ...(row.reviewed_by ? { reviewedById: row.reviewed_by, reviewedBy: reviewerName(row, names, partners) } : {}),
+  ...(row.follow_up ? { followUp: row.follow_up } : {}),
+  ...(row.refunded_at ? { refundedAt: row.refunded_at } : {}),
+  ...(row.refunded_by ? { refundedById: row.refunded_by, refundedBy: names.get(row.refunded_by) || "Unknown admin" } : {}),
+  ...(row.refunded_from === "confirmed" || row.refunded_from === "rejected" ? { refundedFrom: row.refunded_from } : {}),
 });
 
 export async function loadUpiSettings(): Promise<UpiSettings> {
@@ -151,11 +166,22 @@ export async function loadBankAudit(): Promise<BankAuditRow[]> {
 /** Admins get every submission; a customer only their own (row security in the database). */
 export async function loadUpiSubmissions(): Promise<UpiSubmission[]> {
   if (STATIC_DATA_MODE) return readJson<UpiSubmission[]>(DEMO_SUBMISSIONS, []);
-  const { data, error } = await supabase.from("upi_payment_submissions")
-    .select("order_no,amount,utr,customer_name,submitted_at,status,reviewed_at,note,late,sent_by_role")
-    .order("submitted_at", { ascending: false }).limit(500);
+  const read = (columns: string) => supabase.from("upi_payment_submissions").select(columns)
+    .order("submitted_at", { ascending: false }).limit(500) as unknown as PromiseLike<{ data: SubmissionRow[] | null; error: { code?: string; message: string } | null }>;
+  const base = "order_no,amount,utr,customer_name,submitted_at,status,reviewed_at,note,late,sent_by_role,reviewed_by";
+  let { data, error } = await read(`${base},follow_up,refunded_at,refunded_by,refunded_from`);
+  // The database change of 13 Nov 2026 (follow_up and the refunded_ columns) is not applied yet: the list still loads.
+  if (error && isMissingInDatabase(error)) ({ data, error } = await read(base));
   if (error) throw new Error(error.message);
-  return (data ?? []).map(fromRow);
+  // Who checked or refunded each one, by name (admins may read every profile; a customer only gets their own rows, never these names).
+  const ids = [...new Set((data ?? []).flatMap((row) => [row.reviewed_by, row.refunded_by]).filter((id): id is string => Boolean(id)))];
+  const { data: people } = ids.length ? await supabase.from("profiles").select("id,full_name").in("id", ids) : { data: [] };
+  const names = new Map((people ?? []).map((person) => [person.id, person.full_name ?? ""] as const));
+  // Approvals by a godown's channel partner (16 Nov 2026) show the partner's name from their partner record.
+  const partnerIds = [...new Set((data ?? []).filter((row) => approvedByPartner(row.note)).map((row) => row.reviewed_by).filter((id): id is string => Boolean(id)))];
+  const { data: partnerRows } = partnerIds.length ? await supabase.from("channel_partners").select("user_id,name").in("user_id", partnerIds) : { data: [] };
+  const partners = new Map((partnerRows ?? []).filter((p) => p.user_id).map((p) => [p.user_id as string, p.name ?? ""] as const));
+  return (data ?? []).map((row) => fromRow(row, names, partners));
 }
 
 export async function submitUpiPayment(submission: { orderNo: string; amount: number; utr: string; customer: string }) {
@@ -261,6 +287,8 @@ export async function placeEndedCheckout(orderNo: string, utr: string | null, me
 export type PartnerCheckout = {
   orderNo: string; status: string; total: number; method: string; placedAt: string; holdUntil: string | null;
   customer: string; items: string; utr: string | null; utrStatus: string | null; utrLate: boolean; utrSentBy: string | null;
+  /** Added 16 Nov 2026: the UTR's amount and when it was sent, what is paid already, and whether this partner may approve it now. */
+  utrAmount: number | null; utrSentAt: string | null; paidAmount: number; canApprove: boolean;
 };
 /** A channel partner: their godown's checkouts waiting for payment, or ended in the last 15 days. */
 export async function loadPartnerCheckouts(): Promise<PartnerCheckout[]> {
@@ -272,7 +300,53 @@ export async function loadPartnerCheckouts(): Promise<PartnerCheckout[]> {
     placedAt: String(row["placed_at"]), holdUntil: (row["hold_until"] as string | null) ?? null, customer: String(row["customer"] ?? ""),
     items: String(row["items"] ?? ""), utr: (row["utr"] as string | null) ?? null, utrStatus: (row["utr_status"] as string | null) ?? null,
     utrLate: Boolean(row["utr_late"]), utrSentBy: (row["utr_sent_by"] as string | null) ?? null,
+    utrAmount: row["utr_amount"] === null || row["utr_amount"] === undefined ? null : Number(row["utr_amount"]),
+    utrSentAt: (row["utr_sent_at"] as string | null) ?? null, paidAmount: Number(row["paid_amount"] ?? 0),
+    // Before the database change of 16 Nov 2026 the list has no can_approve: nothing to approve, as before.
+    canApprove: row["can_approve"] === true,
   }));
+}
+
+/** Where the partner saw the money (partner_approve_payment's _checked). */
+export type PartnerPaymentCheck = "bank_sms" | "bank_statement" | "upi_app";
+export const PARTNER_PAYMENT_CHECKS: { value: PartnerPaymentCheck; label: string }[] = [
+  { value: "bank_sms", label: "The bank's SMS or alert" },
+  { value: "bank_statement", label: "The bank statement or passbook" },
+  { value: "upi_app", label: "The business UPI app's received payments" },
+];
+
+/**
+ * The godown's channel partner approves the UTR they looked at (owner, 16 Nov 2026). The database checks everything an
+ * admin's Confirm checks, for an order of the partner's own godown only, and tells our office.
+ */
+export async function approvePartnerPayment(orderNo: string, utr: string, checked: PartnerPaymentCheck) {
+  const { data, error } = await supabase.rpc("partner_approve_payment", { _order_no: orderNo, _expected_utr: utr, _checked: checked });
+  if (error) throw new Error(error.message);
+  changed();
+  const result = (data ?? {}) as { order_no?: string; utr?: string; amount?: number | string; status?: string };
+  return { orderNo: result.order_no ?? orderNo, utr: result.utr ?? utr, amount: Number(result.amount ?? 0), status: result.status ?? "" };
+}
+
+export const PARTNER_PAYMENT_APPROVAL_KEY = "partner_payment_approval";
+export type PartnerPaymentApproval = { enabled: boolean; changedAt: string | null; changedBy: string | null };
+/** Admin: whether channel partners may approve their godown's payments (off when the setting is missing). */
+export async function loadPartnerPaymentApproval(): Promise<PartnerPaymentApproval> {
+  if (STATIC_DATA_MODE) return { enabled: true, changedAt: null, changedBy: null };
+  const { data, error } = await supabase.from("settings").select("value").eq("key", PARTNER_PAYMENT_APPROVAL_KEY).maybeSingle();
+  if (error) throw new Error(error.message);
+  const value = (data?.value ?? {}) as { enabled?: unknown; changedAt?: unknown; changedBy?: unknown };
+  return {
+    enabled: value.enabled === true,
+    changedAt: typeof value.changedAt === "string" ? value.changedAt : null,
+    changedBy: typeof value.changedBy === "string" ? value.changedBy : null,
+  };
+}
+/** Admin: switches payment approval by channel partners on or off. */
+export async function setPartnerPaymentApproval(enabled: boolean): Promise<PartnerPaymentApproval> {
+  const { data, error } = await supabase.rpc("admin_set_partner_payment_approval", { _enabled: enabled });
+  if (error) throw new Error(error.message);
+  const value = (data ?? {}) as { enabled?: unknown; changedAt?: unknown; changedBy?: unknown };
+  return { enabled: value.enabled === true, changedAt: typeof value.changedAt === "string" ? value.changedAt : null, changedBy: typeof value.changedBy === "string" ? value.changedBy : null };
 }
 
 /** Tell every open payments list to read again (after an order with UTRs was deleted elsewhere). */
@@ -306,8 +380,10 @@ export async function loadBankCredits(): Promise<BankCredit[]> {
 }
 
 /** Admin: a credit that needed a person was dealt with (refunded, order placed by hand, not for the shop). */
-export async function settleBankCredit(id: string, note: string) {
-  const { error } = await supabase.rpc("settle_bank_credit", { _credit_id: id, _note: note });
+/** refunded: the money went back to the customer, so the database also marks the customer's UTR for it refunded (13 Nov 2026). */
+export async function settleBankCredit(id: string, note: string, refunded = false) {
+  // Only a refund sends _refunded, so settling for any other reason works before and after that database change.
+  const { error } = await supabase.rpc("settle_bank_credit", refunded ? { _credit_id: id, _note: note, _refunded: true } : { _credit_id: id, _note: note });
   if (error) throw new Error(error.message);
   changed();
 }

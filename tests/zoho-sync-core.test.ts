@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  zohoAvailableAt,
   asksAboutUnansweredCreate,
   reconcileOrders,
   websiteOrderNoOf,
@@ -225,4 +226,19 @@ test("only the question about an unanswered create counts as asking it", () => {
   assert.doesNotMatch(unansweredCreateQuestion("CLK-577522-261026-143215", true), /is created/);
   for (const other of ["Order has no line items", "Zoho did not answer when order X was sent, and it may still be making the sales order.", "", null, undefined])
     assert.equal(asksAboutUnansweredCreate(other), false, String(other));
+});
+
+test("zohoAvailableAt: Zoho's available stock at a location, never floored, 0 when Zoho has no entry", () => {
+  const item = { locations: [
+    { location_id: "L1", location_available_stock: 324, location_stock_on_hand: 342 },
+    { location_id: "L2", location_available_stock: -12.5, location_stock_on_hand: 0 },
+    { location_id: "L3", location_stock_on_hand: "7.12345" },
+    { location_id: "L4", location_available_stock: "", location_stock_on_hand: null },
+  ] };
+  assert.equal(zohoAvailableAt(item, "L1"), 324, "accounting stock, as the hourly pull reads it");
+  assert.equal(zohoAvailableAt(item, "L2"), -12.5, "a negative number stays negative");
+  assert.equal(zohoAvailableAt(item, "L3"), 7.123, "on hand when available is missing; 3 decimals");
+  assert.equal(zohoAvailableAt(item, "L4"), 0);
+  assert.equal(zohoAvailableAt(item, "NOPE"), 0, "no entry = 0");
+  assert.equal(zohoAvailableAt({}, "L1"), 0);
 });

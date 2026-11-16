@@ -18,6 +18,7 @@ import { DataTable, FilterNote, Panel, scrollToSection, StatCard, StatusBadge } 
 import { adminNav } from "@/lib/panel-nav";
 import { inr, type Product, type PurchaseBatch } from "@/lib/data";
 import { useApp } from "@/lib/store";
+import { preorderText } from "@/lib/preorder";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -395,7 +396,12 @@ function AdminInventory() {
                 <p className="text-xs text-slate">{p.vendor}</p>
               </div>,
               <span className="font-mono text-xs text-slate">{p.sku}</span>,
-              <span className="font-medium text-navy">{p.stock}</span>,
+              <span className="font-medium text-navy">
+                {p.stock}
+                {(p.incoming ?? 0) > 0 && (
+                  <Link to="/admin/batches" search={{ tab: "preorders" }} className="ml-1 block text-[11px] font-semibold text-amber-800 hover:underline">{preorderText.plusArriving(p.incoming ?? 0)}</Link>
+                )}
+              </span>,
               <span className={p.stock < minimum ? "font-semibold text-amber-700" : "text-slate"}>
                 {minimum}
               </span>,
@@ -466,7 +472,10 @@ function AdminInventory() {
             <DialogTitle>Update Stock — {targetProduct?.name}</DialogTitle>
           </DialogHeader>
           <div className="grid gap-1.5 py-2">
-            <Label>New Stock Quantity</Label>
+            <Label>Ready stock (in the godown now)</Label>
+            {(targetProduct?.incoming ?? 0) > 0 && (
+              <p className="text-xs text-amber-800">{`${preorderText.plusArriving(targetProduct?.incoming ?? 0)} on a pre-order batch: those come in with their Zoho bill, so the ready stock can be lowered here but not raised.`}</p>
+            )}
             <Input
               type="number"
               min={0}

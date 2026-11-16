@@ -11,6 +11,7 @@ import { SelfieCamera } from "@/components/attendance/SelfieCamera";
 import { StaffStockCount } from "@/components/attendance/StaffStockCount";
 import { StaffFollowUps } from "@/components/attendance/StaffFollowUps";
 import { GodownTransfers } from "@/components/batches/GodownTransfers";
+import { ComingToGodown } from "@/components/batches/ComingToGodown";
 import { getBestFix } from "@/components/attendance/geolocation";
 import { useGodownDevice, type GodownDevice } from "@/components/attendance/godownDevice";
 import { Input } from "@/components/ui/input";
@@ -195,6 +196,7 @@ function StaffHome() {
         )}
 
         <GodownTransfers />
+        <ComingToGodown branchId={me.branch_id} />
         <Link to="/slip" className="flex items-center gap-3 rounded-2xl border-2 border-navy bg-card p-4 shadow-sm hover:border-gold">
           <ScanLine className="h-8 w-8 shrink-0 text-navy" />
           <span className="min-w-0">

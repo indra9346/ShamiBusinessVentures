@@ -1,207 +1,99 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { PartnerPaymentsPanel } from "@/components/panel/PartnerPaymentsPanel";
-import { FavouritesBar, PanelSearch } from "@/components/panel/PanelSearch";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { CalendarCheck, IndianRupee, LogOut, RefreshCw, ScanLine, Target, Timer, Trophy } from "lucide-react";
-import { BrandLogo, LogoMark } from "@/components/brand/Logo";
-import { FilterNote, Panel, scrollToSection, StatCard } from "@/components/panel/widgets";
-import { CommissionOrders, PartnerLeaderboard, TargetBar, commissionTotals, usePartnerData } from "@/components/partners/PartnerWidgets";
-import { MyPartnerReport } from "@/components/partners/MyPartnerReport";
-import { PartnerPayouts } from "@/components/partners/PartnerPayouts";
-import { PartnerInvoices } from "@/components/partners/PartnerInvoices";
-import { MonthlyIncome } from "@/components/partners/MonthlyIncome";
-import { GodownTransfers } from "@/components/batches/GodownTransfers";
-import { PartnerStockIndents } from "@/components/partners/StockIndents";
-import { ReleasedDeliveryNotes } from "@/components/panel/DeliveryNotePanel";
+import { useEffect, useMemo, useState } from "react";
+import { ClipboardCheck, CreditCard, FileCheck2, IndianRupee, Target, Timer, Trophy } from "lucide-react";
+import { StatCard } from "@/components/panel/widgets";
+import { usePartner } from "@/components/partners/PartnerLayout";
+import { commissionTotals, usePartnerData } from "@/components/partners/PartnerWidgets";
+import { ScanQrCard } from "@/components/partners/ScanQrCard";
 import { supabase } from "@/integrations/supabase/client";
 import { inrPrecise } from "@/lib/data";
-import { describeRate, monthLabel, monthStart, targetProgress, type CommissionKind } from "@/lib/partners";
-import { matchesCommissionStatus } from "@/lib/panel-filters";
-import { percentText, type MonthStatement } from "@/lib/partner-month";
+import { monthLabel } from "@/lib/partners";
+import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/partner/")({
   head: () => ({ meta: [{ title: "Channel Partner Commission Platform | Grain Bazar" }, { name: "robots", content: "noindex" }] }),
   component: PartnerDashboard,
 });
 
-type Me = { id: string; name: string; branchId: string; godown: string; signaturePath: string | null };
-type Rate = { productName: string; kind: CommissionKind; value: number; enabled: boolean };
-
-/** The godown channel partner's live dashboard: commissions, target, rates and the leaderboard. */
+/**
+ * The channel partner's dashboard (owner, 16 Nov 2026: a side menu like the admin's instead of one long page): what is
+ * waiting for the partner, the month's figures and the QR scanner. Each card opens its page.
+ */
 function PartnerDashboard() {
   const navigate = useNavigate();
-  const [me, setMe] = useState<Me | null>(null);
-  const [month, setMonth] = useState(monthStart());
-  const [rates, setRates] = useState<Rate[]>([]);
-  const [target, setTarget] = useState<number>(0);
-  // Set when the chosen month is on monthly profit share: the per-unit figures then say nothing.
-  const [statement, setStatement] = useState<MonthStatement | null>(null);
-  const onStatement = useCallback((next: MonthStatement | null) => setStatement(next), []);
+  const { me, month, statement } = usePartner();
   const { leaders, lines, error } = usePartnerData(month);
-  // The money cards open the commission list below, showing just what they add up.
-  const [lineView, setLineView] = useState("all");
-  const openLines = (view: string) => {
-    setLineView(view);
-    scrollToSection("your-commissions");
-  };
-
-  // Only an active partner may stay here; anyone else goes to the partner login.
-  useEffect(() => {
-    void (async () => {
-      const { data: session } = await supabase.auth.getSession();
-      const userId = session.session?.user.id;
-      if (!userId) { navigate({ to: "/partner/login", replace: true }); return; }
-      const { data: partner } = await supabase.from("channel_partners").select("id,name,branch_id,status").eq("user_id", userId).maybeSingle();
-      if (!partner || partner.status !== "active") { await supabase.auth.signOut({ scope: "local" }); navigate({ to: "/partner/login", replace: true }); return; }
-      // Read on its own: a database without the column yet must not sign the partner out.
-      const [{ data: branch }, { data: signed }] = await Promise.all([
-        supabase.from("branches").select("name").eq("id", partner.branch_id).maybeSingle(),
-        supabase.from("channel_partners").select("signature_path").eq("id", partner.id).maybeSingle(),
-      ]);
-      setMe({ id: partner.id, name: partner.name, branchId: partner.branch_id, godown: branch?.name ?? partner.branch_id, signaturePath: signed?.signature_path ?? null });
-      const { data: rules } = await supabase.from("partner_commission_rules").select("*").eq("branch_id", partner.branch_id);
-      const ids = (rules ?? []).map((rule) => rule.product_id).filter((id): id is string => Boolean(id));
-      const { data: products } = ids.length ? await supabase.from("catalog_products").select("id,payload").in("id", ids) : { data: [] };
-      const names = new Map((products ?? []).map((row) => [row.id, String((row.payload as Record<string, unknown>)?.["name"] ?? row.id)]));
-      setRates((rules ?? []).map((rule) => ({
-        productName: rule.product_id ? names.get(rule.product_id) ?? rule.product_id : "All other products",
-        kind: rule.kind as CommissionKind, value: Number(rule.value), enabled: rule.enabled !== false,
-      })).sort((a, b) => (a.productName === "All other products" ? 1 : b.productName === "All other products" ? -1 : a.productName.localeCompare(b.productName))));
-    })();
-  }, [navigate]);
-
-  useEffect(() => {
-    if (!me) return;
-    void supabase.from("partner_targets").select("target_sales").eq("partner_id", me.id).eq("month", month).maybeSingle()
-      .then(({ data }) => setTarget(Number(data?.target_sales ?? 0)));
-  }, [me, month]);
-
   const totals = useMemo(() => commissionTotals(lines), [lines]);
-  const progress = targetProgress(totals.sales, target);
-  const myRank = leaders?.find((row) => row.partner_id === me?.id)?.rank;
-
-  if (!me) {
-    return <div className="grid min-h-screen place-items-center bg-panel text-sm text-slate"><span className="inline-flex items-center gap-2"><RefreshCw className="h-4 w-4 animate-spin" /> Opening your dashboard…</span></div>;
-  }
+  const myRank = leaders?.find((row) => row.partner_id === me.id)?.rank;
+  const waiting = useWaiting();
+  const openLines = (view: "earned" | "pending" | "sales") => navigate({ to: "/partner/commissions", search: { view } });
 
   return (
-    <div className="min-h-screen bg-[oklch(0.972_0.004_258)]">
-      <header className="sticky top-0 z-30 border-b border-border bg-card/95 backdrop-blur">
-        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-3">
-          <div className="flex items-center gap-3">
-            <LogoMark className="h-10 w-10 shrink-0 sm:hidden" />
-            <BrandLogo shape="wide" className="hidden h-10 w-auto shrink-0 sm:block" sizes="187px" />
-            <div>
-              <p className="text-sm font-extrabold tracking-wide text-navy">Channel Partner Commission Platform</p>
-              <p className="text-xs text-slate">{me.name} · {me.godown}</p>
-            </div>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <PanelSearch panel="partner" />
-            <input type="month" value={month.slice(0, 7)} max={monthStart().slice(0, 7)}
-              onChange={(event) => event.target.value && setMonth(`${event.target.value}-01`)}
-              className="h-9 rounded-md border border-input bg-white px-2 text-sm" aria-label="Month" />
-            <Link to="/partner/attendance" className="inline-flex h-9 items-center gap-1.5 rounded-md bg-navy px-3 text-sm font-semibold text-white hover:bg-midnight">
-              <CalendarCheck className="h-4 w-4" /> Attendance & stock
-            </Link>
-            <button type="button" onClick={async () => { await supabase.auth.signOut({ scope: "local" }); navigate({ to: "/partner/login" }); }}
-              className="inline-flex h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-border px-3 text-sm text-navy hover:border-gold hover:text-gold">
-              <LogOut className="h-4 w-4" /> Sign out
-            </button>
-          </div>
-        </div>
-      </header>
-
-      <main className="mx-auto max-w-6xl space-y-6 px-4 py-6">
-        <FavouritesBar panel="partner" />
-        {error && <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
-        <GodownTransfers />
-        <div className="grid gap-4 lg:grid-cols-2">
-          <Link to="/slip" className="flex items-center gap-3 self-start rounded-2xl border-2 border-navy bg-card p-4 shadow-sm hover:border-gold">
-            <ScanLine className="h-8 w-8 shrink-0 text-navy" />
-            <span className="min-w-0">
-              <span className="block text-sm font-extrabold text-navy">Scan the QR on the customer's invoice</span>
-              <span className="block text-xs text-slate">{`See the released delivery note of an order at ${me.godown}. Printing and handing over follow the head office's rules; the godown in-charge does both.`}</span>
-            </span>
-          </Link>
-          {/* 12 Nov 2026: the notes released at this godown, with the items still to go. */}
-          <ReleasedDeliveryNotes />
-        </div>
-        <p className="text-xs text-slate">{monthLabel(month)} · updates live every 30 seconds</p>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {statement ? (
-            <>
-              <StatCard onClick={() => scrollToSection("monthly-income")} label="Total income" value={inrPrecise(statement.income)} icon={IndianRupee} description="Profit on delivered and fully paid orders" />
-              <StatCard onClick={() => scrollToSection("monthly-income")} label="Your share" value={inrPrecise(statement.share_amount)} icon={Timer} description="After deductions and income tax" />
-            </>
-          ) : (
-            <>
-              <StatCard onClick={() => openLines("earned")} label="Commission earned" value={inrPrecise(totals.earned)} icon={IndianRupee} description="Delivered and fully paid orders" />
-              <StatCard onClick={() => openLines("pending")} label="Commission pending" value={inrPrecise(totals.pending)} icon={Timer} description="Becomes earned on delivery + full payment" />
-            </>
-          )}
-          <StatCard onClick={() => openLines("sales")} label="Sales (excl. GST)" value={inrPrecise(totals.sales)} icon={Target} description={`${totals.orders} orders`} />
-          <StatCard onClick={() => scrollToSection("leaderboard")} label="Leaderboard rank" value={myRank ? `#${myRank} of ${leaders?.length ?? 0}` : "—"} icon={Trophy} />
-        </div>
-
-        {/* Added 13 Nov 2026 (owner): ask head office for stock (an indent) and follow its status. */}
-        <PartnerStockIndents branchId={me.branchId} godown={me.godown} partnerName={me.name} />
-
-        {/* Added 12 Nov 2026 (owner): send the UTR a customer shows you; our office confirms it. */}
-        <PartnerPaymentsPanel />
-
-        <MonthlyIncome month={month} audience="partner" onLoaded={onStatement} />
-
-        <PartnerPayouts partnerId={me.id} partnerName={me.name} />
-
-        <Panel title={`Target for ${monthLabel(month)}`}>
-          {target > 0 ? (
-            <div className="space-y-2">
-              <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm">
-                <span className="font-semibold text-navy">{inrPrecise(totals.sales)} of {inrPrecise(target)}</span>
-                <span className="font-bold text-navy">{progress}%</span>
-              </div>
-              <TargetBar percent={progress} />
-              <p className="text-xs text-slate">{progress !== null && progress >= 100 ? "Target reached. Well done!" : `${inrPrecise(Math.max(0, target - totals.sales))} more in sales to reach the target.`}</p>
-            </div>
-          ) : <p className="text-sm text-slate">No target set for this month yet.</p>}
-        </Panel>
-
-        <MyPartnerReport partnerName={me.name} />
-
-        <PartnerInvoices signaturePath={me.signaturePath} />
-
-        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
-          <div id="leaderboard" className="min-w-0 scroll-mt-36">
-            <Panel title="Leaderboard" className="h-full">
-              <PartnerLeaderboard leaders={leaders} highlightPartnerId={me.id} />
-            </Panel>
-          </div>
-          <Panel title="Your commission rates">
-            {statement ? (
-              <p className="text-sm text-charcoal">{`You earn ${percentText(statement.share_percent)}% of what remains each month, after deductions and income tax.`}</p>
-            ) : rates.length ? (
-              <ul className="space-y-2 text-sm">
-                {rates.map((rate) => (
-                  <li key={rate.productName} className="flex justify-between gap-3 border-b border-border/60 pb-2 last:border-0">
-                    <span className="text-charcoal">{rate.productName}</span>
-                    <span className="shrink-0 font-semibold text-navy">{rate.enabled ? describeRate(rate.kind, rate.value) : "No commission (₹0)"}</span>
-                  </li>
-                ))}
-              </ul>
-            ) : <p className="text-sm text-slate">Rates have not been set yet.</p>}
-          </Panel>
-        </div>
-
-        <div id="your-commissions" className="scroll-mt-36">
-          <Panel title={`Your commissions · ${monthLabel(month)}`}>
-            {lineView !== "all" && (
-              <FilterNote label={lineView === "earned" ? "Commission earned" : lineView === "pending" ? "Commission pending" : "Sales (excl. GST)"} onClear={() => setLineView("all")} />
-            )}
-            <CommissionOrders lines={lines?.filter((line) => line.partner_id === me.id && matchesCommissionStatus(line.status, lineView)) ?? null} />
-          </Panel>
-        </div>
-      </main>
-    </div>
+    <>
+      {error && <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+      <div className="grid gap-4 sm:grid-cols-3">
+        <WaitingCard to="/partner/payments" icon={CreditCard} label="Customer payments" count={waiting.payments} hint="checkouts waiting for payment" />
+        <WaitingCard to="/partner/orders" icon={ClipboardCheck} label="Orders to confirm" count={waiting.orders} hint="paid orders to confirm" />
+        <WaitingCard to="/partner/delivery-notes" icon={FileCheck2} label="Delivery notes" count={waiting.handover} hint="with goods still to hand over" />
+      </div>
+      <p className="text-xs text-slate">{monthLabel(month)} · updates live every 30 seconds</p>
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {statement ? (
+          <>
+            <StatCard onClick={() => navigate({ to: "/partner/income" })} label="Total income" value={inrPrecise(statement.income)} icon={IndianRupee} description="Profit on delivered and fully paid orders" />
+            <StatCard onClick={() => navigate({ to: "/partner/income" })} label="Your share" value={inrPrecise(statement.share_amount)} icon={Timer} description="After deductions and income tax" />
+          </>
+        ) : (
+          <>
+            <StatCard onClick={() => openLines("earned")} label="Commission earned" value={inrPrecise(totals.earned)} icon={IndianRupee} description="Delivered and fully paid orders" />
+            <StatCard onClick={() => openLines("pending")} label="Commission pending" value={inrPrecise(totals.pending)} icon={Timer} description="Becomes earned on delivery + full payment" />
+          </>
+        )}
+        <StatCard onClick={() => openLines("sales")} label="Sales (excl. GST)" value={inrPrecise(totals.sales)} icon={Target} description={`${totals.orders} orders`} />
+        <StatCard onClick={() => navigate({ to: "/partner/leaderboard" })} label="Leaderboard rank" value={myRank ? `#${myRank} of ${leaders?.length ?? 0}` : "—"} icon={Trophy} />
+      </div>
+      <ScanQrCard godown={me.godown} />
+    </>
   );
+}
+
+function WaitingCard({ to, icon: Icon, label, count, hint }: {
+  to: "/partner/payments" | "/partner/orders" | "/partner/delivery-notes";
+  icon: React.ComponentType<{ className?: string }>; label: string; count: number | null; hint: string;
+}) {
+  return (
+    <Link to={to} className={cn("flex items-center gap-3 rounded-xl border bg-card p-4 shadow-sm hover:border-gold", count ? "border-amber-300" : "border-border")}>
+      <Icon className="h-6 w-6 shrink-0 text-navy" />
+      <span className="min-w-0">
+        <span className="block text-sm font-bold text-navy">{label}</span>
+        <span className={cn("block text-xs", count ? "font-semibold text-amber-800" : "text-slate")}>{count === null ? "Loading…" : `${count} ${hint}`}</span>
+      </span>
+    </Link>
+  );
+}
+
+/** How many things wait for the partner: checkouts to be paid, paid orders to confirm, notes with goods to hand over. */
+function useWaiting() {
+  const [state, setState] = useState<{ payments: number | null; orders: number | null; handover: number | null }>({ payments: null, orders: null, handover: null });
+  useEffect(() => {
+    let stop = false;
+    const load = async () => {
+      const [payments, orders, notes] = await Promise.all([
+        supabase.rpc("partner_payment_checkouts"),
+        supabase.rpc("partner_orders_to_confirm"),
+        supabase.rpc("godown_released_notes"),
+      ]);
+      if (stop) return;
+      const rows = (result: { data: unknown; error: unknown }) => (!result.error && Array.isArray(result.data) ? (result.data as Record<string, unknown>[]) : []);
+      setState({
+        payments: rows(payments).length,
+        orders: rows(orders).filter((row) => !row["confirmed_at"] && row["zoho_void"] !== true).length,
+        handover: rows(notes).filter((row) => !row["delivered"] && Number(row["to_go"] ?? 0) > 0).length,
+      });
+    };
+    void load();
+    const timer = window.setInterval(() => void load(), 30_000);
+    return () => { stop = true; window.clearInterval(timer); };
+  }, []);
+  return state;
 }

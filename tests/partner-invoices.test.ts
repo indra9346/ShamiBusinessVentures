@@ -119,8 +119,9 @@ test("the migration hands partners only customer-copy fields and keeps its helpe
 });
 
 test("the partner page keeps working on a database without the signature column yet", () => {
-  const page = read("src/routes/partner.index.tsx");
+  // The sign-in check is in the partner's side menu since 16 Nov 2026; the invoices are their own page.
+  const page = read("src/components/partners/PartnerLayout.tsx");
   assert.match(page, /select\("id,name,branch_id,status"\)/, "the sign-in check does not ask for signature_path");
   assert.match(page, /select\("signature_path"\)/);
-  assert.match(page, /<PartnerInvoices signaturePath=\{me\.signaturePath\} \/>/);
+  assert.match(read("src/routes/partner.invoices.tsx"), /<PartnerInvoices signaturePath=\{me\.signaturePath\} \/>/);
 });

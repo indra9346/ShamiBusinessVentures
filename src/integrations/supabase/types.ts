@@ -14,13 +14,19 @@ export type Database = {
   }
   public: {
     Tables: {
+      preorder_watch: { Row: { branch_id: string; product_id: string; zoho_last: number; held: number; held_since: string | null; opened_at: string; read_at: string; last_waiting: number; last_unbilled: number; last_raw: number | null; updated_at: string; pending_delta: number; suspect_lines: string[]; suspect_cap: number; push_pending: number | null; push_delta: number | null; push_started_at: string | null }; Insert: never; Update: never; Relationships: [] }
+      batch_lot_events: { Row: { id: number; batch_id: string | null; branch_id: string; product_id: string; kind: string; qty: number | null; detail: Json; by_user: string | null; by_name: string; note: string; created_at: string }; Insert: never; Update: never; Relationships: [] }
+      zoho_bill_line_cache: { Row: { bill_id: string; modified: string; bill_number: string; bill_date: string | null; created_time: string; status: string; location_id: string; vendor_name: string; lines: Json; fetched_at: string }; Insert: { bill_id: string; modified: string; bill_number?: string; bill_date?: string | null; created_time?: string; status?: string; location_id?: string; vendor_name?: string; lines?: Json; fetched_at?: string }; Update: { bill_id?: string; modified?: string; bill_number?: string; bill_date?: string | null; created_time?: string; status?: string; location_id?: string; vendor_name?: string; lines?: Json; fetched_at?: string }; Relationships: [] }
+      zoho_cost_documents: { Row: { id: number; source: string; zoho_id: string; zoho_line_id: string; doc_number: string; doc_date: string; account_id: string; account_name: string; vendor_name: string; description: string; location_id: string; currency_code: string; amount_before_gst: number; gst_amount: number; gst_claimable: boolean; gst_override: boolean | null; reverse_charge: boolean; rebilled: boolean; cost_amount: number; accepted_cost_amount: number | null; zoho_status: string; zoho_modified: string; flag: string; flag_at: string | null; gone_at: string | null; fetched_at: string; checked_at: string | null }; Insert: never; Update: never; Relationships: [] }
+      batch_cost_tags: { Row: { id: number; document_id: number; batch_id: string; amount: number; method: string; weight: number; note: string; tagged_by: string | null; tagged_by_name: string; tagged_at: string }; Insert: never; Update: never; Relationships: [] }
+      batch_cost_tag_events: { Row: { id: number; document_id: number; action: string; before: Json; after: Json; by_id: string | null; by_name: string; at: string }; Insert: never; Update: never; Relationships: [] }
       partner_payouts: { Row: { id: string; payout_no: string; partner_id: string; branch_id: string; paid_on: string; amount: number; lines_total: number; recovered_total: number; mode: string; reference: string; note: string; period_from: string | null; period_to: string | null; status: string; request_key: string | null; created_by: string; created_by_name: string; created_at: string; voided_at: string | null; voided_by: string | null; voided_by_name: string; void_reason: string; statement_id: string | null }; Insert: never; Update: never; Relationships: [] }
       godown_commission_schemes: { Row: { id: string; branch_id: string; from_month: string; starts_at: string; scheme: string; share_percent: number | null; tax_percent: number; updated_by: string | null; updated_by_name: string; updated_at: string }; Insert: never; Update: never; Relationships: [] }
       partner_payout_lines: { Row: { id: string; payout_id: string; order_item_id: string; order_id: string | null; order_no: string; partner_id: string; product_name: string; placed_at: string; amount: number }; Insert: never; Update: never; Relationships: [] }
       partner_payout_events: { Row: { id: string; payout_id: string; event: string; at: string; by_user: string | null; by_name: string; detail: Json }; Insert: never; Update: never; Relationships: [] }
       deleted_payments_log: { Row: { id: string; kind: string; order_no: string; payment: Json; order_paid_before: number; order_paid_after: number; reason: string; deleted_by: string; deleted_by_name: string; deleted_at: string }; Insert: never; Update: never; Relationships: [] }
       deleted_orders_log: { Row: { id: number; order_no: string; order_status: string; total: number; item_count: number; order_created_at: string | null; reason: string; deleted_by: string | null; deleted_by_name: string; deleted_at: string; utrs: string; zoho_salesorder_id: string; zoho_order_status: string; snapshot: Json | null }; Insert: never; Update: never; Relationships: [] }
-      order_cancellations: { Row: { id: string; order_id: string; order_no: string; stage: string; goods_back: boolean | null; refunded: number; reason: string; cancelled_by: string | null; cancelled_by_name: string; cancelled_at: string }; Insert: never; Update: never; Relationships: [] }
+      order_cancellations: { Row: { id: string; order_id: string; order_no: string; stage: string; goods_back: boolean | null; refunded: number; reason: string; cancelled_by: string | null; cancelled_by_name: string; cancelled_at: string; placed_again_at: string | null; placed_again_by_name: string | null; earlier: Json | null }; Insert: never; Update: never; Relationships: [] }
       order_refunds: { Row: { id: string; order_id: string; order_no: string; payment_id: string | null; paid_ref: string; amount: number; mode: string; reference: string; refunded_on: string; created_by: string | null; created_by_name: string; created_at: string; zoho_payment_id: string | null; zoho_refund_id: string | null; zoho_claimed_at: string | null; zoho_refunded_at: string | null; zoho_problem: string | null }; Insert: never; Update: { zoho_payment_id?: string | null; zoho_refund_id?: string | null; zoho_claimed_at?: string | null; zoho_refunded_at?: string | null; zoho_problem?: string | null }; Relationships: [] }
       refunded_transfers: { Row: { id: number; utr: string; order_no: string; amount: number | null; source: string; refunded_at: string }; Insert: never; Update: never; Relationships: [] }
       branches: {
@@ -66,9 +72,10 @@ export type Database = {
         Relationships: []
       }
       branch_stock: {
-        Row: { branch_id: string; product_id: string; stock: number; zoho_pending: boolean; updated_at: string }
-        Insert: { branch_id: string; product_id: string; stock?: number; zoho_pending?: boolean; updated_at?: string }
-        Update: { branch_id?: string; product_id?: string; stock?: number; zoho_pending?: boolean; updated_at?: string }
+        /** stock = ready (in Zoho, not promised); incoming = arriving units of pre-order batches on sale now; free_total = everything that may be promised (ready + arriving), set by the database. */
+        Row: { branch_id: string; product_id: string; stock: number; zoho_pending: boolean; updated_at: string; free_total: number; incoming: number; incoming_detail: Json }
+        Insert: { branch_id: string; product_id: string; stock?: number; zoho_pending?: boolean; updated_at?: string; free_total?: number; incoming?: number; incoming_detail?: Json }
+        Update: { branch_id?: string; product_id?: string; stock?: number; zoho_pending?: boolean; updated_at?: string; free_total?: number; incoming?: number; incoming_detail?: Json }
         Relationships: []
       }
       zoho_oauth_states: {
@@ -243,6 +250,26 @@ export type Database = {
       }
       batches: {
         Row: {
+          stage: string
+          expected_quantity: number | null
+          expected_date: string | null
+          hold_back: number
+          selling_paused: boolean
+          paused_reason: string
+          est_unit_cost_ex_gst: number | null
+          est_unit_cost_inc_gst: number | null
+          zoho_po_id: string
+          zoho_po_number: string
+          zoho_po_line_id: string
+          split_from_batch_id: string | null
+          preorder_checks: Json
+          matched_at: string | null
+          matched_by: string | null
+          matched_by_name: string
+          closed_at: string | null
+          closed_note: string
+          overdue_notified_at: string | null
+          not_preorder_note: string
           unit_cost_ex_gst: number | null
           unit_cost_inc_gst: number | null
           cost_basis: string | null
@@ -289,6 +316,26 @@ export type Database = {
           warehouse: string | null
         }
         Insert: {
+          stage?: string
+          expected_quantity?: number | null
+          expected_date?: string | null
+          hold_back?: number
+          selling_paused?: boolean
+          paused_reason?: string
+          est_unit_cost_ex_gst?: number | null
+          est_unit_cost_inc_gst?: number | null
+          zoho_po_id?: string
+          zoho_po_number?: string
+          zoho_po_line_id?: string
+          split_from_batch_id?: string | null
+          preorder_checks?: Json
+          matched_at?: string | null
+          matched_by?: string | null
+          matched_by_name?: string
+          closed_at?: string | null
+          closed_note?: string
+          overdue_notified_at?: string | null
+          not_preorder_note?: string
           unit_cost_ex_gst?: number | null
           unit_cost_inc_gst?: number | null
           cost_basis?: string | null
@@ -335,6 +382,26 @@ export type Database = {
           warehouse?: string | null
         }
         Update: {
+          stage?: string
+          expected_quantity?: number | null
+          expected_date?: string | null
+          hold_back?: number
+          selling_paused?: boolean
+          paused_reason?: string
+          est_unit_cost_ex_gst?: number | null
+          est_unit_cost_inc_gst?: number | null
+          zoho_po_id?: string
+          zoho_po_number?: string
+          zoho_po_line_id?: string
+          split_from_batch_id?: string | null
+          preorder_checks?: Json
+          matched_at?: string | null
+          matched_by?: string | null
+          matched_by_name?: string
+          closed_at?: string | null
+          closed_note?: string
+          overdue_notified_at?: string | null
+          not_preorder_note?: string
           unit_cost_ex_gst?: number | null
           unit_cost_inc_gst?: number | null
           cost_basis?: string | null
@@ -395,9 +462,9 @@ export type Database = {
         Relationships: []
       }
       order_item_batch_allocations: {
-        Row: { id: string; order_item_id: string; batch_id: string; reserved_quantity: number; released_quantity: number; unit_cost: number; created_at: string }
-        Insert: { id?: string; order_item_id: string; batch_id: string; reserved_quantity: number; released_quantity?: number; unit_cost?: number; created_at?: string }
-        Update: { id?: string; order_item_id?: string; batch_id?: string; reserved_quantity?: number; released_quantity?: number; unit_cost?: number; created_at?: string }
+        Row: { id: string; order_item_id: string; batch_id: string; reserved_quantity: number; released_quantity: number; unit_cost: number; created_at: string; moved_from_allocation_id: string | null }
+        Insert: { id?: string; order_item_id: string; batch_id: string; reserved_quantity: number; released_quantity?: number; unit_cost?: number; created_at?: string; moved_from_allocation_id?: string | null }
+        Update: { id?: string; order_item_id?: string; batch_id?: string; reserved_quantity?: number; released_quantity?: number; unit_cost?: number; created_at?: string; moved_from_allocation_id?: string | null }
         Relationships: []
       }
       catalog_products: {
@@ -688,7 +755,7 @@ export type Database = {
         Relationships: []
       }
       upi_payment_submissions: {
-        Row: { late: boolean; sent_by: string | null; sent_by_role: string; id: string; order_id: string; order_no: string; user_id: string | null; customer_name: string; amount: number; utr: string; status: string; note: string | null; submitted_at: string; reviewed_at: string | null; reviewed_by: string | null }
+        Row: { late: boolean; sent_by: string | null; sent_by_role: string; id: string; order_id: string; order_no: string; user_id: string | null; customer_name: string; amount: number; utr: string; status: string; note: string | null; submitted_at: string; reviewed_at: string | null; reviewed_by: string | null; follow_up: string | null; refunded_at: string | null; refunded_by: string | null; refunded_from: string | null }
         Insert: never
         Update: never
         Relationships: []
@@ -805,6 +872,9 @@ export type Database = {
       }
       order_items: {
         Row: {
+          /** Units of the line taken from pre-order batches when it was ordered, and the latest expected date then. */
+          preorder_qty: number
+          preorder_by: string | null
           batch_code: string | null
           capacity: string | null
           coupon_share: number
@@ -822,6 +892,8 @@ export type Database = {
           vendor_id: string | null
         }
         Insert: {
+          preorder_qty?: number
+          preorder_by?: string | null
           batch_code?: string | null
           capacity?: string | null
           created_at?: string
@@ -838,6 +910,8 @@ export type Database = {
           vendor_id?: string | null
         }
         Update: {
+          preorder_qty?: number
+          preorder_by?: string | null
           batch_code?: string | null
           capacity?: string | null
           created_at?: string
@@ -902,6 +976,7 @@ export type Database = {
           id: string
           note: string | null
           order_id: string
+          partner_id: string | null
           status: string
         }
         Insert: {
@@ -910,6 +985,7 @@ export type Database = {
           id?: string
           note?: string | null
           order_id: string
+          partner_id?: string | null
           status: string
         }
         Update: {
@@ -918,6 +994,7 @@ export type Database = {
           id?: string
           note?: string | null
           order_id?: string
+          partner_id?: string | null
           status?: string
         }
         Relationships: [
@@ -928,10 +1005,19 @@ export type Database = {
             referencedRelation: "orders"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "order_tracking_partner_id_fkey"
+            columns: ["partner_id"]
+            isOneToOne: false
+            referencedRelation: "channel_partners"
+            referencedColumns: ["id"]
+          },
         ]
       }
       orders: {
         Row: {
+          /** When the customer agreed to the pre-order terms (some units arrive later). */
+          preorder_ack_at: string | null
           discount_taxable: number | null
           bank_credit_id: string | null
           bank_credit_seen_at: string | null
@@ -975,6 +1061,7 @@ export type Database = {
           vendor_ids: string[]
         }
         Insert: {
+          preorder_ack_at?: string | null
           bank_credit_id?: string | null
           bank_credit_seen_at?: string | null
           branch_id?: string | null
@@ -1017,6 +1104,7 @@ export type Database = {
           vendor_ids?: string[]
         }
         Update: {
+          preorder_ack_at?: string | null
           bank_credit_id?: string | null
           bank_credit_seen_at?: string | null
           branch_id?: string | null
@@ -1369,6 +1457,30 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      create_incoming_batch: { Args: { _branch_id: string; _product_id: string; _quantity: number; _unit_cost_ex_gst: number; _expected_date: string; _hold_back: number; _supplier: string; _po: Json | null; _notes: string; _checks: Json; _readings: Json; _snapshot: Json; _read_at: string; _by: string; _by_name: string }; Returns: Json }
+      admin_update_incoming_batch: { Args: { _batch_id: string; _quantity?: number | null; _expected_date?: string | null; _unit_cost_ex_gst?: number | null; _hold_back?: number | null; _paused?: boolean | null; _supplier?: string | null; _notes?: string | null; _note?: string | null }; Returns: Json }
+      admin_cancel_incoming_batch: { Args: { _batch_id: string; _note: string }; Returns: Json }
+      admin_join_incoming_batches: { Args: { _into: string; _from: string; _note: string }; Returns: Json }
+      admin_move_to_ready: { Args: { _order_item_id: string; _qty: number; _note: string }; Returns: Json }
+      apply_preorder_reading: { Args: { _branch_id: string; _product_id: string; _reading: number; _read_at: string; _snapshot: string[]; _explained?: number; _after_push?: boolean }; Returns: Json }
+      preorder_push_plan: { Args: { _branch_id: string; _product_id: string; _reading: number; _snapshot: string[] }; Returns: Json }
+      preorder_push_start: { Args: { _branch_id: string; _product_id: string }; Returns: Json }
+      preorder_push_finish: { Args: { _branch_id: string; _product_id: string; _ok: boolean }; Returns: Json }
+      partner_orders_waiting_goods: { Args: Record<string, never>; Returns: { order_no: string; waiting: number; expected_date: string | null }[] }
+      release_preorder_hold: { Args: { _branch_id: string; _product_id: string; _qty: number; _note: string; _regular_bills: Json; _reading: number; _snapshot: string[]; _read_at: string; _by: string; _by_name: string }; Returns: Json }
+      unmatch_incoming_batch: { Args: { _batch_id: string; _note: string; _readings: Json; _snapshot: Json; _read_at: string; _by: string; _by_name: string }; Returns: Json }
+      receive_bill_lines: { Args: { _branch_id: string; _bill: Json; _lines: Json; _cost_basis: string; _readings: Json; _snapshot: Json; _read_at: string; _by: string; _by_name: string }; Returns: Json }
+      preorder_waiting_items: { Args: { _product_ids: string[] }; Returns: { branch_id: string; product_id: string; order_item_id: string }[] }
+      order_waiting_goods: { Args: { _order_id: string }; Returns: Json }
+      order_item_arrivals: { Args: { _order_id: string }; Returns: { order_item_id: string; preorder_qty: number; waiting: number; expected_date: string | null; arrived_on: string | null }[] }
+      godown_incoming_lots: { Args: { _branch_id: string }; Returns: { product_id: string; product_name: string; expected: number; sold: number; waiting_orders: number; expected_date: string; paused: boolean }[] }
+      refresh_incoming_all: { Args: Record<PropertyKey, never>; Returns: number }
+      admin_set_preorder_settings: { Args: { _enabled: boolean; _grace_days: number; _require_ack: boolean }; Returns: Json }
+      save_cost_document: { Args: { _doc: Json }; Returns: number }
+      tag_batch_costs: { Args: { _document_id: number; _rows: Json; _confirm_rebilled: boolean; _by: string; _by_name: string; _replace?: boolean }; Returns: Json }
+      untag_batch_costs: { Args: { _document_id: number; _by: string; _by_name: string }; Returns: number }
+      flag_cost_document_changes: { Args: { _rows: Json }; Returns: number }
+      accept_cost_document_change: { Args: { _document_id: number; _by?: string | null; _by_name?: string | null }; Returns: Json }
       partner_settlement_summary: { Args: Record<PropertyKey, never>; Returns: { partner_id: string; partner_name: string; godown: string; partner_status: string; earned: number; pending: number; cancelled: number; paid: number; due: number; owed_back: number; payouts: number; last_paid_on: string | null }[] }
       partner_settlement_lines: { Args: { _partner_id?: string; _from?: string; _to?: string }; Returns: { order_item_id: string; partner_id: string; partner_name: string; order_no: string; placed_at: string; earned_at: string | null; order_status: string; payment_status: string; customer_name: string; pin: string; product_name: string; qty: number; line_total: number; kind: string; rate: number; amount: number; status: string; payable: number; paid_amount: number; due_amount: number; payout_nos: string[] }[] }
       admin_create_partner_payout: { Args: { _partner_id: string; _item_ids: string[]; _paid_on: string; _mode: string; _reference: string; _note?: string; _amount?: number; _period_from?: string; _period_to?: string; _request_key?: string }; Returns: Json }
@@ -1453,7 +1565,7 @@ export type Database = {
       bank_transfer_details: { Args: Record<PropertyKey, never>; Returns: Json }
       cancel_payment_hold: { Args: { _order_no: string }; Returns: boolean }
       record_bank_credit: { Args: { _utr: string; _amount: number; _payer?: string; _raw?: string; _source?: string; _sender?: string }; Returns: Json }
-      settle_bank_credit: { Args: { _credit_id: string; _note: string }; Returns: { id: string; status: string; note: string | null } }
+      settle_bank_credit: { Args: { _credit_id: string; _note: string; _refunded?: boolean }; Returns: { id: string; status: string; note: string | null } }
       reopen_bank_credit: { Args: { _credit_id: string }; Returns: { id: string; status: string; note: string | null } }
       send_payment_utr: { Args: { _order_no: string; _utr: string }; Returns: Json }
       admin_utr_conflicts: { Args: { _days?: number }; Returns: Json }
@@ -1482,9 +1594,13 @@ export type Database = {
       issue_delivery_note_auto: { Args: { _order_no: string; _zoho: Json; _actor?: string | null; _how?: string }; Returns: Json }
       delivery_invoice_scan: { Args: { _code: string; _action: string; _zoho: Json | null; _actor: string; _lines?: number[] | null; _device?: string | null }; Returns: Json }
       delivery_admin_release_print: { Args: { _order_no: string; _note: boolean; _slip_lines: number[]; _zoho: Json | null; _actor: string }; Returns: Json }
-      godown_released_notes: { Args: Record<string, never>; Returns: { note_no: string; order_no: string; customer: string; items: number; to_go: number; released_at: string; released_how: string; delivered: boolean; godown: string }[] }
+      godown_released_notes: { Args: Record<string, never>; Returns: { note_no: string; order_no: string; customer: string; items: number; to_go: number; released_at: string; released_how: string; delivered: boolean; godown: string; shop: string; contact: string; phone: string; address: string }[] }
       my_delivery_role: { Args: Record<string, never>; Returns: Json }
-      partner_payment_checkouts: { Args: Record<string, never>; Returns: { order_no: string; status: string; total: number; method: string; placed_at: string; hold_until: string | null; customer: string; items: string; utr: string | null; utr_status: string | null; utr_late: boolean; utr_sent_by: string | null }[] }
+      partner_confirm_order: { Args: { _order_no: string }; Returns: Json }
+      partner_orders_to_confirm: { Args: Record<string, never>; Returns: { order_no: string; placed_at: string; order_status: string; payment_status: string; payment_method: string; shipping_method: string; total: number; paid_amount: number; customer: string; items: string | null; zoho_void: boolean; invoice_number: string | null; invoice_mine: boolean; confirmed_at: string | null }[] }
+      partner_payment_checkouts: { Args: Record<string, never>; Returns: { order_no: string; status: string; total: number; method: string; placed_at: string; hold_until: string | null; customer: string; items: string; utr: string | null; utr_status: string | null; utr_late: boolean; utr_sent_by: string | null; utr_amount: number | null; utr_sent_at: string | null; paid_amount: number; can_approve: boolean }[] }
+      partner_approve_payment: { Args: { _order_no: string; _expected_utr: string; _checked: string }; Returns: Json }
+      admin_set_partner_payment_approval: { Args: { _enabled: boolean }; Returns: Json }
       order_delete_with_payments_check: { Args: { _order_no: string }; Returns: Json }
       complete_follow_up_task: { Args: { _id: string; _note?: string }; Returns: Json }
       admin_reject_utr_and_end_checkout: { Args: { _order_no: string; _note: string; _expected_utr?: string | null }; Returns: boolean }
@@ -1502,7 +1618,7 @@ export type Database = {
       set_delivery_stop: { Args: { _order_no: string; _stopped: boolean; _reason: string; _actor: string; _actor_name: string }; Returns: boolean }
       review_upi_utr: { Args: { _order_no: string; _decision: string; _note?: string | null; _expected_utr?: string | null }; Returns: { id: string; order_id: string; order_no: string; user_id: string | null; customer_name: string; amount: number; utr: string; status: string; note: string | null; submitted_at: string; reviewed_at: string | null; reviewed_by: string | null } }
       record_stock_count: {
-        Args: { _branch_id: string; _product_id: string; _counted: number; _zoho_physical_before: number; _zoho_delta: number; _site_after: number; _reason: string; _note: string; _flagged: boolean; _zoho_adjustment_id: string; _counted_by: string; _counted_by_name: string; _employee_id: string | null }
+        Args: { _branch_id: string; _product_id: string; _counted: number; _zoho_physical_before: number; _zoho_delta: number; _site_after: number; _reason: string; _note: string; _flagged: boolean; _zoho_adjustment_id: string; _counted_by: string; _counted_by_name: string; _employee_id: string | null; _zoho_after?: number | null; _snapshot?: string[] | null }
         Returns: string
       }
       next_batch_code: { Args: { _branch_id: string; _purchase_date: string | null }; Returns: string }
@@ -1513,6 +1629,7 @@ export type Database = {
       record_batch_adjustments: { Args: { _rows: Json; _created_by: string | null; _created_by_name: string }; Returns: number }
       apply_zoho_batches: { Args: { _rows: Json }; Returns: Json }
       create_batches_from_bill: { Args: { _branch_id: string; _bill: Json; _lines: Json; _cost_basis: string; _by: string | null; _by_name: string }; Returns: Json }
+      relink_batch_bill: { Args: { _batch_id: string; _bill: Json; _line: Json; _by: string | null; _by_name: string }; Returns: Json }
       admin_delete_batch: { Args: { _batch_id: string }; Returns: Json }
       flag_batch_bill_changes: { Args: { _rows: Json }; Returns: number }
       begin_batch_split: { Args: { _batch_id: string; _targets: Json; _by: string; _by_name: string; _request: string | null }; Returns: Json }

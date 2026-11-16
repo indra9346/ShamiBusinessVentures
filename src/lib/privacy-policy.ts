@@ -17,7 +17,7 @@ export type PolicySection = {
 };
 
 export const POLICY_TITLE = "Privacy Policy";
-export const POLICY_UPDATED = "Last updated: 12 November 2026";
+export const POLICY_UPDATED = "Last updated: 14 November 2026";
 export const POLICY_INTRO =
   "This page explains what information Grain Bazar collects when you use grainbazar.com, why we collect it, who it goes to, and the choices you have.";
 
@@ -94,7 +94,7 @@ const WHO_CAN_SEE_IT: PolicySection = {
     },
     {
       lead: "At handover",
-      text: "Your invoice carries a delivery QR. When the godown's in-charge, staff or channel partner scans it, they see the order number, your name, the last 4 digits of your phone number and the items, and the same shows in their list of released orders. The in-charge, and anyone head office allows to print the delivery note, also sees your full phone number, GSTIN and address, which are printed on it. The last 4 digits help them check who is collecting, so keep your invoice to yourself.",
+      text: "Your invoice carries a delivery QR. When the godown's in-charge, staff or channel partner scans it, they see the order number, your name, the last 4 digits of your phone number and the items, and the same shows in their list of released orders. The in-charge, and anyone head office allows to print the delivery note, also sees your full phone number, GSTIN and address, which are printed on it; your phone number and address also show to them in their list of released orders. The last 4 digits help them check who is collecting, so keep your invoice to yourself.",
     },
     {
       lead: "Supabase",

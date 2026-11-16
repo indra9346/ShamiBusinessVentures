@@ -50,7 +50,9 @@ test("each page lights up its own menu item, and only that one", () => {
     ["/account", accountNav, "/account"],
     ["/account/orders/GB-1", accountNav, "/account/orders"],
     ["/account/profile", accountNav, "/account/profile"],
-    ["/wishlist", accountNav, "/wishlist"],
+    // 13 Nov 2026: the panel's own wishlist page; the shop's /wishlist is not in the menu any more.
+    ["/account/wishlist", accountNav, "/account/wishlist"],
+    ["/account/how-to-order", accountNav, "/account/how-to-order"],
   ];
   for (const [path, items, expected] of cases) assert.equal(activeNavTarget(path, items), expected, path);
   assert.equal(activeNavTarget("/shop", adminNav), undefined);

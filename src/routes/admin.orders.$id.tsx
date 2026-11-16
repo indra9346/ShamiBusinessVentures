@@ -48,7 +48,9 @@ import { OrderPaymentsPanel } from "@/components/panel/OrderPaymentsPanel";
 import { DeleteOrderRecordButton } from "@/components/panel/DeleteOrderRecord";
 import { InvoicePreviewButton } from "@/components/site/InvoicePreviewDialog";
 import { ResizableTable } from "@/hooks/use-column-resize";
-import { ItemBatchCodes, useOrderItemBatches } from "@/components/batches/OrderItemBatches";
+import { ItemArrivalNote, ItemBatchCodes, orderWaiting, useOrderItemArrivals, useOrderItemBatches, useWaitingLotCodes } from "@/components/batches/OrderItemBatches";
+import { MoveToReadyButton } from "@/components/batches/PreorderPanel";
+import { dayLabel } from "@/lib/preorder";
 import { isVoidInZoho, zohoVoidNotice } from "@/lib/zoho-void";
 import { orderTone, orderToneClass, TONE_CLASSES } from "@/lib/order-status-tone";
 import { useZohoContactNumbers } from "@/hooks/use-zoho-contact-numbers";
@@ -102,6 +104,14 @@ function AdminOrderDetail() {
   // Zoho's customer number of the order's customer and the vendor numbers of its vendors.
   const contactNumbers = useZohoContactNumbers(user?.id);
   const itemBatches = useOrderItemBatches(order?.dbOrderId, order?.items.map((item) => `${item.dbItemId}:${item.qty}:${order.status}`).join(",") ?? "");
+  // Pre-order goods (14 Nov 2026): while lines wait for a batch's bill, the order can't be packed or handed over.
+  const [arrivalsKey, setArrivalsKey] = useState(0);
+  const arrivals = useOrderItemArrivals(order?.dbOrderId, `${order?.items.map((item) => `${item.dbItemId}:${item.qty}:${order.status}`).join(",") ?? ""}:${arrivalsKey}`);
+  const goods = orderWaiting(arrivals);
+  const lotCodes = useWaitingLotCodes(arrivals);
+  const waitingText = goods.waiting > 0
+    ? `Order ${order?.id ?? ""} is waiting for goods: ${lotCodes.join(", ") || "a pre-order batch"} has not arrived (expected ${dayLabel(goods.by, { full: true })}). It can be packed or handed over once its bill is matched.`
+    : "";
   // Hooks stay above the early return: orders load after the first render.
   const [pushedZohoId, setPushedZohoId] = useState<string | null>(null);
   const [syncingZoho, setSyncingZoho] = useState(false);
@@ -231,7 +241,7 @@ function AdminOrderDetail() {
             </SelectTrigger>
             <SelectContent>
               {orderStages.map((s) => (
-                <SelectItem key={s} value={s}>
+                <SelectItem key={s} value={s} disabled={goods.waiting > 0 && ["Packed", "Dispatched", "Out for Delivery", "Delivered"].includes(s) && s !== order.status}>
                   {s}
                 </SelectItem>
               ))}
@@ -292,6 +302,11 @@ function AdminOrderDetail() {
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            {goods.waiting > 0 && (
+              <p className="basis-full rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-950">
+                {`Waiting for goods: ${goods.waiting} units on ${lotCodes.join(", ") || "a pre-order batch"}, expected ${dayLabel(goods.by)}`}
+              </p>
+            )}
             {order.status === "Placed" && (
               <Button
                 size="sm"
@@ -309,6 +324,8 @@ function AdminOrderDetail() {
               <Button
                 size="sm"
                 className="bg-navy hover:bg-navy/90 text-white font-semibold shadow-sm"
+                disabled={goods.waiting > 0}
+                title={waitingText || undefined}
                 onClick={async () => {
                   if (await updateOrderStatus(order.id, "Packed")) {
                     toast.success(`Order ${order.id} marked as Packed`);
@@ -322,6 +339,8 @@ function AdminOrderDetail() {
               <Button
                 size="sm"
                 className="bg-amber-600 hover:bg-amber-700 text-white font-semibold shadow-sm"
+                disabled={goods.waiting > 0}
+                title={waitingText || undefined}
                 onClick={async () => {
                   if (await updateOrderStatus(order.id, "Out for Delivery")) {
                     toast.success(`Order ${order.id} marked Out for Delivery`);
@@ -724,6 +743,11 @@ function AdminOrderDetail() {
                             <p className="font-semibold text-navy">{it.product.name}</p>
                             <span className="text-xs text-slate">{it.product.category}</span>
                             <ItemBatchCodes admin batches={it.dbItemId ? itemBatches.get(it.dbItemId) : undefined} />
+                            <ItemArrivalNote arrival={it.dbItemId ? arrivals.get(it.dbItemId) : undefined} order={order} />
+                            {it.dbItemId && (arrivals.get(it.dbItemId)?.waiting ?? 0) > 0 && !isCancelled && (
+                              <MoveToReadyButton orderItemId={it.dbItemId} waiting={arrivals.get(it.dbItemId)?.waiting ?? 0} productName={it.product.name}
+                                onMoved={() => setArrivalsKey((k) => k + 1)} />
+                            )}
                             <Input
                               aria-label={`${it.product.name} bag capacity`}
                               defaultValue={it.capacity ?? it.product.weight}

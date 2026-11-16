@@ -32,6 +32,17 @@ export type UpiSubmission = {
   late?: boolean;
   /** Who sent it: the customer, the godown's channel partner, or an admin. */
   sentByRole?: "customer" | "partner" | "admin";
+  /** The admin who confirmed or rejected it (13 Nov 2026: shown in its own column, and the list filters by it). */
+  reviewedById?: string;
+  reviewedBy?: string;
+  /** A UTR nobody checked in time whose order was paid with another payment: what an admin still has to do about it. */
+  followUp?: string;
+  /** Its money went back to the customer: when, and who recorded it. Whoever approved it before stays in reviewedBy. */
+  refundedAt?: string;
+  refundedById?: string;
+  refundedBy?: string;
+  /** What it was when refunded: confirmed (approved, then its order was cancelled with a refund) or rejected (nobody checked it in time). */
+  refundedFrom?: "confirmed" | "rejected";
 };
 
 /** A UPI ID: handle@bank (letters, digits, dot, dash, underscore before @). */

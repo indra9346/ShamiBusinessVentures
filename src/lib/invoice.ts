@@ -20,6 +20,7 @@ import { GODOWN_SIGNATURE_BUCKET } from "@/lib/godown-signature";
 import { canvasTextImage, loadLogoPng } from "@/lib/delivery-note-pdf";
 import { deliveryQrLink, deliveryQrOrigin, drawPdfQr } from "@/lib/pdf-qr";
 import { cleanContactNumber, contactNumberLine } from "@/lib/zoho-contact-numbers";
+import { collectAddressLine, collectFromBlock, locationQrCorner, type CollectPoint } from "@/lib/godown-location";
 
 export { invoiceLines, type Line };
 
@@ -268,8 +269,17 @@ export async function buildInvoicePdf(order: Order, options: InvoiceOptions = {}
   // The godown's contact on its invoices: that area's channel partner's mobile, else the godown's phone.
   const godownPhone = (orderBranch && context.phones.get(orderBranch.id)) || orderBranch?.phone || company.phone;
   const pickupPoint = !isPickup ? null : orderBranch
-    ? { name: orderBranch.name, address: orderBranch.address, phone: godownPhone, instructions: orderBranch.instructions }
+    ? { name: orderBranch.name, address: orderBranch.address, phone: godownPhone, instructions: orderBranch.instructions, mapUrl: orderBranch.mapUrl }
     : legacyPoint;
+  // "Collect goods from here" under the notes (owner, 13 Nov 2026): on every copy of a collect-from-godown order. The
+  // phone and the pickup instructions are in the PICKUP FROM card at the top, so the block does not repeat them (it kept
+  // the delivery QR off the first page). The godown's location QR is not in this block any more: it prints at the top
+  // right, beside the invoice dates (owner, 14 Nov 2026), from `locationQr` below, so the block gets no link.
+  const collectPoint: CollectPoint | null = !pickupPoint ? null : {
+    name: pickupPoint.name,
+    address: orderBranch ? collectAddressLine(orderBranch) : pickupPoint.address,
+    mapUrl: "",
+  };
   const customerGstState = /^[0-9]{2}/.test(order.gstin ?? "") ? order.gstin!.slice(0, 2) : "";
   const deliveryStateCode = STATE_CODES[(order.state || "").trim().toLowerCase()] ?? "";
   const supplyCode = pickupPoint ? orderBranch?.stateCode || company.stateCode : customerGstState || deliveryStateCode || company.stateCode;
@@ -493,20 +503,36 @@ export async function buildInvoicePdf(order: Order, options: InvoiceOptions = {}
     ["Payment", `${order.method || "Online"} · ${order.payment}`],
     ["Fulfilment", pickupPoint ? "Pickup from godown" : order.delivery || "Delivery"],
   ];
+  // The godown's location QR at the top right, beside the dates (owner, 14 Nov 2026: "Add scan for godown location in
+  // the invoice here"), on every copy of an order collected from a godown whose Admin > Godowns location link works.
+  const locationQr = pickupPoint ? locationQrCorner(pdf, pickupPoint.mapUrl, { ink, muted, navy, rule }) : null;
   pdf.setFontSize(8.5);
   {
     const colW = usable / 2;
+    // The QR's top: 2.6 mm under the gold rule (32 mm), level with the first row's capitals.
+    const qrTop = y - 3.4;
+    // The right column's values stop 3 mm short of the QR. A value too long for that (a long payment method) is set a
+    // little smaller so it stays on its own row instead of wrapping into the next one.
+    const rightStop = locationQr ? R - locationQr.size - 3 : R;
     meta.forEach(([label, value], index) => {
       const x = M + (index % 2) * colW;
       const rowY = y + Math.floor(index / 2) * 5.2;
       pdf.setFont("helvetica", "normal");
+      pdf.setFontSize(8.5);
       pdf.setTextColor(...muted);
       pdf.text(label, x, rowY);
       pdf.setFont("helvetica", "bold");
       pdf.setTextColor(...ink);
-      pdf.text(`:  ${value}`, x + 27, rowY, { maxWidth: colW - 30 });
+      const text = `:  ${value}`;
+      const room = Math.min(colW - 30, rightStop - (x + 27));
+      const width = pdf.getTextWidth(text);
+      if (locationQr && index % 2 === 1 && width > room) pdf.setFontSize(Math.max(6.5, (8.5 * room * 0.98) / width));
+      pdf.text(text, x + 27, rowY, { maxWidth: room });
+      pdf.setFontSize(8.5);
     });
     y += Math.ceil(meta.length / 2) * 5.2 + 3;
+    // The QR and its label sit beside the rows; the cards below start under the label when the QR is the taller.
+    if (locationQr) y = Math.max(y, locationQr.draw(R, qrTop) + 1.6);
   }
 
   // Address cards (the "Sold by" card style), three across.
@@ -680,9 +706,35 @@ export async function buildInvoicePdf(order: Order, options: InvoiceOptions = {}
   summaryRows.push([pickupPoint ? "Pickup charges" : "Shipping charges", order.shipping]);
   if (roundOff !== 0 && Math.abs(roundOff) < 1) summaryRows.push(["Round off", roundOff]);
   const summaryH = summaryRows.length * 5.6 + 26;
-  if (y + summaryH + 52 > bottomLimit) newPage(false);
-  y += 6;
   const sumW = 78;
+  // The left column, measured before anything is drawn: the total in words, the notes and, for an order collected from
+  // a godown, the "Collect goods from here" block (owner, 13 Nov 2026). It must fit beside the totals, or both move on.
+  const leftW = usable - sumW - 10;
+  pdf.setFont("helvetica", "bold");
+  pdf.setFontSize(8.6);
+  const words = pdf.splitTextToSize(`Indian Rupee ${numberToIndianWords(order.amount).replace(/ Rupees/, "")}`, leftW) as string[];
+  pdf.setFont("helvetica", "normal");
+  pdf.setFontSize(8);
+  const notes = [
+    `Order ${order.id} placed on Grain Bazar.`,
+    // The goods are handed over against the delivery QR now, not the order number (owner, 11 Nov 2026). Where to collect
+    // them is the block under the notes (owner, 13 Nov 2026), so the note no longer names the godown. The invoice has two
+    // QRs (the godown location at the top right), so the note names the DELIVERY QR band at the bottom: that is the one
+    // shown at the counter.
+    pickupPoint ? (qrCode
+      ? "At the godown counter, show the DELIVERY QR at the bottom."
+      : "The tax invoice carries your DELIVERY QR once the payment is confirmed; show it at the godown counter.") : "",
+    !facts.payments.length && (order.utr || order.txn) ? `Payment reference: ${order.utr || order.txn}` : "",
+    couponInLines ? `Coupon ${order.coupon ?? ""}: Rs. ${money(order.discount)} taken off the items above in proportion, with the GST on it.`.replace("  ", " ") : "",
+    zohoNumber ? "" : "Proforma: the tax invoice number comes from Zoho Books once the invoice is raised.",
+    copy === "office" ? "Office copy: includes fulfilling vendor details. Do not share with the customer." : "",
+  ].filter(Boolean).flatMap((note) => pdf.splitTextToSize(note, leftW) as string[]);
+  const collect = collectPoint ? collectFromBlock(pdf, collectPoint, leftW, { ink, muted, navy, rule }) : null;
+  // `ly` runs a line step (3.8 mm) past the notes' last line: the block starts about 1.4 mm under that line's text.
+  const COLLECT_GAP = -1.8;
+  const leftH = 5 + words.length * 4 + 4 + 4.5 + notes.length * 3.8 + (collect ? COLLECT_GAP + collect.height : 0);
+  if (y + summaryH + 52 > bottomLimit || y + 6 + leftH > bottomLimit) newPage(false);
+  y += 6;
   const sumX = R - sumW;
   let sy = y;
   pdf.setFontSize(8.6);
@@ -714,7 +766,6 @@ export async function buildInvoicePdf(order: Order, options: InvoiceOptions = {}
   pdf.text("Balance due", sumX, sy);
   pdf.text(rupees(balance), R, sy, { align: "right" });
 
-  const leftW = usable - sumW - 10;
   pdf.setFont("helvetica", "bold");
   pdf.setFontSize(7.8);
   pdf.setTextColor(...muted);
@@ -722,7 +773,6 @@ export async function buildInvoicePdf(order: Order, options: InvoiceOptions = {}
   pdf.setFont("helvetica", "bold");
   pdf.setFontSize(8.6);
   pdf.setTextColor(...ink);
-  const words = pdf.splitTextToSize(`Indian Rupee ${numberToIndianWords(order.amount).replace(/ Rupees/, "")}`, leftW) as string[];
   pdf.text(words, M, y + 5);
   let ly = y + 5 + words.length * 4 + 4;
   pdf.setFont("helvetica", "bold");
@@ -732,20 +782,12 @@ export async function buildInvoicePdf(order: Order, options: InvoiceOptions = {}
   pdf.setFont("helvetica", "normal");
   pdf.setFontSize(8);
   pdf.setTextColor(...ink);
-  const notes = [
-    `Order ${order.id} placed on Grain Bazar.`,
-    // The goods are handed over against the delivery QR now, not the order number (owner, 11 Nov 2026).
-    pickupPoint ? (qrCode
-      ? `Collect from ${pickupPoint.name}. Show this invoice's delivery QR at the godown counter.`
-      : `Collect from ${pickupPoint.name}. The tax invoice carries your delivery QR once the payment is confirmed; show it at the godown counter.`) : "",
-    !facts.payments.length && (order.utr || order.txn) ? `Payment reference: ${order.utr || order.txn}` : "",
-    couponInLines ? `Coupon ${order.coupon ?? ""}: Rs. ${money(order.discount)} taken off the items above in proportion, with the GST on it.`.replace("  ", " ") : "",
-    zohoNumber ? "" : "Proforma: the tax invoice number comes from Zoho Books once the invoice is raised.",
-    copy === "office" ? "Office copy: includes fulfilling vendor details. Do not share with the customer." : "",
-  ].filter(Boolean).flatMap((note) => pdf.splitTextToSize(note, leftW) as string[]);
   pdf.text(notes, M, ly + 4.5);
   ly += 4.5 + notes.length * 3.8;
-  y = Math.max(sy + 8, ly + 4);
+  // Where to collect the goods: right under the notes, on every copy (the location QR is at the top right).
+  if (collect) ly = collect.draw(M, ly + COLLECT_GAP);
+  // The block ends on its QR or its own last line (the notes' `ly` runs a line step past theirs), so less space follows.
+  y = Math.max(sy + 8, ly + (collect ? 1.8 : 4));
 
   // The terms and the signature line take about 31 mm. Reserving no more than that keeps an ordinary order on one page.
   const termsH = 33;

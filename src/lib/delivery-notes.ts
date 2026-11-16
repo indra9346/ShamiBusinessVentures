@@ -7,12 +7,15 @@
  * functions only put the database's answer into words.
  */
 import type { DeliveryHandoverRow, DeliveryPaperRow, DeliveryReopenRow, DeliveryScanRow, PaperHandover, PaperPrint } from "./delivery-papers.ts";
+import { dayLabel, preorderText } from "./preorder.ts";
 
 export type DeliveryGateCode =
   | "paid" | "unpaid" | "partly_paid" | "payment_mismatch" | "website_behind" | "zoho_has_payment" | "zoho_behind"
   | "no_invoice" | "invoice_draft" | "zoho_unreadable" | "several_invoices" | "zoho_inconsistent" | "totals_differ"
   | "zoho_not_money" | "invoice_used" | "records_disagree" | "utr_reused" | "bank_credit_short" | "stopped"
-  | "refunded" | "return_refunded" | "cancelled" | "payment_expired" | "not_confirmed" | "no_items" | "not_found";
+  | "refunded" | "return_refunded" | "cancelled" | "payment_expired" | "not_confirmed" | "no_items" | "not_found"
+  /** The order holds units of a pre-order batch whose bill is not matched yet (14 Nov 2026). */
+  | "not_arrived";
 
 /** What the database answered. Amounts are rupees. */
 export type DeliveryGate = {
@@ -42,6 +45,10 @@ export type DeliveryGate = {
   invoice_total?: number | null;
   invoice_balance?: number | null;
   invoice_payment_made?: number | null;
+  /** not_arrived: the units still to come, the latest expected date and the pre-order batches (14 Nov 2026). */
+  waiting?: number;
+  expected_date?: string | null;
+  waiting_batches?: string[];
   /** Only with a note: what has happened since it was generated. */
   note_no?: string | null;
   items_changed?: boolean;
@@ -231,6 +238,11 @@ export function gateWords(gate: DeliveryGate): GateWords {
       return words("Not confirmed yet", "This order is not confirmed yet. Confirm its full payment first.", "wait");
     case "no_items":
       return words("No items", "This order has no items to deliver.");
+    case "not_arrived":
+      // No batch codes or date (review fix: it read "Batch of this order is expected by soon"): a sentence of its own.
+      return words("Goods not arrived", (gate.waiting_batches ?? []).length && gate.expected_date
+        ? preorderText.notArrived((gate.waiting_batches ?? []).join(", "), dayLabel(gate.expected_date, { full: true }))
+        : preorderText.notArrivedPlain, "wait");
     case "not_found":
       return words("Order not found", "This order could not be found.");
     default:
@@ -254,6 +266,7 @@ export function paperWarnings(gate: DeliveryGate): string[] {
     case "unpaid":
     case "partly_paid": warnings.push("NOT FULLY PAID. DO NOT DELIVER."); break;
     case "zoho_unreadable": warnings.push("PAYMENT COULD NOT BE RE-CHECKED WHEN THIS WAS PRINTED. CHECK WITH THE OFFICE BEFORE DELIVERY."); break;
+    case "not_arrived": warnings.push("GOODS NOT ARRIVED YET (PRE-ORDER). DO NOT HAND OVER UNTIL HEAD OFFICE RECEIVES ITS BILL."); break;
     default: warnings.push("PAYMENT RECORDS NEED CHECKING. CHECK WITH THE OFFICE BEFORE DELIVERY.");
   }
   if (gate.items_changed) warnings.push("ORDER ITEMS CHANGED AFTER THIS NOTE. CHECK WITH THE OFFICE BEFORE DELIVERY.");

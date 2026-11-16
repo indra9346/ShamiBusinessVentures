@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { adminCancelPlan, cancelFormProblem, cancelSteps, deleteAsksAboutMoney, deletedPaymentKind, deletePlan, refundArgument, REFUND_MODES, type CancelForm, type DeleteCheck, bulkDeleteAllDetailsProblem, normaliseDeleteCheck } from "../src/lib/order-cancel.ts";
+import { adminCancelPlan, cancelFormProblem, cancelSteps, deleteAsksAboutMoney, deletedPaymentKind, deletePlan, refundArgument, REFUND_MODES, type CancelForm, type DeleteCheck, bulkDeleteAllDetailsProblem, normaliseDeleteCheck, placedAgainText } from "../src/lib/order-cancel.ts";
 import {
   liveZohoInvoices, matchRefundPayments, refundAlreadyInZoho, zohoOrderPapers, zohoRefundBody, zohoRefundMode, zohoRefundProblem, zohoVoidRefusedReview,
   type WebsiteRefund,
@@ -219,4 +219,21 @@ test("deleting several at once: only rows that need no question go; the rest kee
   assert.match(bulkDeleteAllDetailsProblem({ ...base, needs_cancel: true }) ?? "", /cancelled first/);
   const money = normaliseDeleteCheck({ ...base, paid: "2518.95" as never, payments: [{ id: "p", amount: "2518.95" as never, method: "NEFT", reference: "2535", in_zoho: false }] });
   assert.equal(money.payments[0]!.amount, 2518.95);
+});
+
+test("an ended checkout placed again reads as an order, not a cancel (13 Nov 2026 review)", () => {
+  const when = (iso: string) => iso.slice(0, 10);
+  assert.equal(placedAgainText({ placed_again_at: null }, when), null);
+  assert.equal(placedAgainText({}, when), null, "a database without the column");
+  assert.equal(placedAgainText({ placed_again_at: "2026-11-13T12:00:00Z", placed_again_by_name: "Indra" }, when),
+    "Placed again on 2026-11-13 by Indra after its payment was found: it is an order now, not cancelled");
+  assert.match(placedAgainText({ placed_again_at: "2026-11-13T12:00:00Z", placed_again_by_name: "" }, when) ?? "", /^Placed again on 2026-11-13 after/);
+});
+
+test("the placed-again lines have their Kannada", () => {
+  for (const key of [
+    "Placed again on {0} by {1} after its payment was found: it is an order now, not cancelled",
+    "Placed again on {0} after its payment was found: it is an order now, not cancelled",
+    "The checkout had ended on {0}", "Ended by {0}",
+  ]) assert.ok(kn[key], key);
 });

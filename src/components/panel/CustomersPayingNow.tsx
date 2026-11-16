@@ -73,10 +73,17 @@ export function CustomersPayingNow({ compact = false }: { compact?: boolean }) {
                     {hold.gstBillTo && <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-900" title={`GST bill to ${hold.gstBillTo}: the money should come from the firm's account`}>GST bill</span>}
                   </span>
                   <span className="font-semibold tabular-nums text-navy">{inrPrecise(hold.amount)}</span>
-                  <span className={cn("inline-flex min-w-[118px] items-center justify-end gap-1 font-mono text-sm font-bold tabular-nums",
-                    left === 0 ? "text-slate" : left <= 60 ? "text-red-700" : "text-amber-700")}>
-                    {left > 0 ? <><Clock className="h-3.5 w-3.5" />{clockText(left)} left</> : <><ShieldCheck className="h-3.5 w-3.5" /> time up · check the bank</>}
-                  </span>
+                  {hold.moneySeenAt ? (
+                    // The bank shows the money (13 Nov 2026: the countdown kept running): it only needs confirming.
+                    <span className="inline-flex min-w-[118px] items-center justify-end gap-1 text-xs font-bold text-emerald-700">
+                      <ShieldCheck className="h-3.5 w-3.5" /> money seen · confirm it
+                    </span>
+                  ) : (
+                    <span className={cn("inline-flex min-w-[118px] items-center justify-end gap-1 font-mono text-sm font-bold tabular-nums",
+                      left === 0 ? "text-slate" : left <= 60 ? "text-red-700" : "text-amber-700")}>
+                      {left > 0 ? <><Clock className="h-3.5 w-3.5" />{clockText(left)} left</> : <><ShieldCheck className="h-3.5 w-3.5" /> time up · check the bank</>}
+                    </span>
+                  )}
                   {!STATIC_DATA_MODE && (
                     <button type="button" onClick={() => setEnding(hold.orderNo)} className="text-xs font-semibold text-danger underline">End checkout</button>
                   )}

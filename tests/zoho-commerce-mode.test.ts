@@ -16,10 +16,19 @@ test("no setting, a damaged one or anything but an explicit false means Zoho Com
   assert.equal(zohoCommerceModeFrom({ inUse: false, changedAt: 5 }).changedAt, null);
 });
 
-test("with Zoho Commerce in use the permission line is the old one plus the Books sales order update and transfer orders", () => {
+test("with Zoho Commerce in use the permission line is the old one plus the Books sales order update, transfer orders and expenses", () => {
   // Transfer orders (10 Nov 2026): a bill unloaded at another godown, a batch sent to other godowns.
+  // Books expenses (14 Nov 2026): read only, for expenses tagged to batches.
   assert.equal(zohoOAuthScopes(true),
-    `${BEFORE},ZohoBooks.salesorders.UPDATE,ZohoInventory.transferorders.READ,ZohoInventory.transferorders.CREATE,ZohoInventory.transferorders.UPDATE`);
+    `${BEFORE},ZohoBooks.salesorders.UPDATE,ZohoInventory.transferorders.READ,ZohoInventory.transferorders.CREATE,ZohoInventory.transferorders.UPDATE,ZohoBooks.expenses.READ`);
+});
+
+test("Books expenses are asked for read only, whether or not Zoho Commerce is in use", () => {
+  for (const inUse of [true, false]) {
+    const scopes = zohoOAuthScopes(inUse).split(",");
+    assert.ok(scopes.includes("ZohoBooks.expenses.READ"));
+    assert.equal(scopes.some((scope) => /^ZohoBooks\.expenses\.(CREATE|UPDATE|DELETE|ALL)$/.test(scope)), false);
+  }
 });
 
 test("with Zoho Commerce off no Zoho Commerce permission is asked for, and every other one still is", () => {

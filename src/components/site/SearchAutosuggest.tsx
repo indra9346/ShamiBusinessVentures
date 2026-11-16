@@ -8,6 +8,7 @@ import { resizedImage } from "@/lib/image-url";
 import { useStorefrontDisplay } from "@/lib/storefront-display";
 import { getSearchAutosuggestions, type SearchSuggestionItem } from "@/lib/search";
 import { storeCategorySlug } from "@/lib/category-slug";
+import { dayLabel, preorderText } from "@/lib/preorder";
 
 interface SearchAutosuggestProps {
   value?: string;
@@ -262,8 +263,8 @@ export function SearchAutosuggest({
                           <span className="line-through text-slate/70 text-[11px]">{inr(product.mrp)}</span>
                         )}
                         <span>•</span>
-                        <span className={cn("text-[11px]", availableStock > 0 ? "text-emerald-700 font-semibold" : "text-danger")}>
-                          {availableStock > 0 ? `In Stock (${availableStock})` : "Out of Stock"}
+                        <span className={cn("text-[11px]", availableStock > 0 ? "text-emerald-700 font-semibold" : (product.incoming ?? 0) > 0 ? "text-amber-700 font-semibold" : "text-danger")}>
+                          {availableStock > 0 ? `In Stock (${availableStock})` : (product.incoming ?? 0) > 0 ? preorderText.badge(dayLabel(product.incomingBy)) : "Out of Stock"}
                         </span>
                       </div>
                     </div>

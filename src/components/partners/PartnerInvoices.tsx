@@ -9,8 +9,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { inrPrecise, type Order } from "@/lib/data";
 import { istToday } from "@/lib/godown-report";
 import type { InvoiceFacts } from "@/lib/invoice-lines";
-import { partnerInvoiceOrder, partnerInvoiceRows, partnerInvoiceStage, partnerInvoiceVisible, paymentLabel, type PartnerInvoiceRow } from "@/lib/partner-invoices";
-import { INVOICE_STAGE_WORDS } from "@/lib/invoice-visibility";
+import { partnerInvoiceOrder, partnerInvoiceRows, partnerInvoiceVisible, paymentLabel, type PartnerInvoiceRow } from "@/lib/partner-invoices";
+import { partnerOrderInvoice } from "@/lib/partner-confirm";
 import { orderToneClass } from "@/lib/order-status-tone";
 import { cn } from "@/lib/utils";
 import { ORDER_FILTERS, PAYMENT_FILTERS, filterCounts, matchesOrderFilter, matchesPaymentFilter, matchesSearch } from "@/lib/list-search";
@@ -121,15 +121,20 @@ export function PartnerInvoices({ signaturePath }: { signaturePath: string | nul
                   <p className="truncate text-sm text-charcoal">{row.customer_name || "Customer"}</p>
                   <p className="text-xs text-slate">{placedLabel(row.placed_at)} · {row.order_status} · {paymentLabel(row.payment_status)}</p>
                 </div>
-                <div className="flex shrink-0 items-center gap-3">
-                  <span className="text-sm font-bold text-navy tabular-nums">{inrPrecise(row.total)}</span>
+                {/* May shrink on a phone (375 px): the amount and the button keep their size, the words wrap beside them. */}
+                <div className="flex min-w-0 items-center gap-3">
+                  <span className="shrink-0 whitespace-nowrap text-sm font-bold text-navy tabular-nums">{inrPrecise(row.total)}</span>
                   {partnerInvoiceVisible(row) ? (
                     <button type="button" disabled={opening === row.order_no} onClick={() => void open(row.order_no)}
-                      className="inline-flex h-9 items-center gap-1.5 rounded-md border border-border bg-white px-3 text-sm text-navy hover:border-gold disabled:opacity-60">
+                      className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md border border-border bg-white px-3 text-sm text-navy hover:border-gold disabled:opacity-60">
                       <FileText className="h-4 w-4" />{opening === row.order_no ? "Opening…" : "View / Download"}
                     </button>
-                  ) : <span className="text-xs text-charcoal">{INVOICE_STAGE_WORDS[partnerInvoiceStage(row)]}</span>}
+                  ) : <span className="min-w-0 max-w-[16rem] text-right text-xs text-charcoal">{partnerOrderInvoice({ ...row, invoice_mine: true }).words}</span>}
                 </div>
+                {/* Confirmed and paid, but Zoho Books has not numbered the tax invoice yet: say what opens meanwhile. */}
+                {partnerInvoiceVisible(row) && !row.invoice_number && (
+                  <p className="basis-full text-[11px] text-slate">{partnerOrderInvoice({ ...row, invoice_mine: true }).words}</p>
+                )}
               </li>
             ))}
           </ul>

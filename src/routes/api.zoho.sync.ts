@@ -21,7 +21,12 @@ export const Route = createFileRoute("/api/zoho/sync")({
           const key = process.env["SUPABASE_SERVICE_ROLE_KEY"];
           if (url && key) {
             const { createClient } = await import("@supabase/supabase-js");
-            await createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } }).rpc("expire_payment_holds");
+            const db = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
+            await db.rpc("expire_payment_holds");
+            // Pre-order batches (14 Nov 2026): ready and arriving worked out again (a lot's date passes at midnight in
+            // India) and one alert per overdue lot. Database only, no Zoho call.
+            const { error: incomingError } = await db.rpc("refresh_incoming_all");
+            if (incomingError) console.warn("Could not refresh arriving stock", incomingError.message);
           }
         } catch (cause) {
           console.warn("Could not end expired payment holds", cause);

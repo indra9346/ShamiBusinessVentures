@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { reloadBranches, useBranches } from "@/lib/branches";
+import { mapLinkProblem } from "@/lib/godown-location";
 import { supabase } from "@/integrations/supabase/client";
 import type { Json } from "@/integrations/supabase/types";
 
@@ -45,12 +46,15 @@ export function VendorFulfilmentPanel({ vendorId }: { vendorId: string }) {
 
   const save = async () => {
     if (mode === "godown" && !branchId) { toast.error("Choose the Grain Bazar godown that keeps your stock"); return; }
+    // The same rule as Admin > Godowns: the link is printed as a location QR on invoices (the database refuses others).
+    const mapProblem = mapLinkProblem(details.mapUrl);
+    if (mapProblem) { toast.error(mapProblem); return; }
     setSaving(true);
     const { error } = await supabase.rpc("vendor_set_fulfilment", {
       _mode: mode,
       _branch_id: mode === "godown" ? branchId : null,
       _details: {
-        address: details.address, city: details.city, pincode: details.pincode, phone: details.phone, map_url: details.mapUrl,
+        address: details.address, city: details.city, pincode: details.pincode, phone: details.phone, map_url: details.mapUrl.trim(),
         instructions: details.instructions, pincodes: details.pincodes.split(/[\s,]+/).filter(Boolean),
         pickup: details.pickup, delivery: details.delivery, delivery_fee: details.fee, free_delivery_above: details.freeAbove,
       } as Json,

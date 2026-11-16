@@ -5,6 +5,7 @@ import {
   Gift,
   Heart,
   Package,
+  PlayCircle,
   ShoppingCart,
   Sparkles,
   Star,
@@ -110,11 +111,25 @@ function Account() {
         </span>
       </Link>
 
+      <Link
+        to="/account/how-to-order"
+        className="mb-4 flex items-center gap-3 rounded-lg border border-gold/40 bg-white p-3 shadow-card transition-colors hover:border-gold sm:p-4"
+      >
+        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-navy text-white">
+          <PlayCircle className="h-5 w-5" />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block font-bold text-navy">How to order and pay</span>
+          <span className="mt-0.5 block text-sm text-slate">New here? Watch how to order, pay by UPI and send your UTR.</span>
+        </span>
+        <ArrowRight className="h-4 w-4 shrink-0 text-navy" />
+      </Link>
+
       <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
         <StatCard link={{ to: "/account/orders" }} label="Total Orders" value={String(ordersList.length)} icon={Package} compact />
         <StatCard link={{ to: "/account/invoices" }} label="Total Spend" value={inr(totalSpend)} icon={Wallet} highlight compact />
         <StatCard link={{ to: "/account/orders", search: { status: OPEN_ORDERS } }} label="Active Deliveries" value={String(activeDeliveries)} icon={Truck} compact />
-        <StatCard link={{ to: "/wishlist" }} label="Wishlist Items" value={String(wishlist.length)} icon={Heart} compact />
+        <StatCard link={{ to: "/account/wishlist" }} label="Wishlist Items" value={String(wishlist.length)} icon={Heart} compact />
       </div>
 
       <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
@@ -260,7 +275,7 @@ function Account() {
         <Panel
           title="Wishlist Preview"
           action={
-            <Link to="/wishlist" className="text-xs font-semibold text-navy hover:text-gold">
+            <Link to="/account/wishlist" className="text-xs font-semibold text-navy hover:text-gold">
               View all
             </Link>
           }

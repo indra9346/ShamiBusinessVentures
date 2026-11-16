@@ -46,6 +46,8 @@ export const ZOHO_CORE_SCOPES = [
   "ZohoBooks.salesorders.UPDATE",
   // Moving stock between godowns: a bill unloaded at another godown, a batch sent to other godowns (10 Nov 2026).
   "ZohoInventory.transferorders.READ", "ZohoInventory.transferorders.CREATE", "ZohoInventory.transferorders.UPDATE",
+  // Batch expenses (14 Nov 2026): freight, hamali and other Zoho Books expenses tagged to batches, read only.
+  "ZohoBooks.expenses.READ",
 ] as const;
 
 /** The permission list for "Connect / Reauthorize Zoho". */

@@ -21,7 +21,12 @@ import { Pager } from "@/components/panel/pager";
 import { adminNav } from "@/lib/panel-nav";
 import { inr, orderStages, type OrderStatus } from "@/lib/data";
 import { allowedMethods } from "@/lib/payment-rules";
-import { inOrderRange, matchesOrderStatus, OPEN_ORDERS, orderListSearch, orderStatusFilter } from "@/lib/panel-filters";
+import { compareOrdersByDate, inOrderRange, matchesOrderStatus, OPEN_ORDERS, orderListSearch, orderStatusFilter } from "@/lib/panel-filters";
+import { useWaitingOrders } from "@/components/batches/OrderItemBatches";
+import { dayLabel, preorderText } from "@/lib/preorder";
+
+/** The status filter's own value for orders waiting for pre-order goods (14 Nov 2026). */
+const WAITING_FOR_GOODS = "waiting_goods";
 import { orderToneClass } from "@/lib/order-status-tone";
 import { useApp, type Address } from "@/lib/store";
 import { supabase } from "@/integrations/supabase/client";
@@ -281,6 +286,8 @@ function AdminOrders() {
     setPage(1);
   }, [routeSearch.status, range.from, range.to]);
 
+  // Orders whose lines hold units of pre-order batches not matched to their bill yet.
+  const waitingOrders = useWaitingOrders(String(orders.length));
   const filtered = useMemo(() => {
     let list = orders.filter((o) => {
       const s = q.trim().toLowerCase();
@@ -290,19 +297,19 @@ function AdminOrders() {
         o.customer.toLowerCase().includes(s) ||
         o.phone.toLowerCase().includes(s) ||
         (o.customerId ? contactNumbers.customers.get(o.customerId) ?? "" : "").toLowerCase().includes(s);
-      const matchesStatus = matchesOrderStatus(o.status, status);
+      const matchesStatus = status === WAITING_FOR_GOODS ? Boolean(o.dbOrderId && waitingOrders.has(o.dbOrderId)) : matchesOrderStatus(o.status, status);
       const matchesPayment = payment === "all" || o.method === payment;
       return matchesQ && matchesStatus && matchesPayment && inOrderRange(o, range.from, range.to);
     });
     list = [...list].sort((a, b) => {
-      if (sort === "date-desc") return b.id.localeCompare(a.id);
-      if (sort === "date-asc") return a.id.localeCompare(b.id);
+      if (sort === "date-desc") return compareOrdersByDate(a, b, true);
+      if (sort === "date-asc") return compareOrdersByDate(a, b, false);
       if (sort === "amount-desc") return b.amount - a.amount;
       if (sort === "amount-asc") return a.amount - b.amount;
       return 0;
     });
     return list;
-  }, [orders, contactNumbers, q, status, payment, sort, range.from, range.to]);
+  }, [orders, contactNumbers, q, status, payment, sort, range.from, range.to, waitingOrders]);
 
   if (pathname !== "/admin/orders" && pathname !== "/admin/orders/") {
     return <Outlet />;
@@ -430,6 +437,7 @@ function AdminOrders() {
               <SelectContent>
                 <SelectItem value="all">All Status</SelectItem>
                 <SelectItem value={OPEN_ORDERS}>All pending</SelectItem>
+                <SelectItem value={WAITING_FOR_GOODS}>Waiting for goods</SelectItem>
                 {[...orderStages, "Cancelled"].map((s) => (
                   <SelectItem key={s} value={s}>
                     {s}
@@ -515,6 +523,9 @@ function AdminOrders() {
                 >
                   {o.id}
                 </Link>
+                {o.dbOrderId && waitingOrders.has(o.dbOrderId) && (
+                  <span className="mt-0.5 inline-flex rounded bg-amber-100 px-1.5 text-[10px] font-semibold text-amber-900">{preorderText.badge(dayLabel(waitingOrders.get(o.dbOrderId)))}</span>
+                )}
                 {o.zohoSalesOrderId ? (
                   <span className="mt-0.5 inline-flex items-center gap-1 rounded bg-emerald-50 border border-emerald-200 px-1.5 py-0.2 text-[10px] font-semibold text-emerald-800">
                     Zoho: {o.zohoSalesOrderId}

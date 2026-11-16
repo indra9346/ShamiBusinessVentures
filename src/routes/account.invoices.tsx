@@ -4,7 +4,7 @@ import { Download, FileText, IndianRupee, Receipt } from "lucide-react";
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { DataTable, Panel, scrollToSection, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { accountNav } from "@/lib/account-nav";
-import { inr } from "@/lib/data";
+import { inr, inrPrecise } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { downloadCSV } from "@/lib/export-utils";
@@ -14,6 +14,8 @@ import { InvoicePreviewButton } from "@/components/site/InvoicePreviewDialog";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { customerInvoiceVisible } from "@/lib/invoice-visibility";
 import { issuedZohoNumber, type ZohoInvoiceCopy } from "@/lib/invoice-lines";
+import { useCustomerWaitingOrders } from "@/components/batches/OrderItemBatches";
+import { preorderText } from "@/lib/preorder";
 
 export const Route = createFileRoute("/account/invoices")({
   head: () => ({
@@ -36,6 +38,8 @@ function AccountInvoices() {
   // Only orders whose invoice the customer may see: paid in full and confirmed by the office (owner, 11 Nov 2026), the
   // same rule as the order page and the channel partner's list.
   const list = orders.filter((order) => orderBelongsToUser(order, user) && customerInvoiceVisible({ orderStatus: order.status, payment: order.payment }));
+  // Orders waiting for pre-order goods (14 Nov 2026): their tax invoice and pickup QR are made when the goods arrive.
+  const waitingGoods = useCustomerWaitingOrders(list.filter((o) => o.dbOrderId).map((o) => o.dbOrderId as string));
   const orderNos = list.map((order) => order.id).join(",");
   // The invoice number is Zoho Books' own, never one made up here; an order Zoho has not invoiced yet shows none.
   const [zohoNumbers, setZohoNumbers] = useState<Map<string, string>>(() => new Map());
@@ -110,7 +114,9 @@ function AccountInvoices() {
           rows={list.map((o) => [
             zohoNumbers.get(o.id)
               ? <span className="font-semibold text-navy">{zohoNumbers.get(o.id)}</span>
-              : <span className="text-xs text-slate">Being issued</span>,
+              : o.dbOrderId && waitingGoods.has(o.dbOrderId)
+                ? <span className="block max-w-[16rem] text-xs text-amber-800">{preorderText.invoiceLater(inrPrecise(o.amount))}</span>
+                : <span className="text-xs text-slate">Being issued</span>,
             <Link
               to="/account/orders/$id"
               params={{ id: o.id }}

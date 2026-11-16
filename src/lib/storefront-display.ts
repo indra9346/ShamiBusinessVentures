@@ -13,6 +13,8 @@ export type StorefrontDisplay = {
   showRatings: boolean;
   /** Vendor name above the product title on product cards. */
   showVendor: boolean;
+  /** The "Popular Products" row on the home page (13 Nov 2026: the owner wanted to be able to turn it off). On unless switched off. */
+  showPopularProducts: boolean;
 };
 
 export const STOREFRONT_DISPLAY_KEY = "storefront_display";
@@ -21,6 +23,7 @@ export const defaultStorefrontDisplay: StorefrontDisplay = {
   showMrpSavings: false,
   showRatings: false,
   showVendor: false,
+  showPopularProducts: true,
 };
 
 export function parseStorefrontDisplay(value: unknown): StorefrontDisplay {
@@ -30,6 +33,8 @@ export function parseStorefrontDisplay(value: unknown): StorefrontDisplay {
     showRatings: v["showRatings"] === true,
     // Customers never see which vendor supplies a product; Grain Bazar is always the seller.
     showVendor: false,
+    // Shown before this switch existed, so only an explicit false hides it.
+    showPopularProducts: v["showPopularProducts"] !== false,
   };
 }
 

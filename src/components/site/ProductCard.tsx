@@ -7,6 +7,7 @@ import { responsiveImage, showOriginalImage } from "@/lib/image-url";
 import { useStorefrontDisplay } from "@/lib/storefront-display";
 import { showCustomerNotification } from "@/components/site/CartFloatingNotification";
 import { AddToCartPicker } from "@/components/site/AddToCartPicker";
+import { dayLabel, preorderText } from "@/lib/preorder";
 
 const LOW_STOCK_FALLBACK = 20;
 
@@ -16,6 +17,9 @@ function fallbackImage(category: string) {
 }
 
 function stockState(product: Product, availableStock: number) {
+  // Pre-order units only (14 Nov 2026): on sale, collected once they arrive.
+  if (availableStock <= 0 && (Number(product.incoming) || 0) > 0)
+    return { label: preorderText.badge(dayLabel(product.incomingBy)), dot: "bg-amber-500", text: "text-amber-700" } as const;
   if (availableStock <= 0) return { label: "Out of Stock", dot: "bg-red-500", text: "text-red-600" } as const;
   const threshold = Math.max(1, Number(product.minimumStock) || LOW_STOCK_FALLBACK);
   if (availableStock <= threshold)
@@ -93,8 +97,11 @@ export function ProductCard({
   const display = useStorefrontDisplay();
   const off = display.showMrpSavings ? getDisplayDiscountPercent(product) : 0;
   const wished = wishlist.includes(product.id);
-  const availableStock = Math.max(0, Math.floor((Number(product.stock) || 0) - (Number(product.reserved) || 0)));
-  const stock = stockState(product, availableStock);
+  const readyStock = Math.max(0, Math.floor((Number(product.stock) || 0) - (Number(product.reserved) || 0)));
+  const arriving = Math.max(0, Number(product.incoming) || 0);
+  const stock = stockState(product, readyStock);
+  // Ready or arriving: either can be bought (ready first).
+  const availableStock = readyStock + arriving;
 
   const onWishlist = () => {
     const nextWished = !wished;
@@ -192,9 +199,10 @@ export function ProductCard({
   );
 
   const stockIndicator = (
-    <span className={cn("inline-flex items-center gap-1 text-[10px] sm:text-[11px] font-semibold", stock.text)}>
+    <span className={cn("inline-flex min-w-0 flex-wrap items-center gap-x-1 text-[10px] sm:text-[11px] font-semibold", stock.text)}>
       <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", stock.dot)} aria-hidden />
       {stock.label}
+      {readyStock > 0 && arriving > 0 && <span className="font-medium text-amber-700">{preorderText.plusArriving(arriving)}</span>}
     </span>
   );
 

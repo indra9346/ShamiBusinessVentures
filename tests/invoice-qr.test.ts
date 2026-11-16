@@ -176,7 +176,7 @@ test("the invoice asks the database for the code each time, and draws the QR onl
   assert.match(source, /DELIVERY_QR_NOTE\.en/);
   assert.ok(!/localStorage|sessionStorage|indexedDB/.test(source), "the code is never kept in the browser");
   assert.ok(!source.includes("Bring this invoice or your order number"), "pickup goes by the QR now");
-  assert.match(source, /Show this invoice's delivery QR at the godown counter\./);
+  assert.match(source, /At the godown counter, show the DELIVERY QR at the bottom\./);
   // The logo: the small PNG for the letterhead, and the watermark drawn last on every page.
   assert.match(source, /loadLogoPng\(\)/);
   assert.ok(!source.includes('fetch("/grainbazar-logo.png")'), "the 1920 px WebP is no longer embedded as is");

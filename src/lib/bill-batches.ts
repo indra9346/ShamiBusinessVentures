@@ -43,6 +43,10 @@ export type BillLine = {
   discountLabel: string;
   /** gross less the line discount: what GST is charged on. */
   taxable: number;
+  /** Zoho's account for the line (freight, hamali… on a vendor bill), for charge lines (14 Nov 2026). */
+  accountName: string;
+  /** A line with no Zoho item, or a non-stock item: freight, hamali and other charges, never a batch. */
+  chargeLine: boolean;
   gstPct: number;
   interState: boolean;
   cgst: number;
@@ -65,6 +69,10 @@ export type BillPlan = {
   locationName: string;
   status: string;
   modifiedAt: string;
+  /** When the bill was made in Zoho (created_time): a pre-order match explains its units only if after the watch opened. */
+  createdAt: string;
+  /** Purchase orders the bill was made from, when Zoho says (a pre-order batch made from one ranks first). */
+  poIds: string[];
   subTotal: number;
   taxTotal: number;
   total: number;
@@ -110,6 +118,8 @@ export function billLinePlan(line: Record<string, unknown>, interState: boolean)
     qty, rate, gross, discount,
     discountLabel: discount === 0 ? "" : isPercent ? rawDiscount : `₹${discount.toFixed(2)}`,
     taxable, gstPct, interState,
+    accountName: text(line["account_name"]),
+    chargeLine: !text(line["item_id"]) || Boolean(text(line["item_type"]) && text(line["item_type"]) !== "inventory"),
     cgst: interState ? 0 : half,
     sgst: interState ? 0 : paise(gst - half),
     igst: interState ? gst : 0,
@@ -149,10 +159,27 @@ export function billPlan(raw: Record<string, unknown>): BillPlan {
     locationName: text(raw["location_name"] ?? raw["branch_name"]),
     status,
     modifiedAt: text(raw["last_modified_time"]),
+    createdAt: text(raw["created_time"]),
+    poIds: billPurchaseOrderIds(raw),
     subTotal: paise(num(raw["sub_total"])),
     taxTotal: paise(num(raw["tax_total"])),
     total, billDiscount, adjustment, interState, lines, warnings,
   };
+}
+
+/** The purchase orders a bill names: purchaseorder_ids (strings or {purchaseorder_id}), else its lines' own (unverified fields). */
+export function billPurchaseOrderIds(raw: Record<string, unknown>) {
+  const ids = new Set<string>();
+  const list = Array.isArray(raw["purchaseorder_ids"]) ? raw["purchaseorder_ids"] as unknown[] : [];
+  for (const entry of list) {
+    const id = typeof entry === "object" && entry ? text((entry as Record<string, unknown>)["purchaseorder_id"]) : text(entry);
+    if (id) ids.add(id);
+  }
+  for (const line of Array.isArray(raw["line_items"]) ? raw["line_items"] as Record<string, unknown>[] : []) {
+    const id = text(line["purchaseorder_id"]);
+    if (id) ids.add(id);
+  }
+  return [...ids];
 }
 
 export const costOf = (line: Pick<BillLine, "unitExGst" | "unitIncGst">, basis: CostBasis) => (basis === "inc_gst" ? line.unitIncGst : line.unitExGst);
@@ -186,13 +213,74 @@ export function billChange(stored: { modifiedAt: string; total: number }, now: {
   if (!now) return "Bill deleted in Zoho";
   if (now.status === "void") return "Bill voided in Zoho";
   if (stored.total && Math.abs(now.total - stored.total) > 0.004) return `Bill total changed in Zoho (₹${stored.total.toFixed(2)} → ₹${now.total.toFixed(2)})`;
-  if (stored.modifiedAt && now.modifiedAt && now.modifiedAt !== stored.modifiedAt) return "Bill edited in Zoho after its batches were made";
+  if (stored.modifiedAt && now.modifiedAt && now.modifiedAt !== stored.modifiedAt) return BILL_EDITED;
+  return "";
+}
+
+/** The flags the bill check gives when a batch's bill is gone from Zoho (relink_batch_bill accepts only these). */
+export const BILL_GONE_FLAGS = ["Bill deleted in Zoho", "Bill voided in Zoho"] as const;
+export const billGone = (flag: string | null | undefined) => (BILL_GONE_FLAGS as readonly string[]).includes(flag ?? "");
+
+/**
+ * A line of a bill that looks like the purchase of a batch whose own bill is gone from Zoho: the same product and the
+ * same quantity (13 Nov 2026: "YET TO COME" was deleted to be entered again with its real number). Making a new batch
+ * from it would count the units twice; the old batch is linked to it instead. "" when none.
+ */
+export function goneBillLookalike(line: { productId: string; qty: number }, gone: { batchCode: string; productId: string; quantity: number }[]) {
+  const qty = Math.round(line.qty * 100) / 100;
+  return gone.find((batch) => batch.productId === line.productId && Math.abs(batch.quantity - qty) < 0.005)?.batchCode ?? "";
+}
+
+/** Why a bill line can't take over a batch whose bill is gone, or "". Mirrors relink_batch_bill in the database. */
+export function relinkBlocker(
+  batch: { productId: string; quantity: number; billId: string; billFlag: string },
+  line: { productId: string; qty: number; batchCode: string },
+  billId: string,
+) {
+  if (!billGone(batch.billFlag)) return "The batch's own bill is still in Zoho";
+  if (billId === batch.billId) return "That is the batch's own bill";
+  if (line.batchCode) return `Already batch ${line.batchCode}`;
+  if (line.productId !== batch.productId) return "Another product";
+  const qty = Math.round(line.qty * 100) / 100;
+  if (Math.abs(qty - batch.quantity) >= 0.005) return `${qty} on this bill, ${batch.quantity} in the batch`;
+  return "";
+}
+
+/** A flag billLinesChange gave: one of the batches' own bill lines changed in Zoho. */
+export const isBillLineFlag = (flag: string) => /^Bill (line|quantity|cost) (of|for) batch /.test(flag);
+
+/** billChange's answer when only Zoho's edit time moved: the server then compares the batch lines (billLinesChange). */
+export const BILL_EDITED = "Bill edited in Zoho after its batches were made";
+
+/**
+ * A bill whose edit time moved, read in full: whether the lines its batches were made from are still as they were
+ * (13 Nov 2026). A purchase receive, a payment or a note touches the bill's edit time too; that is not a change to
+ * the batch. "" = the batch lines are unchanged, else what changed.
+ */
+export function billLinesChange(
+  batches: { batchCode: string; lineId: string; itemId: string; quantity: number; unitExGst: number | null }[],
+  bill: Pick<BillPlan, "lines">,
+) {
+  const lines = new Map(bill.lines.map((line) => [line.lineId, line]));
+  for (const batch of batches) {
+    const line = lines.get(batch.lineId);
+    if (!line) return `Bill line of batch ${batch.batchCode} was removed in Zoho`;
+    if (batch.itemId && line.itemId && line.itemId !== batch.itemId) return `Bill line of batch ${batch.batchCode} now has another item in Zoho`;
+    // The batch keeps its quantity to 2 decimals (numeric(14,2)); Zoho's line may have 3.
+    if (Math.abs(Math.round(line.qty * 100) / 100 - batch.quantity) > 0.0005) return `Bill quantity for batch ${batch.batchCode} changed in Zoho (${batch.quantity} → ${line.qty})`;
+    if (batch.unitExGst !== null && Math.abs(line.unitExGst - batch.unitExGst) > 0.004)
+      return `Bill cost for batch ${batch.batchCode} changed in Zoho (₹${batch.unitExGst.toFixed(2)} → ₹${line.unitExGst.toFixed(2)} before GST)`;
+  }
   return "";
 }
 
 /** Why a batch cannot be deleted, or "" when it can. Mirrors admin_delete_batch in the database. */
-export function batchDeleteBlocker<A extends { reserved_quantity: number; released_quantity: number }>(batch: { quantity: number; remaining_quantity: number }, allocations: A[], adjustments: number,
-  orderOf?: (allocation: A) => { order_status: string; payment_status: string } | undefined, inTransfer = false) {
+export function batchDeleteBlocker<A extends { reserved_quantity: number; released_quantity: number }>(
+  batch: { quantity: number; remaining_quantity: number; stage?: string | undefined; batch_code?: string | undefined }, allocations: A[], adjustments: number,
+  orderOf?: (allocation: A) => { order_status: string; payment_status: string } | undefined, inTransfer = false, facts: { tagged?: boolean } = {}) {
+  // A pre-order batch is cancelled, not deleted (14 Nov 2026); one with expenses tagged keeps them for the profit.
+  if (batch.stage === "incoming") return `Cancel pre-order batch ${batch.batch_code ?? ""} instead`.replace("  ", " ");
+  if (facts.tagged) return `Expenses are tagged to batch ${batch.batch_code ?? ""}; remove them first`.replace("  ", " ");
   // Its units are at a godown in Zoho because of a transfer: deleting it would lose them here (10 Nov 2026).
   if (inTransfer) return "This batch is part of a transfer between godowns, so it is kept for the record.";
   const held = allocations.reduce((sum, a) => sum + Math.max(0, a.reserved_quantity - a.released_quantity), 0);

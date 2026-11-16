@@ -4,6 +4,7 @@ import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { defaultBranchOf } from "@/lib/godown-rules";
 import { products as seedProducts } from "@/lib/data";
 import { afterPageLoad, snapshotIsFresh, useStorefrontSnapshot, type StorefrontSnapshot } from "@/lib/storefront-snapshot";
+import { DEFAULT_PREORDER_SETTINGS, PREORDER_SETTING_KEY, arrivingDetail, parsePreorderSettings, type ArrivingDetail, type PreorderSettings } from "@/lib/preorder";
 
 export { branchForPin, branchStockOf, defaultBranchOf, godownOfferOf, godownPriceOf, orderGodownFor, zohoLocationLabel } from "@/lib/godown-rules";
 
@@ -60,7 +61,7 @@ export const DEMO_BRANCH: Branch = {
   id: "BR-CLK", code: "CLK", name: "Grain Bazar Challakere Godown",
   address: "Pavagada Road, Behind Mahalakshmi Kalyana Mantapa, Mahadevi Road, Challakere, Karnataka 577522",
   city: "Challakere", state: "Karnataka", stateCode: "29", pincode: "577522", phone: "8310084308",
-  email: "shamibusinessventurespvtltd@gmail.com", mapUrl: "", instructions: "Bring your order number. Collect during working hours.",
+  email: "shamibusinessventurespvtltd@gmail.com", mapUrl: "", instructions: "Show the delivery QR on your invoice at the counter. Collect during working hours.",
   gstin: "", zohoLocationId: "", zohoLocationName: "CLK Shami Business Ventures", zohoPricebookId: "", zohoPricebookName: "",
   servesPincodes: ["577522", "577536", "577537", "577538", "577543"], pickupEnabled: true, deliveryEnabled: false,
   deliveryFee: 0, freeDeliveryAbove: null, isDefault: true, active: true, sortOrder: 0, vendorId: null,
@@ -96,6 +97,10 @@ export type BranchState = {
   stock: Map<string, Map<string, number>>;
   /** product id -> branch id -> godown price (godowns linked to a Zoho price list). */
   prices: Map<string, Map<string, GodownPrice>>;
+  /** product id -> branch id -> pre-order units on sale now and by when (14 Nov 2026; empty while none). */
+  incoming: Map<string, Map<string, { qty: number; detail: ArrivingDetail[] }>>;
+  /** The public pre-order switch (Admin › Settings › Pre-orders). */
+  preorder: PreorderSettings;
   features: PlatformFeatures;
   /** Marketplace ON: vendor id -> the branch their items are fulfilled from. */
   vendorPoints: Map<string, string>;
@@ -115,11 +120,11 @@ function demoPinMatching(): boolean {
 const demoRouting = demoPinMatching();
 let cache: BranchState = STATIC_DATA_MODE
   ? {
-      ready: true, branches: [DEMO_BRANCH], prices: new Map(), vendorPoints: new Map(),
+      ready: true, branches: [DEMO_BRANCH], prices: new Map(), vendorPoints: new Map(), incoming: new Map(), preorder: DEFAULT_PREORDER_SETTINGS,
       stock: demoRouting ? new Map(seedProducts.map((product) => [product.id, new Map([[DEMO_BRANCH.id, product.stock]])])) : new Map(),
       features: { ...defaultFeatures, branchRouting: demoRouting },
     }
-  : { ready: false, branches: [], stock: new Map(), prices: new Map(), features: defaultFeatures, vendorPoints: new Map() };
+  : { ready: false, branches: [], stock: new Map(), prices: new Map(), features: defaultFeatures, vendorPoints: new Map(), incoming: new Map(), preorder: DEFAULT_PREORDER_SETTINGS };
 const listeners = new Set<(state: BranchState) => void>();
 let loading: Promise<void> | null = null;
 let subscribed = false;
@@ -130,14 +135,15 @@ function publish(next: BranchState) {
 }
 
 type PriceRow = { branch_id: string; product_id: string; price: number | string; listed: boolean | null; pending: boolean | null };
-type StockRow = { branch_id: string; product_id: string; stock: number | string };
+type StockRow = { branch_id: string; product_id: string; stock: number | string; incoming?: number | string | null; incoming_detail?: unknown };
 
 const featuresFrom = (setting: unknown): PlatformFeatures => {
   const value = setting && typeof setting === "object" && !Array.isArray(setting) ? setting as Row : {};
   return { branchRouting: value["branch_routing"] === true, marketplaceVendors: value["marketplace_vendors"] === true };
 };
 
-function branchStateFrom(branchRows: Row[], stockRows: StockRow[], priceRows: PriceRow[], features: PlatformFeatures, points: { vendor_id: string; branch_id: string }[]): BranchState {
+function branchStateFrom(branchRows: Row[], stockRows: StockRow[], priceRows: PriceRow[], features: PlatformFeatures, points: { vendor_id: string; branch_id: string }[],
+  preorder: PreorderSettings = DEFAULT_PREORDER_SETTINGS): BranchState {
   const prices = new Map<string, Map<string, GodownPrice>>();
   for (const row of priceRows) {
     const byBranch = prices.get(row.product_id) ?? new Map<string, GodownPrice>();
@@ -145,24 +151,34 @@ function branchStateFrom(branchRows: Row[], stockRows: StockRow[], priceRows: Pr
     prices.set(row.product_id, byBranch);
   }
   const stock = new Map<string, Map<string, number>>();
+  const incoming = new Map<string, Map<string, { qty: number; detail: ArrivingDetail[] }>>();
   for (const row of stockRows) {
     const byBranch = stock.get(row.product_id) ?? new Map<string, number>();
     byBranch.set(row.branch_id, Number(row.stock) || 0);
     stock.set(row.product_id, byBranch);
+    const arriving = Number(row.incoming) || 0;
+    if (arriving > 0) {
+      const byGodown = incoming.get(row.product_id) ?? new Map<string, { qty: number; detail: ArrivingDetail[] }>();
+      byGodown.set(row.branch_id, { qty: arriving, detail: arrivingDetail(row.incoming_detail) });
+      incoming.set(row.product_id, byGodown);
+    }
   }
   const vendorPoints = new Map<string, string>();
   if (features.marketplaceVendors) for (const point of points) vendorPoints.set(point.vendor_id, point.branch_id);
-  return { ready: true, branches: branchRows.map((row) => branchFromRow(row)), stock, prices, features, vendorPoints };
+  return { ready: true, branches: branchRows.map((row) => branchFromRow(row)), stock, prices, features, vendorPoints, incoming, preorder };
 }
 
 export async function reloadBranches() {
   if (STATIC_DATA_MODE) return;
-  const [branchResult, stockResult, featureResult, priceResult] = await Promise.all([
+  const [branchResult, stockFirst, featureResult, priceResult, preorderResult] = await Promise.all([
     supabase.from("branches").select("*").order("sort_order").order("name"),
-    supabase.from("branch_stock").select("branch_id,product_id,stock"),
+    supabase.from("branch_stock").select("branch_id,product_id,stock,incoming,incoming_detail"),
     supabase.from("settings").select("value").eq("key", PLATFORM_FEATURES_KEY).eq("is_public", true).maybeSingle(),
     supabase.from("branch_prices").select("branch_id,product_id,price,listed,pending"),
+    supabase.from("settings").select("value").eq("key", PREORDER_SETTING_KEY).eq("is_public", true).maybeSingle(),
   ]);
+  // Before the pre-order migration the arriving columns do not exist yet: the stock alone, as before.
+  const stockResult = stockFirst.error ? await supabase.from("branch_stock").select("branch_id,product_id,stock") : stockFirst;
   const features = featuresFrom(featureResult.data?.value);
   const points = features.marketplaceVendors ? (await supabase.rpc("vendor_fulfilment_points")).data ?? [] : [];
   publish(branchStateFrom(
@@ -172,6 +188,7 @@ export async function reloadBranches() {
     priceResult.error ? [] : priceResult.data ?? [],
     features,
     points,
+    parsePreorderSettings(preorderResult.data?.value),
   ));
 }
 
@@ -181,7 +198,7 @@ function snapshotBranchState(snapshot: StorefrontSnapshot): BranchState {
   let state = snapshotStates.get(snapshot);
   if (!state) {
     state = branchStateFrom(snapshot.branches, snapshot.branchStock, snapshot.branchPrices,
-      featuresFrom(snapshot.settings[PLATFORM_FEATURES_KEY]), snapshot.vendorPoints);
+      featuresFrom(snapshot.settings[PLATFORM_FEATURES_KEY]), snapshot.vendorPoints, parsePreorderSettings(snapshot.settings[PREORDER_SETTING_KEY]));
     snapshotStates.set(snapshot, state);
   }
   return state;

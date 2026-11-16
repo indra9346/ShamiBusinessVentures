@@ -18,6 +18,7 @@ import { Route as CategoriesRouteImport } from './routes/categories'
 import { Route as CheckoutRouteImport } from './routes/checkout'
 import { Route as ContactRouteImport } from './routes/contact'
 import { Route as LoginRouteImport } from './routes/login'
+import { Route as PartnerRouteImport } from './routes/partner'
 import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as RegisterRouteImport } from './routes/register'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
@@ -26,6 +27,7 @@ import { Route as SitemapDotxmlRouteImport } from './routes/sitemap[.]xml'
 import { Route as SlipRouteImport } from './routes/slip'
 import { Route as WishlistRouteImport } from './routes/wishlist'
 import { Route as AccountAddressesRouteImport } from './routes/account.addresses'
+import { Route as AccountHowToOrderRouteImport } from './routes/account.how-to-order'
 import { Route as AccountInvoicesRouteImport } from './routes/account.invoices'
 import { Route as AccountNotificationsRouteImport } from './routes/account.notifications'
 import { Route as AccountOrdersRouteImport } from './routes/account.orders'
@@ -33,6 +35,7 @@ import { Route as AccountProfileRouteImport } from './routes/account.profile'
 import { Route as AccountReviewsRouteImport } from './routes/account.reviews'
 import { Route as AccountSettingsRouteImport } from './routes/account.settings'
 import { Route as AccountTrackRouteImport } from './routes/account.track'
+import { Route as AccountWishlistRouteImport } from './routes/account.wishlist'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
 import { Route as AdminAdsRouteImport } from './routes/admin.ads'
 import { Route as AdminAttendanceRouteImport } from './routes/admin.attendance'
@@ -78,7 +81,16 @@ import { Route as CategoriesIndexRouteImport } from './routes/categories.index'
 import { Route as CategoriesSlugRouteImport } from './routes/categories.$slug'
 import { Route as PartnerIndexRouteImport } from './routes/partner.index'
 import { Route as PartnerAttendanceRouteImport } from './routes/partner.attendance'
+import { Route as PartnerCommissionsRouteImport } from './routes/partner.commissions'
+import { Route as PartnerDeliveryNotesRouteImport } from './routes/partner.delivery-notes'
+import { Route as PartnerIncomeRouteImport } from './routes/partner.income'
+import { Route as PartnerInvoicesRouteImport } from './routes/partner.invoices'
+import { Route as PartnerLeaderboardRouteImport } from './routes/partner.leaderboard'
 import { Route as PartnerLoginRouteImport } from './routes/partner.login'
+import { Route as PartnerOrdersRouteImport } from './routes/partner.orders'
+import { Route as PartnerPaymentsRouteImport } from './routes/partner.payments'
+import { Route as PartnerReportRouteImport } from './routes/partner.report'
+import { Route as PartnerStockRouteImport } from './routes/partner.stock'
 import { Route as ProductIdRouteImport } from './routes/product.$id'
 import { Route as StaffIndexRouteImport } from './routes/staff.index'
 import { Route as StaffDeviceRouteImport } from './routes/staff.device'
@@ -157,6 +169,11 @@ const LoginRoute = LoginRouteImport.update({
   path: '/login',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PartnerRoute = PartnerRouteImport.update({
+  id: '/partner',
+  path: '/partner',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PrivacyRoute = PrivacyRouteImport.update({
   id: '/privacy',
   path: '/privacy',
@@ -197,6 +214,11 @@ const AccountAddressesRoute = AccountAddressesRouteImport.update({
   path: '/addresses',
   getParentRoute: () => AccountRoute,
 } as any)
+const AccountHowToOrderRoute = AccountHowToOrderRouteImport.update({
+  id: '/how-to-order',
+  path: '/how-to-order',
+  getParentRoute: () => AccountRoute,
+} as any)
 const AccountInvoicesRoute = AccountInvoicesRouteImport.update({
   id: '/invoices',
   path: '/invoices',
@@ -230,6 +252,11 @@ const AccountSettingsRoute = AccountSettingsRouteImport.update({
 const AccountTrackRoute = AccountTrackRouteImport.update({
   id: '/track',
   path: '/track',
+  getParentRoute: () => AccountRoute,
+} as any)
+const AccountWishlistRoute = AccountWishlistRouteImport.update({
+  id: '/wishlist',
+  path: '/wishlist',
   getParentRoute: () => AccountRoute,
 } as any)
 const AdminIndexRoute = AdminIndexRouteImport.update({
@@ -448,19 +475,64 @@ const CategoriesSlugRoute = CategoriesSlugRouteImport.update({
   getParentRoute: () => CategoriesRoute,
 } as any)
 const PartnerIndexRoute = PartnerIndexRouteImport.update({
-  id: '/partner/',
-  path: '/partner/',
-  getParentRoute: () => rootRouteImport,
+  id: '/',
+  path: '/',
+  getParentRoute: () => PartnerRoute,
 } as any)
 const PartnerAttendanceRoute = PartnerAttendanceRouteImport.update({
-  id: '/partner/attendance',
-  path: '/partner/attendance',
-  getParentRoute: () => rootRouteImport,
+  id: '/attendance',
+  path: '/attendance',
+  getParentRoute: () => PartnerRoute,
+} as any)
+const PartnerCommissionsRoute = PartnerCommissionsRouteImport.update({
+  id: '/commissions',
+  path: '/commissions',
+  getParentRoute: () => PartnerRoute,
+} as any)
+const PartnerDeliveryNotesRoute = PartnerDeliveryNotesRouteImport.update({
+  id: '/delivery-notes',
+  path: '/delivery-notes',
+  getParentRoute: () => PartnerRoute,
+} as any)
+const PartnerIncomeRoute = PartnerIncomeRouteImport.update({
+  id: '/income',
+  path: '/income',
+  getParentRoute: () => PartnerRoute,
+} as any)
+const PartnerInvoicesRoute = PartnerInvoicesRouteImport.update({
+  id: '/invoices',
+  path: '/invoices',
+  getParentRoute: () => PartnerRoute,
+} as any)
+const PartnerLeaderboardRoute = PartnerLeaderboardRouteImport.update({
+  id: '/leaderboard',
+  path: '/leaderboard',
+  getParentRoute: () => PartnerRoute,
 } as any)
 const PartnerLoginRoute = PartnerLoginRouteImport.update({
-  id: '/partner/login',
-  path: '/partner/login',
-  getParentRoute: () => rootRouteImport,
+  id: '/login',
+  path: '/login',
+  getParentRoute: () => PartnerRoute,
+} as any)
+const PartnerOrdersRoute = PartnerOrdersRouteImport.update({
+  id: '/orders',
+  path: '/orders',
+  getParentRoute: () => PartnerRoute,
+} as any)
+const PartnerPaymentsRoute = PartnerPaymentsRouteImport.update({
+  id: '/payments',
+  path: '/payments',
+  getParentRoute: () => PartnerRoute,
+} as any)
+const PartnerReportRoute = PartnerReportRouteImport.update({
+  id: '/report',
+  path: '/report',
+  getParentRoute: () => PartnerRoute,
+} as any)
+const PartnerStockRoute = PartnerStockRouteImport.update({
+  id: '/stock',
+  path: '/stock',
+  getParentRoute: () => PartnerRoute,
 } as any)
 const ProductIdRoute = ProductIdRouteImport.update({
   id: '/product/$id',
@@ -634,6 +706,7 @@ export interface FileRoutesByFullPath {
   '/checkout': typeof CheckoutRoute
   '/contact': typeof ContactRoute
   '/login': typeof LoginRoute
+  '/partner': typeof PartnerRouteWithChildren
   '/privacy': typeof PrivacyRoute
   '/register': typeof RegisterRoute
   '/reset-password': typeof ResetPasswordRoute
@@ -642,6 +715,7 @@ export interface FileRoutesByFullPath {
   '/slip': typeof SlipRoute
   '/wishlist': typeof WishlistRoute
   '/account/addresses': typeof AccountAddressesRoute
+  '/account/how-to-order': typeof AccountHowToOrderRoute
   '/account/invoices': typeof AccountInvoicesRoute
   '/account/notifications': typeof AccountNotificationsRoute
   '/account/orders': typeof AccountOrdersRouteWithChildren
@@ -649,6 +723,7 @@ export interface FileRoutesByFullPath {
   '/account/reviews': typeof AccountReviewsRoute
   '/account/settings': typeof AccountSettingsRoute
   '/account/track': typeof AccountTrackRoute
+  '/account/wishlist': typeof AccountWishlistRoute
   '/admin/ads': typeof AdminAdsRoute
   '/admin/attendance': typeof AdminAttendanceRoute
   '/admin/batches': typeof AdminBatchesRoute
@@ -691,7 +766,16 @@ export interface FileRoutesByFullPath {
   '/admin/zoho-diagnostics': typeof AdminZohoDiagnosticsRoute
   '/categories/$slug': typeof CategoriesSlugRouteWithChildren
   '/partner/attendance': typeof PartnerAttendanceRoute
+  '/partner/commissions': typeof PartnerCommissionsRoute
+  '/partner/delivery-notes': typeof PartnerDeliveryNotesRoute
+  '/partner/income': typeof PartnerIncomeRoute
+  '/partner/invoices': typeof PartnerInvoicesRoute
+  '/partner/leaderboard': typeof PartnerLeaderboardRoute
   '/partner/login': typeof PartnerLoginRoute
+  '/partner/orders': typeof PartnerOrdersRoute
+  '/partner/payments': typeof PartnerPaymentsRoute
+  '/partner/report': typeof PartnerReportRoute
+  '/partner/stock': typeof PartnerStockRoute
   '/product/$id': typeof ProductIdRoute
   '/staff/device': typeof StaffDeviceRoute
   '/staff/login': typeof StaffLoginRoute
@@ -745,6 +829,7 @@ export interface FileRoutesByTo {
   '/slip': typeof SlipRoute
   '/wishlist': typeof WishlistRoute
   '/account/addresses': typeof AccountAddressesRoute
+  '/account/how-to-order': typeof AccountHowToOrderRoute
   '/account/invoices': typeof AccountInvoicesRoute
   '/account/notifications': typeof AccountNotificationsRoute
   '/account/orders': typeof AccountOrdersRouteWithChildren
@@ -752,6 +837,7 @@ export interface FileRoutesByTo {
   '/account/reviews': typeof AccountReviewsRoute
   '/account/settings': typeof AccountSettingsRoute
   '/account/track': typeof AccountTrackRoute
+  '/account/wishlist': typeof AccountWishlistRoute
   '/admin/ads': typeof AdminAdsRoute
   '/admin/attendance': typeof AdminAttendanceRoute
   '/admin/batches': typeof AdminBatchesRoute
@@ -794,7 +880,16 @@ export interface FileRoutesByTo {
   '/admin/zoho-diagnostics': typeof AdminZohoDiagnosticsRoute
   '/categories/$slug': typeof CategoriesSlugRouteWithChildren
   '/partner/attendance': typeof PartnerAttendanceRoute
+  '/partner/commissions': typeof PartnerCommissionsRoute
+  '/partner/delivery-notes': typeof PartnerDeliveryNotesRoute
+  '/partner/income': typeof PartnerIncomeRoute
+  '/partner/invoices': typeof PartnerInvoicesRoute
+  '/partner/leaderboard': typeof PartnerLeaderboardRoute
   '/partner/login': typeof PartnerLoginRoute
+  '/partner/orders': typeof PartnerOrdersRoute
+  '/partner/payments': typeof PartnerPaymentsRoute
+  '/partner/report': typeof PartnerReportRoute
+  '/partner/stock': typeof PartnerStockRoute
   '/product/$id': typeof ProductIdRoute
   '/staff/device': typeof StaffDeviceRoute
   '/staff/login': typeof StaffLoginRoute
@@ -842,6 +937,7 @@ export interface FileRoutesById {
   '/checkout': typeof CheckoutRoute
   '/contact': typeof ContactRoute
   '/login': typeof LoginRoute
+  '/partner': typeof PartnerRouteWithChildren
   '/privacy': typeof PrivacyRoute
   '/register': typeof RegisterRoute
   '/reset-password': typeof ResetPasswordRoute
@@ -850,6 +946,7 @@ export interface FileRoutesById {
   '/slip': typeof SlipRoute
   '/wishlist': typeof WishlistRoute
   '/account/addresses': typeof AccountAddressesRoute
+  '/account/how-to-order': typeof AccountHowToOrderRoute
   '/account/invoices': typeof AccountInvoicesRoute
   '/account/notifications': typeof AccountNotificationsRoute
   '/account/orders': typeof AccountOrdersRouteWithChildren
@@ -857,6 +954,7 @@ export interface FileRoutesById {
   '/account/reviews': typeof AccountReviewsRoute
   '/account/settings': typeof AccountSettingsRoute
   '/account/track': typeof AccountTrackRoute
+  '/account/wishlist': typeof AccountWishlistRoute
   '/admin/ads': typeof AdminAdsRoute
   '/admin/attendance': typeof AdminAttendanceRoute
   '/admin/batches': typeof AdminBatchesRoute
@@ -899,7 +997,16 @@ export interface FileRoutesById {
   '/admin/zoho-diagnostics': typeof AdminZohoDiagnosticsRoute
   '/categories/$slug': typeof CategoriesSlugRouteWithChildren
   '/partner/attendance': typeof PartnerAttendanceRoute
+  '/partner/commissions': typeof PartnerCommissionsRoute
+  '/partner/delivery-notes': typeof PartnerDeliveryNotesRoute
+  '/partner/income': typeof PartnerIncomeRoute
+  '/partner/invoices': typeof PartnerInvoicesRoute
+  '/partner/leaderboard': typeof PartnerLeaderboardRoute
   '/partner/login': typeof PartnerLoginRoute
+  '/partner/orders': typeof PartnerOrdersRoute
+  '/partner/payments': typeof PartnerPaymentsRoute
+  '/partner/report': typeof PartnerReportRoute
+  '/partner/stock': typeof PartnerStockRoute
   '/product/$id': typeof ProductIdRoute
   '/staff/device': typeof StaffDeviceRoute
   '/staff/login': typeof StaffLoginRoute
@@ -948,6 +1055,7 @@ export interface FileRouteTypes {
     | '/checkout'
     | '/contact'
     | '/login'
+    | '/partner'
     | '/privacy'
     | '/register'
     | '/reset-password'
@@ -956,6 +1064,7 @@ export interface FileRouteTypes {
     | '/slip'
     | '/wishlist'
     | '/account/addresses'
+    | '/account/how-to-order'
     | '/account/invoices'
     | '/account/notifications'
     | '/account/orders'
@@ -963,6 +1072,7 @@ export interface FileRouteTypes {
     | '/account/reviews'
     | '/account/settings'
     | '/account/track'
+    | '/account/wishlist'
     | '/admin/ads'
     | '/admin/attendance'
     | '/admin/batches'
@@ -1005,7 +1115,16 @@ export interface FileRouteTypes {
     | '/admin/zoho-diagnostics'
     | '/categories/$slug'
     | '/partner/attendance'
+    | '/partner/commissions'
+    | '/partner/delivery-notes'
+    | '/partner/income'
+    | '/partner/invoices'
+    | '/partner/leaderboard'
     | '/partner/login'
+    | '/partner/orders'
+    | '/partner/payments'
+    | '/partner/report'
+    | '/partner/stock'
     | '/product/$id'
     | '/staff/device'
     | '/staff/login'
@@ -1059,6 +1178,7 @@ export interface FileRouteTypes {
     | '/slip'
     | '/wishlist'
     | '/account/addresses'
+    | '/account/how-to-order'
     | '/account/invoices'
     | '/account/notifications'
     | '/account/orders'
@@ -1066,6 +1186,7 @@ export interface FileRouteTypes {
     | '/account/reviews'
     | '/account/settings'
     | '/account/track'
+    | '/account/wishlist'
     | '/admin/ads'
     | '/admin/attendance'
     | '/admin/batches'
@@ -1108,7 +1229,16 @@ export interface FileRouteTypes {
     | '/admin/zoho-diagnostics'
     | '/categories/$slug'
     | '/partner/attendance'
+    | '/partner/commissions'
+    | '/partner/delivery-notes'
+    | '/partner/income'
+    | '/partner/invoices'
+    | '/partner/leaderboard'
     | '/partner/login'
+    | '/partner/orders'
+    | '/partner/payments'
+    | '/partner/report'
+    | '/partner/stock'
     | '/product/$id'
     | '/staff/device'
     | '/staff/login'
@@ -1155,6 +1285,7 @@ export interface FileRouteTypes {
     | '/checkout'
     | '/contact'
     | '/login'
+    | '/partner'
     | '/privacy'
     | '/register'
     | '/reset-password'
@@ -1163,6 +1294,7 @@ export interface FileRouteTypes {
     | '/slip'
     | '/wishlist'
     | '/account/addresses'
+    | '/account/how-to-order'
     | '/account/invoices'
     | '/account/notifications'
     | '/account/orders'
@@ -1170,6 +1302,7 @@ export interface FileRouteTypes {
     | '/account/reviews'
     | '/account/settings'
     | '/account/track'
+    | '/account/wishlist'
     | '/admin/ads'
     | '/admin/attendance'
     | '/admin/batches'
@@ -1212,7 +1345,16 @@ export interface FileRouteTypes {
     | '/admin/zoho-diagnostics'
     | '/categories/$slug'
     | '/partner/attendance'
+    | '/partner/commissions'
+    | '/partner/delivery-notes'
+    | '/partner/income'
+    | '/partner/invoices'
+    | '/partner/leaderboard'
     | '/partner/login'
+    | '/partner/orders'
+    | '/partner/payments'
+    | '/partner/report'
+    | '/partner/stock'
     | '/product/$id'
     | '/staff/device'
     | '/staff/login'
@@ -1260,6 +1402,7 @@ export interface RootRouteChildren {
   CheckoutRoute: typeof CheckoutRoute
   ContactRoute: typeof ContactRoute
   LoginRoute: typeof LoginRoute
+  PartnerRoute: typeof PartnerRouteWithChildren
   PrivacyRoute: typeof PrivacyRoute
   RegisterRoute: typeof RegisterRoute
   ResetPasswordRoute: typeof ResetPasswordRoute
@@ -1307,8 +1450,6 @@ export interface RootRouteChildren {
   AdminZohoRoute: typeof AdminZohoRoute
   AdminZohoApiCallsRoute: typeof AdminZohoApiCallsRoute
   AdminZohoDiagnosticsRoute: typeof AdminZohoDiagnosticsRoute
-  PartnerAttendanceRoute: typeof PartnerAttendanceRoute
-  PartnerLoginRoute: typeof PartnerLoginRoute
   ProductIdRoute: typeof ProductIdRoute
   StaffDeviceRoute: typeof StaffDeviceRoute
   StaffLoginRoute: typeof StaffLoginRoute
@@ -1325,7 +1466,6 @@ export interface RootRouteChildren {
   VendorReviewsRoute: typeof VendorReviewsRoute
   VendorSettingsRoute: typeof VendorSettingsRoute
   AdminIndexRoute: typeof AdminIndexRoute
-  PartnerIndexRoute: typeof PartnerIndexRoute
   StaffIndexRoute: typeof StaffIndexRoute
   VendorIndexRoute: typeof VendorIndexRoute
   AdminDeliveryNoteOrderNoRoute: typeof AdminDeliveryNoteOrderNoRoute
@@ -1401,6 +1541,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LoginRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/partner': {
+      id: '/partner'
+      path: '/partner'
+      fullPath: '/partner'
+      preLoaderRoute: typeof PartnerRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/privacy': {
       id: '/privacy'
       path: '/privacy'
@@ -1457,6 +1604,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AccountAddressesRouteImport
       parentRoute: typeof AccountRoute
     }
+    '/account/how-to-order': {
+      id: '/account/how-to-order'
+      path: '/how-to-order'
+      fullPath: '/account/how-to-order'
+      preLoaderRoute: typeof AccountHowToOrderRouteImport
+      parentRoute: typeof AccountRoute
+    }
     '/account/invoices': {
       id: '/account/invoices'
       path: '/invoices'
@@ -1504,6 +1658,13 @@ declare module '@tanstack/react-router' {
       path: '/track'
       fullPath: '/account/track'
       preLoaderRoute: typeof AccountTrackRouteImport
+      parentRoute: typeof AccountRoute
+    }
+    '/account/wishlist': {
+      id: '/account/wishlist'
+      path: '/wishlist'
+      fullPath: '/account/wishlist'
+      preLoaderRoute: typeof AccountWishlistRouteImport
       parentRoute: typeof AccountRoute
     }
     '/admin/': {
@@ -1809,24 +1970,87 @@ declare module '@tanstack/react-router' {
     }
     '/partner/': {
       id: '/partner/'
-      path: '/partner'
+      path: '/'
       fullPath: '/partner/'
       preLoaderRoute: typeof PartnerIndexRouteImport
-      parentRoute: typeof rootRouteImport
+      parentRoute: typeof PartnerRoute
     }
     '/partner/attendance': {
       id: '/partner/attendance'
-      path: '/partner/attendance'
+      path: '/attendance'
       fullPath: '/partner/attendance'
       preLoaderRoute: typeof PartnerAttendanceRouteImport
-      parentRoute: typeof rootRouteImport
+      parentRoute: typeof PartnerRoute
+    }
+    '/partner/commissions': {
+      id: '/partner/commissions'
+      path: '/commissions'
+      fullPath: '/partner/commissions'
+      preLoaderRoute: typeof PartnerCommissionsRouteImport
+      parentRoute: typeof PartnerRoute
+    }
+    '/partner/delivery-notes': {
+      id: '/partner/delivery-notes'
+      path: '/delivery-notes'
+      fullPath: '/partner/delivery-notes'
+      preLoaderRoute: typeof PartnerDeliveryNotesRouteImport
+      parentRoute: typeof PartnerRoute
+    }
+    '/partner/income': {
+      id: '/partner/income'
+      path: '/income'
+      fullPath: '/partner/income'
+      preLoaderRoute: typeof PartnerIncomeRouteImport
+      parentRoute: typeof PartnerRoute
+    }
+    '/partner/invoices': {
+      id: '/partner/invoices'
+      path: '/invoices'
+      fullPath: '/partner/invoices'
+      preLoaderRoute: typeof PartnerInvoicesRouteImport
+      parentRoute: typeof PartnerRoute
+    }
+    '/partner/leaderboard': {
+      id: '/partner/leaderboard'
+      path: '/leaderboard'
+      fullPath: '/partner/leaderboard'
+      preLoaderRoute: typeof PartnerLeaderboardRouteImport
+      parentRoute: typeof PartnerRoute
     }
     '/partner/login': {
       id: '/partner/login'
-      path: '/partner/login'
+      path: '/login'
       fullPath: '/partner/login'
       preLoaderRoute: typeof PartnerLoginRouteImport
-      parentRoute: typeof rootRouteImport
+      parentRoute: typeof PartnerRoute
+    }
+    '/partner/orders': {
+      id: '/partner/orders'
+      path: '/orders'
+      fullPath: '/partner/orders'
+      preLoaderRoute: typeof PartnerOrdersRouteImport
+      parentRoute: typeof PartnerRoute
+    }
+    '/partner/payments': {
+      id: '/partner/payments'
+      path: '/payments'
+      fullPath: '/partner/payments'
+      preLoaderRoute: typeof PartnerPaymentsRouteImport
+      parentRoute: typeof PartnerRoute
+    }
+    '/partner/report': {
+      id: '/partner/report'
+      path: '/report'
+      fullPath: '/partner/report'
+      preLoaderRoute: typeof PartnerReportRouteImport
+      parentRoute: typeof PartnerRoute
+    }
+    '/partner/stock': {
+      id: '/partner/stock'
+      path: '/stock'
+      fullPath: '/partner/stock'
+      preLoaderRoute: typeof PartnerStockRouteImport
+      parentRoute: typeof PartnerRoute
     }
     '/product/$id': {
       id: '/product/$id'
@@ -2069,6 +2293,7 @@ const AccountOrdersRouteWithChildren = AccountOrdersRoute._addFileChildren(
 
 interface AccountRouteChildren {
   AccountAddressesRoute: typeof AccountAddressesRoute
+  AccountHowToOrderRoute: typeof AccountHowToOrderRoute
   AccountInvoicesRoute: typeof AccountInvoicesRoute
   AccountNotificationsRoute: typeof AccountNotificationsRoute
   AccountOrdersRoute: typeof AccountOrdersRouteWithChildren
@@ -2076,10 +2301,12 @@ interface AccountRouteChildren {
   AccountReviewsRoute: typeof AccountReviewsRoute
   AccountSettingsRoute: typeof AccountSettingsRoute
   AccountTrackRoute: typeof AccountTrackRoute
+  AccountWishlistRoute: typeof AccountWishlistRoute
 }
 
 const AccountRouteChildren: AccountRouteChildren = {
   AccountAddressesRoute: AccountAddressesRoute,
+  AccountHowToOrderRoute: AccountHowToOrderRoute,
   AccountInvoicesRoute: AccountInvoicesRoute,
   AccountNotificationsRoute: AccountNotificationsRoute,
   AccountOrdersRoute: AccountOrdersRouteWithChildren,
@@ -2087,6 +2314,7 @@ const AccountRouteChildren: AccountRouteChildren = {
   AccountReviewsRoute: AccountReviewsRoute,
   AccountSettingsRoute: AccountSettingsRoute,
   AccountTrackRoute: AccountTrackRoute,
+  AccountWishlistRoute: AccountWishlistRoute,
 }
 
 const AccountRouteWithChildren =
@@ -2117,6 +2345,39 @@ const CategoriesRouteChildren: CategoriesRouteChildren = {
 const CategoriesRouteWithChildren = CategoriesRoute._addFileChildren(
   CategoriesRouteChildren,
 )
+
+interface PartnerRouteChildren {
+  PartnerAttendanceRoute: typeof PartnerAttendanceRoute
+  PartnerCommissionsRoute: typeof PartnerCommissionsRoute
+  PartnerDeliveryNotesRoute: typeof PartnerDeliveryNotesRoute
+  PartnerIncomeRoute: typeof PartnerIncomeRoute
+  PartnerInvoicesRoute: typeof PartnerInvoicesRoute
+  PartnerLeaderboardRoute: typeof PartnerLeaderboardRoute
+  PartnerLoginRoute: typeof PartnerLoginRoute
+  PartnerOrdersRoute: typeof PartnerOrdersRoute
+  PartnerPaymentsRoute: typeof PartnerPaymentsRoute
+  PartnerReportRoute: typeof PartnerReportRoute
+  PartnerStockRoute: typeof PartnerStockRoute
+  PartnerIndexRoute: typeof PartnerIndexRoute
+}
+
+const PartnerRouteChildren: PartnerRouteChildren = {
+  PartnerAttendanceRoute: PartnerAttendanceRoute,
+  PartnerCommissionsRoute: PartnerCommissionsRoute,
+  PartnerDeliveryNotesRoute: PartnerDeliveryNotesRoute,
+  PartnerIncomeRoute: PartnerIncomeRoute,
+  PartnerInvoicesRoute: PartnerInvoicesRoute,
+  PartnerLeaderboardRoute: PartnerLeaderboardRoute,
+  PartnerLoginRoute: PartnerLoginRoute,
+  PartnerOrdersRoute: PartnerOrdersRoute,
+  PartnerPaymentsRoute: PartnerPaymentsRoute,
+  PartnerReportRoute: PartnerReportRoute,
+  PartnerStockRoute: PartnerStockRoute,
+  PartnerIndexRoute: PartnerIndexRoute,
+}
+
+const PartnerRouteWithChildren =
+  PartnerRoute._addFileChildren(PartnerRouteChildren)
 
 interface AdminCustomersRouteChildren {
   AdminCustomersIdRoute: typeof AdminCustomersIdRoute
@@ -2212,6 +2473,7 @@ const rootRouteChildren: RootRouteChildren = {
   CheckoutRoute: CheckoutRoute,
   ContactRoute: ContactRoute,
   LoginRoute: LoginRoute,
+  PartnerRoute: PartnerRouteWithChildren,
   PrivacyRoute: PrivacyRoute,
   RegisterRoute: RegisterRoute,
   ResetPasswordRoute: ResetPasswordRoute,
@@ -2259,8 +2521,6 @@ const rootRouteChildren: RootRouteChildren = {
   AdminZohoRoute: AdminZohoRoute,
   AdminZohoApiCallsRoute: AdminZohoApiCallsRoute,
   AdminZohoDiagnosticsRoute: AdminZohoDiagnosticsRoute,
-  PartnerAttendanceRoute: PartnerAttendanceRoute,
-  PartnerLoginRoute: PartnerLoginRoute,
   ProductIdRoute: ProductIdRoute,
   StaffDeviceRoute: StaffDeviceRoute,
   StaffLoginRoute: StaffLoginRoute,
@@ -2277,7 +2537,6 @@ const rootRouteChildren: RootRouteChildren = {
   VendorReviewsRoute: VendorReviewsRoute,
   VendorSettingsRoute: VendorSettingsRoute,
   AdminIndexRoute: AdminIndexRoute,
-  PartnerIndexRoute: PartnerIndexRoute,
   StaffIndexRoute: StaffIndexRoute,
   VendorIndexRoute: VendorIndexRoute,
   AdminDeliveryNoteOrderNoRoute: AdminDeliveryNoteOrderNoRoute,

@@ -14,7 +14,10 @@ import { ORDER_FILTERS, filterCounts, matchesOrderFilter, matchesSearch } from "
 export type LeaderRow = Database["public"]["Functions"]["partner_leaderboard"]["Returns"][number];
 export type CommissionLine = Database["public"]["Functions"]["partner_commission_lines"]["Returns"][number];
 
-/** Re-runs `load` now, every 30 seconds and when the window regains focus (live tracking). */
+/** Sent when something on the partner's page changed another list (16 Nov 2026: a payment approved here puts its order under Orders to confirm). */
+export const PARTNER_REFRESH_EVENT = "gb-partner-refresh";
+
+/** Re-runs `load` now, every 30 seconds, when the window regains focus (live tracking) and on PARTNER_REFRESH_EVENT. */
 export function useLiveRefresh(load: () => Promise<void> | void, deps: unknown[]) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const run = useCallback(load, deps);
@@ -23,7 +26,8 @@ export function useLiveRefresh(load: () => Promise<void> | void, deps: unknown[]
     const timer = window.setInterval(() => void run(), 30_000);
     const onFocus = () => void run();
     window.addEventListener("focus", onFocus);
-    return () => { window.clearInterval(timer); window.removeEventListener("focus", onFocus); };
+    window.addEventListener(PARTNER_REFRESH_EVENT, onFocus);
+    return () => { window.clearInterval(timer); window.removeEventListener("focus", onFocus); window.removeEventListener(PARTNER_REFRESH_EVENT, onFocus); };
   }, [run]);
 }
 

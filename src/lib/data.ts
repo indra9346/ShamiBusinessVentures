@@ -84,6 +84,16 @@ export type Product = {
   hsn?: string | undefined;
   /** Code from Admin → Product Codes, e.g. RS01. Separate from the SKU, which is what Zoho matches items by. */
   productCode?: string | undefined;
+  /**
+   * Pre-order units on sale at the shopper's godown (14 Nov 2026, src/lib/preorder.ts): goods ordered from the supplier,
+   * not at the godown yet. stock stays the ready units; incomingBy is when they should arrive (YYYY-MM-DD), and
+   * incomingGodown the godown's name for the "collect at" line.
+   */
+  incoming?: number | undefined;
+  incomingBy?: string | null | undefined;
+  /** The arriving units by date, earliest first (branch_stock.incoming_detail): a line's own date is where they run out. */
+  incomingDetail?: { by: string; qty: number }[] | undefined;
+  incomingGodown?: string | undefined;
 };
 
 /* ---------- trade-rate pricing (QTL, kg, litre) ---------- */
@@ -216,12 +226,17 @@ export function getMaxPurchaseQuantity(product: Pick<Product, "maxPurchaseQuanti
   return Number.isSafeInteger(limit) && limit >= 1 ? limit : DEFAULT_MAX_PURCHASE_QUANTITY;
 }
 
+/** Ready units plus pre-order units on sale (ready first), less the reserved, never more than one order may take. */
 export function getAvailablePurchaseQuantity(
-  product: Pick<Product, "stock" | "reserved" | "maxPurchaseQuantity">,
+  product: Pick<Product, "stock" | "reserved" | "maxPurchaseQuantity"> & { incoming?: number | undefined },
 ) {
-  const availableStock = Math.max(0, Math.floor((Number(product.stock) || 0) - (Number(product.reserved) || 0)));
+  const availableStock = Math.max(0, Math.floor((Number(product.stock) || 0) + (Number(product.incoming) || 0) - (Number(product.reserved) || 0)));
   return Math.min(availableStock, getMaxPurchaseQuantity(product));
 }
+
+/** Ready units only (in the godown now, less the reserved): what can be collected without waiting. */
+export const readyStockOf = (product: Pick<Product, "stock" | "reserved">) =>
+  Math.max(0, Math.floor((Number(product.stock) || 0) - (Number(product.reserved) || 0)));
 
 export function getProductImageFallback(category: string | null | undefined, productName = "") {
   const searchable = `${category ?? ""} ${productName}`.toLowerCase();

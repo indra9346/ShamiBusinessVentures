@@ -46,7 +46,7 @@ export const defaultPickupSettings: PickupSettings = {
       name: "Grain Bazar Challakere Godown",
       address: "Challakere, Chitradurga district, Karnataka",
       mapUrl: "",
-      instructions: "Bring your order number. Collect during working hours.",
+      instructions: "Show the delivery QR on your invoice at the counter. Collect during working hours.",
       phone: "",
       pincodes: CHALLAKERE_TALUK_PINCODES,
       zohoLocationId: "",
