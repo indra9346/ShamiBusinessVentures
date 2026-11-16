@@ -151,7 +151,7 @@ export function PartnerOrdersToConfirm() {
           <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />Refresh
         </button>
       )}>
-      <p className="mb-3 text-xs text-slate">Paid orders of your godown wait here for you to confirm them, as our office does. A payment is approved first, by you under Customer payments or by our office. Open an order's invoice here or under Customer invoices to view, print or download it.</p>
+      <p className="mb-3 text-xs text-slate">Paid orders of your godown wait here for you to confirm them, as our office does. A payment is approved first, by our office or, when our office allows it, by you under Customer payments. Open an order's invoice here or under Customer invoices to view, print or download it.</p>
       {failed ? <p className="text-sm text-danger">{failed}</p>
         : !rows ? <p className="flex items-center gap-2 text-sm text-slate"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</p>
         : !rows.length ? <p className="text-sm text-slate">No orders are waiting to be confirmed.</p>

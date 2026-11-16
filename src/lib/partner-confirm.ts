@@ -43,7 +43,7 @@ export const PARTNER_CONFIRM_WORDS: Record<PartnerConfirmState, string> = {
   needs_payment: "Waiting for the full payment. Our office confirms the rest of the payment; then you can confirm it here.",
   refunded: "The payment was refunded, so it cannot be confirmed.",
   void_in_zoho: "Void in Zoho. Our office decides what happens to it.",
-  checkout: "Not paid yet. Approve the customer's UTR under Customer payments, or our office confirms it.",
+  checkout: "Not paid yet. Approve the customer's UTR under Customer payments if our office allows it, or our office confirms it.",
   closed: "Cancelled. Nothing to confirm.",
 };
 

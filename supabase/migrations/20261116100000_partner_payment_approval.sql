@@ -8,7 +8,9 @@
 --     UTR sent for it, admin_place_ended_checkout. Every check those make for an admin applies unchanged (the full amount,
 --     the same UTR never paying twice, refunded money, the bank alert's amount, stock still there for an ended checkout).
 --   * Only to approve, never to reject: rejecting a UTR stays with our office.
---   * Only the UTR already sent on the order, never one typed at approval; only orders of the partner's own godown.
+--   * Only the UTR already sent on the order by the customer (or our office), never one typed at approval or sent by the
+--     partner, and never the partner's own order: a second person always checks what a partner entered. Only orders of
+--     the partner's own godown, and an ended checkout only within the 15 days the partner's list shows it.
 --   * Our office can switch it off (Admin > UPI & Bank Payments): settings.partner_payment_approval, on from today.
 --   * Every approval is on record: the UTR row says "Approved by channel partner <name> (<godown>) after checking
 --     <where>", Approved by shows the partner, the order history has a row with the partner, and every admin gets a
@@ -119,6 +121,12 @@ BEGIN
   SELECT * INTO target FROM public.orders WHERE order_no = _order_no FOR UPDATE;
   IF NOT FOUND THEN RAISE EXCEPTION 'Order not found'; END IF;
   IF by_partner AND target.branch_id IS DISTINCT FROM acting.branch_id THEN RAISE EXCEPTION 'This is not an order of your godown'; END IF;
+  -- A partner only ever pays a waiting checkout in full, with the UTR sent for it (review_upi_utr, or Place again after
+  -- it took the checkout back to waiting).
+  IF by_partner AND (target.order_status <> 'Awaiting Payment' OR round(_amount, 2) <> target.total - target.paid_amount
+      OR NOT EXISTS (SELECT 1 FROM public.upi_payment_submissions WHERE order_id = target.id AND status = 'submitted' AND private.same_utr(utr, reference))) THEN
+    RAISE EXCEPTION 'A channel partner approves only the full amount of a checkout, with the UTR sent for it';
+  END IF;
   IF target.order_status = 'Cancelled' THEN RAISE EXCEPTION 'Cancelled orders cannot receive payment'; END IF;
   -- Its stock went back on sale and it can never be reopened: money recorded here would pay for nothing.
   IF target.order_status = 'Payment Expired' THEN RAISE EXCEPTION 'This checkout has ended. Place the order again, then record the payment on the new order.'; END IF;
@@ -442,7 +450,7 @@ BEGIN
   END IF;
   IF o.order_status = 'Cancelled' THEN RAISE EXCEPTION 'This order is cancelled, so there is nothing to confirm'; END IF;
   IF o.order_status IN ('Awaiting Payment', 'Payment Expired') THEN
-    RAISE EXCEPTION 'This checkout is not a paid order yet. Approve the customer''s UTR under Customer payments, or our office confirms it; the order then shows here to confirm';
+    RAISE EXCEPTION 'This checkout is not a paid order yet. Approve the customer''s UTR under Customer payments if our office allows it, or our office confirms it; the order then shows here to confirm';
   END IF;
   IF o.order_status NOT IN ('Placed', 'Payment Confirmed') THEN
     RAISE EXCEPTION 'This order cannot be confirmed here (it is %)', o.order_status;
@@ -491,7 +499,10 @@ BEGIN
     s.utr, s.status, COALESCE(s.late, false), s.sent_by_role,
     -- Added 16 Nov 2026: what the UTR is for and when it came, and whether this partner may approve it now.
     s.amount, s.submitted_at, COALESCE(o.paid_amount, 0),
-    COALESCE(approving AND s.status = 'submitted', false)
+    COALESCE(approving AND s.status = 'submitted'
+      AND COALESCE(s.sent_by_role, '') <> 'partner' AND s.sent_by IS DISTINCT FROM auth.uid() AND o.user_id IS DISTINCT FROM auth.uid()
+      AND (o.order_status <> 'Awaiting Payment' OR s.amount = o.total - COALESCE(o.paid_amount, 0))
+      AND (o.order_status <> 'Payment Expired' OR o.updated_at > now() - interval '15 days'), false)
   FROM public.orders o
   LEFT JOIN public.upi_payment_submissions s ON s.order_id = o.id
   WHERE o.branch_id = branch
@@ -525,6 +536,7 @@ DECLARE
   note text;
   amount numeric;
   placed jsonb;
+  failed text;
 BEGIN
   SELECT * INTO me FROM public.channel_partners WHERE user_id = auth.uid() AND status = 'active' AND branch_id IS NOT NULL;
   IF auth.uid() IS NULL OR NOT FOUND THEN RAISE EXCEPTION 'Only an active channel partner can approve payments here'; END IF;
@@ -534,11 +546,11 @@ BEGIN
   checked := CASE btrim(COALESCE(_checked, ''))
     WHEN 'bank_sms' THEN 'the bank''s SMS or alert'
     WHEN 'bank_statement' THEN 'the bank statement or passbook'
-    WHEN 'upi_app' THEN 'the UPI app''s payment history'
+    WHEN 'upi_app' THEN 'the business UPI app''s received payments'
   END;
   IF checked IS NULL THEN RAISE EXCEPTION 'Choose where you saw this payment'; END IF;
-  -- Read here, not locked: review_upi_utr and admin_place_ended_checkout lock the UTR, its row and the order in the same
-  -- order as the bank alert does, and check everything again.
+  -- Read here, not locked: review_upi_utr and admin_place_ended_checkout lock what they change, in the same order as
+  -- when our office presses Confirm or Place again, and check everything again.
   SELECT * INTO o FROM public.orders WHERE order_no = btrim(COALESCE(_order_no, ''));
   IF NOT FOUND OR o.branch_id IS DISTINCT FROM me.branch_id THEN RAISE EXCEPTION 'This is not an order of your godown'; END IF;
   SELECT * INTO s FROM public.upi_payment_submissions WHERE order_id = o.id;
@@ -546,20 +558,49 @@ BEGIN
   IF _expected_utr IS NULL OR upper(btrim(_expected_utr)) <> s.utr THEN
     RAISE EXCEPTION 'The UTR for this order is now %. Check the payment again.', s.utr;
   END IF;
+  -- A second person checks what a partner entered: a UTR the partner sent, or the partner's own order, is our office's.
+  IF COALESCE(s.sent_by_role, '') = 'partner' OR s.sent_by IS NOT DISTINCT FROM auth.uid() THEN
+    RAISE EXCEPTION 'You sent this UTR yourself, so our office checks it';
+  END IF;
+  IF o.user_id IS NOT DISTINCT FROM auth.uid() THEN RAISE EXCEPTION 'This is your own order, so our office checks its payment'; END IF;
   SELECT NULLIF(btrim(name), '') INTO godown FROM public.branches WHERE id = me.branch_id;
   godown := COALESCE(godown, me.branch_id);
   note := left(format('Approved by channel partner %s (%s) after checking %s', me.name, godown, checked), 200);
   PERFORM set_config('app.partner_payment', me.id::text, true);
-  IF o.order_status = 'Awaiting Payment' THEN
-    amount := s.amount;
-    PERFORM public.review_upi_utr(o.order_no, 'confirmed', note, s.utr);
-  ELSIF o.order_status = 'Payment Expired' THEN
-    IF o.updated_at <= now() - interval '15 days' THEN RAISE EXCEPTION 'This checkout ended more than 15 days ago. Our office checks it.'; END IF;
-    placed := public.admin_place_ended_checkout(o.order_no, NULL, NULL, note);
-    amount := (placed->>'amount')::numeric;
-  ELSE
-    RAISE EXCEPTION 'This order is not waiting for payment';
-  END IF;
+  BEGIN
+    IF o.order_status = 'Awaiting Payment' THEN
+      amount := s.amount;
+      PERFORM public.review_upi_utr(o.order_no, 'confirmed', note, s.utr);
+    ELSIF o.order_status = 'Payment Expired' THEN
+      -- The same 15 days as the partner's list and the customer's late UTR (the order's last change).
+      IF o.updated_at <= now() - interval '15 days' THEN
+        RAISE EXCEPTION 'This checkout ended more than 15 days ago. Our office checks it.';
+      END IF;
+      -- Exactly our office's Place again, which locks the order and then the UTR, so a partner and the office pressing it
+      -- at once simply queue. The UTR the partner looked at goes in: Place again refuses it if the order's UTR has changed.
+      placed := public.admin_place_ended_checkout(o.order_no, s.utr, NULL, note);
+      amount := (placed->>'amount')::numeric;
+    ELSE
+      RAISE EXCEPTION 'This order is not waiting for payment';
+    END IF;
+  EXCEPTION WHEN raise_exception THEN
+    GET STACKED DIAGNOSTICS failed = MESSAGE_TEXT;
+    -- Our office's own words ask for office-only steps (reject, refund, record a part payment, add stock): the partner
+    -- is told to leave it for our office. Everything else is said as it is.
+    IF failed LIKE 'The bank alert for UTR % shows Rs %' THEN
+      RAISE EXCEPTION 'The bank shows a different amount for UTR %. Leave this payment for our office.', s.utr;
+    ELSIF failed LIKE 'Only % left of % at its godown%' OR failed LIKE 'Only % ready now%' THEN
+      RAISE EXCEPTION 'Not enough stock is left at your godown to place this order again. Leave it for our office.';
+    ELSIF failed LIKE 'The customer sent this UTR on order %' THEN
+      RAISE EXCEPTION 'This UTR was also sent on another order. Leave this payment for our office.';
+    ELSIF failed LIKE 'This UTR was sent for an order of Rs % that lapsed%' OR failed LIKE 'This transfer reference has already been recorded on this order.%' THEN
+      RAISE EXCEPTION 'This UTR was sent for another checkout. Leave this payment for our office.';
+    END IF;
+    RAISE EXCEPTION '%', failed;
+  WHEN deadlock_detected THEN
+    -- Our office decided on this same UTR at the same moment: nothing was changed.
+    RAISE EXCEPTION 'Our office is working on this payment right now. Check the list again in a moment.';
+  END;
   PERFORM set_config('app.partner_payment', '', true);
   SELECT * INTO after FROM public.orders WHERE id = o.id;
   -- Who approved it stays on the order's history.

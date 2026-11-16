@@ -312,7 +312,7 @@ export type PartnerPaymentCheck = "bank_sms" | "bank_statement" | "upi_app";
 export const PARTNER_PAYMENT_CHECKS: { value: PartnerPaymentCheck; label: string }[] = [
   { value: "bank_sms", label: "The bank's SMS or alert" },
   { value: "bank_statement", label: "The bank statement or passbook" },
-  { value: "upi_app", label: "The UPI app's payment history" },
+  { value: "upi_app", label: "The business UPI app's received payments" },
 ];
 
 /**

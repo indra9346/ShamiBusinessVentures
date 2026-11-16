@@ -17,9 +17,12 @@ const when = (iso: string) => new Date(iso).toLocaleString("en-IN", { day: "nume
 /** Who sent the UTR, as the partner reads it. */
 const SENT_BY: Record<string, string> = { customer: "Sent by the customer", partner: "Sent by you", admin: "Sent by our office" };
 
-/** What the UTR is for: its own amount, else what is still to pay. */
-export const partnerUtrAmount = (row: Pick<PartnerCheckout, "utrAmount" | "total" | "paidAmount">) =>
-  row.utrAmount ?? Math.max(0, row.total - row.paidAmount);
+/**
+ * What approving records: for a checkout still waiting, the UTR's own amount (the database offers Approve only when that is
+ * what is left to pay); for an ended one, what is left to pay, as Place again records it.
+ */
+export const partnerUtrAmount = (row: Pick<PartnerCheckout, "status" | "utrAmount" | "total" | "paidAmount">) =>
+  row.status === "Payment Expired" ? Math.max(0, row.total - row.paidAmount) : row.utrAmount ?? Math.max(0, row.total - row.paidAmount);
 
 /**
  * Channel partner (12 Nov 2026, owner): their own godown's checkouts waiting for payment, or ended in the last 15 days.
@@ -27,7 +30,8 @@ export const partnerUtrAmount = (row: Pick<PartnerCheckout, "utrAmount" | "total
  * Changed 16 Nov 2026 (owner: "Give option to approve payments of customers in their login for channel partners respective
  * to their Godown orders only"): once the partner has seen the money arrive, they approve the UTR here
  * (partner_approve_payment), with the same checks as our office's Confirm. They never reject one: that stays with our
- * office, which is told of every approval. When our office has switched approval off, the UTR waits for our office as before.
+ * office, which is told of every approval. A UTR the partner sent themselves, or one on the partner's own order, always
+ * waits for our office (a second person checks it), as every UTR does when our office has switched approval off.
  */
 export function PartnerPaymentsPanel() {
   const [rows, setRows] = useState<PartnerCheckout[] | null>(null);
@@ -64,7 +68,7 @@ export function PartnerPaymentsPanel() {
 
   return (
     <Panel title="Customer payments">
-      <p className="mb-3 text-xs text-slate">Checkouts at your godown that are waiting for payment, or ended without it in the last 15 days. If a customer paid and gives you the UTR, send it here. Once you have seen the money arrive in the bank account, approve it here; otherwise our office checks it and places the order.</p>
+      <p className="mb-3 text-xs text-slate">Checkouts at your godown that are waiting for payment, or ended without it in the last 15 days. If a customer paid and gives you the UTR, send it here. When our office allows it, you can approve a UTR the customer sent once you have seen the money arrive in the bank account; otherwise our office checks it and places the order.</p>
       {failed ? <p className="text-sm text-danger">{failed}</p>
         : !rows ? <p className="flex items-center gap-2 text-sm text-slate"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</p>
         : !rows.length ? <p className="text-sm text-slate">Nothing is waiting for payment.</p>

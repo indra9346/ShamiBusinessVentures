@@ -46,7 +46,7 @@ test("every state has plain words, and only ready ones offer Confirm", () => {
   for (const s of states) assert.ok(PARTNER_CONFIRM_WORDS[s].trim().length > 5, s);
   assert.match(PARTNER_CONFIRM_WORDS.needs_payment, /Our office confirms the rest of the payment/);
   // 16 Nov 2026: a checkout's UTR can be approved by the partner under Customer payments.
-  assert.match(PARTNER_CONFIRM_WORDS.checkout, /Approve the customer's UTR under Customer payments, or our office confirms it/);
+  assert.match(PARTNER_CONFIRM_WORDS.checkout, /Approve the customer's UTR under Customer payments if our office allows it, or our office confirms it/);
   assert.match(confirmQuestion("CLK-1", "Placed"), /^Confirm order CLK-1\? .*tax invoice is made in Zoho\.$/);
   // A Payment Confirmed order already has its Zoho tax invoice: the question does not promise one.
   assert.match(confirmQuestion("CLK-1", "Payment Confirmed"), /^Confirm order CLK-1\? .*moves to Confirmed\.$/);

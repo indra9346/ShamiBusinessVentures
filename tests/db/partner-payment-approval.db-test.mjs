@@ -96,6 +96,9 @@ const EXP = await order("TEST-PA-EXP", "Payment Expired", { payment_hold_outcome
 const OLD = await order("TEST-PA-OLD", "Payment Expired", { payment_hold_outcome: "expired", updated_at: ago(20) });
 const NOSTOCK = await order("TEST-PA-NOSTOCK", "Payment Expired", { payment_hold_outcome: "expired", updated_at: ago(1) }, 1000);
 const DUP = await order("TEST-PA-DUP", "Awaiting Payment", { payment_hold_until: soon });
+const OWN = await order("TEST-PA-OWN", "Awaiting Payment", { payment_hold_until: soon, user_id: P_CLK });
+const CHANGED = await order("TEST-PA-CHANGED", "Awaiting Payment", { payment_hold_until: soon });
+const TX = await order("TEST-PA-TX", "Awaiting Payment", { payment_hold_until: soon });
 const PAID = await order("TEST-PA-PAID", "Payment Confirmed", { paid_amount: 100, payment_status: "Paid" });
 await q("ALTER TABLE public.order_items ENABLE TRIGGER USER");
 await q("ALTER TABLE public.orders ENABLE TRIGGER USER");
@@ -150,29 +153,57 @@ let told = await notices(WAIT, "Payment approved by channel partner");
 assert.equal(told.length, 1); assert.equal(told[0].recipient_role, "admin");
 assert.match(told[0].message, /^Partner CLK \(channel partner, Challakere Godown\) approved UTR 712345678901 for ₹100\.00 on order TEST-PA-WAIT after checking the bank's SMS or alert\. Check it in the bank account\.$/);
 // The flags do not outlive the step.
-const flags = (await q("SELECT COALESCE(current_setting('app.partner_payment', true), '') AS p, COALESCE(current_setting('app.payment_workflow', true), '') AS w"))[0];
-assert.equal(flags.p, ""); assert.notEqual(flags.w, "on");
 await refuses(() => approve(P_CLK, WAIT.no, "712345678901"), /No UTR is waiting for a check/, "twice");
 assert.ok(!(await as(P_CLK, "authenticated", () => q("SELECT order_no FROM public.partner_payment_checkouts()"))).some((x) => x.order_no === WAIT.no), "a paid order leaves the list");
 
-// ---- the partner sends a UTR and approves it; another godown's partner cannot; neither can a customer or a suspended partner
+// ---- a UTR the partner sent, or the partner's own order, waits for our office: a second person checks it (review, 16 Nov)
 await send(P_CLK, BYPARTNER.no, "722345678901");
-await refuses(() => approve(P_HBL, BYPARTNER.no, "722345678901"), /not an order of your godown/, "another godown's partner");
-await refuses(() => approve(CUSTOMER, BYPARTNER.no, "722345678901"), /Only an active channel partner/, "the customer");
-await refuses(() => approve(P_OLD, BYPARTNER.no, "722345678901"), /Only an active channel partner/, "a suspended partner");
-await refuses(() => as(null, "anon", () => q("SELECT public.partner_approve_payment($1,$2,'bank_sms')", [BYPARTNER.no, "722345678901"])), /permission denied/, "anon");
-r = await approve(P_CLK, BYPARTNER.no, "722345678901", "upi_app");
-assert.equal(r.status, "Payment Confirmed");
-assert.match((await sub(BYPARTNER)).note, /after checking the UPI app's payment history$/);
+await refuses(() => approve(P_CLK, BYPARTNER.no, "722345678901"), /You sent this UTR yourself, so our office checks it/, "the partner's own UTR");
+assert.equal((await as(P_CLK, "authenticated", () => q("SELECT order_no, can_approve FROM public.partner_payment_checkouts()"))).find((x) => x.order_no === BYPARTNER.no).can_approve, false);
+assert.equal((await status(BYPARTNER)).order_status, "Awaiting Payment");
+await q("INSERT INTO public.upi_payment_submissions (order_id, order_no, user_id, utr, amount, status, sent_by_role) VALUES ($1,$2,$3,'812345678901',100,'submitted','customer')", [OWN.id, OWN.no, P_CLK]);
+await refuses(() => approve(P_CLK, OWN.no, "812345678901"), /This is your own order, so our office checks its payment/, "the partner's own order");
+assert.equal((await as(P_CLK, "authenticated", () => q("SELECT order_no, can_approve FROM public.partner_payment_checkouts()"))).find((x) => x.order_no === OWN.no).can_approve, false);
+const office = await as(ADMIN, "authenticated", () => q("SELECT (public.review_upi_utr($1,'confirmed','Checked against bank SMS','722345678901')).status AS s", [BYPARTNER.no]));
+assert.equal(office[0].s, "confirmed", "our office approves the partner's UTR");
+// Another godown's partner, a customer, a suspended partner and anon cannot approve.
 await send(CUSTOMER, HBL.no, "732345678901");
 await refuses(() => approve(P_CLK, HBL.no, "732345678901"), /not an order of your godown/, "CLK partner, HBL order");
-r = await approve(P_HBL, HBL.no, "732345678901", "bank_statement");
+await refuses(() => approve(CUSTOMER, HBL.no, "732345678901"), /Only an active channel partner/, "the customer");
+await refuses(() => approve(P_OLD, HBL.no, "732345678901"), /Only an active channel partner/, "a suspended partner");
+await refuses(() => as(null, "anon", () => q("SELECT public.partner_approve_payment($1,$2,'bank_sms')", [HBL.no, "732345678901"])), /permission denied/, "anon");
+r = await approve(P_HBL, HBL.no, "732345678901", "upi_app");
 assert.equal(r.status, "Payment Confirmed", "Hubli's partner approves Hubli's order");
+assert.match((await sub(HBL)).note, /after checking the business UPI app's received payments$/);
+
+// ---- the order's total changed after the UTR came: no Approve, and the database refuses it
+await send(CUSTOMER, CHANGED.no, "822345678901");
+await q("ALTER TABLE public.orders DISABLE TRIGGER USER");
+await q("UPDATE public.orders SET total = 120 WHERE id = $1", [CHANGED.id]);
+await q("ALTER TABLE public.orders ENABLE TRIGGER USER");
+assert.equal((await as(P_CLK, "authenticated", () => q("SELECT order_no, can_approve FROM public.partner_payment_checkouts()"))).find((x) => x.order_no === CHANGED.no).can_approve, false);
+await refuses(() => approve(P_CLK, CHANGED.no, "822345678901"), /An unpaid order is placed only when its full amount is paid/, "a changed total");
+
+// ---- the step leaves no flag behind, inside its own transaction
+await send(CUSTOMER, TX.no, "832345678901");
+await db.query("UPDATE auth.cur SET uid = $1", [P_CLK]);
+await db.exec("BEGIN; SET LOCAL ROLE authenticated");
+try {
+  await db.query("SELECT public.partner_approve_payment($1,'832345678901','bank_sms')", [TX.no]);
+  const flags = (await db.query("SELECT COALESCE(current_setting('app.partner_payment', true), '') AS p, COALESCE(current_setting('app.payment_workflow', true), '') AS w")).rows[0];
+  assert.equal(flags.p, "", "the partner flag is cleared");
+  assert.notEqual(flags.w, "on", "the payment flag is put back");
+  // Within the same transaction the partner still cannot reach the office's functions.
+  let message = "";
+  try { await db.query("SAVEPOINT x"); await db.query("SELECT public.review_upi_utr($1,'rejected','x',NULL)", [WAIT.no]); } catch (error) { message = error.message; await db.query("ROLLBACK TO SAVEPOINT x"); }
+  assert.match(message, /Only administrators can confirm UPI payments/);
+} finally { await db.exec("ROLLBACK"); await db.query("UPDATE auth.cur SET uid = NULL"); }
+assert.equal((await status(TX)).order_status, "Awaiting Payment", "rolled back");
 
 // ---- the office's checks still apply: a bank alert showing less money refuses it, and nothing changes
 await send(CUSTOMER, ALERT.no, "742345678901");
 await q("INSERT INTO public.bank_credits (received_at, amount, utr, status, raw) VALUES (now(), 90, '742345678901', 'unmatched', 'TEST alert')");
-await refuses(() => approve(P_CLK, ALERT.no, "742345678901"), /The bank alert for UTR 742345678901 shows Rs 90\.00, not Rs 100\.00/, "bank alert amount");
+await refuses(() => approve(P_CLK, ALERT.no, "742345678901"), /^The bank shows a different amount for UTR 742345678901\. Leave this payment for our office\.$/, "bank alert amount, in the partner's words");
 assert.equal((await status(ALERT)).order_status, "Awaiting Payment", "a refusal changes nothing");
 assert.equal((await sub(ALERT)).status, "submitted");
 assert.equal((await notices(ALERT, "Payment approved by channel partner")).length, 0, "and tells nobody");
@@ -222,6 +253,9 @@ await refuses(() => as(ADMIN, "authenticated", () => q("SELECT public.admin_set_
 // ---- a UTR that paid another order never pays twice
 await q("INSERT INTO public.upi_payment_submissions (order_id, order_no, user_id, utr, amount, status) VALUES ($1,$2,$3,'899988887777',100,'submitted')", [DUP.id, DUP.no, CUSTOMER]);
 await refuses(() => approve(P_CLK, DUP.no, "899988887777"), /already been recorded on order TEST-PA-PAID/, "a UTR that paid another order");
+// The defence in depth: with the flag, the office's payment function pays only a waiting checkout in full with its UTR.
+await refuses(() => inTx(P_CLK, CLK_ID, "SELECT public.admin_confirm_manual_payment($1,50,'899988887777')", [DUP.no]), /A channel partner approves only the full amount of a checkout, with the UTR sent for it|already been recorded/, "a part payment");
+await refuses(() => inTx(P_CLK, CLK_ID, "SELECT public.admin_confirm_manual_payment($1,100,'512345678901')", [DUP.no]), /A channel partner approves only the full amount of a checkout, with the UTR sent for it/, "a UTR not sent on the order");
 assert.equal((await status(DUP)).order_status, "Awaiting Payment");
 
 // ---- a late UTR on a checkout that ended: the partner approves it within 15 days, stock is taken again
@@ -251,7 +285,7 @@ await q("ALTER TABLE public.upi_payment_submissions ENABLE TRIGGER USER");
 await refuses(() => approve(P_CLK, OLD.no, "792345678901"), /more than 15 days ago/, "an old checkout");
 await send(CUSTOMER, NOSTOCK.no, "802345678901");
 before = await stock();
-await refuses(() => approve(P_CLK, NOSTOCK.no, "802345678901"), /Only 48 left of TEST Sugar/, "not enough stock");
+await refuses(() => approve(P_CLK, NOSTOCK.no, "802345678901"), /^Not enough stock is left at your godown to place this order again\. Leave it for our office\.$/, "not enough stock, in the partner's words");
 assert.equal((await status(NOSTOCK)).order_status, "Payment Expired");
 assert.deepEqual(await stock(), before, "and takes no stock");
 await refuses(() => inTx(P_CLK, CLK_ID, "SELECT public.admin_place_ended_checkout($1, 'HDFCN52026111612345', 'NEFT', 'x')", [NOSTOCK.no]), /Approve only the UTR sent for this order/, "a typed UTR");
