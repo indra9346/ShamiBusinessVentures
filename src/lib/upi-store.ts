@@ -55,12 +55,20 @@ type SubmissionRow = {
   reviewed_by?: string | null;
   follow_up?: string | null; refunded_at?: string | null; refunded_by?: string | null; refunded_from?: string | null;
 };
-const fromRow = (row: SubmissionRow, names: Map<string, string> = new Map()): UpiSubmission => ({
+/** A UTR approved by the godown's channel partner (16 Nov 2026): partner_approve_payment writes this into its note. */
+export const PARTNER_APPROVAL_NOTE = "Approved by channel partner ";
+const approvedByPartner = (note: string | null | undefined) => (note ?? "").includes(PARTNER_APPROVAL_NOTE);
+const reviewerName = (row: SubmissionRow, names: Map<string, string>, partners: Map<string, string>) => {
+  const id = row.reviewed_by ?? "";
+  if (approvedByPartner(row.note) && partners.get(id)) return `${partners.get(id)} (channel partner)`;
+  return names.get(id) || (approvedByPartner(row.note) ? "A channel partner" : "Unknown admin");
+};
+const fromRow = (row: SubmissionRow, names: Map<string, string> = new Map(), partners: Map<string, string> = new Map()): UpiSubmission => ({
   orderNo: row.order_no, amount: Number(row.amount), utr: row.utr, customer: row.customer_name, submittedAt: row.submitted_at,
   status: row.status as UpiSubmission["status"], ...(row.reviewed_at ? { reviewedAt: row.reviewed_at } : {}), ...(row.note ? { note: row.note } : {}),
   ...(row.late ? { late: true } : {}),
   ...(row.sent_by_role === "partner" || row.sent_by_role === "admin" ? { sentByRole: row.sent_by_role } : {}),
-  ...(row.reviewed_by ? { reviewedById: row.reviewed_by, reviewedBy: names.get(row.reviewed_by) || "Unknown admin" } : {}),
+  ...(row.reviewed_by ? { reviewedById: row.reviewed_by, reviewedBy: reviewerName(row, names, partners) } : {}),
   ...(row.follow_up ? { followUp: row.follow_up } : {}),
   ...(row.refunded_at ? { refundedAt: row.refunded_at } : {}),
   ...(row.refunded_by ? { refundedById: row.refunded_by, refundedBy: names.get(row.refunded_by) || "Unknown admin" } : {}),
@@ -169,7 +177,11 @@ export async function loadUpiSubmissions(): Promise<UpiSubmission[]> {
   const ids = [...new Set((data ?? []).flatMap((row) => [row.reviewed_by, row.refunded_by]).filter((id): id is string => Boolean(id)))];
   const { data: people } = ids.length ? await supabase.from("profiles").select("id,full_name").in("id", ids) : { data: [] };
   const names = new Map((people ?? []).map((person) => [person.id, person.full_name ?? ""] as const));
-  return (data ?? []).map((row) => fromRow(row, names));
+  // Approvals by a godown's channel partner (16 Nov 2026) show the partner's name from their partner record.
+  const partnerIds = [...new Set((data ?? []).filter((row) => approvedByPartner(row.note)).map((row) => row.reviewed_by).filter((id): id is string => Boolean(id)))];
+  const { data: partnerRows } = partnerIds.length ? await supabase.from("channel_partners").select("user_id,name").in("user_id", partnerIds) : { data: [] };
+  const partners = new Map((partnerRows ?? []).filter((p) => p.user_id).map((p) => [p.user_id as string, p.name ?? ""] as const));
+  return (data ?? []).map((row) => fromRow(row, names, partners));
 }
 
 export async function submitUpiPayment(submission: { orderNo: string; amount: number; utr: string; customer: string }) {
@@ -275,6 +287,8 @@ export async function placeEndedCheckout(orderNo: string, utr: string | null, me
 export type PartnerCheckout = {
   orderNo: string; status: string; total: number; method: string; placedAt: string; holdUntil: string | null;
   customer: string; items: string; utr: string | null; utrStatus: string | null; utrLate: boolean; utrSentBy: string | null;
+  /** Added 16 Nov 2026: the UTR's amount and when it was sent, what is paid already, and whether this partner may approve it now. */
+  utrAmount: number | null; utrSentAt: string | null; paidAmount: number; canApprove: boolean;
 };
 /** A channel partner: their godown's checkouts waiting for payment, or ended in the last 15 days. */
 export async function loadPartnerCheckouts(): Promise<PartnerCheckout[]> {
@@ -286,7 +300,53 @@ export async function loadPartnerCheckouts(): Promise<PartnerCheckout[]> {
     placedAt: String(row["placed_at"]), holdUntil: (row["hold_until"] as string | null) ?? null, customer: String(row["customer"] ?? ""),
     items: String(row["items"] ?? ""), utr: (row["utr"] as string | null) ?? null, utrStatus: (row["utr_status"] as string | null) ?? null,
     utrLate: Boolean(row["utr_late"]), utrSentBy: (row["utr_sent_by"] as string | null) ?? null,
+    utrAmount: row["utr_amount"] === null || row["utr_amount"] === undefined ? null : Number(row["utr_amount"]),
+    utrSentAt: (row["utr_sent_at"] as string | null) ?? null, paidAmount: Number(row["paid_amount"] ?? 0),
+    // Before the database change of 16 Nov 2026 the list has no can_approve: nothing to approve, as before.
+    canApprove: row["can_approve"] === true,
   }));
+}
+
+/** Where the partner saw the money (partner_approve_payment's _checked). */
+export type PartnerPaymentCheck = "bank_sms" | "bank_statement" | "upi_app";
+export const PARTNER_PAYMENT_CHECKS: { value: PartnerPaymentCheck; label: string }[] = [
+  { value: "bank_sms", label: "The bank's SMS or alert" },
+  { value: "bank_statement", label: "The bank statement or passbook" },
+  { value: "upi_app", label: "The UPI app's payment history" },
+];
+
+/**
+ * The godown's channel partner approves the UTR they looked at (owner, 16 Nov 2026). The database checks everything an
+ * admin's Confirm checks, for an order of the partner's own godown only, and tells our office.
+ */
+export async function approvePartnerPayment(orderNo: string, utr: string, checked: PartnerPaymentCheck) {
+  const { data, error } = await supabase.rpc("partner_approve_payment", { _order_no: orderNo, _expected_utr: utr, _checked: checked });
+  if (error) throw new Error(error.message);
+  changed();
+  const result = (data ?? {}) as { order_no?: string; utr?: string; amount?: number | string; status?: string };
+  return { orderNo: result.order_no ?? orderNo, utr: result.utr ?? utr, amount: Number(result.amount ?? 0), status: result.status ?? "" };
+}
+
+export const PARTNER_PAYMENT_APPROVAL_KEY = "partner_payment_approval";
+export type PartnerPaymentApproval = { enabled: boolean; changedAt: string | null; changedBy: string | null };
+/** Admin: whether channel partners may approve their godown's payments (off when the setting is missing). */
+export async function loadPartnerPaymentApproval(): Promise<PartnerPaymentApproval> {
+  if (STATIC_DATA_MODE) return { enabled: true, changedAt: null, changedBy: null };
+  const { data, error } = await supabase.from("settings").select("value").eq("key", PARTNER_PAYMENT_APPROVAL_KEY).maybeSingle();
+  if (error) throw new Error(error.message);
+  const value = (data?.value ?? {}) as { enabled?: unknown; changedAt?: unknown; changedBy?: unknown };
+  return {
+    enabled: value.enabled === true,
+    changedAt: typeof value.changedAt === "string" ? value.changedAt : null,
+    changedBy: typeof value.changedBy === "string" ? value.changedBy : null,
+  };
+}
+/** Admin: switches payment approval by channel partners on or off. */
+export async function setPartnerPaymentApproval(enabled: boolean): Promise<PartnerPaymentApproval> {
+  const { data, error } = await supabase.rpc("admin_set_partner_payment_approval", { _enabled: enabled });
+  if (error) throw new Error(error.message);
+  const value = (data ?? {}) as { enabled?: unknown; changedAt?: unknown; changedBy?: unknown };
+  return { enabled: value.enabled === true, changedAt: typeof value.changedAt === "string" ? value.changedAt : null, changedBy: typeof value.changedBy === "string" ? value.changedBy : null };
 }
 
 /** Tell every open payments list to read again (after an order with UTRs was deleted elsewhere). */

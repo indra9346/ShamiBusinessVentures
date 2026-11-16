@@ -23,6 +23,7 @@ import { CustomersPayingNow } from "@/components/panel/CustomersPayingNow";
 import { DeleteUtrDialog } from "@/components/panel/DeleteUtrDialog";
 import { BulkBar, BulkDeleteDialog, TickBox, useBulkSelection } from "@/components/panel/BulkSelect";
 import { BankStatementPanel } from "@/components/panel/BankStatementPanel";
+import { PartnerPaymentApprovalPanel } from "@/components/panel/PartnerPaymentApprovalPanel";
 import { ResizableTable } from "@/hooks/use-column-resize";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -302,6 +303,9 @@ function AdminUpiPayments() {
       }} />
 
       <BankDetailsPanel />
+
+      {/* 16 Nov 2026: whether godown channel partners may approve their own godown's payments. */}
+      {!STATIC_DATA_MODE && <PartnerPaymentApprovalPanel />}
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_260px]">
         <Panel title="UPI settings">

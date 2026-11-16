@@ -4,8 +4,8 @@
  *
  * The confirm is the admin's "Mark as Confirmed" (the order moves to Accepted, with the same Zoho invoice, notifications
  * and fulfilment updates), done by the database in partner_confirm_order (migration 20261113230000), which checks
- * everything again. Money stays with the office: a partner confirms only an order whose payment the office (or the bank
- * alert) has already settled in full. A checkout waiting for payment, a part-paid, refunded, cancelled or Zoho-void order
+ * everything again. A partner confirms only an order whose payment is already settled in full: by the office, the bank
+ * alert or, since 16 Nov 2026, by the partner approving the customer's UTR under Customer payments (partner_approve_payment). A checkout waiting for payment, a part-paid, refunded, cancelled or Zoho-void order
  * is never the partner's to confirm. These helpers only decide what the partner's page offers and says, in the same order
  * as the database's checks. No app imports: the node tests load it.
  */
@@ -40,10 +40,10 @@ export function partnerConfirmState({ orderStatus, paymentStatus, zohoVoid = fal
 export const PARTNER_CONFIRM_WORDS: Record<PartnerConfirmState, string> = {
   ready: "Paid in full. Confirm the order when you accept it.",
   confirmed: "Confirmed",
-  needs_payment: "Waiting for the full payment. Only our office confirms payments; then you can confirm it here.",
+  needs_payment: "Waiting for the full payment. Our office confirms the rest of the payment; then you can confirm it here.",
   refunded: "The payment was refunded, so it cannot be confirmed.",
   void_in_zoho: "Void in Zoho. Our office decides what happens to it.",
-  checkout: "Not paid yet. Our office confirms the payment first.",
+  checkout: "Not paid yet. Approve the customer's UTR under Customer payments, or our office confirms it.",
   closed: "Cancelled. Nothing to confirm.",
 };
 
