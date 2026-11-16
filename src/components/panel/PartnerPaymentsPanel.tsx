@@ -30,8 +30,9 @@ export const partnerUtrAmount = (row: Pick<PartnerCheckout, "status" | "utrAmoun
  * Changed 16 Nov 2026 (owner: "Give option to approve payments of customers in their login for channel partners respective
  * to their Godown orders only"): once the partner has seen the money arrive, they approve the UTR here
  * (partner_approve_payment), with the same checks as our office's Confirm. They never reject one: that stays with our
- * office, which is told of every approval. A UTR the partner sent themselves, or one on the partner's own order, always
- * waits for our office (a second person checks it), as every UTR does when our office has switched approval off.
+ * office, which is told of every approval. Changed again 16 Nov 2026 (owner: "Channel partner should be able to approve
+ * the order just like admin"): also a UTR the partner sent for the customer. Only the partner's own order waits for our
+ * office, as every UTR does when our office has switched approval off.
  */
 export function PartnerPaymentsPanel() {
   const [rows, setRows] = useState<PartnerCheckout[] | null>(null);
@@ -68,7 +69,7 @@ export function PartnerPaymentsPanel() {
 
   return (
     <Panel title="Customer payments">
-      <p className="mb-3 text-xs text-slate">Checkouts at your godown that are waiting for payment, or ended without it in the last 15 days. If a customer paid and gives you the UTR, send it here. When our office allows it, you can approve a UTR the customer sent once you have seen the money arrive in the bank account; otherwise our office checks it and places the order.</p>
+      <p className="mb-3 text-xs text-slate">Checkouts at your godown that are waiting for payment, or ended without it in the last 15 days. If a customer paid and gives you the UTR, send it here. When our office allows it, you approve the UTR yourself once you have seen the money arrive in the bank account, as our office does, also a UTR you sent for the customer; otherwise our office checks it and places the order.</p>
       {failed ? <p className="text-sm text-danger">{failed}</p>
         : !rows ? <p className="flex items-center gap-2 text-sm text-slate"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</p>
         : !rows.length ? <p className="text-sm text-slate">Nothing is waiting for payment.</p>

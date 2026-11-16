@@ -156,16 +156,18 @@ assert.match(told[0].message, /^Partner CLK \(channel partner, Challakere Godown
 await refuses(() => approve(P_CLK, WAIT.no, "712345678901"), /No UTR is waiting for a check/, "twice");
 assert.ok(!(await as(P_CLK, "authenticated", () => q("SELECT order_no FROM public.partner_payment_checkouts()"))).some((x) => x.order_no === WAIT.no), "a paid order leaves the list");
 
-// ---- a UTR the partner sent, or the partner's own order, waits for our office: a second person checks it (review, 16 Nov)
+// ---- a UTR the partner sent for the customer: the partner approves it, as our office does (owner, 16 Nov 2026 afternoon)
 await send(P_CLK, BYPARTNER.no, "722345678901");
-await refuses(() => approve(P_CLK, BYPARTNER.no, "722345678901"), /You sent this UTR yourself, so our office checks it/, "the partner's own UTR");
-assert.equal((await as(P_CLK, "authenticated", () => q("SELECT order_no, can_approve FROM public.partner_payment_checkouts()"))).find((x) => x.order_no === BYPARTNER.no).can_approve, false);
-assert.equal((await status(BYPARTNER)).order_status, "Awaiting Payment");
+assert.equal((await as(P_CLK, "authenticated", () => q("SELECT order_no, can_approve FROM public.partner_payment_checkouts()"))).find((x) => x.order_no === BYPARTNER.no).can_approve, true);
+await refuses(() => approve(P_HBL, BYPARTNER.no, "722345678901"), /not an order of your godown/, "another godown's partner, a UTR sent by CLK's partner");
+r = await approve(P_CLK, BYPARTNER.no, "722345678901", "bank_statement");
+assert.equal(r.status, "Payment Confirmed", "the partner approves the UTR they sent");
+assert.equal((await status(BYPARTNER)).order_status, "Payment Confirmed");
+assert.match((await sub(BYPARTNER)).note, /after checking the bank statement or passbook$/);
+// The partner's own order still waits for our office.
 await q("INSERT INTO public.upi_payment_submissions (order_id, order_no, user_id, utr, amount, status, sent_by_role) VALUES ($1,$2,$3,'812345678901',100,'submitted','customer')", [OWN.id, OWN.no, P_CLK]);
 await refuses(() => approve(P_CLK, OWN.no, "812345678901"), /This is your own order, so our office checks its payment/, "the partner's own order");
 assert.equal((await as(P_CLK, "authenticated", () => q("SELECT order_no, can_approve FROM public.partner_payment_checkouts()"))).find((x) => x.order_no === OWN.no).can_approve, false);
-const office = await as(ADMIN, "authenticated", () => q("SELECT (public.review_upi_utr($1,'confirmed','Checked against bank SMS','722345678901')).status AS s", [BYPARTNER.no]));
-assert.equal(office[0].s, "confirmed", "our office approves the partner's UTR");
 // Another godown's partner, a customer, a suspended partner and anon cannot approve.
 await send(CUSTOMER, HBL.no, "732345678901");
 await refuses(() => approve(P_CLK, HBL.no, "732345678901"), /not an order of your godown/, "CLK partner, HBL order");

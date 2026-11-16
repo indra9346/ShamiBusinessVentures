@@ -90,7 +90,7 @@ test("the partner's words no longer say only our office confirms payments", () =
 
 test("every new text has Kannada", () => {
   const texts = [
-    "Checkouts at your godown that are waiting for payment, or ended without it in the last 15 days. If a customer paid and gives you the UTR, send it here. When our office allows it, you can approve a UTR the customer sent once you have seen the money arrive in the bank account; otherwise our office checks it and places the order.",
+    "Checkouts at your godown that are waiting for payment, or ended without it in the last 15 days. If a customer paid and gives you the UTR, send it here. When our office allows it, you approve the UTR yourself once you have seen the money arrive in the bank account, as our office does, also a UTR you sent for the customer; otherwise our office checks it and places the order.",
     "UTR {0} for {1}", "Sent by the customer", "Sent by you", "Sent by our office", "after the checkout ended",
     "Seen this money arrive? Approve it, or leave it for our office.", "Approve payment", "Approving…", "Approve & place order",
     "Only send a UTR the customer showed you from their UPI app or bank. It is checked against the bank account before the order is placed.",
@@ -135,4 +135,16 @@ test("every new text has Kannada", () => {
   assert.ok(read("src/components/partners/PartnerOrdersToConfirm.tsx").includes(
     "Paid orders of your godown wait here for you to confirm them, as our office does. A payment is approved first, by our office or, when our office allows it, by you under Customer payments. Open an order's invoice here or under Customer invoices to view, print or download it."),
   "the Orders to confirm sentence");
+});
+
+// 16 Nov 2026 afternoon, the owner: "Channel partner should be able to approve the order just like admin".
+test("a partner approves a UTR they sent for the customer, as our office does; their own order still waits", () => {
+  const sql = read("supabase/migrations/20261116160000_partner_approve_own_utr.sql");
+  assert.ok(!sql.includes("You sent this UTR yourself"), "no refusal of a UTR the partner sent");
+  assert.ok(!sql.includes("COALESCE(s.sent_by_role, '') <> 'partner'"), "can_approve no longer skips a partner-sent UTR");
+  assert.ok(sql.includes("IF o.user_id IS NOT DISTINCT FROM auth.uid() THEN RAISE EXCEPTION 'This is your own order, so our office checks its payment'; END IF;"));
+  assert.ok(sql.includes("AND o.user_id IS DISTINCT FROM auth.uid()\n"));
+  assert.ok(sql.includes("IF NOT FOUND OR o.branch_id IS DISTINCT FROM me.branch_id THEN RAISE EXCEPTION 'This is not an order of your godown'; END IF;"));
+  assert.ok(sql.includes("IF NOT private.partner_payment_approval_on() THEN"));
+  assert.ok(read("src/components/panel/PartnerPaymentsPanel.tsx").includes("also a UTR you sent for the customer"));
 });
