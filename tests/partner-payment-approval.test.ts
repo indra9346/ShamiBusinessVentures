@@ -93,7 +93,7 @@ test("every new text has Kannada", () => {
     "Checkouts at your godown that are waiting for payment, or ended without it in the last 15 days. If a customer paid and gives you the UTR, send it here. When our office allows it, you approve the UTR yourself once you have seen the money arrive in the bank account, as our office does, also a UTR you sent for the customer; otherwise our office checks it and places the order.",
     "UTR {0} for {1}", "Sent by the customer", "Sent by you", "Sent by our office", "after the checkout ended",
     "Seen this money arrive? Approve it, or leave it for our office.", "Approve payment", "Approving…", "Approve & place order",
-    "Only send a UTR the customer showed you from their UPI app or bank. It is checked against the bank account before the order is placed.",
+    "Only send a UTR the customer showed you from their UPI app or bank. Once it is sent, check the money in the bank account: when our office allows it, the Approve payment box opens here for you.",
     "Approve {0} for {1}?", "Only approve after you have seen this money arrive with UTR {0}.",
     "This checkout ended before the payment was sent. Approving takes its stock again at your godown and places the order.",
     "Where did you see this money?", "The bank's SMS or alert", "The bank statement or passbook", "The business UPI app's received payments",
@@ -146,5 +146,10 @@ test("a partner approves a UTR they sent for the customer, as our office does; t
   assert.ok(sql.includes("AND o.user_id IS DISTINCT FROM auth.uid()\n"));
   assert.ok(sql.includes("IF NOT FOUND OR o.branch_id IS DISTINCT FROM me.branch_id THEN RAISE EXCEPTION 'This is not an order of your godown'; END IF;"));
   assert.ok(sql.includes("IF NOT private.partner_payment_approval_on() THEN"));
-  assert.ok(read("src/components/panel/PartnerPaymentsPanel.tsx").includes("also a UTR you sent for the customer"));
+  const panel = read("src/components/panel/PartnerPaymentsPanel.tsx");
+  assert.ok(panel.includes("also a UTR you sent for the customer"));
+  // Sending the UTR opens the Approve box at once when the database allows it, and the list reads again by itself.
+  assert.ok(panel.includes("onSent={() => void sent(row.orderNo)}"));
+  assert.ok(panel.includes('r.orderNo === orderNo && r.utrStatus === "submitted" && r.utr && r.canApprove'));
+  assert.ok(panel.includes("useLiveRefresh(() => { void load(); }, [load]);"));
 });

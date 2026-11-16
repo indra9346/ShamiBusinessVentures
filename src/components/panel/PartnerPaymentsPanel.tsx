@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { toast } from "sonner";
-import { CheckCircle2, Loader2 } from "lucide-react";
+import { CheckCircle2, Loader2, RefreshCw } from "lucide-react";
 import { Panel } from "@/components/panel/widgets";
-import { PARTNER_REFRESH_EVENT } from "@/components/partners/PartnerWidgets";
+import { PARTNER_REFRESH_EVENT, useLiveRefresh } from "@/components/partners/PartnerWidgets";
 import { SendUtrForm } from "@/components/site/UpiIdPay";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -39,13 +39,25 @@ export function PartnerPaymentsPanel() {
   const [failed, setFailed] = useState("");
   const [asking, setAsking] = useState<PartnerCheckout | null>(null);
   const [approving, setApproving] = useState("");
-  const load = useCallback(() => {
-    void loadPartnerCheckouts().then(
-      (list) => { setRows(list); setFailed(""); },
-      (cause: unknown) => setFailed(cause instanceof Error ? cause.message : "Could not load the payments"),
-    );
+  // Reads again every 30 seconds, on focus and after any partner step (16 Nov 2026: a page opened earlier kept showing
+  // an old state), as Orders to confirm does.
+  const load = useCallback(async (): Promise<PartnerCheckout[] | null> => {
+    try {
+      const list = await loadPartnerCheckouts();
+      setRows(list); setFailed("");
+      return list;
+    } catch (cause) {
+      setFailed(cause instanceof Error ? cause.message : "Could not load the payments");
+      return null;
+    }
   }, []);
-  useEffect(() => { load(); }, [load]);
+  useLiveRefresh(() => { void load(); }, [load]);
+  // Owner, 16 Nov 2026: a partner who sends the customer's UTR goes straight on to check the bank and approve it.
+  const sent = async (orderNo: string) => {
+    const list = await load();
+    const row = list?.find((r) => r.orderNo === orderNo && r.utrStatus === "submitted" && r.utr && r.canApprove);
+    if (row) setAsking(row);
+  };
 
   const approve = async (row: PartnerCheckout, checked: PartnerPaymentCheck) => {
     if (!row.utr) return;
@@ -56,19 +68,21 @@ export function PartnerPaymentsPanel() {
       // The same instant Zoho push our office's Confirm makes; the queue sends it anyway if this one cannot.
       pushOrderToZohoInBackground(row.orderNo);
       setAsking(null);
-      load();
+      void load();
       // Orders to confirm reads again at once: the order is there now.
       window.dispatchEvent(new Event(PARTNER_REFRESH_EVENT));
     } catch (cause) {
       toast.error("Could not approve the payment", { description: cause instanceof Error ? cause.message : undefined });
-      load();
+      void load();
     } finally {
       setApproving("");
     }
   };
 
   return (
-    <Panel title="Customer payments">
+    <Panel title="Customer payments" action={
+      <Button size="sm" variant="outline" onClick={() => void load()} aria-label="Refresh customer payments"><RefreshCw className="h-4 w-4" /></Button>
+    }>
       <p className="mb-3 text-xs text-slate">Checkouts at your godown that are waiting for payment, or ended without it in the last 15 days. If a customer paid and gives you the UTR, send it here. When our office allows it, you approve the UTR yourself once you have seen the money arrive in the bank account, as our office does, also a UTR you sent for the customer; otherwise our office checks it and places the order.</p>
       {failed ? <p className="text-sm text-danger">{failed}</p>
         : !rows ? <p className="flex items-center gap-2 text-sm text-slate"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</p>
@@ -110,7 +124,7 @@ export function PartnerPaymentsPanel() {
                   <p className="mt-2 rounded-md bg-sky-50 px-3 py-2 text-xs font-semibold text-sky-900">{`UTR ${row.utr} is with our office for a check.`}</p>
                 ) : (
                   <SendUtrForm className="mt-2" orderNo={row.orderNo} defaultMethod={row.method} title="Customer paid? Send the UTR"
-                    help="Only send a UTR the customer showed you from their UPI app or bank. It is checked against the bank account before the order is placed." onSent={load} />
+                    help="Only send a UTR the customer showed you from their UPI app or bank. Once it is sent, check the money in the bank account: when our office allows it, the Approve payment box opens here for you." onSent={() => void sent(row.orderNo)} />
                 )}
               </li>
             ))}

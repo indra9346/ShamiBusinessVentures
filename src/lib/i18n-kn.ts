@@ -5879,6 +5879,7 @@ export const kn: Record<string, string> = {
   "Nothing is waiting for payment.": "ಯಾವುದೂ ಪಾವತಿಗಾಗಿ ಕಾಯುತ್ತಿಲ್ಲ.",
   "UTR {0} is with our office for a check.": "UTR {0} ನಮ್ಮ ಕಚೇರಿಯಲ್ಲಿ ಪರಿಶೀಲನೆಯಲ್ಲಿದೆ.",
   "Customer paid? Send the UTR": "ಗ್ರಾಹಕರು ಪಾವತಿಸಿದ್ದಾರೆಯೇ? UTR ಕಳುಹಿಸಿ",
+  "Only send a UTR the customer showed you from their UPI app or bank. Once it is sent, check the money in the bank account: when our office allows it, the Approve payment box opens here for you.": "ಗ್ರಾಹಕರು ತಮ್ಮ UPI ಆ್ಯಪ್ ಅಥವಾ ಬ್ಯಾಂಕ್‌ನಿಂದ ತೋರಿಸಿದ UTR ಅನ್ನು ಮಾತ್ರ ಕಳುಹಿಸಿ. ಕಳುಹಿಸಿದ ನಂತರ ಬ್ಯಾಂಕ್ ಖಾತೆಯಲ್ಲಿ ಹಣವನ್ನು ಪರಿಶೀಲಿಸಿ: ನಮ್ಮ ಕಚೇರಿ ಅನುಮತಿಸಿದಾಗ, ಪಾವತಿ ಅನುಮೋದನೆ ಪೆಟ್ಟಿಗೆ ಇಲ್ಲಿ ನಿಮಗಾಗಿ ತೆರೆಯುತ್ತದೆ.",
   "Only send a UTR the customer showed you from their UPI app or bank. It is checked against the bank account before the order is placed.": "ಗ್ರಾಹಕರು ತಮ್ಮ UPI ಆ್ಯಪ್ ಅಥವಾ ಬ್ಯಾಂಕ್‌ನಿಂದ ನಿಮಗೆ ತೋರಿಸಿದ UTR ಮಾತ್ರ ಕಳುಹಿಸಿ. ಆರ್ಡರ್ ಮಾಡುವ ಮೊದಲು ಅದನ್ನು ಬ್ಯಾಂಕ್ ಖಾತೆಯೊಂದಿಗೆ ಪರಿಶೀಲಿಸಲಾಗುತ್ತದೆ.",
   "Could not load the payments": "ಪಾವತಿಗಳನ್ನು ತೋರಿಸಲು ಆಗಲಿಲ್ಲ",
   "This checkout ended more than 15 days ago. Please call us with the UTR.": "ಈ ಚೆಕ್‌ಔಟ್ 15 ದಿನಗಳಿಗಿಂತ ಹಿಂದೆ ಕೊನೆಗೊಂಡಿದೆ. ದಯವಿಟ್ಟು UTR ನೊಂದಿಗೆ ನಮಗೆ ಕರೆ ಮಾಡಿ.",
