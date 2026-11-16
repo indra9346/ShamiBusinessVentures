@@ -234,8 +234,9 @@ test("the screens: the scan shows the buttons by permission and makes the PDF; t
   assert.match(panel, /Release now/);
   assert.match(panel, /supabase\.rpc\("admin_replace_invoice_delivery_code", \{ _order_no: orderNo, _reason: reason\.trim\(\) \}\)/);
   assert.match(panel, /supabase\.rpc\("godown_released_notes"\)/);
-  for (const page of ["src/routes/staff.index.tsx", "src/routes/partner.index.tsx"]) {
-    const source = read(page);
+  for (const page of ["src/routes/staff.index.tsx", "src/routes/partner.delivery-notes.tsx"]) {
+    // The partner's scan card is its own component since the side menu (16 Nov 2026).
+    const source = read(page) + (page.includes("partner") ? read("src/components/partners/ScanQrCard.tsx") : "");
     assert.match(source, /Scan the QR on the customer's invoice/, page);
     assert.match(source, /<ReleasedDeliveryNotes \/>/, page);
   }

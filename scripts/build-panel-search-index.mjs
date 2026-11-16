@@ -21,7 +21,8 @@ const PANELS = {
   vendor: ROUTES.filter((name) => name.startsWith("vendor.") && !["vendor.login.tsx", "vendor.index.tsx", "vendor.register.tsx"].includes(name)),
   // The wishlist is the panel's own page (account.wishlist.tsx) since 13 Nov 2026; the shop's /wishlist is not a panel page.
   customer: ROUTES.filter((name) => name.startsWith("account.")),
-  partner: ["partner.index.tsx", "partner.attendance.tsx", "slip.tsx"],
+  // Every partner page since the side menu of 16 Nov 2026 (partner.tsx is the menu around them).
+  partner: [...ROUTES.filter((name) => name.startsWith("partner.") && !["partner.login.tsx", "partner.tsx"].includes(name)), "slip.tsx"],
   staff: ["staff.index.tsx", "staff.device.tsx", "slip.tsx"],
 };
 /**
@@ -33,7 +34,7 @@ const PAGES_ONLY = new Set(["slip.tsx", "staff.device.tsx"]);
 
 /** Page names people know them by: the side menus first, then these, then the page's own heading. */
 const EXTRA_LABELS = {
-  "/partner": "Home", "/partner/attendance": "Attendance & stock", "/slip": "Scan delivery QR",
+  "/slip": "Scan delivery QR",
   "/staff": "Home", "/staff/device": "Godown phone",
 };
 

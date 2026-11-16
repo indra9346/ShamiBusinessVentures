@@ -36,6 +36,8 @@ import {
   Users,
   Wallet,
   Warehouse,
+  Receipt,
+  ScanLine,
 } from "lucide-react";
 
 export const vendorNav = [
@@ -88,4 +90,23 @@ export const adminNav = [
   { label: "Zoho Commerce", to: "/admin/zoho", icon: Link2 },
   { label: "Zoho API Calls", to: "/admin/zoho-api-calls", icon: Activity },
   { label: "Settings", to: "/admin/settings", icon: Settings },
+];
+
+/**
+ * The channel partner's side menu (owner, 16 Nov 2026: "need same left pages panel like admin"). Each part of the old long
+ * page is its own page now, as in the admin panel.
+ */
+export const partnerNav = [
+  { label: "Dashboard", to: "/partner", icon: LayoutDashboard },
+  { label: "Orders to confirm", to: "/partner/orders", icon: ClipboardCheck },
+  { label: "Customer payments", to: "/partner/payments", icon: CreditCard },
+  { label: "Delivery notes", to: "/partner/delivery-notes", icon: FileCheck2 },
+  { label: "Scan delivery QR", to: "/slip", icon: ScanLine },
+  { label: "Customer invoices", to: "/partner/invoices", icon: Receipt },
+  { label: "Stock & indents", to: "/partner/stock", icon: Boxes },
+  { label: "Attendance & stock count", to: "/partner/attendance", icon: CalendarCheck },
+  { label: "Monthly income", to: "/partner/income", icon: Wallet },
+  { label: "Commissions", to: "/partner/commissions", icon: HandCoins },
+  { label: "Leaderboard", to: "/partner/leaderboard", icon: Trophy },
+  { label: "Sales report", to: "/partner/report", icon: FileBarChart },
 ];

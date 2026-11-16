@@ -141,7 +141,7 @@ test("who confirmed cannot be made up from the site (review, 13 Nov 2026)", () =
 });
 
 test("the partner's page: Orders to confirm with Confirm order and the invoice; the Zoho push is allowed for their godown", () => {
-  const page = read("src/routes/partner.index.tsx");
+  const page = read("src/routes/partner.orders.tsx");
   assert.match(page, /<PartnerOrdersToConfirm \/>/);
   const panel = read("src/components/partners/PartnerOrdersToConfirm.tsx");
   assert.match(panel, /<Panel id="orders-to-confirm" title="Orders to confirm"/);

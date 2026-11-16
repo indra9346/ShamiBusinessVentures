@@ -43,8 +43,8 @@ test("every panel has its pages, and its buttons and sections", () => {
   has("admin", "/admin/attendance", "Make in-charge");
   has("admin", "/admin/partners", "Add channel partner");
   has("admin", "/admin/partners", "Settle commissions");
-  has("partner", "/partner", "Customer invoices");
-  has("partner", "/partner", "Released delivery notes");
+  // Customer invoices is a page of its own since the side menu (16 Nov 2026): found as the page (below).
+  has("partner", "/partner/delivery-notes", "Released delivery notes");
   has("staff", "/staff", "Released delivery notes");
   has("staff", "/staff", "Request leave");
   // The search bar's own buttons are not suggestions.
@@ -171,7 +171,12 @@ test("wired in: every panel's header, the side menu, the title star, the partner
   assert.match(layout, /<FavouriteToggle panel=\{tone\} label=\{title\} \/>/);
   assert.match(layout, /<FavouritesNav panel=\{tone\} rail=\{rail\} onPick=\{\(\) => setOpen\(false\)\} \/>/);
   assert.doesNotMatch(layout, /globalQuery/, "the old search box is gone");
-  for (const [file, panel] of [["src/routes/partner.index.tsx", "partner"], ["src/routes/partner.attendance.tsx", "partner"], ["src/routes/staff.index.tsx", "staff"]]) {
+  // The partner's pages sit inside its side menu (16 Nov 2026), which carries the search, the star and the favourites.
+  const partner = read("src/components/partners/PartnerLayout.tsx");
+  assert.match(partner, /<PanelSearch panel="partner" \/>/);
+  assert.match(partner, /<FavouriteToggle panel="partner" label=\{title\} \/>/);
+  assert.match(partner, /<FavouritesNav panel="partner" rail=\{rail\} onPick=\{\(\) => setOpen\(false\)\} \/>/);
+  for (const [file, panel] of [["src/components/partners/PartnerLayout.tsx", "partner"], ["src/routes/staff.index.tsx", "staff"]]) {
     const page = read(file!);
     assert.match(page, new RegExp(`<PanelSearch panel="${panel}"`), file);
     assert.match(page, new RegExp(`<FavouritesBar panel="${panel}" />`), file);

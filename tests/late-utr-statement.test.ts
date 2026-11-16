@@ -83,7 +83,7 @@ test("the screens are wired", () => {
   assert.match(held, /<SendUtrForm className="mt-3" orderNo=\{orderNo\}/);
   const mine = readFileSync("src/routes/account.orders.tsx", "utf8");
   assert.match(mine, /<SendUtrForm className="mt-2" orderNo=\{hold\.orderNo\}/);
-  const partner = readFileSync("src/routes/partner.index.tsx", "utf8");
+  const partner = readFileSync("src/routes/partner.payments.tsx", "utf8");
   assert.match(partner, /<PartnerPaymentsPanel \/>/);
   const store = readFileSync("src/lib/upi-store.ts", "utf8");
   assert.match(store, /supabase\.rpc\("submit_utr_for_order"/);
