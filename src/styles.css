@@ -1,0 +1,941 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Design system definition.
+ *
+ * The @theme inline block maps CSS custom properties to Tailwind utility
+ * classes (e.g. --color-primary -> bg-primary, text-primary).
+ *
+ * The :root and .dark blocks define the actual color values using oklch.
+ * All colors MUST use oklch format.
+ *
+ * To add a new semantic color:
+ * 1. Add the variable to :root (light value) and .dark (dark value)
+ * 2. Register it in @theme inline as --color-<name>: var(--<name>)
+ */
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
+  --radius-4xl: calc(var(--radius) + 16px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-ring-offset-background: var(--background);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+:root {
+  --radius: 0.5rem;
+
+  /*
+   * Shami brand palette — "eye-comfort" edition.
+   * No pure black and no blue: deep forest green replaces navy/midnight,
+   * warm stone greys replace cool slate, and text is a warm charcoal.
+   * (The variable names are kept so every existing `text-navy`, `bg-midnight`
+   * etc. utility keeps working across all pages.)
+   */
+  --navy: oklch(0.43 0.055 162);
+  --midnight: oklch(0.37 0.05 162);
+  --gold: oklch(0.75 0.095 78);
+  --gold-light: oklch(0.82 0.08 82);
+  /* Deeper bronze for gold text on light surfaces; bright gold stays for fills and dark areas */
+  --gold-ink: oklch(0.55 0.085 68);
+  --ivory: oklch(0.955 0.011 88);
+  --charcoal: oklch(0.35 0.016 70);
+  --slate: oklch(0.53 0.014 75);
+  --panel: oklch(0.958 0.009 88);
+  --success: oklch(0.497 0.093 165);
+  --warning: oklch(0.75 0.095 78);
+  --danger: oklch(0.53 0.14 30);
+
+  --gradient-hero: linear-gradient(135deg, var(--midnight) 0%, var(--navy) 60%, var(--midnight) 100%);
+  --gradient-gold: linear-gradient(120deg, var(--gold) 0%, var(--gold-light) 100%);
+  --shadow-card: 0 1px 3px oklch(0.25 0.04 60 / 6%), 0 10px 26px -12px oklch(0.25 0.04 60 / 12%);
+  --shadow-elevated: 0 18px 44px -14px oklch(0.25 0.04 60 / 22%);
+  --shadow-gold: 0 0 0 1px var(--gold), 0 18px 40px -20px oklch(0.75 0.095 78 / 40%);
+
+  /* Soft linen surfaces: low chroma so large areas stay calm on the eyes */
+  --background: oklch(0.968 0.008 88);
+  --foreground: var(--charcoal);
+  --card: oklch(0.988 0.005 90);
+  --card-foreground: var(--charcoal);
+  --popover: oklch(0.988 0.005 90);
+  --popover-foreground: var(--charcoal);
+  --primary: var(--navy);
+  --primary-foreground: oklch(0.988 0.005 90);
+  --secondary: var(--ivory);
+  --secondary-foreground: var(--navy);
+  --muted: var(--panel);
+  --muted-foreground: var(--slate);
+  --accent: var(--gold);
+  --accent-foreground: var(--midnight);
+  --destructive: var(--danger);
+  --destructive-foreground: oklch(1 0 0);
+  --border: oklch(0.9 0.012 88);
+  --input: oklch(0.9 0.012 88);
+  --ring: var(--gold);
+  --chart-1: var(--navy);
+  --chart-2: var(--gold);
+  --chart-3: oklch(0.6 0.06 162);
+  --chart-4: var(--gold-light);
+  --chart-5: var(--slate);
+  --sidebar: var(--navy);
+  --sidebar-foreground: oklch(0.97 0.005 90);
+  --sidebar-primary: var(--gold);
+  --sidebar-primary-foreground: var(--midnight);
+  --sidebar-accent: oklch(1 0 0 / 8%);
+  --sidebar-accent-foreground: var(--gold);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: var(--gold);
+}
+
+@theme inline {
+  --color-navy: var(--navy);
+  --color-midnight: var(--midnight);
+  --color-gold: var(--gold);
+  --color-gold-light: var(--gold-light);
+  --color-ivory: var(--ivory);
+  --color-charcoal: var(--charcoal);
+  --color-slate: var(--slate);
+  --color-panel: var(--panel);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --font-sans: "Plus Jakarta Sans", "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Manrope", "Plus Jakarta Sans", ui-sans-serif, sans-serif;
+  --shadow-card: var(--shadow-card);
+  --shadow-elevated: var(--shadow-elevated);
+}
+
+.dark {
+  --background: oklch(0.129 0.042 264.695);
+  --foreground: oklch(0.984 0.003 247.858);
+  --card: oklch(0.208 0.042 265.755);
+  --card-foreground: oklch(0.984 0.003 247.858);
+  --popover: oklch(0.208 0.042 265.755);
+  --popover-foreground: oklch(0.984 0.003 247.858);
+  --primary: oklch(0.929 0.013 255.508);
+  --primary-foreground: oklch(0.208 0.042 265.755);
+  --secondary: oklch(0.279 0.041 260.031);
+  --secondary-foreground: oklch(0.984 0.003 247.858);
+  --muted: oklch(0.279 0.041 260.031);
+  --muted-foreground: oklch(0.704 0.04 256.788);
+  --accent: oklch(0.279 0.041 260.031);
+  --accent-foreground: oklch(0.984 0.003 247.858);
+  --destructive: oklch(0.704 0.191 22.216);
+  --destructive-foreground: oklch(0.984 0.003 247.858);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.551 0.027 264.364);
+  --chart-1: oklch(0.488 0.243 264.376);
+  --chart-2: oklch(0.696 0.17 162.48);
+  --chart-3: oklch(0.769 0.188 70.08);
+  --chart-4: oklch(0.627 0.265 303.9);
+  --chart-5: oklch(0.645 0.246 16.439);
+  --sidebar: oklch(0.208 0.042 265.755);
+  --sidebar-foreground: oklch(0.984 0.003 247.858);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.984 0.003 247.858);
+  --sidebar-accent: oklch(0.279 0.041 260.031);
+  --sidebar-accent-foreground: oklch(0.984 0.003 247.858);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.551 0.027 264.364);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  :root {
+    accent-color: var(--gold);
+    color-scheme: light;
+  }
+
+  ::selection {
+    background: oklch(0.88 0.06 84);
+    color: var(--midnight);
+  }
+
+  /* Edge's own eye shows only while typing and disappears for good on blur; PasswordInput has one
+     that stays, so hide the browser's to avoid two eyes. */
+  input::-ms-reveal,
+  input::-ms-clear {
+    display: none;
+  }
+
+  body {
+    background-color: var(--color-background);
+    background-image: radial-gradient(circle at 50% 0%, oklch(0.976 0.006 90) 0%, oklch(0.964 0.009 88) 100%);
+    background-attachment: fixed;
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: var(--font-display);
+    letter-spacing: -0.02em;
+  }
+}
+
+@utility bg-hero-gradient {
+  background-image: var(--gradient-hero);
+}
+
+@utility bg-gold-gradient {
+  background-image: var(--gradient-gold);
+}
+
+@utility text-gold-gradient {
+  background-image: var(--gradient-gold);
+  background-clip: text;
+  color: transparent;
+}
+
+@utility card-premium {
+  background-color: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  transition:
+    box-shadow 0.3s ease,
+    transform 0.3s ease,
+    border-color 0.3s ease;
+
+  &:hover {
+    transform: translateY(-4px);
+    border-color: var(--gold);
+    box-shadow: var(--shadow-gold);
+  }
+}
+
+@utility hairline-gold {
+  background-image: linear-gradient(90deg, transparent, var(--gold), transparent);
+  height: 1px;
+}
+
+@utility animate-rise {
+  animation: rise 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@utility animate-float {
+  animation: floaty 6s ease-in-out infinite;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes floaty {
+  0%,
+  100% {
+    transform: translateY(0) rotate(-0.4deg);
+  }
+  50% {
+    transform: translateY(-14px) rotate(0.4deg);
+  }
+}
+
+@utility animate-cart-droplet {
+  animation: cart-droplet-rise 2.4s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
+}
+
+@keyframes cart-droplet-rise {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 16px, 0) scale(0.92);
+  }
+  10% {
+    opacity: 1;
+    transform: translate3d(-3px, -20px, 0) scale(1.02);
+  }
+  25% {
+    opacity: 1;
+    transform: translate3d(4px, -80px, 0) scale(1);
+  }
+  50% {
+    opacity: 0.95;
+    transform: translate3d(-4px, -170px, 0) scale(1);
+  }
+  75% {
+    opacity: 0.65;
+    transform: translate3d(3px, -250px, 0) scale(0.97);
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(0, -320px, 0) scale(0.92);
+  }
+}
+
+@keyframes water-droplet-trail-1 {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 0, 0) scale(0.7);
+  }
+  15% {
+    opacity: 0.9;
+    transform: translate3d(2px, -30px, 0) scale(1);
+  }
+  60% {
+    opacity: 0.7;
+    transform: translate3d(-3px, -140px, 0) scale(0.9);
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(1px, -240px, 0) scale(0.6);
+  }
+}
+
+@keyframes water-droplet-trail-2 {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 10px, 0) scale(0.5);
+  }
+  20% {
+    opacity: 0.8;
+    transform: translate3d(-4px, -20px, 0) scale(0.9);
+  }
+  70% {
+    opacity: 0.6;
+    transform: translate3d(3px, -120px, 0) scale(0.7);
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(-1px, -200px, 0) scale(0.4);
+  }
+}
+
+@keyframes water-droplet-trail-3 {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 15px, 0) scale(0.4);
+  }
+  25% {
+    opacity: 0.7;
+    transform: translate3d(3px, -15px, 0) scale(0.8);
+  }
+  80% {
+    opacity: 0.4;
+    transform: translate3d(-2px, -100px, 0) scale(0.6);
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(0, -170px, 0) scale(0.3);
+  }
+}
+
+@keyframes gold-sparkle-pulse {
+  0%, 100% {
+    transform: scale(1) rotate(0deg);
+    opacity: 0.8;
+    filter: drop-shadow(0 0 4px #facc15);
+  }
+  50% {
+    transform: scale(1.25) rotate(15deg);
+    opacity: 1;
+    filter: drop-shadow(0 0 10px #facc15);
+  }
+}
+
+/* Footer heart: a golden spark runs up each side from the bottom tip and meets the other at the top. */
+@keyframes footer-heart-spark {
+  0% { stroke-dashoffset: 28; opacity: 0; }
+  8% { opacity: 1; }
+  88% { opacity: 1; }
+  100% { stroke-dashoffset: -100; opacity: 0; }
+}
+
+.footer-heart {
+  overflow: visible;
+}
+
+.footer-heart-spark {
+  stroke-dasharray: 28 100;
+  stroke-dashoffset: 28;
+  filter: drop-shadow(0 0 1.5px rgba(250, 204, 21, 0.95));
+  animation: footer-heart-spark 1.8s linear infinite;
+  /* A dash offset is redrawn by the page on every frame, so it runs only while on screen (SiteFooter sets data-sparks). */
+  animation-play-state: paused;
+}
+
+[data-sparks] .footer-heart-spark {
+  animation-play-state: running;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .footer-heart-spark {
+    animation: none;
+    stroke-dasharray: none;
+    stroke-dashoffset: 0;
+    opacity: 1;
+  }
+}
+
+
+/* ---------- Flipkart-style storefront helpers ---------- */
+@utility scrollbar-none {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* Header cart total "pop" when the cart value changes */
+@utility animate-cart-pop {
+  animation: cart-pop 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+@keyframes cart-pop {
+  0% {
+    transform: scale(1);
+  }
+  35% {
+    transform: scale(1.18);
+    filter: drop-shadow(0 0 8px rgba(250, 204, 21, 0.85));
+  }
+  70% {
+    transform: scale(0.96);
+  }
+  100% {
+    transform: scale(1);
+    filter: none;
+  }
+}
+
+/* Short sparkle ring that radiates from the cart icon on change */
+@utility animate-cart-ring {
+  animation: cart-ring 0.7s ease-out both;
+}
+
+@keyframes cart-ring {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(1.9);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-cart-pop,
+  .animate-cart-ring {
+    animation: none;
+  }
+}
+
+/* Home page advertising band (AdShowcase) */
+@utility animate-ad-kenburns {
+  animation: ad-kenburns 5s ease-out both;
+}
+@keyframes ad-kenburns {
+  from {
+    transform: scale(1.06) translate3d(1%, 0, 0);
+  }
+  to {
+    transform: scale(1) translate3d(0, 0, 0);
+  }
+}
+
+@utility animate-ad-progress {
+  animation: ad-progress linear both;
+}
+/* A full-width bar slid in from the left, clipped by its track: width would lay out the page on every frame. */
+@keyframes ad-progress {
+  from {
+    transform: translate3d(-100%, 0, 0);
+  }
+  to {
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@utility animate-ad-fade-in {
+  animation: ad-fade-in 0.6s ease-out both;
+}
+@keyframes ad-fade-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 6px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@utility animate-ad-backdrop {
+  animation: ad-backdrop 18s ease-in-out infinite alternate;
+}
+/* The element is twice the band's size: this is background-position 0% 50% to 100% 50%, without a repaint on every frame. */
+@keyframes ad-backdrop {
+  from {
+    transform: translate3d(0, -25%, 0);
+  }
+  to {
+    transform: translate3d(-50%, -25%, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-ad-kenburns,
+  .animate-ad-progress,
+  .animate-ad-fade-in,
+  .animate-ad-backdrop {
+    animation: none;
+  }
+}
+
+/*
+ * Gold text: the bright brand gold is too faint for small text on the light linen
+ * surfaces, so text-gold reads as bronze there and switches back to bright gold on
+ * the dark green header, sidebar, footer and buttons. Unlayered, so it wins over the
+ * generated utilities.
+ */
+.text-gold,
+.hover\:text-gold:hover,
+.group:hover .group-hover\:text-gold {
+  color: var(--gold-ink);
+}
+
+:is(.bg-navy, .bg-midnight, .bg-sidebar, .bg-primary, .bg-hero-gradient, .bg-navy\/85, .bg-navy\/90, .bg-navy\/95, [class*="from-navy"], [class*="from-midnight"]):is(.text-gold, .hover\:text-gold:hover),
+:is(.bg-navy, .bg-midnight, .bg-sidebar, .bg-primary, .bg-hero-gradient, .bg-navy\/85, .bg-navy\/90, .bg-navy\/95, [class*="from-navy"], [class*="from-midnight"]) :is(.text-gold, .hover\:text-gold:hover),
+.group:hover:is(.bg-navy, .bg-midnight, .bg-sidebar, .bg-primary) .group-hover\:text-gold,
+:is(.bg-navy, .bg-midnight, .bg-sidebar, .bg-primary) .group:hover .group-hover\:text-gold {
+  color: var(--gold);
+}
+
+/* Product card price: a soft, slow blink that draws the eye without flashing */
+@utility animate-price-blink {
+  animation: price-blink 2.4s ease-in-out infinite;
+}
+
+@keyframes price-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+/* Column resize handles on panel tables (useColumnResize), like Excel / Zoho: a faint line on the
+   header's right edge that turns gold when hovered or dragged. */
+.gb-col-resizer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 8px;
+  cursor: col-resize;
+  z-index: 5;
+  touch-action: none;
+}
+.gb-col-resizer::after {
+  content: "";
+  position: absolute;
+  top: 25%;
+  bottom: 25%;
+  right: 2px;
+  width: 2px;
+  border-radius: 1px;
+  background: transparent;
+  transition: background-color 0.15s, top 0.15s, bottom 0.15s;
+}
+th:hover > .gb-col-resizer::after {
+  background: var(--border);
+}
+.gb-col-resizer:hover::after,
+.gb-col-resizer[data-dragging]::after {
+  top: 0;
+  bottom: 0;
+  background: var(--gold);
+}
+table[data-col-resized] > thead > tr > th,
+table[data-col-resized] > tbody > tr > td {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-price-blink {
+    animation: none;
+  }
+}
+
+/* "Not in your area yet": the delivery circle breathes, the customer's pin searches. */
+@keyframes gb-zone-pulse { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
+@keyframes gb-radar { 0% { transform: scale(0.6); opacity: 0.9; } 100% { transform: scale(3); opacity: 0; } }
+@keyframes gb-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
+@keyframes gb-blink { 0%, 38%, 72%, 100% { opacity: 0; transform: scale(0.6); } 46%, 64% { opacity: 1; transform: scale(1); } }
+@keyframes gb-pop-in { from { opacity: 0; transform: translateY(6px) scale(0.98); } to { opacity: 1; transform: none; } }
+.gb-zone-ring { animation: gb-zone-pulse 2.4s ease-in-out infinite; }
+.gb-radar { transform-box: fill-box; transform-origin: center; animation: gb-radar 2s ease-out infinite; }
+.gb-radar-2 { animation-delay: 1s; }
+.gb-bob { animation: gb-bob 1.6s ease-in-out infinite; }
+.gb-blink { transform-box: fill-box; transform-origin: center; animation: gb-blink 5s linear infinite; }
+.gb-pop-in { animation: gb-pop-in 0.35s ease-out both; }
+@media (prefers-reduced-motion: reduce) {
+  .gb-zone-ring, .gb-radar, .gb-bob, .gb-blink, .gb-pop-in { animation: none; }
+  .gb-blink { opacity: 1; }
+}
+
+/*
+ * Festival theme (Deepavali): see components/site/DiwaliDecor.tsx and lib/festive.ts. Everything here is
+ * an overlay animated with transform/opacity only; html[data-festive="off"] (admin switch, applied in
+ * <head> before the first paint) hides it all.
+ */
+html[data-festive="off"] .gb-festive {
+  display: none !important;
+}
+.gb-toran {
+  height: 22px;
+  background: url("/festive/diwali/toran.webp") repeat-x 0 0 / auto 100%;
+}
+@media (min-width: 640px) {
+  .gb-toran {
+    height: 30px;
+  }
+}
+.gb-rangoli-pattern {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='96' height='96' viewBox='0 0 96 96'%3E%3Cg fill='none' stroke='%23b4471c' stroke-width='1.4'%3E%3Ccircle cx='48' cy='48' r='6'/%3E%3Cpath d='M48 20c6 10 6 18 0 22-6-4-6-12 0-22zM48 76c-6-10-6-18 0-22 6 4 6 12 0 22zM20 48c10-6 18-6 22 0-4 6-12 6-22 0zM76 48c-10 6-18 6-22 0 4-6 12-6 22 0z'/%3E%3C/g%3E%3Cg fill='%23b4471c'%3E%3Ccircle cx='48' cy='10' r='1.6'/%3E%3Ccircle cx='48' cy='86' r='1.6'/%3E%3Ccircle cx='10' cy='48' r='1.6'/%3E%3Ccircle cx='86' cy='48' r='1.6'/%3E%3Ccircle cx='0' cy='0' r='2.4'/%3E%3Ccircle cx='96' cy='0' r='2.4'/%3E%3Ccircle cx='0' cy='96' r='2.4'/%3E%3Ccircle cx='96' cy='96' r='2.4'/%3E%3C/g%3E%3C/svg%3E");
+  background-size: 96px 96px;
+}
+/* Sparks from the lamps: rise, drift and fade (each one starts at a different point of its loop). */
+.gb-spark {
+  position: absolute;
+  bottom: -14px;
+  border-radius: 9999px;
+  background: radial-gradient(circle, rgba(255, 244, 200, 1) 0%, rgba(255, 190, 80, 0.85) 35%, rgba(255, 140, 30, 0) 70%);
+  opacity: 0;
+  animation: gb-spark-rise linear infinite;
+  will-change: transform, opacity;
+}
+@keyframes gb-spark-rise {
+  0% { transform: translate3d(0, 0, 0) scale(0.6); opacity: 0; }
+  12% { opacity: 0.95; }
+  55% { transform: translate3d(var(--drift, 10px), -240px, 0) scale(1); opacity: 0.8; }
+  100% { transform: translate3d(calc(var(--drift, 10px) * -0.4), -480px, 0) scale(0.5); opacity: 0; }
+}
+/* A diya: picture of the lamp, a flame on its wick, and a soft warm glow. */
+.gb-diya {
+  position: relative;
+  width: var(--w, 46px);
+  height: calc(var(--w, 46px) * 0.86);
+  flex: none;
+}
+.gb-diya-body {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: auto;
+  user-select: none;
+}
+.gb-diya-flame {
+  position: absolute;
+  left: 90.6%;
+  bottom: calc(var(--w, 46px) * 0.287);
+  width: calc(var(--w, 46px) * 0.15);
+  height: calc(var(--w, 46px) * 0.38);
+  background: url("/festive/diwali/flame.webp") center bottom / contain no-repeat;
+  transform: translateX(-50%);
+  transform-origin: 50% 100%;
+  animation: gb-flame 1.7s ease-in-out infinite alternate;
+  animation-delay: calc(var(--d, 0s) * -1);
+  will-change: transform, opacity;
+}
+.gb-diya-glow {
+  position: absolute;
+  left: calc(90.6% - var(--w, 46px) * 0.55);
+  bottom: calc(var(--w, 46px) * 0.02);
+  width: calc(var(--w, 46px) * 1.1);
+  height: calc(var(--w, 46px) * 0.9);
+  border-radius: 9999px;
+  background: radial-gradient(closest-side, rgba(255, 176, 64, 0.55), rgba(255, 176, 64, 0));
+  animation: gb-glow 2.3s ease-in-out infinite alternate;
+  animation-delay: calc(var(--d, 0s) * -1.3);
+  will-change: opacity, transform;
+}
+@keyframes gb-flame {
+  0% { transform: translateX(-50%) scale(1, 1) skewX(0deg); opacity: 0.96; }
+  25% { transform: translateX(-50%) scale(0.93, 1.07) skewX(-3deg); opacity: 1; }
+  50% { transform: translateX(-50%) scale(1.04, 0.95) skewX(2deg); opacity: 0.92; }
+  75% { transform: translateX(-50%) scale(0.97, 1.04) skewX(-1.5deg); opacity: 1; }
+  100% { transform: translateX(-50%) scale(1.02, 0.98) skewX(1deg); opacity: 0.95; }
+}
+@keyframes gb-glow {
+  from { opacity: 0.75; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1.04); }
+}
+.gb-plaque {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-bottom: 0.15rem;
+  padding: 0.3rem 0.75rem;
+  border-radius: 9999px;
+  border: 1px solid rgba(201, 139, 42, 0.55);
+  background: linear-gradient(180deg, #fffaf0, #ffeccc);
+  box-shadow: 0 6px 18px -8px rgba(140, 60, 10, 0.45), 0 0 0 3px rgba(255, 220, 150, 0.35);
+  white-space: nowrap;
+}
+.gb-plaque-title {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 0.95rem;
+  letter-spacing: 0.01em;
+  background: linear-gradient(180deg, #c2410c, #9a3412);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+@media (min-width: 640px) {
+  .gb-plaque-title {
+    font-size: 1.1rem;
+  }
+}
+.gb-zari {
+  background: linear-gradient(90deg, rgba(246, 199, 106, 0), #f6c76a 12%, #ffe8a8 50%, #f6c76a 88%, rgba(246, 199, 106, 0));
+  box-shadow: 0 0 10px rgba(255, 190, 90, 0.6);
+}
+@media (prefers-reduced-motion: reduce) {
+  .gb-spark {
+    display: none;
+  }
+  .gb-diya-flame,
+  .gb-diya-glow {
+    animation: none;
+  }
+}
+/* Marigold garlands hanging from the toran ends down the sides of the offers banner, each ending in a
+   brass-bell tassel; they swing gently from the top (transform only). */
+.gb-garland {
+  position: absolute;
+  z-index: 10;
+  top: -12px;
+  bottom: 0;
+  width: 14px;
+  pointer-events: none;
+  background: url("/festive/diwali/garland.webp") repeat-y center top / 100% auto;
+  transform-origin: 50% 0;
+  animation: gb-garland-swing 4.6s ease-in-out infinite alternate;
+  will-change: transform;
+}
+.gb-garland::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: calc(100% - 4px);
+  width: 16px;
+  height: 84px;
+  margin-left: -8px;
+  background: url("/festive/diwali/tassel.webp") center top / contain no-repeat;
+}
+.gb-garland-l {
+  left: -15px;
+}
+.gb-garland-r {
+  right: -15px;
+  animation-delay: -2.3s;
+}
+@media (min-width: 640px) {
+  .gb-garland {
+    top: -20px;
+    width: 20px;
+  }
+  .gb-garland::after {
+    width: 20px;
+    height: 104px;
+    margin-left: -10px;
+  }
+  .gb-garland-l {
+    left: -22px;
+  }
+  .gb-garland-r {
+    right: -22px;
+  }
+}
+@keyframes gb-garland-swing {
+  from { transform: rotate(-0.7deg); }
+  to { transform: rotate(0.7deg); }
+}
+/* Sky lanterns (DiwaliLanterns): rise slowly, drift, shrink a little as they go far, and fade away; each sways on
+   its own beat and its diya's light flickers. Transform and opacity only, paused while out of view. */
+.gb-lanterns-header {
+  --rise: 118px;
+  --lantern-scale: 1.1;
+}
+@media (min-width: 1024px) {
+  .gb-lanterns-header {
+    --rise: 180px;
+    --lantern-scale: 1.55;
+  }
+}
+.gb-lanterns-sides {
+  --rise: 620px;
+}
+.gb-lantern-margin {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: none;
+  width: calc((100% - 80rem) / 2);
+}
+@media (min-width: 1360px) {
+  .gb-lantern-margin {
+    display: block;
+  }
+}
+.gb-lanterns-sides .gb-lantern {
+  max-width: 64px;
+}
+.gb-lantern {
+  position: absolute;
+  bottom: -46px;
+  aspect-ratio: 2 / 3;
+  opacity: 0;
+  animation: gb-lantern-rise var(--t, 14s) cubic-bezier(0.32, 0.12, 0.62, 0.96) infinite;
+  animation-delay: calc(var(--d, 0s) * -1);
+  will-change: transform, opacity;
+}
+.gb-lanterns-sides .gb-lantern {
+  bottom: -90px;
+}
+.gb-lantern-sway {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  transform-origin: 50% 0;
+  animation: gb-lantern-sway var(--sway, 4.6s) ease-in-out infinite alternate;
+  animation-delay: calc(var(--d, 0s) * -0.7);
+}
+.gb-lantern-img {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: auto;
+  user-select: none;
+}
+.gb-lantern-halo {
+  position: absolute;
+  left: -70%;
+  right: -70%;
+  top: -35%;
+  bottom: -25%;
+  border-radius: 9999px;
+  background: radial-gradient(closest-side, rgba(255, 196, 96, 0.5), rgba(255, 150, 50, 0.18) 55%, rgba(255, 150, 50, 0));
+  animation: gb-lantern-glow 2.1s ease-in-out infinite alternate;
+  animation-delay: calc(var(--d, 0s) * -0.9);
+}
+.gb-lantern-flame {
+  position: absolute;
+  left: 30%;
+  right: 30%;
+  bottom: 15%;
+  height: 22%;
+  border-radius: 9999px;
+  background: radial-gradient(closest-side, rgba(255, 248, 220, 0.95), rgba(255, 206, 110, 0.55) 45%, rgba(255, 170, 60, 0));
+  animation: gb-lantern-flicker 0.9s ease-in-out infinite alternate;
+  animation-delay: calc(var(--d, 0s) * -0.37);
+}
+.gb-lanterns:not([data-run]) .gb-lantern,
+.gb-lanterns:not([data-run]) .gb-lantern * {
+  animation-play-state: paused;
+}
+@keyframes gb-lantern-rise {
+  0% { transform: translate3d(0, 0, 0) scale(1); opacity: 0; }
+  9% { opacity: 1; }
+  50% { opacity: 0.92; }
+  100% { transform: translate3d(var(--drift, 10px), calc(var(--rise, 160px) * -1), 0) scale(0.7); opacity: 0; }
+}
+@keyframes gb-lantern-sway {
+  from { transform: translateX(-5%) rotate(-3deg); }
+  to { transform: translateX(5%) rotate(3deg); }
+}
+@keyframes gb-lantern-glow {
+  0% { opacity: 0.72; transform: scale(0.96); }
+  35% { opacity: 1; transform: scale(1.03); }
+  60% { opacity: 0.84; transform: scale(0.99); }
+  100% { opacity: 0.95; transform: scale(1.01); }
+}
+@keyframes gb-lantern-flicker {
+  0% { opacity: 0.55; transform: scale(0.92, 0.96); }
+  30% { opacity: 0.95; transform: scale(1.04, 1.08); }
+  55% { opacity: 0.7; transform: scale(0.97, 1); }
+  80% { opacity: 1; transform: scale(1.02, 1.06); }
+  100% { opacity: 0.8; transform: scale(1, 1.02); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .gb-lanterns {
+    display: none;
+  }
+}
+.gb-crackers {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center bottom;
+  transition: opacity 0.6s ease;
+  user-select: none;
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .gb-garland {
+    animation: none;
+  }
+}

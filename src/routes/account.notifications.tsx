@@ -1,0 +1,115 @@
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { useState } from "react";
+import { Bell, BellRing, CheckCheck } from "lucide-react";
+import { toast } from "sonner";
+import { PanelLayout } from "@/components/panel/PanelLayout";
+import { FilterNote, Panel, scrollToSection, StatCard } from "@/components/panel/widgets";
+import { accountNav } from "@/lib/account-nav";
+import { useApp } from "@/lib/store";
+import { Button } from "@/components/ui/button";
+import { notificationTarget } from "@/lib/notification-target";
+import { notificationBelongsToUser } from "@/lib/account-identity";
+import { matchesReadFilter } from "@/lib/panel-filters";
+
+export const Route = createFileRoute("/account/notifications")({
+  head: () => ({
+    meta: [
+      { title: "Notifications | Shami Business Ventures" },
+      {
+        name: "description",
+        content: "Order updates, offers and delivery alerts on your Shami account.",
+      },
+      { property: "og:title", content: "Notifications | Shami" },
+      { property: "og:description", content: "All alerts for your orders and offers." },
+      { name: "robots", content: "noindex" },
+    ],
+  }),
+  component: AccountNotifications,
+});
+
+function AccountNotifications() {
+  const { notifications, markRead, markAllRead, user, orders, paymentHolds } = useApp();
+  const navigate = useNavigate();
+  const mine = notifications.filter(
+    (n) => (n.role === "customer" || !n.role) && (Boolean(n.databaseId) || notificationBelongsToUser(n, user, orders)),
+  );
+  const unread = mine.filter((n) => !n.read).length;
+  const [view, setView] = useState("all");
+  const shown = mine.filter((n) => matchesReadFilter(n.read, view));
+  const openList = (next: string) => {
+    setView(next);
+    scrollToSection("all-notifications");
+  };
+
+  return (
+    <PanelLayout
+      items={accountNav}
+      tone="customer"
+      title="Notifications"
+      subtitle="Updates on your orders and offers"
+    >
+      <div className="grid gap-4 sm:grid-cols-3">
+        <StatCard onClick={() => openList("all")} label="Total Notifications" value={String(mine.length)} icon={Bell} highlight />
+        <StatCard onClick={() => openList("unread")} label="Unread" value={String(unread)} icon={BellRing} />
+        <StatCard onClick={() => openList("read")} label="Read" value={String(mine.length - unread)} icon={CheckCheck} />
+      </div>
+
+      <Panel
+        id="all-notifications"
+        title="All Notifications"
+        className="mt-6"
+        action={
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              void markAllRead().then((ok) => { if (ok) toast.success("All notifications marked as read"); });
+            }}
+          >
+            Mark All Read
+          </Button>
+        }
+      >
+        {view !== "all" && <FilterNote label={view === "unread" ? "Unread" : "Read"} onClear={() => setView("all")} />}
+        {shown.length === 0 && <p className="py-8 text-center text-sm text-slate">No notifications here.</p>}
+        <div className="space-y-3">
+          {shown.map((n) => (
+            <div
+              key={n.id}
+              role="button"
+              tabIndex={0}
+              onClick={() => {
+                void markRead(n.id).then((ok) => { if (ok) navigate({ to: notificationTarget(n, "customer", user, orders, paymentHolds) as never }); });
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  void markRead(n.id).then((ok) => { if (ok) navigate({ to: notificationTarget(n, "customer", user, orders, paymentHolds) as never }); });
+                }
+              }}
+              className={`flex cursor-pointer flex-wrap items-start justify-between gap-3 rounded-lg border p-4 transition-colors hover:bg-ivory ${n.read ? "border-border" : "border-gold/40 bg-gold/5"}`}
+            >
+              <div className="min-w-0">
+                <p className="font-semibold text-navy">{n.title}</p>
+                <p className="mt-1 text-sm text-slate">{n.body}</p>
+                <p className="mt-1 text-xs text-slate">{n.time}</p>
+              </div>
+              {!n.read && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void markRead(n.id).then((ok) => { if (ok) toast.success("Marked as read"); });
+                  }}
+                >
+                  Mark Read
+                </Button>
+              )}
+            </div>
+          ))}
+        </div>
+      </Panel>
+    </PanelLayout>
+  );
+}

@@ -1,0 +1,58 @@
+/*
+ * Business (B2B) purchases: the buyer's GSTIN and legal name. Same rules as the database
+ * (start_paid_checkout) so the checkout explains a problem before the order is refused.
+ */
+
+export const GSTIN_REGEX = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/;
+
+/** GST state codes by state / union territory name (lower case). */
+export const GST_STATE_CODES: Record<string, string> = {
+  "jammu and kashmir": "01", "himachal pradesh": "02", punjab: "03", chandigarh: "04", uttarakhand: "05",
+  haryana: "06", delhi: "07", rajasthan: "08", "uttar pradesh": "09", bihar: "10", sikkim: "11",
+  "arunachal pradesh": "12", nagaland: "13", manipur: "14", mizoram: "15", tripura: "16", meghalaya: "17",
+  assam: "18", "west bengal": "19", jharkhand: "20", odisha: "21", chhattisgarh: "22", "madhya pradesh": "23",
+  gujarat: "24", "dadra and nagar haveli and daman and diu": "26", maharashtra: "27", karnataka: "29", goa: "30",
+  lakshadweep: "31", kerala: "32", "tamil nadu": "33", puducherry: "34", "andaman and nicobar islands": "35",
+  telangana: "36", "andhra pradesh": "37", ladakh: "38",
+};
+
+/** "29ABCDE1234F1Z5" from what a person typed (spaces dropped, upper case). */
+export const normaliseGstin = (raw: string | null | undefined) => (raw ?? "").replace(/\s+/g, "").toUpperCase();
+
+/** The two-digit GST code of a state name ("Karnataka" → "29"); null when unknown. */
+export function gstStateCodeOf(stateName: string | null | undefined): string | null {
+  const key = (stateName ?? "").trim().toLowerCase().replace(/&/g, "and").replace(/\s+/g, " ");
+  return GST_STATE_CODES[key] ?? null;
+}
+
+/**
+ * What is wrong with the company details for the invoice, or null when fine. The company name is
+ * required; the GSTIN is optional, but when given it must be valid and belong to the state of the
+ * billing address (its first two digits).
+ */
+export function businessDetailsProblem(rawGstin: string, legalName: string, addressState?: string | null): string | null {
+  if (legalName.trim().length < 2) return "Enter your company name for the invoice";
+  const gstin = normaliseGstin(rawGstin);
+  if (!gstin) return null;
+  if (gstin.length !== 15) return "A GSTIN has 15 characters";
+  if (!GSTIN_REGEX.test(gstin)) return "This is not a valid GSTIN (for example 29ABCDE1234F1Z5)";
+  const code = gstStateCodeOf(addressState);
+  if (code && gstin.slice(0, 2) !== code) {
+    return `This GSTIN is registered in state code ${gstin.slice(0, 2)}, but the address is in ${addressState} (${code}). Use an address in the GSTIN's state.`;
+  }
+  return null;
+}
+
+/** The wording the payment page shows when the customer chose a GST bill (client's note, 6 Nov 2026). */
+export const GST_BILL_PAY_NOTE = "You have selected a GST invoice. Please make the payment from your registered firm / business account.";
+
+/**
+ * A GST bill (client's rule, 6 Nov 2026): the bill is made out to the firm, so both the firm name and its GSTIN are
+ * required, and the GSTIN must be valid and of the billing address's state. Without a GST bill the bill is in the
+ * customer's own name and nothing here is asked.
+ */
+export function gstBillProblem(rawGstin: string, firmName: string, addressState?: string | null): string | null {
+  if (firmName.trim().length < 2) return "Enter your firm name for the GST bill";
+  if (!normaliseGstin(rawGstin)) return "Enter your firm's GSTIN for the GST bill";
+  return businessDetailsProblem(rawGstin, firmName, addressState);
+}

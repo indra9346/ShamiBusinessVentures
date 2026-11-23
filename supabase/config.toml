@@ -1,0 +1,12 @@
+project_id = "ppziinqjxqpxpmudinfd"
+
+# Supabase Auth calls this hook with its own signature, not a user token.
+[functions.send-sms]
+verify_jwt = false
+
+# Zoho signs its webhook calls; there is no user token.
+[functions.zoho-webhook]
+verify_jwt = false
+
+[functions.order-sms]
+verify_jwt = false

@@ -1,0 +1,37 @@
+import type { Order } from "@/lib/data";
+import type { SessionUser } from "@/lib/store";
+import type { Notif } from "@/lib/store";
+import { orderNumberIn } from "@/lib/order-number";
+
+export function normalizePhone(phone: string | undefined) {
+  const digits = phone?.replace(/\D/g, "") ?? "";
+  return digits.length > 10 ? digits.slice(-10) : digits;
+}
+
+export function orderBelongsToUser(order: Order, user: SessionUser | null) {
+  if (!user) return false;
+  // An order placed by this exact account is always theirs, whatever the account's role (staff
+  // also shop on the storefront). Email/phone matching is only for customer accounts, because
+  // staff accounts load every customer's orders.
+  if (user.id && order.customerId && order.customerId === user.id) return true;
+  if (user.role !== "customer") return false;
+  const orderEmail = typeof order.email === "string" ? order.email.toLowerCase() : "";
+  const emailMatches = Boolean(user.email && orderEmail === user.email.toLowerCase());
+  const userPhone = normalizePhone(user.phone);
+  const phoneMatches = Boolean(userPhone && normalizePhone(order.phone) === userPhone);
+  return emailMatches || phoneMatches;
+}
+
+export function notificationBelongsToUser(
+  notification: Notif,
+  user: SessionUser | null,
+  orders: Order[],
+) {
+  if (!user || user.role !== "customer") return false;
+  if (notification.source !== "live" && notification.id <= 34) return false;
+
+  const orderId = orderNumberIn(notification.body);
+  if (!orderId) return true;
+  const order = orders.find((candidate) => candidate.id === orderId);
+  return order ? orderBelongsToUser(order, user) : false;
+}

@@ -1,0 +1,360 @@
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { pageHead, SITE_NAME } from "@/lib/seo";
+import { Minus, Plus, ShoppingBag, Trash2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { toast } from "sonner";
+import { SiteLayout, Breadcrumbs } from "@/components/site/SiteLayout";
+import { getAvailablePurchaseQuantity, getMaxPurchaseQuantity, inr, inrPrecise, showsStruckMrp, type Product } from "@/lib/data";
+import { useApp } from "@/lib/store";
+import { resizedImage } from "@/lib/image-url";
+import { useStorefrontDisplay } from "@/lib/storefront-display";
+import { branchDeliveryFee, defaultBranchOf, useBranches } from "@/lib/branches";
+import { couponDiscount, gstAfterCoupon, lineGstInside } from "@/lib/pricing";
+import { Input } from "@/components/ui/input";
+import { showCartNotification } from "@/components/site/CartFloatingNotification";
+import { PreorderSplit } from "@/components/site/PreorderSplit";
+
+export const Route = createFileRoute("/cart")({
+  head: () => pageHead({ title: `Your Cart | ${SITE_NAME}`, description: "Review your cart, apply coupons and check out.", path: "/cart", noindex: true }),
+  component: Cart,
+});
+
+function Cart() {
+  const { cart, cartItems, setQty, removeFromCart, subtotal, coupons, clearCart, productCatalogStatus } = useApp();
+  const display = useStorefrontDisplay();
+  const [coupon, setCoupon] = useState("");
+  const [applied, setApplied] = useState<string | null>(null);
+  const hasUnavailableLines = cartItems.length < cart.length;
+  const removeUnavailable = () => {
+    for (const line of cart) if (!cartItems.some((item) => item.product.id === line.id)) removeFromCart(line.id);
+  };
+  const checkoutBlocked = productCatalogStatus !== "ready" || hasUnavailableLines;
+  // Same default as checkout: pickup from the godown (free) when it offers pickup, else its home-delivery charge.
+  // Checkout picks the godown by delivery PIN when branch routing is on; before an address, use the default godown.
+  const godown = defaultBranchOf(useBranches().branches);
+  const pickup = godown ? godown.pickupEnabled : true;
+  const delivery = pickup ? 0 : branchDeliveryFee(godown, subtotal);
+  // Prices include GST: the subtotal is what the customer pays for the goods, and this is the GST inside it.
+  const taxBeforeCoupon = cartItems.reduce((sum, line) => sum + lineGstInside(line.product.price, line.qty, line.product.gst), 0);
+  const appliedCoupon = applied ? coupons.find((c) => c.code === applied) : undefined;
+  const discount = appliedCoupon ? couponDiscount(appliedCoupon, subtotal) : 0;
+  const tax = discount > 0 ? gstAfterCoupon(cartItems.map((line) => ({ price: line.product.price, qty: line.qty, gstPercent: line.product.gst })), discount) : taxBeforeCoupon;
+  const total = subtotal + delivery - discount;
+
+  const applyCoupon = () => {
+    const code = coupon.trim().toUpperCase();
+    const found = coupons.find((c) => c.code === code);
+    if (!found) {
+      toast.error("Invalid coupon code");
+      return;
+    }
+    if (found.status !== "Active") {
+      toast.error(`Coupon ${code} is ${found.status.toLowerCase()}`);
+      return;
+    }
+    if (subtotal < found.min) {
+      toast.error(`Minimum order value of ${inr(found.min)} required for ${code}`);
+      return;
+    }
+    setApplied(code);
+    toast.success("Coupon applied", { description: `${code} — ${found.value} off` });
+  };
+
+  return (
+    <SiteLayout>
+      <div className="border-b border-border bg-ivory">
+        <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8">
+          <Breadcrumbs items={[{ label: "Cart" }]} />
+          <h1 className="mt-3 text-2xl font-bold text-navy sm:text-3xl">Shopping Cart</h1>
+        </div>
+      </div>
+
+      {cartItems.length === 0 ? (
+        <div className="mx-auto grid max-w-md place-items-center gap-3 px-4 py-16 text-center sm:px-6 sm:py-24">
+          <ShoppingBag className="h-10 w-10 text-gold" />
+          <p className="text-lg font-bold text-navy">
+            {hasUnavailableLines
+              ? productCatalogStatus === "loading" ? "Loading your saved cart" : "Your saved cart items are unavailable"
+              : "Your cart is empty"}
+          </p>
+          <p className="text-sm text-slate">
+            {hasUnavailableLines
+              ? productCatalogStatus === "loading"
+                ? "We’re matching saved cart items with the live catalog."
+                : "These items are not sold at the godown serving your PIN code, or are no longer available."
+              : "Browse the catalogue and add sugar, rice, oils or pulses."}
+          </p>
+          {hasUnavailableLines && productCatalogStatus !== "loading" && (
+            <button onClick={clearCart} className="text-sm font-semibold text-danger hover:underline">
+              Remove these items
+            </button>
+          )}
+          <Link to="/shop" className="mt-3 rounded-md bg-navy px-6 py-3 text-sm font-semibold text-white hover:bg-midnight">
+            Continue Shopping
+          </Link>
+        </div>
+      ) : (
+        <div className="mx-auto grid max-w-7xl gap-6 px-4 py-6 sm:gap-8 sm:px-6 sm:py-10 lg:grid-cols-[minmax(0,1fr)_360px]">
+          <div className="space-y-4">
+            {checkoutBlocked && (
+              <div role="alert" className="rounded-lg border border-danger/30 bg-danger/5 p-4 text-sm text-danger">
+                {productCatalogStatus === "loading"
+                  ? "The live catalog is still loading; checkout is temporarily unavailable."
+                  : hasUnavailableLines
+                    ? <>Some items in your cart are not sold at the godown serving your PIN code, or are no longer available. They are not in this total. <button type="button" onClick={removeUnavailable} className="font-semibold underline">Remove them</button> to continue.</>
+                    : "The live product catalog is unavailable, so checkout is disabled."}
+              </div>
+            )}
+            {cartItems.map(({ product, qty }) => (
+              <div key={product.id} className="flex flex-col gap-4 rounded-lg border border-border bg-card p-4 shadow-card sm:flex-row">
+                <img
+                  src={resizedImage(product.image || `/products/${product.category.toLowerCase()}.jpg`, 320)}
+                  alt={product.name}
+                  loading="lazy"
+                  width={800}
+                  height={800}
+                  onError={(e) => {
+                    const cat = product.category.toLowerCase();
+                    (e.currentTarget as HTMLImageElement).src =
+                      cat.includes("sugar")
+                        ? "/products/sugar.jpg"
+                        : cat.includes("oil")
+                        ? "/products/oil.jpg"
+                        : "/products/rice.jpg";
+                  }}
+                  className="h-24 w-24 shrink-0 rounded-md object-cover"
+                />
+                <div className="min-w-0 flex-1">
+                  {display.showVendor && <p className="text-[11px] tracking-wider text-slate uppercase">{product.vendor}</p>}
+                  <Link to="/product/$id" params={{ id: product.id }} className="font-semibold text-navy hover:text-gold">
+                    {product.name}
+                  </Link>
+                  <p className="mt-1 text-xs text-slate">
+                    {product.weight}
+                    {showsStruckMrp(product, display.showMrpSavings) && (
+                      <>
+                        {" "}· MRP <span className="line-through">{inr(product.mrp)}</span> ·{" "}
+                        <span className="font-semibold text-gold">Save {inr(product.mrp - product.price)}</span>
+                      </>
+                    )}
+                  </p>
+                  <div className="mt-3 flex flex-wrap items-center gap-3">
+                    <CartQuantityControl
+                      product={product}
+                      qty={qty}
+                      onUpdateQty={(newQty) => setQty(product.id, newQty)}
+                    />
+                    <button
+                      onClick={() => {
+                        removeFromCart(product.id);
+                        showCartNotification("Item removed", product.name, "remove", product.image);
+                      }}
+                      className="flex items-center gap-1.5 text-xs font-semibold text-danger hover:underline"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" /> Remove
+                    </button>
+                  </div>
+                </div>
+                <p className="text-lg font-bold text-navy">{inr(product.price * qty)}</p>
+              </div>
+            ))}
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <Link to="/shop" className="inline-block text-sm font-semibold text-navy hover:text-gold">
+                ← Continue shopping
+              </Link>
+              <button
+                onClick={() => {
+                  clearCart();
+                  showCartNotification("Cart cleared", undefined, "remove");
+                }}
+                className="text-sm font-semibold text-danger hover:underline"
+              >
+                Clear cart
+              </button>
+            </div>
+          </div>
+
+          <aside className="h-max rounded-lg border border-border bg-card p-6 shadow-card lg:sticky lg:top-40">
+            <h2 className="text-sm font-bold tracking-wide text-navy uppercase">Order Summary</h2>
+            <div className="mt-5 space-y-3 text-sm">
+              <Row label="Subtotal (incl. GST)" value={inrPrecise(subtotal)} />
+              <Row label={pickup ? "Godown pickup" : "Delivery charges"} value={delivery === 0 ? "Free" : inrPrecise(delivery)} />
+              {discount > 0 && <Row label={`Coupon discount (${applied})`} value={`- ${inrPrecise(discount)}`} gold />}
+              <div className="hairline-gold my-2" />
+              <div className="flex justify-between text-base font-bold text-navy">
+                <span>Grand total</span>
+                <span>{inrPrecise(total)}</span>
+              </div>
+              {tax > 0 && <p className="text-right text-xs text-slate">{`Includes GST of ${inrPrecise(tax)}`}</p>}
+            </div>
+
+            <div className="mt-5 flex gap-2">
+              <Input value={coupon} onChange={(e) => setCoupon(e.target.value.toUpperCase())} placeholder="Coupon code" className="h-10" />
+              <button
+                onClick={applyCoupon}
+                className="rounded-md bg-navy px-4 text-xs font-semibold text-white hover:bg-midnight"
+              >
+                Apply
+              </button>
+            </div>
+
+            {checkoutBlocked ? (
+              <button disabled className="mt-5 block w-full cursor-not-allowed rounded-md bg-border py-3.5 text-center text-sm font-bold text-slate">
+                Checkout unavailable
+              </button>
+            ) : (
+              <Link
+                to="/checkout"
+                search={applied ? { coupon: applied } : {}}
+                className="mt-5 block rounded-md bg-gold py-3.5 text-center text-sm font-bold text-midnight transition-colors hover:bg-gold-light"
+              >
+                Proceed to Checkout
+              </Link>
+            )}
+          </aside>
+        </div>
+      )}
+    </SiteLayout>
+  );
+}
+
+function Row({ label, value, gold }: { label: string; value: string; gold?: boolean }) {
+  return (
+    <div className="flex justify-between">
+      <span className="text-slate">{label}</span>
+      <span className={gold ? "font-semibold text-gold" : "font-semibold text-navy"}>{value}</span>
+    </div>
+  );
+}
+
+function CartQuantityControl({
+  product,
+  qty,
+  onUpdateQty,
+}: {
+  product: Product;
+  qty: number;
+  onUpdateQty: (newQty: number) => void;
+}) {
+  const [val, setVal] = useState(String(qty));
+  const purchaseLimit = getAvailablePurchaseQuantity(product);
+  const configuredMax = getMaxPurchaseQuantity(product);
+
+  useEffect(() => {
+    setVal(String(qty));
+  }, [qty]);
+
+  const commitValue = (valueToCommit: string) => {
+    const digitsOnly = valueToCommit.replace(/\D/g, "");
+    const parsed = parseInt(digitsOnly, 10);
+
+    // Cleared or 0: quietly put the previous quantity back (deleting the number is not an error).
+    if (isNaN(parsed) || parsed < 1) {
+      setVal(String(qty));
+      return;
+    }
+
+    // Above the limit: quietly cap it; the line under the box says why.
+    if (parsed > purchaseLimit) {
+      setVal(String(purchaseLimit || 1));
+      onUpdateQty(purchaseLimit || 1);
+      return;
+    }
+
+    setVal(String(parsed));
+    onUpdateQty(parsed);
+  };
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const raw = e.target.value;
+    if (raw === "") {
+      setVal("");
+      return;
+    }
+    const digitsOnly = raw.replace(/\D/g, "");
+    if (!digitsOnly) {
+      setVal("");
+      return;
+    }
+
+    const num = parseInt(digitsOnly, 10);
+    if (num > purchaseLimit) {
+      setVal(digitsOnly);
+      return;
+    }
+
+    setVal(digitsOnly);
+    if (num > 0) {
+      onUpdateQty(num);
+    }
+  };
+
+  const handleBlur = () => {
+    commitValue(val);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") {
+      e.currentTarget.blur();
+    }
+  };
+
+  const handleDecrease = () => {
+    if (qty <= 1) return;
+    const next = qty - 1;
+    setVal(String(next));
+    onUpdateQty(next);
+  };
+
+  const handleIncrease = () => {
+    if (qty >= purchaseLimit) return;
+    const next = Math.min(purchaseLimit, qty + 1);
+    setVal(String(next));
+    onUpdateQty(next);
+  };
+
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center rounded-md border border-border bg-card shadow-xs">
+        <button
+          type="button"
+          onClick={handleDecrease}
+          disabled={qty <= 1}
+          className="p-2 text-navy hover:text-gold transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+          aria-label={`Decrease quantity of ${product.name}`}
+        >
+          <Minus className="h-3.5 w-3.5" />
+        </button>
+        <input
+          type="text"
+          inputMode="numeric"
+          pattern="[0-9]*"
+          value={val}
+          onChange={handleInputChange}
+          onBlur={handleBlur}
+          onKeyDown={handleKeyDown}
+          className="h-8 w-12 border-x border-border bg-transparent text-center text-sm font-semibold text-navy focus:bg-card focus:outline-none focus:ring-1 focus:ring-gold"
+          aria-label={`Quantity for ${product.name}`}
+        />
+        <button
+          type="button"
+          onClick={handleIncrease}
+          disabled={qty >= purchaseLimit}
+          className="p-2 text-navy hover:text-gold transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+          aria-label={`Increase quantity of ${product.name}`}
+        >
+          <Plus className="h-3.5 w-3.5" />
+        </button>
+      </div>
+      {Number(val) > purchaseLimit ? (
+        <p role="status" className="text-xs font-medium text-amber-700">
+          Maximum {purchaseLimit} per purchase{purchaseLimit < configuredMax ? " (available stock)" : ""}
+        </p>
+      ) : qty >= purchaseLimit && purchaseLimit > 0 ? (
+        <p className="text-[11px] text-slate">Maximum {purchaseLimit} per purchase</p>
+      ) : null}
+      <PreorderSplit product={product} qty={qty} />
+    </div>
+  );
+}
+

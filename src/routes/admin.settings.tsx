@@ -1,0 +1,553 @@
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { useCallback, useEffect, useState } from "react";
+import { toast } from "sonner";
+import { Building2, Percent, Save, ShieldCheck, Truck } from "lucide-react";
+import { PanelLayout } from "@/components/panel/PanelLayout";
+import { Panel, scrollToSection, StatCard } from "@/components/panel/widgets";
+import { adminNav } from "@/lib/panel-nav";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { supabase } from "@/integrations/supabase/client";
+import type { Json } from "@/integrations/supabase/types";
+import { useApp } from "@/lib/store";
+import { DEFAULT_PREORDER_SETTINGS, PREORDER_SETTING_KEY, parsePreorderSettings, type PreorderSettings } from "@/lib/preorder";
+import {
+  STOREFRONT_DISPLAY_KEY,
+  defaultStorefrontDisplay,
+  parseStorefrontDisplay,
+  setStorefrontDisplay,
+  type StorefrontDisplay,
+} from "@/lib/storefront-display";
+import { setSiteDetails } from "@/lib/site-details";
+import { CustomerMessagesPanel } from "@/components/panel/CustomerMessagesPanel";
+import { OrderVoicePanel } from "@/components/panel/OrderVoicePanel";
+import {
+  DEFAULT_SITE_DETAILS,
+  SITE_DETAILS_KEY,
+  cleanSiteDetails,
+  parseSiteDetails,
+  siteDetailsProblem,
+  type SiteDetailField,
+  type SiteDetails,
+} from "@/lib/site-details-rules";
+
+export const Route = createFileRoute("/admin/settings")({
+  head: () => ({
+    meta: [
+      { title: "System Settings | Shami Business Ventures Admin" },
+      { name: "description", content: "Business profile, GST, commission, shipping and security settings for the platform." },
+      { property: "og:title", content: "System Settings | Shami Admin" },
+      { property: "og:description", content: "Configure platform-wide business rules." },
+      { name: "robots", content: "noindex" },
+    ],
+  }),
+  // ?tab=alerts opens a tab directly (the order-alert speaker's "Change wording").
+  validateSearch: (search: Record<string, unknown>): { tab?: string } => (typeof search["tab"] === "string" && /^[a-z]{2,20}$/.test(search["tab"]) ? { tab: search["tab"] } : {}),
+  component: AdminSettings,
+});
+
+const settingKeys = ["business_profile", "tax_config", "commerce_rules", "security_config", "company", "tax", "order", "shipping", "security"] as const;
+
+function AdminSettings() {
+  const { vendors } = useApp();
+  // The cards open the tab with their setting.
+  const [tab, setTab] = useState(Route.useSearch().tab ?? "business");
+  const openTab = (next: string) => {
+    setTab(next);
+    scrollToSection("settings-tabs");
+  };
+  const [business, setBusiness] = useState({
+    name: "Shami Business Ventures Private Limited",
+    email: "shamibusinessventurespvtltd@gmail.com",
+    phone: "8310084308",
+    gstin: "29ABJCS7870F1ZR",
+    pan: "ABJCS7870F",
+    address: ["Pavagada Road, Behind Mahalakshmi Kalyana Mantapa", "Mahadevi Road, Challakere", "Karnataka 577522, India"].join("\n"),
+  });
+  const [tax, setTax] = useState({ sugar: "5", staples: "5", packaged: "12", gstEnabled: true, invoicePrefix: "SBV/26-27/" });
+  const [commerce, setCommerce] = useState({
+    advance: "30",
+    splitThreshold: "280000",
+    paymentWindow: "20",
+    freeShipAbove: "10000",
+    shippingFlat: "250",
+    codEnabled: false,
+  });
+  const [security, setSecurity] = useState({ vendorKyc: true, autoLogout: "30" });
+  useEffect(() => {
+    let active = true;
+    void supabase.from("settings").select("key,value").in("key", [...settingKeys]).then(({ data, error }) => {
+      if (!active || error) return;
+      const values = new Map((data ?? []).map((r) => [r.key, r.value]));
+      const obj = (key: string): Record<string, unknown> => { const v = values.get(key); return v && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : {}; };
+      const savedBusiness = { ...obj("company"), ...obj("business_profile") };
+      if (Object.keys(savedBusiness).length) setBusiness((old) => ({ ...old, name: String(savedBusiness["name"] ?? old.name), email: String(savedBusiness["email"] ?? old.email), phone: String(savedBusiness["phone"] ?? old.phone), gstin: String(savedBusiness["gstin"] ?? old.gstin), pan: String(savedBusiness["pan"] ?? old.pan), address: String(savedBusiness["address"] ?? old.address) }));
+      const savedTax = { ...obj("tax"), ...obj("tax_config") };
+      if (Object.keys(savedTax).length) setTax((old) => ({ ...old, sugar: String(savedTax["sugar"] ?? savedTax["gst_default"] ?? old.sugar), staples: String(savedTax["staples"] ?? savedTax["gst_default"] ?? old.staples), packaged: String(savedTax["packaged"] ?? old.packaged), gstEnabled: Boolean(savedTax["gstEnabled"] ?? savedTax["gst_enabled"] ?? old.gstEnabled), invoicePrefix: String(savedTax["invoicePrefix"] ?? savedTax["invoice_prefix"] ?? old.invoicePrefix) }));
+      const savedCommerce = { ...obj("commerce_rules"), ...obj("order") }, savedShipping = obj("shipping");
+      if (Object.keys(savedCommerce).length || Object.keys(savedShipping).length) setCommerce((old) => ({ ...old, advance: String(savedCommerce["advance"] ?? savedCommerce["advance_percent"] ?? old.advance), splitThreshold: String(savedCommerce["splitThreshold"] ?? savedCommerce["split_threshold"] ?? old.splitThreshold), paymentWindow: String(savedCommerce["paymentWindow"] ?? savedCommerce["payment_timer_minutes"] ?? old.paymentWindow), freeShipAbove: String(savedShipping["free_above"] ?? old.freeShipAbove), shippingFlat: String(savedShipping["standard"] ?? old.shippingFlat), codEnabled: false }));
+      const savedSecurity = { ...obj("security"), ...obj("security_config") };
+      if (Object.keys(savedSecurity).length) {
+        const rawSec = savedSecurity["autoLogout"];
+        const rawHours = savedSecurity["session_hours"];
+        setSecurity((old) => ({
+          ...old,
+          vendorKyc: Boolean(savedSecurity["vendorKyc"] ?? old.vendorKyc),
+          autoLogout: rawSec !== null && rawSec !== undefined && rawSec !== ""
+            ? String(rawSec)
+            : Number(rawHours)
+            ? String(Number(rawHours) * 60)
+            : old.autoLogout,
+        }));
+      }
+    });
+    return () => { active = false; };
+  }, []);
+  const saveSetting = async (key: typeof settingKeys[number], value: object, label: string) => {
+    const idleTimeout = Math.min(1440, Math.max(5, Math.round(Number(security.autoLogout) || 30)));
+    if (key === "security_config" && !Number.isFinite(Number(security.autoLogout))) {
+      toast.error("Enter an inactivity timeout from 5 to 1,440 minutes");
+      return;
+    }
+    const valueJson = JSON.parse(JSON.stringify(value)) as Json;
+    const rows: { key: string; value: Json; is_public: boolean }[] = [{ key, value: valueJson, is_public: false }];
+    if (key === "business_profile" && business.gstin.trim() && !/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/.test(business.gstin.trim().toUpperCase())) {
+      toast.error("Enter a valid 15-character GSTIN");
+      return;
+    }
+    // Printed on every invoice (src/lib/invoice.ts): legal name, address, GSTIN, PAN, phone, email.
+    if (key === "business_profile") rows.push({ key: "company", value: { name: business.name, legal_name: business.name, email: business.email, phone: business.phone, address: business.address, gstin: business.gstin.trim().toUpperCase(), pan: business.pan.trim().toUpperCase(), currency: "INR" }, is_public: true });
+    if (key === "tax_config") rows.push({ key: "tax", value: { gst_default: Number(tax.staples), gst_enabled: tax.gstEnabled, cess: 0, sugar: Number(tax.sugar), staples: Number(tax.staples), packaged: Number(tax.packaged), invoice_prefix: tax.invoicePrefix }, is_public: true });
+    if (key === "commerce_rules") {
+      const { data: currentShipping } = await supabase.from("settings").select("value").eq("key", "shipping").maybeSingle();
+      const oldShipping = currentShipping?.value && typeof currentShipping.value === "object" && !Array.isArray(currentShipping.value) ? currentShipping.value : {};
+      rows.push({ key: "order", value: { split_threshold: Number(commerce.splitThreshold), advance_percent: Number(commerce.advance), payment_timer_minutes: Number(commerce.paymentWindow), cod_enabled: false }, is_public: true });
+      rows.push({ key: "shipping", value: { ...oldShipping, free_above: Number(commerce.freeShipAbove), standard: Number(commerce.shippingFlat) } as Json, is_public: true });
+    }
+    if (key === "security_config") rows.push({ key: "security", value: { ...JSON.parse(JSON.stringify(value)), autoLogout: idleTimeout, session_hours: Math.max(1, Math.ceil(idleTimeout / 60)), password_min: 8 }, is_public: false });
+    const { error } = await supabase.from("settings").upsert(rows, { onConflict: "key" });
+    if (error) { toast.error(`Could not save ${label.toLowerCase()}`, { description: error.message }); return; }
+    if (key === "security_config") {
+      setSecurity((current) => ({ ...current, autoLogout: String(idleTimeout) }));
+      window.dispatchEvent(new CustomEvent("admin-idle-timeout-updated", { detail: idleTimeout }));
+    }
+    toast.success(`${label} saved`);
+  };
+
+  return (
+    <PanelLayout items={adminNav} tone="admin" title="System Settings" subtitle="Platform-wide business configuration">
+      <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <StatCard link={{ to: "/admin/commissions" }} label="Average Vendor Commission" value={`${vendors.length ? (vendors.reduce((sum, vendor) => sum + vendor.commission, 0) / vendors.length).toFixed(1) : "0"}%`} icon={Percent} highlight />
+        <StatCard onClick={() => openTab("commerce")} label="Advance on Order" value={`${commerce.advance}%`} icon={ShieldCheck} />
+        <StatCard onClick={() => openTab("commerce")} label="Free Freight Above" value={`₹${Number(commerce.freeShipAbove).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} icon={Truck} />
+        <StatCard onClick={() => openTab("tax")} label="GST on New Products" value={tax.gstEnabled ? "Enabled" : "Disabled"} icon={Building2} />
+      </div>
+
+      <Tabs id="settings-tabs" value={tab} onValueChange={setTab} className="scroll-mt-36">
+        <TabsList className="mb-4 h-auto flex-wrap justify-start">
+          <TabsTrigger value="business">Business</TabsTrigger>
+          <TabsTrigger value="website">Website details</TabsTrigger>
+          <TabsTrigger value="tax">Tax & Invoicing</TabsTrigger>
+          <TabsTrigger value="commerce">Commerce Rules</TabsTrigger>
+          <TabsTrigger value="security">Security</TabsTrigger>
+          <TabsTrigger value="storefront">Storefront</TabsTrigger>
+          <TabsTrigger value="pickup">Pickup</TabsTrigger>
+          <TabsTrigger value="preorders">Pre-orders</TabsTrigger>
+          <TabsTrigger value="messages">Customer messages</TabsTrigger>
+          <TabsTrigger value="alerts">Order alerts</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="business">
+          <Panel title="Business Profile">
+            <div className="grid gap-4 sm:grid-cols-2 xl:max-w-3xl">
+              {(
+                [
+                  ["Legal name", "name"],
+                  ["Support email", "email"],
+                  ["Support phone", "phone"],
+                  ["GSTIN", "gstin"],
+                  ["PAN", "pan"],
+                ] as const
+              ).map(([label, key]) => (
+                <div key={key} className="grid gap-1.5">
+                  <Label>{label}</Label>
+                  <Input value={business[key]} onChange={(e) => setBusiness((b) => ({ ...b, [key]: e.target.value }))} />
+                </div>
+              ))}
+              <div className="grid gap-1.5 sm:col-span-2">
+                <Label>Registered address</Label>
+                <Textarea rows={3} value={business.address} onChange={(e) => setBusiness((b) => ({ ...b, address: e.target.value }))} />
+                <p className="text-xs text-slate">Printed on an invoice only when its godown has no address. The Website details tab sets what customers see on the site.</p>
+              </div>
+              <Button
+                className="bg-navy text-white hover:bg-navy/90 sm:w-fit"
+                onClick={() => {
+                  if (!business.name.trim() || !business.email.includes("@")) {
+                    toast.error("Enter a valid business name and support email");
+                    return;
+                  }
+                  void saveSetting("business_profile", business, "Business profile");
+                }}
+              >
+                <Save className="mr-1 h-4 w-4" /> Save Profile
+              </Button>
+            </div>
+          </Panel>
+        </TabsContent>
+
+        <TabsContent value="website">
+          <SiteDetailsPanel />
+        </TabsContent>
+
+        <TabsContent value="tax">
+          <Panel title="Tax & Invoicing">
+            <div className="grid gap-4 sm:grid-cols-2 xl:max-w-3xl">
+              <div className="grid gap-1.5"><Label>New sugar product GST default (%)</Label><Input type="number" min="0" max="100" value={tax.sugar} onChange={(e) => setTax((t) => ({ ...t, sugar: e.target.value }))} /></div>
+              <div className="grid gap-1.5"><Label>New staple product GST default (%)</Label><Input type="number" min="0" max="100" value={tax.staples} onChange={(e) => setTax((t) => ({ ...t, staples: e.target.value }))} /></div>
+              <div className="grid gap-1.5"><Label>New packaged product GST default (%)</Label><Input type="number" min="0" max="100" value={tax.packaged} onChange={(e) => setTax((t) => ({ ...t, packaged: e.target.value }))} /></div>
+              <div className="grid gap-1.5"><Label>Invoice number prefix</Label><Input value={tax.invoicePrefix} onChange={(e) => setTax((t) => ({ ...t, invoicePrefix: e.target.value }))} /><p className="text-xs text-slate">Applied to invoice downloads in customer accounts.</p></div>
+              <div className="flex items-center justify-between gap-4 rounded-md border border-border p-4 sm:col-span-2">
+                <div>
+                  <p className="text-sm font-bold text-navy">Apply GST defaults to new products</p>
+                  <p className="text-xs text-slate">Rates are copied into new listings and used at checkout. Existing products keep their saved GST rate.</p>
+                </div>
+                <Switch
+                  checked={tax.gstEnabled}
+                  onCheckedChange={(v) => {
+                    setTax((t) => ({ ...t, gstEnabled: v }));
+                  }}
+                />
+              </div>
+              <Button className="bg-navy text-white hover:bg-navy/90 sm:w-fit" onClick={() => void saveSetting("tax_config", tax, "Tax settings")}>
+                <Save className="mr-1 h-4 w-4" /> Save Tax Settings
+              </Button>
+            </div>
+          </Panel>
+        </TabsContent>
+
+        <TabsContent value="commerce">
+          <Panel title="Commerce & Payment Rules">
+            <div className="grid gap-4 sm:grid-cols-2 xl:max-w-3xl">
+              <div className="rounded-md border border-border p-4 sm:col-span-2"><p className="text-sm font-bold text-navy">Vendor commission rates</p><p className="mt-1 text-xs text-slate">The average above is calculated from saved vendor rates. Set an individual vendor’s commission on the <Link to="/admin/commissions" className="font-semibold text-navy underline">Commissions page</Link>.</p></div>
+              <div className="grid gap-1.5"><Label>Advance payment (%)</Label><Input type="number" value={commerce.advance} onChange={(e) => setCommerce((c) => ({ ...c, advance: e.target.value }))} /></div>
+              <div className="grid gap-1.5"><Label>Order split threshold (₹)</Label><Input type="number" value={commerce.splitThreshold} onChange={(e) => setCommerce((c) => ({ ...c, splitThreshold: e.target.value }))} /></div>
+              <div className="grid gap-1.5"><Label>Payment window (minutes)</Label><Input type="number" value={commerce.paymentWindow} onChange={(e) => setCommerce((c) => ({ ...c, paymentWindow: e.target.value }))} /></div>
+              <div className="grid gap-1.5"><Label>Free freight above (₹)</Label><Input type="number" value={commerce.freeShipAbove} onChange={(e) => setCommerce((c) => ({ ...c, freeShipAbove: e.target.value }))} /></div>
+              <div className="grid gap-1.5"><Label>Flat freight charge (₹)</Label><Input type="number" value={commerce.shippingFlat} onChange={(e) => setCommerce((c) => ({ ...c, shippingFlat: e.target.value }))} /></div>
+              <div className="flex items-center justify-between gap-4 rounded-md border border-border bg-ivory/40 p-4 sm:col-span-2">
+                <div>
+                  <p className="text-sm font-bold text-navy">Cash on Delivery (Disabled)</p>
+                  <p className="text-xs text-slate">Cash on delivery is permanently disabled across the platform. All commodity and marketplace orders require online payment (UPI, NEFT or RTGS, by order value).</p>
+                </div>
+                <Switch checked={false} disabled aria-label="Cash on delivery is permanently disabled" />
+              </div>
+              <Button
+                className="bg-navy text-white hover:bg-navy/90 sm:w-fit"
+                onClick={() => {
+                  void saveSetting("commerce_rules", commerce, "Commerce rules");
+                }}
+              >
+                <Save className="mr-1 h-4 w-4" /> Save Rules
+              </Button>
+            </div>
+          </Panel>
+        </TabsContent>
+
+        <TabsContent value="pickup">
+          <Panel title="Pickup & delivery">
+            <p className="text-sm text-slate">Godowns, the PIN codes they serve, pickup and home delivery are now managed per branch.</p>
+            <Link to="/admin/branches" className="mt-3 inline-flex rounded-md bg-navy px-4 py-2 text-sm font-semibold text-white hover:bg-navy/90">Open Branches</Link>
+          </Panel>
+        </TabsContent>
+        <TabsContent value="storefront">
+          <StorefrontDisplayPanel />
+        </TabsContent>
+        <TabsContent value="preorders">
+          <PreorderSettingsPanel />
+        </TabsContent>
+
+        <TabsContent value="messages">
+          <CustomerMessagesPanel />
+        </TabsContent>
+        <TabsContent value="alerts">
+          <OrderVoicePanel />
+        </TabsContent>
+        <TabsContent value="security">
+          <Panel title="Security & Access">
+            <div className="grid gap-4 xl:max-w-3xl">
+              <p className="rounded-md border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">The inactivity timeout is enforced in admin browser sessions. Password reset and change forms require at least 8 characters. Admin MFA and additional password-strength rules are not enforced by this app.</p>
+              <div className="flex items-center justify-between gap-4 rounded-md border border-border p-4">
+                <div>
+                  <p className="text-sm font-bold text-navy">Two-factor authentication for admins</p>
+                  <p className="text-xs text-slate">An MFA enrollment and challenge flow is not connected, so this app does not require a second factor.</p>
+                </div>
+                <span className="shrink-0 rounded-full border border-amber-300 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-900">Not enforced</span>
+              </div>
+              <div className="flex items-center justify-between gap-4 rounded-md border border-border p-4">
+                <div>
+                  <p className="text-sm font-bold text-navy">Mandatory vendor KYC</p>
+                  <p className="text-xs text-slate">When enabled, PAN, bank proof and business registration documents must be approved before a vendor can submit or edit listings. Vendors with GSTIN also need an approved GST certificate.</p>
+                </div>
+                <Switch checked={security.vendorKyc} onCheckedChange={(value) => setSecurity((current) => ({ ...current, vendorKyc: value }))} aria-label="Require vendor KYC approval before catalog changes" />
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="grid gap-1.5">
+                  <Label>Auto logout after (minutes)</Label>
+                  <Input type="number" min={5} max={1440} value={security.autoLogout} onChange={(event) => setSecurity((current) => ({ ...current, autoLogout: event.target.value }))} />
+                </div>
+                <div className="grid gap-1.5">
+                  <Label>Password minimum</Label>
+                  <div className="flex min-h-9 items-center rounded-md border border-border bg-muted/40 px-3 text-sm text-slate">8 characters in reset and password-change forms</div>
+                </div>
+              </div>
+              <Button className="bg-navy text-white hover:bg-navy/90 sm:w-fit" onClick={() => void saveSetting("security_config", security, "Security settings")}><Save className="mr-1 h-4 w-4" /> Save Security Settings</Button>
+            </div>
+          </Panel>
+        </TabsContent>
+      </Tabs>
+    </PanelLayout>
+  );
+}
+
+const storefrontOptions: { key: keyof StorefrontDisplay; title: string; hint: string }[] = [
+  {
+    key: "showMrpSavings",
+    title: "Show MRP, discount and savings",
+    hint: "Adds the struck-through MRP, “% off” badge and “Save ₹N” to product cards, the product page, search and the cart for every product with an MRP above its price. A product saved as “Discounted with Strikethrough” always shows them, even with this off; one saved as “Direct MRP Only” never does.",
+  },
+  {
+    key: "showRatings",
+    title: "Show ratings and reviews",
+    hint: "Star ratings and review counts on product cards and the product page, plus the shop's rating filter.",
+  },
+  {
+    key: "showPopularProducts",
+    title: "Show Popular Products on the home page",
+    hint: "The “Picked for you · Popular Products” row on the home page. Switched off, the home page goes from the categories straight to the All Products button.",
+  },
+];
+
+const siteDetailRows: { key: SiteDetailField; title: string; hint: string }[] = [
+  { key: "address", title: "Head office address", hint: "Footer, Contact and About pages." },
+  { key: "phone", title: "Head office and customer care number", hint: "Footer, Contact page and customer account pages." },
+  { key: "hours", title: "Phone hours", hint: "Contact page, next to the phone number." },
+  { key: "whatsapp", title: "WhatsApp number", hint: "Contact page." },
+  { key: "email", title: "Email address", hint: "Footer and Contact page. Send it a test mail first, to be sure it receives mail." },
+  { key: "gstin", title: "GSTIN", hint: "Footer and About page." },
+  { key: "fssai", title: "FSSAI licence number", hint: "Footer and About page." },
+];
+
+/** Admin text and switches for the company details customers see; saved as a public setting. */
+function SiteDetailsPanel() {
+  const [value, setValue] = useState<SiteDetails>(DEFAULT_SITE_DETAILS);
+  const [loaded, setLoaded] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    void supabase.from("settings").select("value").eq("key", SITE_DETAILS_KEY).maybeSingle().then(({ data, error }) => {
+      if (!active) return;
+      if (error) {
+        toast.error("Could not load website details", { description: error.message });
+        return;
+      }
+      setValue(parseSiteDetails(data?.value));
+      setLoaded(true);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const change = (key: SiteDetailField, patch: Partial<SiteDetails[SiteDetailField]>) =>
+    setValue((current) => ({ ...current, [key]: { ...current[key], ...patch } }));
+
+  const save = async () => {
+    const problem = siteDetailsProblem(value);
+    if (problem) {
+      toast.error(problem);
+      return;
+    }
+    const clean = cleanSiteDetails(value);
+    setSaving(true);
+    const { error } = await supabase
+      .from("settings")
+      .upsert([{ key: SITE_DETAILS_KEY, value: JSON.parse(JSON.stringify(clean)) as Json, is_public: true }], { onConflict: "key" });
+    setSaving(false);
+    if (error) {
+      toast.error("Could not save website details", { description: error.message });
+      return;
+    }
+    setValue(clean);
+    setSiteDetails(clean);
+    toast.success("Website details saved");
+  };
+
+  return (
+    <Panel title="Details on the website">
+      <div className="grid gap-4 xl:max-w-3xl">
+        <p className="text-sm text-slate">Choose what customers see in the footer and on the Contact and About pages. Switch a detail off to hide it.</p>
+        <p className="text-xs text-slate">Invoices don't use these. They print the Business tab's details and each godown's own address from Branches.</p>
+        {siteDetailRows.map((row) => (
+          <div key={row.key} className="grid gap-2 rounded-md border border-border p-4">
+            <div className="flex items-center justify-between gap-4">
+              <Label htmlFor={`site-detail-${row.key}`} className="text-sm font-bold text-navy">{row.title}</Label>
+              <Switch
+                checked={value[row.key].show}
+                onCheckedChange={(show) => change(row.key, { show })}
+                aria-label={`Show ${row.title} on the website`}
+              />
+            </div>
+            {row.key === "address" ? (
+              <Textarea id={`site-detail-${row.key}`} rows={3} value={value[row.key].value} onChange={(e) => change(row.key, { value: e.target.value })} />
+            ) : (
+              <Input id={`site-detail-${row.key}`} value={value[row.key].value} onChange={(e) => change(row.key, { value: e.target.value })} />
+            )}
+            <p className="text-xs text-slate">{row.hint}</p>
+          </div>
+        ))}
+        <Button className="bg-navy text-white hover:bg-navy/90 sm:w-fit" disabled={saving || !loaded} onClick={() => void save()}>
+          <Save className="mr-1 h-4 w-4" /> {saving ? "Saving…" : "Save Website Details"}
+        </Button>
+      </div>
+    </Panel>
+  );
+}
+
+/** Admin switches for what customers see on product cards; saved as a public setting. */
+/**
+ * Admin › Settings › Pre-orders (14 Nov 2026): goods ordered from a supplier can be sold before they arrive, under a
+ * pre-order batch (Admin › Batches › New pre-order). Saved through admin_set_preorder_settings, which refuses to switch
+ * off while pre-order batches are open.
+ */
+function PreorderSettingsPanel() {
+  const [value, setValue] = useState<PreorderSettings>(DEFAULT_PREORDER_SETTINGS);
+  const [saving, setSaving] = useState(false);
+  // Nothing can be changed or saved until the settings are read (review fix: the defaults showed "off" meanwhile, and a
+  // save could write them).
+  const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const read = useCallback(() => {
+    let active = true;
+    setLoadError("");
+    void supabase.from("settings").select("value").eq("key", PREORDER_SETTING_KEY).maybeSingle().then(({ data, error }) => {
+      if (!active) return;
+      if (error) { setLoadError(error.message); return; }
+      setValue(parsePreorderSettings(data?.value));
+      setLoaded(true);
+    });
+    return () => { active = false; };
+  }, []);
+  useEffect(() => read(), [read]);
+  const save = async () => {
+    if (!loaded) return;
+    setSaving(true);
+    const { data, error } = await supabase.rpc("admin_set_preorder_settings", { _enabled: value.enabled, _grace_days: value.graceDays, _require_ack: value.requireAck });
+    setSaving(false);
+    if (error) {
+      toast.error("Could not save the pre-order settings", { description: error.message });
+      return;
+    }
+    setValue(parsePreorderSettings(data));
+    toast.success(value.enabled ? "Pre-orders are on" : "Pre-orders are off");
+  };
+  return (
+    <Panel title="Pre-orders">
+      <div className="grid gap-4 xl:max-w-3xl">
+        <p className="text-sm text-slate">
+          Sell goods ordered from a supplier before they reach the godown. Make a pre-order batch in Admin › Batches › New pre-order; when the bill comes, match it in Receive purchase. Needs Zoho as the stock master and godown matching by PIN.
+        </p>
+        {!loaded && !loadError && <p className="text-xs text-slate">Reading the pre-order settings…</p>}
+        {loadError && (
+          <div className="flex flex-wrap items-center gap-2 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+            <span className="min-w-0 break-words">{`Could not read the pre-order settings: ${loadError}`}</span>
+            <Button size="sm" variant="outline" onClick={() => read()}>Try again</Button>
+          </div>
+        )}
+        <div className="flex items-center justify-between gap-4 rounded-md border border-border p-4">
+          <div>
+            <p className="text-sm font-bold text-navy">Pre-orders on</p>
+            <p className="text-xs text-slate">Customers can order units of pre-order batches. Switching off is refused while pre-order batches are open.</p>
+          </div>
+          <Switch checked={value.enabled} disabled={!loaded} onCheckedChange={(checked) => setValue((current) => ({ ...current, enabled: checked }))} aria-label="Pre-orders on" />
+        </div>
+        <div className="flex items-center justify-between gap-4 rounded-md border border-border p-4">
+          <div>
+            <p className="text-sm font-bold text-navy">Customers tick the pre-order box</p>
+            <p className="text-xs text-slate">At checkout they confirm they collect the whole order after the goods arrive, with a full refund if they don't come.</p>
+          </div>
+          <Switch checked={value.requireAck} disabled={!loaded} onCheckedChange={(checked) => setValue((current) => ({ ...current, requireAck: checked }))} aria-label="Customers tick the pre-order box" />
+        </div>
+        <label className="grid gap-1 rounded-md border border-border p-4 text-sm">
+          <span className="font-bold text-navy">Grace days after the expected date</span>
+          <span className="text-xs text-slate">Pre-orders stop this many days after a batch's expected date when its bill has not come (0 to 14).</span>
+          <Input type="number" min={0} max={14} className="w-28" value={value.graceDays} disabled={!loaded}
+            onChange={(e) => setValue((current) => ({ ...current, graceDays: Math.min(14, Math.max(0, Math.floor(Number(e.target.value) || 0))) }))} />
+        </label>
+        <Button className="bg-navy text-white hover:bg-navy/90 sm:w-fit" disabled={saving || !loaded} onClick={() => void save()}>
+          <Save className="mr-1 h-4 w-4" /> {saving ? "Saving…" : "Save pre-orders"}
+        </Button>
+      </div>
+    </Panel>
+  );
+}
+
+function StorefrontDisplayPanel() {
+  const [value, setValue] = useState<StorefrontDisplay>(defaultStorefrontDisplay);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    void supabase.from("settings").select("value").eq("key", STOREFRONT_DISPLAY_KEY).maybeSingle().then(({ data, error }) => {
+      if (active && !error) setValue(parseStorefrontDisplay(data?.value));
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const save = async () => {
+    setSaving(true);
+    const { error } = await supabase
+      .from("settings")
+      .upsert([{ key: STOREFRONT_DISPLAY_KEY, value: { ...value }, is_public: true }], { onConflict: "key" });
+    setSaving(false);
+    if (error) {
+      toast.error("Could not save storefront display", { description: error.message });
+      return;
+    }
+    setStorefrontDisplay(value);
+    toast.success("Storefront display saved");
+  };
+
+  return (
+    <Panel title="Product Card Display">
+      <div className="grid gap-4 xl:max-w-3xl">
+        <p className="text-sm text-slate">
+          Product cards always show the product, pack size, stock and selling price. Switch on the extra details you want customers to see.
+        </p>
+        {storefrontOptions.map((option) => (
+          <div key={option.key} className="flex items-center justify-between gap-4 rounded-md border border-border p-4">
+            <div>
+              <p className="text-sm font-bold text-navy">{option.title}</p>
+              <p className="text-xs text-slate">{option.hint}</p>
+            </div>
+            <Switch
+              checked={value[option.key]}
+              onCheckedChange={(checked) => setValue((current) => ({ ...current, [option.key]: checked }))}
+              aria-label={option.title}
+            />
+          </div>
+        ))}
+        <Button className="bg-navy text-white hover:bg-navy/90 sm:w-fit" disabled={saving} onClick={() => void save()}>
+          <Save className="mr-1 h-4 w-4" /> {saving ? "Saving…" : "Save Display"}
+        </Button>
+      </div>
+    </Panel>
+  );
+}

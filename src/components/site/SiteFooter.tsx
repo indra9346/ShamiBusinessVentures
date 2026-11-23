@@ -1,0 +1,214 @@
+import { useEffect, useRef } from "react";
+import { Link } from "@tanstack/react-router";
+import { Facebook, Instagram, Mail, MapPin, Phone, Youtube } from "lucide-react";
+import { Logo } from "@/components/brand/Logo";
+import { storefrontCategories } from "@/lib/data";
+import { useSiteDetails } from "@/lib/site-details";
+import webHostingBabaLogo from "@/assets/web-hosting-baba-logo.png";
+
+const socials = [
+  { Icon: Instagram, href: "https://www.instagram.com/grain_bazar/", label: "Instagram" },
+  { Icon: Youtube, href: "https://www.youtube.com/@GrainBazar", label: "YouTube" },
+  { Icon: Facebook, href: "https://www.facebook.com/profile.php?id=61593879955539", label: "Facebook" },
+];
+
+export function SiteFooter() {
+  const details = useSiteDetails();
+  const registrations = [details.gstin && `GSTIN ${details.gstin}`, details.fssai && `FSSAI ${details.fssai}`].filter(Boolean).join(" · ");
+  // The golden sparks are redrawn by the page on every frame, so they run only while they can be seen.
+  const sparksRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const row = sparksRef.current;
+    if (!row) return;
+    const seen = new IntersectionObserver((entries) => {
+      row.toggleAttribute("data-sparks", !!entries[entries.length - 1]?.isIntersecting);
+    });
+    seen.observe(row);
+    return () => seen.disconnect();
+  }, []);
+
+  return (
+    <footer className="bg-midnight text-white/70">
+      <div className="mx-auto max-w-7xl px-6 py-14">
+        <div className="grid gap-10 md:grid-cols-2 lg:grid-cols-4">
+          <div>
+            <Logo layout="full" />
+            <p className="mt-5 max-w-xs text-sm leading-relaxed">
+              A premium multi-vendor marketplace for sugar and everyday essentials, operated by Shami
+              Business Ventures Pvt. Ltd. with verified mills and institutional-grade logistics.
+            </p>
+            <div className="mt-5 flex gap-3">
+              {socials.map(({ Icon, href, label }) => (
+                <a
+                  key={label}
+                  href={href}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  className="grid h-9 w-9 place-items-center rounded-full border border-white/15 transition-colors hover:border-gold hover:text-gold"
+                  aria-label={label}
+                >
+                  <Icon className="h-4 w-4" />
+                </a>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <h3 className="text-sm font-semibold tracking-widest text-gold uppercase">Categories</h3>
+            <ul className="mt-5 space-y-3 text-sm">
+              {storefrontCategories.map((c) => (
+                <li key={c.name}>
+                  <Link to="/shop" search={{ category: c.name }} className="transition-colors hover:text-gold">
+                    {c.name}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          <div>
+            <h3 className="text-sm font-semibold tracking-widest text-gold uppercase">Company</h3>
+            <ul className="mt-5 space-y-3 text-sm">
+              {[
+                ["About Us", "/about"],
+                ["Contact", "/contact"],
+                ["Privacy Policy", "/privacy"],
+              ].map(([label, to]) => (
+                <li key={to}>
+                  <Link to={to!} className="transition-colors hover:text-gold">
+                    {label}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          {(details.address || details.phone || details.email) && (
+            <div>
+              <h3 className="text-sm font-semibold tracking-widest text-gold uppercase">Get in touch</h3>
+              <ul className="mt-5 space-y-4 text-sm">
+                {details.address && (
+                  <li className="flex gap-3">
+                    <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-gold" />
+                    <span className="min-w-0">{details.address}</span>
+                  </li>
+                )}
+                {details.phone && (
+                  <li className="flex gap-3">
+                    <Phone className="h-4 w-4 shrink-0 text-gold" /> {details.phone}
+                  </li>
+                )}
+                {details.email && (
+                  <li className="flex gap-3">
+                    <Mail className="h-4 w-4 shrink-0 text-gold" />
+                    <span data-no-translate className="min-w-0 [overflow-wrap:anywhere]">{details.email}</span>
+                  </li>
+                )}
+              </ul>
+            </div>
+          )}
+        </div>
+
+        <div className="hairline-gold mt-12" />
+        <div className="flex flex-col gap-4 pt-6 text-xs sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p>© 2026 Shami Business Ventures Pvt. Ltd. All rights reserved.</p>
+            {registrations && <p data-no-translate className="mt-0.5 text-white/50">{registrations}</p>}
+          </div>
+
+          <div ref={sparksRef} className="flex flex-wrap items-center gap-1.5 text-white/75 text-xs sm:text-[13px]">
+            <span className="font-medium tracking-wide">Designed &amp; Developed with</span>
+            <span
+              className="inline-flex items-center mx-1 select-none align-middle"
+              aria-label="love"
+              title="Crafted with passion"
+            >
+              {/* A crisp heart; two golden sparks run up its border from the bottom tip and meet at the top. */}
+              <svg
+                viewBox="0 0 32 32"
+                className="footer-heart h-5 w-5 sm:h-6 sm:w-6"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                <defs>
+                  <linearGradient id="footerHeartFill" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#ff4d6d" />
+                    <stop offset="100%" stopColor="#d90429" />
+                  </linearGradient>
+                  <linearGradient id="footerHeartGold" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#fff3b0" />
+                    <stop offset="100%" stopColor="#f5b400" />
+                  </linearGradient>
+                </defs>
+                <path
+                  d="M16 28.5C15.6 28.5 15.2 28.3 14.9 28C11.5 24.6 3 17.5 3 10.5C3 5.8 6.8 2 11.5 2C13.8 2 15.1 3.1 16 4.2C16.9 3.1 18.2 2 20.5 2C25.2 2 29 5.8 29 10.5C29 17.5 20.5 24.6 17.1 28C16.8 28.3 16.4 28.5 16 28.5Z"
+                  fill="url(#footerHeartFill)"
+                  stroke="#f5b400"
+                  strokeOpacity="0.45"
+                  strokeWidth="1.2"
+                  strokeLinejoin="round"
+                />
+                <path
+                  className="footer-heart-spark"
+                  pathLength={100}
+                  d="M16 28.5C15.6 28.5 15.2 28.3 14.9 28C11.5 24.6 3 17.5 3 10.5C3 5.8 6.8 2 11.5 2C13.8 2 15.1 3.1 16 4.2"
+                  stroke="url(#footerHeartGold)"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                />
+                <path
+                  className="footer-heart-spark"
+                  pathLength={100}
+                  d="M16 28.5C16.4 28.5 16.8 28.3 17.1 28C20.5 24.6 29 17.5 29 10.5C29 5.8 25.2 2 20.5 2C18.2 2 16.9 3.1 16 4.2"
+                  stroke="url(#footerHeartGold)"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                />
+              </svg>
+            </span>
+            <span className="font-medium tracking-wide">by</span>
+            <a
+              href="https://webhostingbaba.com/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center transition-all duration-300 hover:scale-105 hover:opacity-95"
+              title="Web Hosting Baba — https://webhostingbaba.com/"
+            >
+              <span className="relative inline-block">
+                <img
+                  src={webHostingBabaLogo}
+                  alt="Web Hosting Baba"
+                  className="block h-6 w-auto object-contain rounded shadow-sm"
+                />
+                {/* Golden sparks run up both sides of the Baba face (beard tip to topknot) and meet at the top.
+                    Coordinates are the logo's own pixels (236 × 66). */}
+                <svg viewBox="0 0 236 66" className="footer-heart pointer-events-none absolute inset-0 h-full w-full" aria-hidden="true">
+                  <path
+                    className="footer-heart-spark"
+                    pathLength={100}
+                    d="M171.5 59 L166 54 L163 47 L161 39 L159.5 32 L160 25 L161.5 19 L165.5 15.5 L169.5 12 L171 8.5 L175.5 6.5"
+                    stroke="url(#footerHeartGold)"
+                    strokeWidth="2.4"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    fill="none"
+                  />
+                  <path
+                    className="footer-heart-spark"
+                    pathLength={100}
+                    d="M171.5 59 L176.5 54 L178.5 47 L181 39 L183.5 32 L183.5 25 L182.5 19 L181 15 L180.5 10 L178.5 7.5 L175.5 6.5"
+                    stroke="url(#footerHeartGold)"
+                    strokeWidth="2.4"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    fill="none"
+                  />
+                </svg>
+              </span>
+            </a>
+          </div>
+        </div>
+      </div>
+    </footer>
+  );
+}

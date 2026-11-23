@@ -1,0 +1,9 @@
+{
+  "redirects": [
+    {
+      "source": "/:path*",
+      "destination": "https://grainbazar.com/:path*",
+      "permanent": false
+    }
+  ]
+}

@@ -1,0 +1,500 @@
+import { createFileRoute } from "@tanstack/react-router";
+import { pageHead, SITE_NAME } from "@/lib/seo";
+import { useState } from "react";
+import { CheckCircle2, Mail, MapPin, MessageSquare, Phone, RotateCcw, Send } from "lucide-react";
+import { z } from "zod";
+import { toast } from "sonner";
+import { SiteLayout, Breadcrumbs } from "@/components/site/SiteLayout";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { supabase } from "@/integrations/supabase/client";
+import { useSiteDetails } from "@/lib/site-details";
+import { telHref, whatsappHref } from "@/lib/site-details-rules";
+
+export const Route = createFileRoute("/contact")({
+  validateSearch: (search: Record<string, unknown>) => ({
+    ...(search["request"] === "product-configuration"
+      ? { request: "product-configuration" as const }
+      : {}),
+    ...(typeof search["category"] === "string" && search["category"].trim()
+      ? { category: search["category"].trim().slice(0, 80) }
+      : {}),
+    ...(typeof search["subcategory"] === "string" && search["subcategory"].trim()
+      ? { subcategory: search["subcategory"].trim().slice(0, 100) }
+      : {}),
+    ...(typeof search["brand"] === "string" && search["brand"].trim()
+      ? { brand: search["brand"].trim().slice(0, 100) }
+      : {}),
+    ...(typeof search["weight"] === "string" && /^\d+(?:\.\d+)?$/.test(search["weight"])
+      ? { weight: search["weight"] }
+      : {}),
+    ...(typeof search["packSize"] === "string" && search["packSize"].trim()
+      ? { packSize: search["packSize"].trim().slice(0, 60) }
+      : {}),
+  }),
+  head: () => pageHead({
+    title: `Contact Us | Bulk Rice, Sugar & Oil Orders | ${SITE_NAME}`,
+    description: "Contact Grain Bazar (Shami Business Ventures Pvt. Ltd.) for bulk quotes on rice, sugar and cooking oil, vendor onboarding and order support.",
+    path: "/contact",
+  }),
+  component: Contact,
+});
+
+const schema = z.object({
+  name: z.string().trim().min(2, "Enter your full name").max(100),
+  email: z.string().trim().email("Enter a valid email").max(255),
+  phone: z
+    .string()
+    .trim()
+    .regex(/^[0-9+\s-]{8,15}$/, "Enter a valid phone number"),
+  message: z.string().trim().min(5, "Tell us a bit more about your requirement").max(1000),
+});
+
+type SubmittedData = {
+  id: string;
+  name: string;
+  email: string;
+  phone: string;
+  message: string;
+  time: string;
+  emailSent: boolean;
+};
+
+function getEnquirySaveError(error: unknown) {
+  const details =
+    typeof error === "object" && error !== null ? (error as Record<string, unknown>) : {};
+  const code = typeof details["code"] === "string" ? details["code"] : "";
+  const message = typeof details["message"] === "string" ? details["message"] : "";
+  const diagnostic = `${code} ${message}`;
+
+  if (/PGRST202|submit_contact_enquiry|schema cache|42883/i.test(diagnostic)) {
+    return "The enquiry form is not connected to the production database yet, so this request was not saved. The site administrator must apply the contact enquiry database migration in Supabase. Please use WhatsApp or email until that is fixed.";
+  }
+  if (/42501|permission denied|not authorized/i.test(diagnostic)) {
+    return "The database rejected saving this request. The site administrator needs to check the contact enquiry function permissions in Supabase.";
+  }
+
+  return message || "We could not save your request. Please try again or contact us by WhatsApp or email.";
+}
+
+function Contact() {
+  const details = useSiteDetails();
+  const search = Route.useSearch();
+  const configurationRequest = search.request === "product-configuration";
+  const requestedPackSize = search.packSize ?? (search.weight ? `${search.weight} kg` : undefined);
+  const configurationMessage = configurationRequest
+    ? `Please let me know if ${search.subcategory ?? search.brand ?? search.category ?? "the requested product"} is available in ${requestedPackSize ?? "my requested pack size"}. Category: ${search.category ?? "Not specified"}.`
+    : "";
+  const [form, setForm] = useState(() => ({
+    name: "",
+    email: "",
+    phone: "",
+    message: configurationMessage,
+  }));
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(false);
+  const [submitted, setSubmitted] = useState<SubmittedData | null>(null);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const res = schema.safeParse(form);
+    if (!res.success) {
+      const next: Record<string, string> = {};
+      res.error.issues.forEach((i) => (next[String(i.path[0])] = i.message));
+      setErrors(next);
+      return;
+    }
+    setErrors({});
+    setLoading(true);
+
+    const payload = {
+      name: form.name.trim(),
+      email: form.email.trim(),
+      phone: form.phone.trim(),
+      message: form.message.trim(),
+      status: "new",
+      metadata: configurationRequest
+        ? {
+            request_type: "product_configuration",
+            category: search.category ?? null,
+            subcategory: search.subcategory ?? null,
+            brand: search.brand ?? null,
+            requested_pack_size: requestedPackSize ?? null,
+            requested_weight_kg: search.weight ? Number(search.weight) : null,
+          }
+        : {},
+    };
+
+    try {
+      // Persist first. The DB trigger creates an admin notification in the same transaction.
+      const { data: savedId, error: dbError } = await supabase.rpc("submit_contact_enquiry", {
+        _name: payload.name,
+        _email: payload.email,
+        _phone: payload.phone,
+        _message: payload.message,
+        _metadata: payload.metadata,
+      });
+      if (dbError || !savedId) throw dbError ?? new Error("The enquiry could not be saved.");
+
+      // Email is a separate delivery channel. Once savedId exists, the request is durable
+      // even if the email provider or network is unavailable.
+      let emailSent = false;
+      try {
+        const { data: delivery, error: deliveryError } = await supabase.functions.invoke(
+          "send-enquiry",
+          { body: { enquiry_id: savedId } },
+        );
+        emailSent = !deliveryError && delivery?.emailSent === true;
+        if (deliveryError) {
+          console.warn("Enquiry saved; email delivery failed:", deliveryError.message);
+        }
+      } catch (deliveryError) {
+        console.warn("Enquiry saved; email delivery could not be confirmed:", deliveryError);
+      }
+
+      setSubmitted({
+        id: savedId,
+        ...payload,
+        emailSent,
+        time: new Date().toLocaleTimeString("en-IN", {
+          hour: "2-digit",
+          minute: "2-digit",
+          day: "2-digit",
+          month: "short",
+        }),
+      });
+
+      toast.success(configurationRequest ? "Product request saved" : "Enquiry saved", {
+        description: emailSent
+          ? "The request is in the admin enquiry inbox and the email provider accepted the message."
+          : "Your request is saved in the admin enquiry inbox. Email delivery was not confirmed; the supply desk can follow up from there.",
+      });
+      setForm({ name: "", email: "", phone: "", message: "" });
+    } catch (err: unknown) {
+      console.error("Could not save website enquiry:", err);
+      toast.error("Request was not saved", { description: getEnquirySaveError(err) });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const whatsappUrl = (phoneVal: string, msgVal: string) =>
+    `${whatsappHref(details.whatsapp)}?text=${encodeURIComponent(
+      `Hello Shami Business Desk, I have a wholesale enquiry.\nName: ${form.name || "Customer"}\nPhone: ${phoneVal || "N/A"}\nMessage: ${msgVal}`,
+    )}`;
+
+  const emailUrl = (item: SubmittedData) =>
+    `mailto:${details.email}?subject=${encodeURIComponent(
+      `Enquiry ${item.id} from ${item.name}`,
+    )}&body=${encodeURIComponent(
+      `Name: ${item.name}\nEmail: ${item.email}\nPhone: ${item.phone || "Not provided"}\nRequest ID: ${item.id}\nRequirement: ${item.message}`,
+    )}`;
+
+  return (
+    <SiteLayout>
+      <div className="border-b border-border bg-ivory">
+        <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8">
+          <Breadcrumbs items={[{ label: "Contact" }]} />
+          <h1 className="mt-3 text-2xl font-bold text-navy sm:text-3xl">Contact Supply Desk</h1>
+          <p className="mt-1 text-sm text-slate">
+            Direct institutional procurement, vendor onboarding & order assistance.
+          </p>
+        </div>
+      </div>
+
+      <div className="mx-auto grid max-w-7xl gap-8 px-4 py-8 sm:gap-10 sm:px-6 sm:py-14 lg:grid-cols-[minmax(0,1fr)_380px]">
+        {submitted ? (
+          <div className="rounded-xl border border-emerald-500/30 bg-card p-6 shadow-card sm:p-10 animate-in fade-in-50 duration-300">
+            <div className="flex items-start gap-4">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-emerald-600">
+                <CheckCircle2 className="h-6 w-6" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <span className="inline-block rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700">
+                  {submitted.emailSent ? "Email provider accepted" : "Saved for admin follow-up"}
+                </span>
+                <h2 className="mt-2 text-xl font-bold text-navy">
+                  {configurationRequest
+                    ? `Thank You, ${submitted.name}! Your Product Request Has Been Recorded`
+                    : `Thank You, ${submitted.name}! Your Enquiry Has Been Recorded`}
+                </h2>
+                <p className="mt-1 text-sm text-slate">
+                  {configurationRequest ? (
+                    <>
+                      The admin team can review your product request in the enquiry inbox. The email
+                      provider{" "}
+                      {submitted.emailSent ? "accepted the message" : "did not confirm acceptance"};
+                      you can contact the desk directly below.
+                    </>
+                  ) : (
+                    <>
+                      Your request is saved in the admin enquiry inbox. The email provider{" "}
+                      {submitted.emailSent ? "accepted the message" : "did not confirm acceptance"}
+                      {details.email
+                        ? "; use the email link below if you need to contact the desk directly."
+                        : "; you can contact the desk directly below."}
+                    </>
+                  )}
+                </p>
+              </div>
+            </div>
+
+            {/* Receipt Summary Card */}
+            <div className="mt-6 rounded-lg border border-border/80 bg-ivory/60 p-4 sm:p-5">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-slate">
+                Submission Summary ({submitted.time})
+              </h3>
+              <dl className="mt-3 grid gap-2.5 text-sm sm:grid-cols-2">
+                <div>
+                  <dt className="text-xs text-slate">Sender</dt>
+                  <dd className="font-semibold text-navy">{submitted.name}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-slate">Email</dt>
+                  <dd className="font-semibold text-navy">{submitted.email}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-slate">Phone</dt>
+                  <dd className="font-semibold text-navy">{submitted.phone || "Not provided"}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-slate">Destination</dt>
+                  <dd className="font-semibold text-gold">
+                    {submitted.emailSent ? "Provider accepted" : "Not confirmed"}
+                    {details.email && <span data-no-translate className="[overflow-wrap:anywhere]"> · {details.email}</span>}
+                  </dd>
+                </div>
+                <div className="sm:col-span-2">
+                  <dt className="text-xs text-slate">Requirement Note</dt>
+                  <dd className="mt-1 rounded-md bg-card p-3 font-mono text-xs text-charcoal border border-border">
+                    {submitted.message}
+                  </dd>
+                </div>
+              </dl>
+            </div>
+
+            {/* Instant escalation actions */}
+            <div data-analytics-off className="mt-6 flex flex-wrap items-center gap-3">
+              {details.whatsapp && (
+                <a
+                  href={whatsappUrl(submitted.phone, submitted.message)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-xs font-bold text-white transition-colors hover:bg-emerald-700 shadow-xs"
+                >
+                  <MessageSquare className="h-4 w-4" />
+                  {`Chat on WhatsApp (${details.whatsapp})`}
+                </a>
+              )}
+              {details.email && (
+                <a
+                  href={emailUrl(submitted)}
+                  className="inline-flex min-w-0 items-center gap-2 rounded-lg border border-navy/20 bg-navy/5 px-4 py-2.5 text-xs font-bold text-navy transition-colors hover:bg-navy/10"
+                >
+                  <Mail className="h-4 w-4 shrink-0" />
+                  <span className="min-w-0 [overflow-wrap:anywhere]">
+                    Email Desk (<span data-no-translate>{details.email}</span>)
+                  </span>
+                </a>
+              )}
+              <button
+                type="button"
+                onClick={() => setSubmitted(null)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs font-medium text-slate transition-colors hover:bg-muted ml-auto"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                Submit another enquiry
+              </button>
+            </div>
+          </div>
+        ) : (
+          <form
+            onSubmit={submit}
+            className="rounded-xl border border-border bg-card p-5 shadow-card sm:p-8"
+          >
+            <div className="flex items-center justify-between gap-3 border-b border-border/60 pb-4">
+              <div>
+                <h2 className="text-lg font-bold text-navy">Send an enquiry</h2>
+                <p className="mt-0.5 text-xs text-slate">
+                  {details.email ? (
+                    <>
+                      Bulk quotes, vendor onboarding or order support are saved for review and emailed
+                      when delivery is configured to{" "}
+                      <strong data-no-translate className="text-gold [overflow-wrap:anywhere]">{details.email}</strong>.
+                    </>
+                  ) : (
+                    "Bulk quotes, vendor onboarding or order support are saved for review."
+                  )}
+                </p>
+              </div>
+              <span className="hidden sm:inline-flex items-center gap-1.5 rounded-full bg-gold/10 px-2.5 py-1 text-xs font-semibold text-gold">
+                <Send className="h-3 w-3" />
+                Save & notify desk
+              </span>
+            </div>
+
+            <div className="mt-6 grid gap-5 sm:grid-cols-2">
+              <Field id="contact-name" label="Full name" error={errors["name"]}>
+                <Input
+                  id="contact-name"
+                  name="name"
+                  value={form.name}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                  placeholder="Enter your full name"
+                  maxLength={100}
+                />
+              </Field>
+              <Field id="contact-email" label="Email" error={errors["email"]}>
+                <Input
+                  id="contact-email"
+                  name="email"
+                  type="email"
+                  value={form.email}
+                  onChange={(e) => setForm({ ...form, email: e.target.value })}
+                  placeholder="name@example.com"
+                  maxLength={255}
+                />
+              </Field>
+              <Field id="contact-phone" label="Phone number" error={errors["phone"]}>
+                <Input
+                  id="contact-phone"
+                  name="phone"
+                  type="tel"
+                  value={form.phone}
+                  onChange={(e) => setForm({ ...form, phone: e.target.value })}
+                  placeholder="+91 98765 43210"
+                  maxLength={15}
+                />
+              </Field>
+              <div className="sm:col-span-2">
+                <Field
+                  id="contact-message"
+                  label="Message / Requirement details"
+                  error={errors["message"]}
+                >
+                  <Textarea
+                    id="contact-message"
+                    name="message"
+                    rows={5}
+                    maxLength={1000}
+                    placeholder="Describe your bulk commodity requirement, quantity, or query..."
+                    value={form.message}
+                    onChange={(e) => setForm({ ...form, message: e.target.value })}
+                  />
+                </Field>
+              </div>
+            </div>
+
+            <div className="mt-6 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4 pt-2">
+              <button
+                disabled={loading}
+                className="flex items-center justify-center gap-2 rounded-lg bg-navy px-8 py-3 text-sm font-semibold text-white transition-all hover:bg-midnight hover:shadow-md disabled:opacity-60 cursor-pointer"
+              >
+                {loading ? (
+                  <>
+                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                    <span>Saving and sending enquiry...</span>
+                  </>
+                ) : (
+                  <>
+                    <Send className="h-4 w-4" />
+                    <span>Submit Enquiry</span>
+                  </>
+                )}
+              </button>
+
+              <div className="flex items-center gap-2 text-xs text-slate">
+                <Mail className="h-3.5 w-3.5 text-gold shrink-0" />
+                <span>Saved for admin review; email status is confirmed after dispatch</span>
+              </div>
+            </div>
+          </form>
+        )}
+
+        <aside className="h-max space-y-4">
+          {[
+            {
+              icon: MapPin,
+              title: "Head office",
+              detail: details.address,
+            },
+            {
+              icon: Phone,
+              title: "Head office and customer care",
+              detail: details.phone && (details.hours ? `${details.phone} (${details.hours})` : details.phone),
+              href: telHref(details.phone),
+            },
+            {
+              icon: Mail,
+              title: "Official Email Desk",
+              detail: details.email,
+              href: `mailto:${details.email}`,
+            },
+            {
+              icon: MessageSquare,
+              title: "WhatsApp Support",
+              detail: details.whatsapp,
+              href: whatsappHref(details.whatsapp),
+            },
+          ].filter((item) => item.detail).map((item) => {
+            const I = item.icon;
+            const content = (
+              <div
+                key={item.title}
+                className="flex gap-4 rounded-xl border border-border bg-card p-5 shadow-card transition-all hover:border-gold/50"
+              >
+                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-navy/5 text-gold">
+                  <I className="h-5 w-5" />
+                </span>
+                <div className="min-w-0">
+                  <p className="font-semibold text-navy">{item.title}</p>
+                  <p data-no-translate={item.icon === Mail || undefined} className="text-sm text-slate [overflow-wrap:anywhere]">{item.detail}</p>
+                </div>
+              </div>
+            );
+
+            if (item.href) {
+              return (
+                <a
+                  key={item.title}
+                  href={item.href}
+                  target={item.href.startsWith("http") ? "_blank" : undefined}
+                  rel={item.href.startsWith("http") ? "noreferrer" : undefined}
+                  className="block transition-transform hover:-translate-y-0.5"
+                >
+                  {content}
+                </a>
+              );
+            }
+            return content;
+          })}
+        </aside>
+      </div>
+    </SiteLayout>
+  );
+}
+
+function Field({
+  id,
+  label,
+  error,
+  children,
+}: {
+  id?: string;
+  label: string;
+  error?: string | undefined;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="block">
+      <label
+        htmlFor={id}
+        className="mb-1.5 block text-xs font-semibold text-charcoal cursor-pointer"
+      >
+        {label}
+      </label>
+      {children}
+      {error && <span className="mt-1 block text-xs font-medium text-danger">{error}</span>}
+    </div>
+  );
+}

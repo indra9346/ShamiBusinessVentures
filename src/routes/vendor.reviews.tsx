@@ -1,0 +1,171 @@
+import { createFileRoute } from "@tanstack/react-router";
+import { useMemo, useState } from "react";
+import { Flag, MessageSquare, Star } from "lucide-react";
+import { toast } from "sonner";
+import { PanelLayout } from "@/components/panel/PanelLayout";
+import { DataTable, FilterNote, Panel, scrollToSection, StatCard, StatusBadge } from "@/components/panel/widgets";
+import { vendorNav } from "@/lib/panel-nav";
+import { matchesReviewCard } from "@/lib/panel-filters";
+import { useApp, useVendorScope } from "@/lib/store";
+import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
+
+export const Route = createFileRoute("/vendor/reviews")({
+  head: () => ({
+    meta: [
+      { title: "Reviews | Grain Bazar Vendor Panel" },
+      { name: "description", content: "Customer reviews and ratings for your products." },
+      { property: "og:title", content: "Vendor Reviews | Grain Bazar" },
+      { property: "og:description", content: "Manage and respond to customer reviews." },
+      { name: "robots", content: "noindex" },
+    ],
+  }),
+  component: VendorReviews,
+});
+
+function VendorReviews() {
+  const { vendor, vendorReviews } = useVendorScope();
+  const { replyReview, reportReview } = useApp();
+  const [rating, setRating] = useState("all");
+  // The Published cards open the list below with just the reviews they count.
+  const [card, setCard] = useState("all");
+  const openList = (next: string) => {
+    setRating("all");
+    setCard(next);
+    scrollToSection("all-reviews");
+  };
+  const [replying, setReplying] = useState<(typeof vendorReviews)[number] | null>(null);
+  const [reply, setReply] = useState("");
+  const [replies, setReplies] = useState<Record<string, string>>({});
+
+  const filtered = useMemo(
+    () => vendorReviews.filter((r) => (rating === "all" || String(r.rating) === rating) && matchesReviewCard(r, card)),
+    [vendorReviews, rating, card],
+  );
+
+  const publishedReviews = vendorReviews.filter((review) => review.status === "Published");
+  const avg = publishedReviews.length ? publishedReviews.reduce((s, r) => s + r.rating, 0) / publishedReviews.length : 0;
+  const distribution = [5, 4, 3, 2, 1].map((star) => ({
+    star,
+    count: publishedReviews.filter((r) => r.rating === star).length,
+  }));
+
+  return (
+    <PanelLayout items={vendorNav} tone="vendor" title="Reviews" subtitle={`Customer feedback on ${vendor?.business ?? "your store"} products`}>
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <StatCard onClick={() => openList("all")} label="Total Reviews" value={String(vendorReviews.length)} icon={MessageSquare} highlight />
+        <StatCard onClick={() => openList("published")} label="Published Average Rating" value={publishedReviews.length ? `${Math.round(avg * 10) / 10} / 5` : "—"} icon={Star} />
+        <StatCard onClick={() => openList("five")} label="Published 5-Star Reviews" value={String(distribution[0]!.count)} icon={Star} />
+        <StatCard onClick={() => openList("low")} label="Published Low Ratings (≤2★)" value={String(distribution[3]!.count + distribution[4]!.count)} icon={Flag} />
+      </div>
+
+      <Panel title="Rating Distribution" className="mt-6">
+        <div className="space-y-2">
+          {distribution.map((d) => (
+            <div key={d.star} className="flex items-center gap-3">
+              <span className="w-12 text-xs font-semibold text-navy">{d.star} ★</span>
+              <div className="h-2 flex-1 overflow-hidden rounded-full bg-navy/8">
+                <div
+                  className="h-full rounded-full bg-gold"
+                  style={{ width: `${publishedReviews.length ? (d.count / publishedReviews.length) * 100 : 0}%` }}
+                />
+              </div>
+              <span className="w-8 text-right text-xs text-slate">{d.count}</span>
+            </div>
+          ))}
+        </div>
+      </Panel>
+
+      <Panel
+        id="all-reviews"
+        title="All Reviews"
+        className="mt-6"
+        action={
+          <Select value={rating} onValueChange={setRating}>
+            <SelectTrigger className="h-9 w-36"><SelectValue placeholder="Rating" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Ratings</SelectItem>
+              {[5, 4, 3, 2, 1].map((r) => (
+                <SelectItem key={r} value={String(r)}>{r} Star</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        }
+      >
+        {card !== "all" && (
+          <FilterNote label={card === "five" ? "Published 5-Star Reviews" : card === "low" ? "Published Low Ratings (≤2★)" : "Published"} onClear={() => setCard("all")} />
+        )}
+        <DataTable
+          columns={["Product", "Customer", "Rating", "Review", "Reply", "Status", "Actions"]}
+          rows={filtered.map((r) => [
+            <span className="font-semibold text-navy">{r.product}</span>,
+            r.customer,
+            `${r.rating} ★`,
+            <div className="max-w-xs">
+              <p className="font-medium text-navy">{r.title}</p>
+              <p className="truncate text-xs text-slate">{r.body}</p>
+            </div>,
+            (replies[r.id] ?? r.reply) ? <p className="max-w-xs truncate text-xs text-slate">{replies[r.id] ?? r.reply}</p> : <span className="text-xs text-slate">No reply yet</span>,
+            <StatusBadge status={r.status} />,
+            <div className="flex gap-1.5">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setReplying(r);
+                  setReply(replies[r.id] ?? r.reply ?? "");
+                }}
+              >
+                Reply
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  const reason = window.prompt("Why should this review be moderated?");
+                  if (reason === null) return;
+                  if (!reason.trim()) { toast.error("Add a reason for the report"); return; }
+                  void reportReview(r.id, reason).then((ok) => { if (ok) toast.success("Review sent to admin moderation"); });
+                }}
+              >
+                Report
+              </Button>
+            </div>,
+          ])}
+        />
+      </Panel>
+
+      <Dialog open={!!replying} onOpenChange={(v) => !v && setReplying(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Reply to {replying?.customer}</DialogTitle>
+          </DialogHeader>
+          <Textarea value={reply} onChange={(e) => setReply(e.target.value)} rows={4} placeholder="Write your response..." />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setReplying(null)}>Cancel</Button>
+            <Button
+              className="bg-navy text-white hover:bg-navy/90"
+              onClick={() => {
+                if (!replying) return;
+                if (!reply.trim()) {
+                  toast.error("Reply cannot be empty");
+                  return;
+                }
+                void replyReview(replying.id, reply.trim()).then((ok) => {
+                  if (!ok) return;
+                  setReplies((r) => ({ ...r, [replying.id]: reply.trim() }));
+                  toast.success(`Reply posted for ${replying.customer}'s review`);
+                  setReplying(null);
+                });
+              }}
+            >
+              Post Reply
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </PanelLayout>
+  );
+}

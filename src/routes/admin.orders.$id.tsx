@@ -1,0 +1,928 @@
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { useState } from "react";
+import { toast } from "sonner";
+import {
+  Ban,
+  Building2,
+  CheckCircle2,
+  Circle,
+  CreditCard,
+  ExternalLink,
+  FileText,
+  MapPin,
+  Minus,
+  Package,
+  Printer,
+  Plus,
+  RefreshCw,
+  ShieldCheck,
+  Sparkles,
+  Truck,
+  UploadCloud,
+  User,
+} from "lucide-react";
+import { PanelLayout } from "@/components/panel/PanelLayout";
+import { Panel, StatusBadge } from "@/components/panel/widgets";
+import { adminNav } from "@/lib/panel-nav";
+import { canCancelOrder, inr, orderStages, type OrderStatus } from "@/lib/data";
+import { useApp } from "@/lib/store";
+import { useBranches, zohoLocationLabel } from "@/lib/branches";
+import { ZohoInvoiceStatus } from "@/components/panel/ZohoInvoiceStatus";
+import { DeliveryNotePanel } from "@/components/panel/DeliveryNotePanel";
+import { STATIC_DATA_MODE } from "@/lib/demo-mode";
+import { syncSingleOrderToZoho } from "@/lib/zoho-commerce.functions";
+import { PickupPointCard } from "@/components/site/PickupPointCard";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { cn } from "@/lib/utils";
+import { DeleteOrderButton } from "@/components/panel/DeleteOrderDialog";
+import { CancelOrderButton } from "@/components/panel/CancelOrderDialog";
+import { OrderPaymentsPanel } from "@/components/panel/OrderPaymentsPanel";
+import { DeleteOrderRecordButton } from "@/components/panel/DeleteOrderRecord";
+import { InvoicePreviewButton } from "@/components/site/InvoicePreviewDialog";
+import { ResizableTable } from "@/hooks/use-column-resize";
+import { ItemArrivalNote, ItemBatchCodes, orderWaiting, useOrderItemArrivals, useOrderItemBatches, useWaitingLotCodes } from "@/components/batches/OrderItemBatches";
+import { MoveToReadyButton } from "@/components/batches/PreorderPanel";
+import { dayLabel } from "@/lib/preorder";
+import { isVoidInZoho, zohoVoidNotice } from "@/lib/zoho-void";
+import { orderTone, orderToneClass, TONE_CLASSES } from "@/lib/order-status-tone";
+import { useZohoContactNumbers } from "@/hooks/use-zoho-contact-numbers";
+import { useZohoNumbers } from "@/hooks/use-zoho-numbers";
+import { zohoNumberParts } from "@/lib/zoho-numbers";
+import { vendorNumberOf } from "@/lib/zoho-contact-numbers";
+
+export const Route = createFileRoute("/admin/orders/$id")({
+  head: ({ params }) => ({
+    meta: [
+      { title: `Order ${params.id} | Shami Business Ventures Admin` },
+      { name: "description", content: `Full detail and status timeline for order ${params.id}.` },
+      { property: "og:title", content: `Order ${params.id} | Shami Admin` },
+      {
+        property: "og:description",
+        content: "Order detail, customer GST, items, payment and vendor information.",
+      },
+      { name: "robots", content: "noindex" },
+    ],
+  }),
+  component: AdminOrderDetail,
+  notFoundComponent: () => (
+    <PanelLayout
+      items={adminNav}
+      tone="admin"
+      title="Order Not Found"
+      subtitle="We could not find this order"
+    >
+      <Panel title="404">
+        <p className="text-sm text-slate">The order you are looking for does not exist.</p>
+        <Link to="/admin/orders" search={true} className="mt-3 inline-block text-sm font-semibold text-gold">
+          Back to Orders
+        </Link>
+      </Panel>
+    </PanelLayout>
+  ),
+});
+
+function AdminOrderDetail() {
+  const { id } = Route.useParams();
+  const {
+    orders,
+    customers,
+    vendors,
+    batches,
+    getFIFOCost,
+    updateOrderStatus,
+    updateOrderItem,
+    updateOrderDelivery,
+    user,
+  } = useApp();
+  const order = orders.find((o) => o.id === id);
+  // Zoho's customer number of the order's customer and the vendor numbers of its vendors.
+  const contactNumbers = useZohoContactNumbers(user?.id);
+  const itemBatches = useOrderItemBatches(order?.dbOrderId, order?.items.map((item) => `${item.dbItemId}:${item.qty}:${order.status}`).join(",") ?? "");
+  // Pre-order goods (14 Nov 2026): while lines wait for a batch's bill, the order can't be packed or handed over.
+  const [arrivalsKey, setArrivalsKey] = useState(0);
+  const arrivals = useOrderItemArrivals(order?.dbOrderId, `${order?.items.map((item) => `${item.dbItemId}:${item.qty}:${order.status}`).join(",") ?? ""}:${arrivalsKey}`);
+  const goods = orderWaiting(arrivals);
+  const lotCodes = useWaitingLotCodes(arrivals);
+  const waitingText = goods.waiting > 0
+    ? `Order ${order?.id ?? ""} is waiting for goods: ${lotCodes.join(", ") || "a pre-order batch"} has not arrived (expected ${dayLabel(goods.by, { full: true })}). It can be packed or handed over once its bill is matched.`
+    : "";
+  // Hooks stay above the early return: orders load after the first render.
+  const [pushedZohoId, setPushedZohoId] = useState<string | null>(null);
+  const [syncingZoho, setSyncingZoho] = useState(false);
+  const { branches } = useBranches();
+  const zohoNumbersOf = useZohoNumbers(order ? [order.id] : []);
+
+  if (!order) {
+    return (
+      <PanelLayout
+        items={adminNav}
+        tone="admin"
+        title="Order Not Found"
+        subtitle="We could not find this order"
+      >
+        <Panel title="404">
+          <p className="text-sm text-slate">Order id "{id}" was not found.</p>
+          <Link to="/admin/orders" search={true} className="mt-3 inline-block text-sm font-semibold text-gold">
+            Back to Orders
+          </Link>
+        </Panel>
+      </PanelLayout>
+    );
+  }
+
+  const isCancelled = order.status === "Cancelled";
+  // Voided (or cancelled) in the official Zoho books: the website closes the order too, and nothing here changes it.
+  const voidInZoho = isVoidInZoho(order);
+  const voidNotice = zohoVoidNotice(order);
+  const voidWord = order.zohoOrderStatus === "cancelled" ? "cancelled" : "void";
+  const canCancel = !voidInZoho && canCancelOrder(order, "admin");
+  const hasUnrefundedPayment = (order.paidAmount ?? 0) > 0 || order.payment === "Paid" || order.payment === "Partially Paid";
+  const canEditItems = !isCancelled && !voidInZoho && (STATIC_DATA_MODE || (
+    order.status === "Placed" && order.payment === "Pending" &&
+    (order.paidAmount ?? 0) === 0 && (order.discount ?? 0) === 0 && !order.coupon
+  ));
+  const currentIdx = orderStages.indexOf(order.status);
+  // The order colours (11 Nov 2026): waiting for payment or the office yellow, confirmed green, cancelled or expired red.
+  const tone = orderTone(order.status);
+
+  // Only this order's or this customer's own GSTIN: a shared name or a blank email is not the same person.
+  const matchedCustomer = customers.find((c) => c.id === order.customerId);
+  const customerGstin = order.gstin || matchedCustomer?.gst;
+  const customerNumber = order.customerId ? contactNumbers.customers.get(order.customerId) : undefined;
+
+  // Retrieve vendor records involved in this order
+  const orderVendors = vendors.filter((v) =>
+    order.items.some((i) => i.vendorId === v.id || i.vendor === v.business),
+  );
+
+  const zohoSalesOrderId = pushedZohoId ?? (order.zohoSalesOrderId || null);
+  // The numbers people use (17 Nov 2026): Zoho's sales order and invoice numbers; the internal id stays in the tooltip.
+  const zohoNumberList = zohoNumberParts(zohoNumbersOf.get(order.id));
+  const zohoShown = zohoNumberList.join(" · ") || "sales order linked";
+  const orderBranch = branches.find((branch) => branch.id === order.branchId) ?? branches.find((branch) => branch.isDefault) ?? null;
+
+  const handleSyncToZoho = async () => {
+    setSyncingZoho(true);
+    try {
+      const res = await syncSingleOrderToZoho({ data: { orderNo: order.id } });
+      if (res.zohoSalesOrderId) {
+        setPushedZohoId(res.zohoSalesOrderId);
+        toast.success(`Order synced to Zoho Sales Order ${res.zohoSalesOrderId}!`);
+      } else {
+        toast.success("Order sync job queued for Zoho Commerce");
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to sync order to Zoho");
+    } finally {
+      setSyncingZoho(false);
+    }
+  };
+
+  return (
+    <PanelLayout
+      items={adminNav}
+      tone="admin"
+      title={order.id}
+      subtitle={`Placed on ${order.date}`}
+    >
+      {/* Top Header Actions */}
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <Link to="/admin/orders" search={true} className="text-sm font-semibold text-navy hover:text-gold">
+            ← Back to Orders
+          </Link>
+          <span className="text-slate/40">|</span>
+          <span className="font-mono text-xs font-semibold text-slate">TXN: {order.txn}</span>
+          {zohoSalesOrderId && (
+            <span className={cn(
+              "inline-flex min-w-0 items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-semibold break-all",
+              voidInZoho ? "border-red-200 bg-red-50 text-red-800" : "border-emerald-200 bg-emerald-50 text-emerald-800",
+            )}>
+              <Building2 className="h-3 w-3 shrink-0" /> <span data-no-translate title={`Zoho sales order id ${zohoSalesOrderId}`}>Zoho: {zohoShown}</span>
+            </span>
+          )}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {!voidInZoho && (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={syncingZoho}
+              onClick={() => void handleSyncToZoho()}
+              className="border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 font-semibold"
+              title="Immediately synchronize this order with Zoho Commerce / Inventory"
+            >
+              <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${syncingZoho ? "animate-spin" : ""}`} />
+              {syncingZoho ? "Syncing to Zoho…" : zohoSalesOrderId ? "Re-sync to Zoho" : "Push to Zoho"}
+            </Button>
+          )}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => window.print()}
+            className="text-slate hover:text-navy"
+          >
+            <Printer className="mr-1.5 h-3.5 w-3.5" /> Print Details
+          </Button>
+          <InvoicePreviewButton order={order} copy="office" size="sm" label="Invoice" />
+
+          {!voidInZoho && (
+          <Select
+            value={order.status}
+            disabled={isCancelled}
+            onValueChange={async (v) => {
+              if (await updateOrderStatus(order.id, v as OrderStatus)) toast.success(`Order ${order.id} updated to ${v}`);
+            }}
+          >
+            <SelectTrigger className="h-9 w-44 font-medium">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {orderStages.map((s) => (
+                <SelectItem key={s} value={s} disabled={goods.waiting > 0 && ["Packed", "Dispatched", "Out for Delivery", "Delivered"].includes(s) && s !== order.status}>
+                  {s}
+                </SelectItem>
+              ))}
+              {isCancelled && <SelectItem value="Cancelled">Cancelled</SelectItem>}
+            </SelectContent>
+          </Select>
+          )}
+
+          {/* Changed 11 Nov 2026: at any step, with a reason; a paid order records its refund first. Also when Zoho voided
+              the sales order but money was received here, which is how that order gets closed. */}
+          {!isCancelled && (!voidInZoho || hasUnrefundedPayment) && <CancelOrderButton order={order} />}
+          {isCancelled && <DeleteOrderButton orderNo={order.id} voidInZoho={voidInZoho} />}
+          {/* Changed 11 Nov 2026: at every step; the dialog asks first whether money recorded on it was really received. */}
+          <DeleteOrderRecordButton orderNo={order.id} />
+        </div>
+      </div>
+
+      {voidNotice && (
+        <div
+          role="status"
+          className={cn(
+            "mb-5 flex items-start gap-2.5 rounded-xl border p-4",
+            voidNotice.tone === "refund" ? "border-amber-300 bg-amber-50 text-amber-950" : "border-red-200 bg-red-50 text-red-950",
+          )}
+        >
+          <Ban className="mt-0.5 h-5 w-5 shrink-0" />
+          <div className="min-w-0">
+            <p className="text-sm font-bold">{voidNotice.title}</p>
+            <p className="mt-0.5 text-sm break-words">{voidNotice.detail}</p>
+          </div>
+        </div>
+      )}
+
+      {/* WHAT'S NEXT Action Banner (matching Zoho Commerce) */}
+      {!isCancelled && !voidInZoho && order.status !== "Delivered" && (
+        // Tinted by the order's status, like its row in the list: yellow while it waits, green once confirmed.
+        <div
+          className={cn(
+            "mb-5 flex flex-col gap-3 rounded-xl border p-4 sm:flex-row sm:items-center sm:justify-between",
+            orderToneClass(order.status, "tile") || "border-emerald-200 bg-emerald-50/70",
+          )}
+        >
+          <div className="flex items-center gap-2.5">
+            <Sparkles className={cn("h-5 w-5 shrink-0", tone === "pending" ? "text-yellow-700" : tone === "closed" ? "text-red-700" : "text-emerald-700")} />
+            <div>
+              <p className={cn("text-xs font-bold uppercase tracking-wider", tone ? TONE_CLASSES[tone].text : "text-emerald-900")}>What's Next?</p>
+              <p className="text-sm font-medium text-navy">
+                {order.status === "Placed"
+                  ? "You can either confirm or cancel this order."
+                  : order.status === "Payment Confirmed" || order.status === "Accepted"
+                  ? "Order is confirmed. Prepare and pack items for fulfillment."
+                  : order.status === "Packed"
+                  ? "Package is ready. Hand over to delivery carrier or customer pickup."
+                  : order.status === "Dispatched" || order.status === "Out for Delivery"
+                  ? "Order is in transit. Awaiting customer receipt confirmation."
+                  : "Review order settlement and customer rating."}
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {goods.waiting > 0 && (
+              <p className="basis-full rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-950">
+                {`Waiting for goods: ${goods.waiting} units on ${lotCodes.join(", ") || "a pre-order batch"}, expected ${dayLabel(goods.by)}`}
+              </p>
+            )}
+            {order.status === "Placed" && (
+              <Button
+                size="sm"
+                className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold shadow-sm"
+                onClick={async () => {
+                  if (await updateOrderStatus(order.id, "Accepted")) {
+                    toast.success(`Order ${order.id} marked as Confirmed`);
+                  }
+                }}
+              >
+                <CheckCircle2 className="mr-1.5 h-4 w-4" /> Mark as Confirmed
+              </Button>
+            )}
+            {(order.status === "Payment Confirmed" || order.status === "Accepted") && (
+              <Button
+                size="sm"
+                className="bg-navy hover:bg-navy/90 text-white font-semibold shadow-sm"
+                disabled={goods.waiting > 0}
+                title={waitingText || undefined}
+                onClick={async () => {
+                  if (await updateOrderStatus(order.id, "Packed")) {
+                    toast.success(`Order ${order.id} marked as Packed`);
+                  }
+                }}
+              >
+                <Package className="mr-1.5 h-4 w-4" /> Mark as Packed
+              </Button>
+            )}
+            {order.status === "Packed" && (
+              <Button
+                size="sm"
+                className="bg-amber-600 hover:bg-amber-700 text-white font-semibold shadow-sm"
+                disabled={goods.waiting > 0}
+                title={waitingText || undefined}
+                onClick={async () => {
+                  if (await updateOrderStatus(order.id, "Out for Delivery")) {
+                    toast.success(`Order ${order.id} marked Out for Delivery`);
+                  }
+                }}
+              >
+                <Truck className="mr-1.5 h-4 w-4" /> Out for Delivery
+              </Button>
+            )}
+            {(order.status === "Dispatched" || order.status === "Out for Delivery") && (
+              <Button
+                size="sm"
+                className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold shadow-sm"
+                onClick={async () => {
+                  if (await updateOrderStatus(order.id, "Delivered")) {
+                    toast.success(`Order ${order.id} marked Delivered`);
+                  }
+                }}
+              >
+                <CheckCircle2 className="mr-1.5 h-4 w-4" /> Mark Delivered
+              </Button>
+            )}
+            <CancelOrderButton order={order} className="border-rose-300 text-rose-700 hover:bg-rose-50" />
+          </div>
+        </div>
+      )}
+
+      {/* Zoho Integration Status Ribbon */}
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card p-3.5 shadow-xs">
+        <div className="flex items-center gap-3">
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">
+            <Building2 className="h-5 w-5" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold uppercase tracking-wider text-slate">Zoho Commerce / Inventory Integration</span>
+              {zohoSalesOrderId && voidInZoho ? (
+                <span className="inline-flex min-w-0 items-center gap-1 rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-semibold text-red-800 break-all">
+                  <Ban className="h-3 w-3 shrink-0" /> <span title={`Zoho sales order id ${zohoSalesOrderId}`}>{`${voidWord === "cancelled" ? "Cancelled" : "Void"} in Zoho: ${zohoShown}`}</span>
+                </span>
+              ) : zohoSalesOrderId ? (
+                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-800">
+                  <CheckCircle2 className="h-3 w-3" /> <span data-no-translate title={`Zoho sales order id ${zohoSalesOrderId}`}>Synced: {zohoShown}</span>
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-800">
+                  <Circle className="h-3 w-3" /> Ready for Write Sync
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-slate mt-0.5">
+              {zohoSalesOrderId && voidInZoho
+                ? `Sales Order ${zohoSalesOrderId}, in ${zohoLocationLabel(orderBranch)}, is ${voidWord} in Zoho. Nothing more is sent to Zoho for this order.`
+                : zohoSalesOrderId
+                ? `Order is synchronized with Zoho under Sales Order ${zohoSalesOrderId}, in ${zohoLocationLabel(orderBranch)}.`
+                : "Active write sync will automatically mirror this sales order into Zoho Inventory & Commerce."}
+            </p>
+            {zohoSalesOrderId && <ZohoInvoiceStatus key={`zoho-invoice-${order.status}-${order.payment}`} orderNo={order.id} audience="admin" className="mt-3" readOnly={voidInZoho} />}
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          {!voidInZoho && (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={syncingZoho}
+              onClick={() => void handleSyncToZoho()}
+              className="text-xs font-semibold text-navy hover:text-gold"
+            >
+              <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${syncingZoho ? "animate-spin" : ""}`} />
+              {syncingZoho ? "Syncing with Zoho…" : zohoSalesOrderId ? "Re-sync to Zoho" : "Push to Zoho Sales Orders"}
+            </Button>
+          )}
+          <Link
+            to="/admin/zoho"
+            className="inline-flex items-center gap-1 text-xs font-semibold text-slate hover:text-navy"
+          >
+            Zoho Hub <ExternalLink className="h-3 w-3" />
+          </Link>
+        </div>
+      </div>
+
+      {/* Each panel that re-reads after a cancel or refund needs its own key: two siblings sharing one made React
+          draw the delivery note panel again and again (11 Nov 2026). */}
+      <DeliveryNotePanel key={`delivery-note-${order.status}-${order.payment}`} orderNo={order.id} className="mb-5" readOnly={voidInZoho} />
+
+      {/* Zoho ERP Style 4-Stage Horizontal Progression Tracker */}
+      <Panel title="Order Stage Progression" className="mb-5">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {[
+            {
+              label: "Received",
+              desc: `Order placed on ${order.date}`,
+              active: true,
+              done: tone !== "pending",
+              current: tone === "pending",
+              icon: FileText,
+            },
+            {
+              label: "Confirmed",
+              desc: tone === "pending" ? "Yet to be confirmed" : "Confirmed by admin",
+              active: ["Payment Confirmed", "Accepted", "Packed", "Dispatched", "Out for Delivery", "Delivered"].includes(order.status),
+              done: ["Packed", "Dispatched", "Out for Delivery", "Delivered"].includes(order.status),
+              current: ["Payment Confirmed", "Accepted"].includes(order.status),
+              icon: CheckCircle2,
+            },
+            {
+              label: "Ready for Pickup",
+              desc: ["Packed", "Dispatched", "Out for Delivery", "Delivered"].includes(order.status) ? "Items packaged" : "Awaiting packaging",
+              active: ["Packed", "Dispatched", "Out for Delivery", "Delivered"].includes(order.status),
+              done: ["Dispatched", "Out for Delivery", "Delivered"].includes(order.status),
+              current: order.status === "Packed",
+              icon: Package,
+            },
+            {
+              label: "Delivered",
+              desc: order.status === "Delivered" ? "Fulfilled to customer" : "In transit / dispatch",
+              active: order.status === "Delivered",
+              done: order.status === "Delivered",
+              current: ["Dispatched", "Out for Delivery"].includes(order.status),
+              icon: Truck,
+            },
+          ].map((step, idx) => {
+            const Icon = step.icon;
+            // The order colours: a done stage green; the stage it is at yellow while it waits for payment or the
+            // office, green once confirmed; on a cancelled or expired order the stages it never reached red.
+            const stopped = !step.done && !step.current && tone === "closed";
+            const waiting = step.current && tone === "pending";
+            return (
+              <div
+                key={step.label}
+                className={cn(
+                  "relative flex flex-col justify-between rounded-xl border p-4 transition-all",
+                  step.done
+                    ? cn(TONE_CLASSES.confirmed.tile, "text-emerald-950")
+                    : waiting
+                    ? cn(TONE_CLASSES.pending.tile, "text-navy shadow-sm ring-2 ring-yellow-300/50")
+                    : step.current
+                    ? cn(TONE_CLASSES.confirmed.tile, "border-emerald-700 text-navy shadow-sm ring-2 ring-emerald-300/40")
+                    : stopped
+                    ? cn(TONE_CLASSES.closed.tile, "text-red-950")
+                    : "border-border bg-stone-50/50 text-slate"
+                )}
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <div
+                    className={cn(
+                      "flex h-8 w-8 items-center justify-center rounded-lg",
+                      step.done
+                        ? "bg-emerald-600 text-white"
+                        : waiting
+                        ? "bg-yellow-400 text-yellow-950"
+                        : step.current
+                        ? "bg-emerald-700 text-white"
+                        : stopped
+                        ? "bg-red-100 text-red-700"
+                        : "bg-stone-200 text-stone-500"
+                    )}
+                  >
+                    <Icon className="h-4 w-4" />
+                  </div>
+                  <span className="text-[10px] font-bold tracking-wider uppercase text-slate">Stage {idx + 1}</span>
+                </div>
+                <div>
+                  <p className="font-semibold text-sm">{step.label}</p>
+                  <p className="text-xs text-slate/80 mt-0.5">
+                    {stopped ? (order.status === "Cancelled" ? "Order cancelled" : order.status) : step.desc}
+                  </p>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </Panel>
+
+      {order.vendorStatuses && order.vendorStatuses.length > 0 && (
+        <Panel title="Vendor Fulfillment Status" className="mt-5">
+          <div className="divide-y divide-border">
+            {order.vendorStatuses.map((fulfillment) => (
+              <div key={fulfillment.vendorId} className="flex flex-wrap items-center justify-between gap-2 py-2 first:pt-0 last:pb-0">
+                <div>
+                  <p className="text-sm font-semibold text-navy">{fulfillment.vendor}</p>
+                  <p className="font-mono text-xs text-slate">{fulfillment.vendorId}</p>
+                </div>
+                <StatusBadge status={fulfillment.status} />
+              </div>
+            ))}
+          </div>
+        </Panel>
+      )}
+
+      {!canEditItems && !isCancelled && !voidInZoho && (
+        <p className="mb-3 rounded-md border border-border bg-muted/20 px-3 py-2 text-xs text-slate">
+          Order lines can be edited only while the order is unpaid, undiscounted, and still in Placed status.
+        </p>
+      )}
+
+      {/* Information Cards: Customer, Delivery, Payment, and Summary */}
+      <div className="mt-6 grid gap-6 sm:grid-cols-2 xl:grid-cols-4">
+        {/* 1. Customer Information */}
+        <Panel title="Customer Details">
+          <div className="flex items-center gap-2 pb-2 text-xs font-semibold text-slate">
+            <User className="h-4 w-4 text-navy" /> Customer Profile
+          </div>
+          <dl className="space-y-2 text-sm">
+            <div className="flex justify-between">
+              <dt className="text-slate">Name</dt>
+              <dd className="font-semibold text-navy">{order.customer}</dd>
+            </div>
+            {customerNumber && (
+              <div className="flex justify-between">
+                <dt className="text-slate">Customer No.</dt>
+                <dd data-no-translate className="font-mono font-semibold text-navy">{customerNumber}</dd>
+              </div>
+            )}
+            <div className="flex justify-between">
+              <dt className="text-slate">Phone</dt>
+              <dd className="font-medium text-navy">{order.phone}</dd>
+            </div>
+            <div className="flex justify-between">
+              <dt className="text-slate">Email</dt>
+              <dd className="font-medium text-navy truncate max-w-[150px]" title={order.email}>
+                {order.email}
+              </dd>
+            </div>
+            {customerGstin && (
+              <div className="flex justify-between border-t border-border pt-1.5">
+                <dt className="text-slate">GSTIN</dt>
+                <dd className="font-mono font-semibold text-navy">{customerGstin}</dd>
+              </div>
+            )}
+            <div className="flex justify-between">
+              <dt className="text-slate">Customer ID</dt>
+              <dd className="font-mono text-xs text-slate">{order.customerId}</dd>
+            </div>
+          </dl>
+        </Panel>
+
+        {/* 2. Delivery & Address */}
+        <Panel title="Delivery Information">
+          <div className="flex items-center gap-2 pb-2 text-xs font-semibold text-slate">
+            <MapPin className="h-4 w-4 text-navy" /> Shipping Address
+          </div>
+          <dl className="space-y-2 text-sm">
+            <div className="flex justify-between">
+              <dt className="text-slate">Address</dt>
+              <dd className="max-w-[65%] text-right font-medium text-navy">{order.address}</dd>
+            </div>
+            <div className="flex justify-between">
+              <dt className="text-slate">City</dt>
+              <dd className="font-medium text-navy">{order.city}</dd>
+            </div>
+            <div className="flex justify-between">
+              <dt className="text-slate">State</dt>
+              <dd className="font-medium text-navy">{order.state}</dd>
+            </div>
+            <div className="flex justify-between">
+              <dt className="text-slate">PIN Code</dt>
+              <dd className="font-mono font-medium text-navy">{order.pin}</dd>
+            </div>
+            <div className="flex justify-between border-t border-border pt-1.5">
+              <dt className="text-slate">Country</dt>
+              <dd className="font-medium text-navy">India</dd>
+            </div>
+            <div className="flex justify-between">
+              <dt className="text-slate">Method</dt>
+              <dd className="w-40 text-xs font-semibold text-gold">
+                <Input
+                  aria-label="Delivery requirement"
+                  defaultValue={order.delivery}
+                  disabled={!canCancel}
+                  className="h-8 text-xs"
+                  onBlur={(event) => updateOrderDelivery(order.id, event.target.value)}
+                />
+              </dd>
+            </div>
+          </dl>
+          <PickupPointCard pin={order.pin} heading="Customer collects from" className="mt-3" />
+        </Panel>
+
+        {/* 3. Payment Information */}
+        <Panel title="Payment Information">
+          <div className="flex items-center gap-2 pb-2 text-xs font-semibold text-slate">
+            <CreditCard className="h-4 w-4 text-navy" /> Settlement Ledger
+          </div>
+          <dl className="space-y-2 text-sm">
+            <div className="flex justify-between">
+              <dt className="text-slate">Transaction ID</dt>
+              <dd className="font-mono font-semibold text-navy">{order.txn}</dd>
+            </div>
+            <div className="flex justify-between">
+              <dt className="text-slate">Method</dt>
+              <dd className="font-medium text-navy">{order.method}</dd>
+            </div>
+            <div className="flex justify-between items-center">
+              <dt className="text-slate">Payment Status</dt>
+              <dd>
+                <StatusBadge status={order.payment} />
+              </dd>
+            </div>
+            <div className="flex justify-between">
+              <dt className="text-slate">Order Status</dt>
+              <dd>
+                <StatusBadge status={order.status} />
+              </dd>
+            </div>
+            <div className="flex justify-between border-t border-border pt-1.5">
+              <dt className="text-slate">Payment Date</dt>
+              <dd className="font-medium text-navy">{order.date}</dd>
+            </div>
+          </dl>
+        </Panel>
+
+        {/* 4. Order Financial Summary */}
+        <Panel title="Order Summary">
+          <div className="flex items-center gap-2 pb-2 text-xs font-semibold text-slate">
+            <FileText className="h-4 w-4 text-navy" /> Tax & Charges
+          </div>
+          <dl className="space-y-2 text-sm">
+            <div className="flex justify-between">
+              <dt className="text-slate">Sub Total before GST ({order.items.length} Item{order.items.length === 1 ? "" : "s"})</dt>
+              <dd className="font-medium text-charcoal">{inr(order.subtotal)}</dd>
+            </div>
+            {order.discount > 0 && (
+              <div className="flex justify-between text-emerald-700 font-medium">
+                <dt>Discount {order.coupon ? `(${order.coupon})` : ""}</dt>
+                <dd>-{inr(order.discount)}</dd>
+              </div>
+            )}
+            <div className="rounded-md border border-border/80 bg-stone-50/70 p-2 space-y-1 text-xs">
+              <div className="flex justify-between font-semibold text-navy">
+                <span>Tax Total</span>
+                <span>{inr(order.tax)}</span>
+              </div>
+              <div className="flex justify-between text-slate pl-2">
+                <span>• CGST2.5</span>
+                <span>{inr(order.tax / 2)}</span>
+              </div>
+              <div className="flex justify-between text-slate pl-2">
+                <span>• SGST2.5</span>
+                <span>{inr(order.tax / 2)}</span>
+              </div>
+            </div>
+            <div className="flex justify-between">
+              <dt className="text-slate">Freight / Delivery</dt>
+              <dd className="font-medium text-charcoal">
+                {order.shipping === 0 ? "Free Shipping" : inr(order.shipping)}
+              </dd>
+            </div>
+            <div className="mt-2 flex justify-between border-t-2 border-border pt-2 text-base font-bold">
+              <dt className="text-navy">Total (Tax Inclusive)</dt>
+              <dd className="text-gold text-lg">{inr(order.amount)}</dd>
+            </div>
+          </dl>
+        </Panel>
+      </div>
+
+      <OrderPaymentsPanel key={`order-payments-${order.status}-${order.payment}`} orderNo={order.id} total={order.amount} cancelled={isCancelled} />
+
+      {/* Items Table with FIFO Cost and Pricing Breakdown */}
+      <div className="mt-6">
+        <Panel title={`Order Items (${order.items.length})`}>
+          <p className="-mt-1 mb-3 text-xs text-slate">
+            Item quantities, selling price, and FIFO inventory cost layer information
+          </p>
+          <div className="overflow-x-auto">
+            <ResizableTable tableId="admin-order-lines" className="w-full min-w-[700px] text-sm">
+              <thead>
+                <tr className="border-b border-border text-left text-[11px] font-bold tracking-wider text-slate uppercase">
+                  <th className="px-3 py-3">Product</th>
+                  <th className="px-3 py-3">SKU</th>
+                  <th className="px-3 py-3">Vendor</th>
+                  <th className="px-3 py-3 text-center">Bags / Capacity</th>
+                  <th className="px-3 py-3 text-right">{order.pricesIncludeGst ? "Price incl. GST" : "Selling Price"}</th>
+                  <th className="px-3 py-3 text-right">FIFO Unit Cost</th>
+                  <th className="px-3 py-3 text-right">Gross Margin</th>
+                  <th className="px-3 py-3 text-right">Line Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {order.items.map((it, i) => {
+                  const fifoCost = getFIFOCost(it.product.id);
+                  const unitPrice = it.unitPrice ?? it.product.price;
+                  const margin =
+                    unitPrice > 0 ? Math.round(((unitPrice - fifoCost) / unitPrice) * 100) : 0;
+
+                  return (
+                    <tr
+                      key={i}
+                      className="border-b border-border/70 last:border-0 hover:bg-muted/10"
+                    >
+                      <td className="px-3 py-3">
+                        <div className="flex items-center gap-3">
+                          <img
+                            src={it.product.image}
+                            alt={it.product.name}
+                            className="h-12 w-12 rounded-md border border-border object-cover"
+                          />
+                          <div>
+                            <p className="font-semibold text-navy">{it.product.name}</p>
+                            <span className="text-xs text-slate">{it.product.category}</span>
+                            <ItemBatchCodes admin batches={it.dbItemId ? itemBatches.get(it.dbItemId) : undefined} />
+                            <ItemArrivalNote arrival={it.dbItemId ? arrivals.get(it.dbItemId) : undefined} order={order} />
+                            {it.dbItemId && (arrivals.get(it.dbItemId)?.waiting ?? 0) > 0 && !isCancelled && (
+                              <MoveToReadyButton orderItemId={it.dbItemId} waiting={arrivals.get(it.dbItemId)?.waiting ?? 0} productName={it.product.name}
+                                onMoved={() => setArrivalsKey((k) => k + 1)} />
+                            )}
+                            <Input
+                              aria-label={`${it.product.name} bag capacity`}
+                              defaultValue={it.capacity ?? it.product.weight}
+                              disabled={!canEditItems}
+                              className="mt-1 h-8 w-32 text-xs"
+                              onBlur={async (event) => {
+                                const value = event.target.value.trim();
+                                if (value && value !== (it.capacity ?? it.product.weight) &&
+                                  !(await updateOrderItem(order.id, i, { capacity: value }))) {
+                                  toast.error("Could not update product capacity");
+                                  event.target.value = it.capacity ?? it.product.weight;
+                                }
+                              }}
+                            />
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-3 py-3 font-mono text-xs text-charcoal">
+                        {it.product.sku}
+                      </td>
+                      <td className="px-3 py-3 font-medium text-navy">{it.vendor}</td>
+                      <td className="px-3 py-3 text-center">
+                        <div className="flex items-center justify-center gap-1">
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="outline"
+                            className="h-8 w-8"
+                            aria-label={`Remove one ${it.product.name} bag`}
+                            disabled={!canEditItems || it.qty <= 1}
+                            onClick={async () => {
+                              if (!(await updateOrderItem(order.id, i, { qty: it.qty - 1 })))
+                                toast.error("Could not update this order quantity");
+                            }}
+                          >
+                            <Minus className="h-3.5 w-3.5" />
+                          </Button>
+                          <Input
+                            type="number"
+                            min={1}
+                            key={`${it.dbItemId ?? i}-${it.qty}`}
+                            defaultValue={it.qty}
+                            disabled={!canEditItems}
+                            aria-label={`${it.product.name} bag quantity`}
+                            className="h-8 w-16 text-center"
+                            onBlur={async (event) => {
+                              const quantity = Number(event.target.value);
+                              if (Number.isInteger(quantity) && quantity > 0 && quantity !== it.qty) {
+                                if (!(await updateOrderItem(order.id, i, { qty: quantity }))) {
+                                  toast.error("Could not update quantity. Check available stock.");
+                                  event.target.value = String(it.qty);
+                                }
+                              } else event.target.value = String(it.qty);
+                            }}
+                          />
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="outline"
+                            className="h-8 w-8"
+                            aria-label={`Add one ${it.product.name} bag`}
+                            disabled={!canEditItems}
+                            onClick={async () => {
+                              if (!(await updateOrderItem(order.id, i, { qty: it.qty + 1 })))
+                                toast.error("Not enough stock available for another bag");
+                            }}
+                          >
+                            <Plus className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                        <span className="mt-1 block text-[11px] text-slate">
+                          {it.qty} × {it.capacity ?? it.product.weight}
+                        </span>
+                      </td>
+                      <td className="px-3 py-3 text-right font-medium text-charcoal">
+                        <Input
+                          type="number"
+                          min={0}
+                          key={`${it.dbItemId ?? i}-${unitPrice}`}
+                          defaultValue={unitPrice}
+                          disabled={!canEditItems}
+                          step="0.01"
+                          aria-label={`${it.product.name} unit price`}
+                          className="h-8 w-24 text-right"
+                          onBlur={async (event) => {
+                            const price = Number(event.target.value);
+                            if (Number.isFinite(price) && price >= 0 && price !== unitPrice) {
+                              if (!(await updateOrderItem(order.id, i, { unitPrice: price }))) {
+                                toast.error("Could not update this order price");
+                                event.target.value = String(unitPrice);
+                              }
+                            } else event.target.value = String(unitPrice);
+                          }}
+                        />
+                      </td>
+                      <td className="px-3 py-3 text-right font-mono text-xs text-slate">
+                        {inr(fifoCost)}
+                      </td>
+                      <td className="px-3 py-3 text-right">
+                        <span
+                          className={`text-xs font-semibold ${margin >= 15 ? "text-emerald-700" : "text-amber-700"}`}
+                        >
+                          {margin}%
+                        </span>
+                      </td>
+                      <td className="px-3 py-3 text-right font-bold text-navy">
+                        {inr(unitPrice * it.qty)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </ResizableTable>
+          </div>
+        </Panel>
+      </div>
+
+      {/* Vendor Information Section */}
+      <div className="mt-6">
+        <Panel title="Fulfilling Vendors">
+          <p className="-mt-1 mb-3 text-xs text-slate">
+            Registered vendor details and GSTIN for items in this order
+          </p>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {orderVendors.map((v) => (
+              <div
+                key={v.id}
+                className="rounded-lg border border-border bg-panel p-4 space-y-2 text-sm"
+              >
+                <div className="flex items-center justify-between border-b border-border/60 pb-2">
+                  <div className="flex items-center gap-2">
+                    <Building2 className="h-4 w-4 text-gold" />
+                    <span className="font-bold text-navy">{v.business}</span>
+                  </div>
+                  <span className="font-mono text-xs rounded bg-navy/10 px-1.5 py-0.5 font-semibold text-navy">
+                    {v.id}
+                  </span>
+                </div>
+                {vendorNumberOf(contactNumbers, v.id) && (
+                  <div className="flex justify-between text-xs">
+                    <span className="text-slate">Vendor No.:</span>
+                    <span data-no-translate className="font-mono font-bold text-navy">{vendorNumberOf(contactNumbers, v.id)}</span>
+                  </div>
+                )}
+                <div className="flex justify-between text-xs">
+                  <span className="text-slate">Proprietor / Contact:</span>
+                  <span className="font-medium text-navy">{v.owner}</span>
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span className="text-slate">Email:</span>
+                  <span className="font-medium text-navy">{v.email}</span>
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span className="text-slate">Phone:</span>
+                  <span className="font-medium text-navy">{v.phone}</span>
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span className="text-slate">Vendor GSTIN:</span>
+                  <span className="font-mono font-bold text-navy">{v.gst}</span>
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span className="text-slate">Location:</span>
+                  <span className="font-medium text-navy">{v.city}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Panel>
+      </div>
+    </PanelLayout>
+  );
+}

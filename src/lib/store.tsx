@@ -1,0 +1,2307 @@
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import { toast } from "sonner";
+import { supabase } from "@/integrations/supabase/client";
+import { AWAITING_PAYMENT, isHeldStatus, type PaymentHold } from "@/lib/payment-hold";
+import { loadUpiSettings } from "@/lib/upi-store";
+import { isBankMethod, mergeIntoCart, reorderPlan, type ReorderLine, type ReorderPlan } from "@/lib/payment-rules";
+import { isStorefrontProduct as isOnSale } from "@/lib/data";
+import { lineGstInside, toPaise } from "@/lib/pricing";
+import { costBeforeGst } from "@/lib/batches";
+import type { Database } from "@/integrations/supabase/types";
+import { STATIC_DATA_MODE } from "@/lib/demo-mode";
+import { branchForPin, branchStockOf, defaultBranchOf, godownPriceOf, useAdminBranch, useBranches, useShopperPin } from "@/lib/branches";
+import { godownArrivingOf } from "@/lib/godown-rules";
+import { istToday } from "@/lib/preorder";
+import { isOutsideServiceArea, OUT_OF_AREA_EVENT } from "@/lib/godown-rules";
+import { afterPageLoad, snapshotIsFresh, useStorefrontSnapshot, type StorefrontSnapshot } from "@/lib/storefront-snapshot";
+
+/** Sends a placed or changed order to Zoho in the background; the daily run is the backup. */
+export function pushOrderToZohoInBackground(orderNo: string) {
+  if (STATIC_DATA_MODE) return;
+  void import("@/lib/zoho-commerce.functions")
+    .then(async ({ pushOrderChangeToZoho, pushOrderStockToZoho }) => {
+      await pushOrderChangeToZoho({ data: { orderNo } });
+      // The order moved stock; send the products' new stock to Zoho too.
+      await pushOrderStockToZoho({ data: { orderNo } });
+    })
+    .catch((cause: unknown) => console.warn("Zoho will receive this order change on the next sync run", cause));
+}
+
+/** Static demo: held checkouts by order number, until their simulated payment makes them orders. */
+const DEMO_HOLDS_KEY = "gb-demo-payment-holds";
+const demoHeldOrders = new Map<string, Order>();
+/** The demo keeps held checkouts in this browser, so the customer and admin pages both see them after a reload. */
+function readDemoHolds(): PaymentHold[] {
+  if (!STATIC_DATA_MODE || typeof window === "undefined") return [];
+  try {
+    const saved = JSON.parse(window.localStorage.getItem(DEMO_HOLDS_KEY) ?? "null") as { holds: PaymentHold[]; orders: Order[] } | null;
+    for (const order of saved?.orders ?? []) demoHeldOrders.set(order.id, order);
+    return saved?.holds ?? [];
+  } catch {
+    return [];
+  }
+}
+
+/** Sends admin and vendor product edits to Zoho in the background; the daily run is the backup. */
+function pushProductsToZohoInBackground(productIds: string[]) {
+  if (STATIC_DATA_MODE || productIds.length === 0) return;
+  void import("@/lib/zoho-commerce.functions")
+    .then(({ pushProductChangeToZoho }) => pushProductChangeToZoho({ data: { productIds } }))
+    .catch((cause: unknown) => console.warn("Zoho will receive this product change on the next sync run", cause));
+}
+import {
+  addresses as seedAddresses,
+  batches as seedBatches,
+  buildOrder,
+  canCancelOrder,
+  calculateFIFOCost,
+  calculateInventoryValuation,
+  coupons as seedCoupons,
+  customers as seedCustomers,
+  getOrderPaymentsReceived,
+  inr,
+  getCurrentFIFOCost,
+  getAvailablePurchaseQuantity,
+  getMaxPurchaseQuantity,
+  getProductAverageSellingPrice,
+  getProductImageFallback,
+  getOrderItemTotal,
+  notifications as seedNotifications,
+  orders as seedOrders,
+  products as seedProducts,
+  returns as seedReturns,
+  reviews as seedReviews,
+  storeCategorySeed,
+  vendors as seedVendors,
+  type Order,
+  type OrderStatus,
+  type Product,
+  type PurchaseBatch,
+  type ReturnRequest,
+  type StoreCategory,
+} from "./data";
+
+export type Role = "customer" | "vendor" | "admin";
+const ROLE_PRIORITY: readonly Role[] = ["admin", "vendor", "customer"];
+
+function preferredRole(roles: readonly string[]): Role | undefined {
+  return ROLE_PRIORITY.find((role) => roles.includes(role));
+}
+
+export type SessionUser = { id?: string | undefined; name: string; email: string; role: Role; phone?: string | undefined; avatar?: string | undefined; addressKey?: string | undefined };
+export type CartLine = { id: string; qty: number };
+export type Address = (typeof seedAddresses)[number] & {
+  /** Map point captured with "Use my current location". */
+  latitude?: number | undefined;
+  longitude?: number | undefined;
+  locationAccuracy?: number | undefined;
+  locatedAt?: string | undefined;
+};
+export type Customer = (typeof seedCustomers)[number];
+export type Vendor = (typeof seedVendors)[number] & { avatar?: string; businessAddress?: string };
+export type Review = (typeof seedReviews)[number] & { reply?: string };
+export type Coupon = (typeof seedCoupons)[number] & {
+  source?: "zoho";
+  maxPerUser?: number;
+  /** No maximum_discount set: the database applies the full percentage. */
+  uncapped?: boolean;
+};
+
+type OrderRow = Database["public"]["Tables"]["orders"]["Row"];
+type OrderItemRow = Database["public"]["Tables"]["order_items"]["Row"];
+type OrderVendorFulfillmentRow = Database["public"]["Tables"]["order_vendor_fulfillments"]["Row"];
+type PaymentRow = Database["public"]["Tables"]["payments"]["Row"];
+type NotificationRow = Database["public"]["Tables"]["notifications"]["Row"];
+
+const DB_PAGE_SIZE = 500;
+
+async function fetchAllRows<T>(
+  fetchPage: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: unknown | null }>,
+) {
+  const rows: T[] = [];
+  for (let from = 0; ; from += DB_PAGE_SIZE) {
+    const { data, error } = await fetchPage(from, from + DB_PAGE_SIZE - 1);
+    if (error) return { data: null, error };
+    rows.push(...(data ?? []));
+    if ((data?.length ?? 0) < DB_PAGE_SIZE) return { data: rows, error: null };
+  }
+}
+
+async function fetchOrderRowsInChunks<T>(
+  ids: string[],
+  fetchPage: (ids: string[], from: number, to: number) => PromiseLike<{ data: T[] | null; error: unknown | null }>,
+) {
+  const rows: T[] = [];
+  for (let index = 0; index < ids.length; index += 100) {
+    const result = await fetchAllRows<T>((from, to) => fetchPage(ids.slice(index, index + 100), from, to));
+    if (result.error) return result;
+    rows.push(...(result.data ?? []));
+  }
+  return { data: rows, error: null };
+}
+export type Notif = (typeof seedNotifications)[number] & { source?: "seed" | "live"; databaseId?: string };
+
+
+type AppState = {
+  hydrated: boolean;
+  /** True once the saved sign-in has been read (a signed-in user is not yet known before this). */
+  authReady: boolean;
+  user: SessionUser | null;
+  login: (u: SessionUser) => void;
+  logout: () => void;
+  updateProfile: (p: Partial<SessionUser>) => Promise<boolean>;
+
+  cart: CartLine[];
+  cartItems: { product: Product; qty: number }[];
+  cartCount: number;
+  subtotal: number;
+  productCatalogStatus: "loading" | "ready" | "unavailable";
+  categoryCatalogStatus: "loading" | "ready" | "unavailable";
+  addToCart: (id: string, qty?: number) => void;
+  setQty: (id: string, qty: number) => void;
+  removeFromCart: (id: string) => void;
+  clearCart: () => void;
+
+  wishlist: string[];
+  toggleWishlist: (id: string) => void;
+
+  categories: StoreCategory[];
+  addCategory: (c: Omit<StoreCategory, "id" | "order">) => Promise<boolean>;
+  updateCategory: (id: string, patch: Partial<StoreCategory>) => Promise<boolean>;
+  deleteCategory: (id: string) => Promise<boolean>;
+  moveCategory: (id: string, dir: -1 | 1) => void;
+
+  products: Product[];
+  addProduct: (p: Product) => Promise<boolean>;
+  updateProduct: (id: string, patch: Partial<Product>) => Promise<boolean>;
+  /** Puts a code on a product or takes it off. Nothing else about the product changes (admin only). */
+  setProductCode: (id: string, code: string | undefined) => Promise<boolean>;
+  deleteProduct: (id: string) => Promise<boolean>;
+
+  batches: PurchaseBatch[];
+  addBatch: (b: Omit<PurchaseBatch, "id">) => Promise<boolean>;
+  updateBatch: (id: string, patch: Partial<PurchaseBatch>) => void;
+  deleteBatch: (id: string) => void;
+  getFIFOCost: (productId: string) => number;
+  getInventoryValuation: (productId: string) => ReturnType<typeof calculateInventoryValuation>;
+  getAverageSellingPrice: (product: Product) => number;
+
+  orders: Order[];
+  placeOrder: (input: {
+    lines: { product: Product; qty: number; capacity?: string; unitPrice?: number }[];
+    method: string;
+    payment: Order["payment"];
+    coupon?: string;
+    customerIndex?: number;
+    customerOverride?: Customer;
+    shippingAddress?: Address;
+    delivery?: string;
+    subtotal?: number;
+    discount?: number;
+    tax?: number;
+    shipping?: number;
+    source?: string;
+    paymentDueDate?: string;
+    /** Customer checkout: the result is a held request that becomes an order only when paid. */
+    payFirst?: boolean;
+    /** Buying for a business (B2B): the buyer's GSTIN and legal name; isB2b false = a personal purchase. */
+    business?: { isB2b: boolean; gstin?: string; legalName?: string };
+    /** The customer ticked the pre-order box: lines may take units that arrive later (14 Nov 2026). */
+    acceptPreorder?: boolean;
+  }) => Promise<Order & { preorderLines?: { productId: string; qty: number; by: string | null }[] }>;
+  /** Checkouts waiting for payment (and recently expired ones). Not orders: kept out of `orders`. */
+  paymentHolds: PaymentHold[];
+  /** This customer's orders and checkouts have been read (a page can tell "loading" from "not found"). */
+  ordersLoaded: boolean;
+  cancelPaymentHold: (orderNo: string) => Promise<boolean>;
+  /** Re-reads these checkouts after the database ended some (time up), so admin lists move on at once. */
+  refreshHeldCheckouts: (orderNos: string[]) => Promise<void>;
+  /** An admin deleted this order or checkout: drop it from the lists on this page. */
+  forgetOrder: (orderNo: string) => void;
+  /** An unpaid checkout's items back in the cart, as far as they are on sale today. */
+  reorderLines: (lines: ReorderLine[]) => ReorderPlan & { outOfArea: boolean };
+  /** Static demo only: the bank SMS for this held checkout "arrives". */
+  simulateBankAlert: (orderNo: string) => void;
+  updateOrderStatus: (id: string, status: OrderStatus) => Promise<boolean>;
+  updateOrderItem: (orderId: string, index: number, patch: { qty?: number; capacity?: string; unitPrice?: number }) => Promise<boolean>;
+  updateOrderDelivery: (orderId: string, delivery: string) => void;
+  confirmPayment: (id: string, amount: number, utr: string, advancePercent?: number, method?: string) => Promise<boolean>;
+  refundOrder: (id: string) => Promise<boolean>;
+  /** Admin: cancel at any step (admin_cancel_order), with a reason, whether the goods came back, and the refund if money came. */
+  cancelOrderAsAdmin: (id: string, input: { reason: string; goodsBack: boolean | null; refund: { mode: string; reference: string; refunded_on: string } | null }) => Promise<boolean>;
+
+  vendors: Vendor[];
+  setVendorStatus: (id: string, status: string) => Promise<boolean>;
+  setVendorCommission: (id: string, rate: number) => Promise<boolean>;
+  customers: Customer[];
+  setCustomerStatus: (id: string, status: string) => Promise<boolean>;
+
+  reviews: Review[];
+  setReviewStatus: (id: string, status: string) => Promise<boolean>;
+  deleteReview: (id: string) => Promise<boolean>;
+  replyReview: (id: string, reply: string) => Promise<boolean>;
+  reportReview: (id: string, reason: string) => Promise<boolean>;
+
+  returns: ReturnRequest[];
+  setReturnStatus: (id: string, status: string, refund?: string) => Promise<boolean>;
+  requestReturn: (orderItemId: string, quantity: number, reason: string) => Promise<boolean>;
+
+  coupons: Coupon[];
+  addCoupon: (c: Coupon) => Promise<boolean>;
+  deleteCoupon: (code: string) => Promise<boolean>;
+
+  notifications: Notif[];
+  markRead: (id: number) => Promise<boolean>;
+  markAllRead: () => Promise<boolean>;
+  deleteNotification: (id: number) => Promise<boolean>;
+
+  addresses: Address[];
+  addAddress: (a: Address) => Promise<boolean>;
+  updateAddress: (id: string, patch: Partial<Address>) => Promise<boolean>;
+  /** A product's name from the whole catalogue, including items the shopper's godown does not sell. */
+  productNameOf: (id: string) => string;
+  deleteAddress: (id: string) => Promise<boolean>;
+  setDefaultAddress: (id: string) => Promise<boolean>;
+};
+
+const AppContext = createContext<AppState | null>(null);
+const KEY = "sbv-state-v2";
+
+/*
+ * The last catalog this device loaded (products + categories). Shown at once on the next visit
+ * while the live catalog refreshes in the background, so a returning shopper never sees empty
+ * rows or the built-in placeholder pictures. Prices are re-checked by the database at checkout.
+ */
+const CATALOG_CACHE_KEY = "gb-catalog-v1";
+const CATALOG_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+type CatalogCache = { savedAt: number; products: Product[]; categories: StoreCategory[] };
+function readCatalogCache(): CatalogCache | null {
+  try {
+    const cached = JSON.parse(window.localStorage.getItem(CATALOG_CACHE_KEY) ?? "null") as CatalogCache | null;
+    if (!cached || !Array.isArray(cached.products) || !Array.isArray(cached.categories)) return null;
+    if (Date.now() - Number(cached.savedAt) > CATALOG_CACHE_MAX_AGE_MS) return null;
+    return cached;
+  } catch {
+    return null;
+  }
+}
+function writeCatalogCache(products: Product[], categories: StoreCategory[]) {
+  try {
+    window.localStorage.setItem(CATALOG_CACHE_KEY, JSON.stringify({ savedAt: Date.now(), products, categories }));
+  } catch {
+    // Storage full or blocked: the next visit simply loads from the network.
+  }
+}
+/** A catalogue row as the storefront shows it: a missing or unknown-category picture gets a fallback. */
+function productFromPayload(payload: unknown): Product {
+  const p = payload as Product;
+  const category = p.category ?? "";
+  const generatedCategoryImage = `/products/${category.toLowerCase()}.jpg`;
+  const image = typeof p.image === "string" ? p.image.trim() : "";
+  const generatedImageUsesUnknownCategory =
+    image === generatedCategoryImage && !["rice", "sugar", "oil", "dal"].includes(category.toLowerCase());
+  return {
+    ...p,
+    image: !image || generatedImageUsesUnknownCategory
+      ? getProductImageFallback(category, p.name)
+      : image,
+  };
+}
+function categoryFromPayload(payload: unknown): StoreCategory {
+  const category = payload as StoreCategory;
+  const seed = storeCategorySeed.find(
+    (s) => s.id === category.id || s.name.toLowerCase() === category.name.toLowerCase(),
+  );
+  return {
+    ...category,
+    image: category.image || seed?.image || `/categories/${category.name.toLowerCase()}.jpg`,
+  };
+}
+// The catalogue sent with the page, converted once per page (the server and the browser start from the same).
+const snapshotCatalogs = new WeakMap<StorefrontSnapshot, { products: Product[]; categories: StoreCategory[] }>();
+function snapshotCatalog(snapshot: StorefrontSnapshot) {
+  let catalog = snapshotCatalogs.get(snapshot);
+  if (!catalog) {
+    catalog = { products: snapshot.products.map(productFromPayload), categories: snapshot.categories.map(categoryFromPayload) };
+    snapshotCatalogs.set(snapshot, catalog);
+  }
+  return catalog;
+}
+// Runs before the first paint in the browser (and is a no-op on the server).
+const useIsomorphicLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
+
+export function AppProvider({ children }: { children: ReactNode }) {
+  // Godown branches: an administrator working in one branch sees that branch's orders and stock.
+  const branchState = useBranches();
+  const [adminBranchId] = useAdminBranch();
+  const [user, setUser] = useState<SessionUser | null>(null);
+  const [cart, setCart] = useState<CartLine[]>([]);
+  const [wishlistsByUser, setWishlistsByUser] = useState<Record<string, string[]>>({});
+  const wishlistOwnerKey = addressOwnerKey(user) || "guest";
+  const wishlist = wishlistsByUser[wishlistOwnerKey] ?? [];
+  // Live mode starts from the catalogue that came with the page (server-rendered), when there is one.
+  const snapshot = useStorefrontSnapshot();
+  const pageSnapshot = useRef(STATIC_DATA_MODE ? null : snapshot);
+  const [products, setProducts] = useState<Product[]>(() =>
+    STATIC_DATA_MODE ? seedProducts : snapshot ? snapshotCatalog(snapshot).products : []);
+  const [categories, setCategories] = useState<StoreCategory[]>(() =>
+    STATIC_DATA_MODE ? storeCategorySeed : snapshot ? snapshotCatalog(snapshot).categories : []);
+  const [batches, setBatches] = useState<PurchaseBatch[]>(STATIC_DATA_MODE ? seedBatches : []);
+  const [orders, setOrders] = useState<Order[]>(STATIC_DATA_MODE ? seedOrders : []);
+  const [paymentHolds, setPaymentHolds] = useState<PaymentHold[]>(readDemoHolds);
+  const [ordersLoadedFor, setOrdersLoadedFor] = useState<string | null | undefined>(undefined);
+  useEffect(() => {
+    if (!STATIC_DATA_MODE) return;
+    try {
+      window.localStorage.setItem(DEMO_HOLDS_KEY, JSON.stringify({ holds: paymentHolds, orders: [...demoHeldOrders.values()] }));
+    } catch {
+      // Private mode: the demo still works for this page view.
+    }
+  }, [paymentHolds]);
+  const [vendors, setVendors] = useState<Vendor[]>(STATIC_DATA_MODE ? seedVendors : []);
+  const [customers, setCustomers] = useState<Customer[]>(STATIC_DATA_MODE ? seedCustomers : []);
+  const [reviews, setReviews] = useState<Review[]>(STATIC_DATA_MODE ? seedReviews : []);
+  const [returns, setReturns] = useState<ReturnRequest[]>(STATIC_DATA_MODE ? seedReturns : []);
+  const [coupons, setCoupons] = useState<Coupon[]>(STATIC_DATA_MODE ? seedCoupons : []);
+  const [notifications, setNotifications] = useState<Notif[]>(STATIC_DATA_MODE ? seedNotifications : []);
+  const [addresses, setAddresses] = useState<Address[]>([]);
+  // Counts address saves, so a background read that started before one cannot undo it on screen.
+  const addressWrites = useRef(0);
+  const [addressesByUser, setAddressesByUser] = useState<Record<string, Address[]>>({});
+  const [hydrated, setHydrated] = useState(false);
+  const [authReady, setAuthReady] = useState(STATIC_DATA_MODE);
+  const [productCatalogStatus, setProductCatalogStatus] = useState<"loading" | "ready" | "unavailable">(snapshot ? "ready" : "loading");
+  const [categoryCatalogStatus, setCategoryCatalogStatus] = useState<"loading" | "ready" | "unavailable">(snapshot ? "ready" : "loading");
+
+  // A returning visitor sees the catalog from their last visit before the first paint.
+  useIsomorphicLayoutEffect(() => {
+    if (STATIC_DATA_MODE) return;
+    const cached = readCatalogCache();
+    if (!cached) return;
+    if (cached.products.length) {
+      setProducts((current) => current.length ? current : cached.products);
+      setProductCatalogStatus((status) => status === "loading" ? "ready" : status);
+    }
+    if (cached.categories.length) {
+      setCategories((current) => current.length ? current : cached.categories);
+      setCategoryCatalogStatus((status) => status === "loading" ? "ready" : status);
+    }
+  }, []);
+
+  // The public catalog and dashboard catalog are read from Supabase. Demo fixtures
+  // stay available to local development only and are never treated as production data.
+  useEffect(() => {
+    if (STATIC_DATA_MODE) {
+      setProductCatalogStatus("ready");
+      setCategoryCatalogStatus("ready");
+      return;
+    }
+    let active = true;
+    let loadRevision = 0;
+    let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+    let hasConnectedOnce = false;
+    const reloadCatalog = async () => {
+      const revision = ++loadRevision;
+      setProductCatalogStatus((status) => status === "ready" ? status : "loading");
+      setCategoryCatalogStatus((status) => status === "ready" ? status : "loading");
+      const [productResult, categoryResult] = await Promise.all([
+        supabase.from("catalog_products").select("payload"),
+        supabase.from("store_categories").select("payload").order("sort_order"),
+      ]);
+      if (!active || revision !== loadRevision) return;
+      let loadedProducts: Product[] | null = null;
+      if (productResult.error) {
+        console.error("Could not load the Supabase product catalog:", productResult.error.message);
+        setProductCatalogStatus("unavailable");
+        setProducts([]);
+      } else {
+        setProductCatalogStatus("ready");
+        loadedProducts = productResult.data.map((row) => productFromPayload(row.payload));
+        setProducts(loadedProducts);
+      }
+      if (categoryResult.error) {
+        console.error("Could not load Supabase store categories:", categoryResult.error.message);
+        setCategoryCatalogStatus("unavailable");
+        setCategories([]);
+      } else {
+        setCategoryCatalogStatus("ready");
+        const persistedCategories = categoryResult.data.map((row) => categoryFromPayload(row.payload));
+        // In live mode an empty table is a real empty catalog, not demo content.
+        setCategories(persistedCategories);
+        if (loadedProducts) writeCatalogCache(loadedProducts, persistedCategories);
+      }
+      if (user?.role) {
+        const [
+          { data: profiles, error: profilesError },
+          { data: roleRows, error: rolesError },
+          { data: batchRows, error: batchError },
+          { data: reviewRows, error: reviewError },
+          { data: returnRows, error: returnError },
+          { data: couponRows, error: couponError },
+          ordersResult,
+        ] = await Promise.all([
+          supabase.from("profiles").select("id, full_name, email, phone, company, gstin, avatar_url, business_city, business_address, vendor_id, commission_rate, status, created_at"),
+          supabase.from("user_roles").select("user_id, role"),
+          supabase.from("batches").select("*").order("purchase_date", { ascending: true }),
+          supabase.from("product_reviews").select("*").order("created_at", { ascending: false }),
+          supabase.from("return_requests").select("*").order("created_at", { ascending: false }),
+          supabase.from("coupons").select("*").order("created_at", { ascending: false }),
+          fetchAllRows<OrderRow>((from, to) => supabase.from("orders").select("*")
+            .order("created_at", { ascending: false }).order("id", { ascending: false }).range(from, to)),
+        ]);
+        if (!active || revision !== loadRevision) return;
+        const orderRows = ordersResult.data;
+        const orderError = ordersResult.error;
+        if (!batchError) {
+          // Pre-order batches (14 Nov 2026) have no bags in a godown yet, and cancelled ones never will: kept out of the
+          // stock valuation, which counts received batches only.
+          setBatches(batchRows.filter((row) => ((row as { stage?: string }).stage ?? "received") === "received").map((row) => ({
+            id: row.id,
+            batchCode: row.batch_code,
+            productId: row.product_id,
+            productName: row.product_name,
+            vendor: row.vendor || "",
+            vendorId: row.vendor_id || "",
+            purchaseDate: row.purchase_date || "",
+            quantity: Number(row.quantity),
+            remainingQty: Number(row.remaining_quantity),
+            unitCost: Number(row.unit_cost),
+            // A bill batch may store its cost with GST; valuation and margins use it before GST, like sales.
+            costBeforeGst: costBeforeGst(row),
+            warehouse: row.warehouse || "",
+            status: row.status === "Depleted" ? "Depleted" : "Active",
+          })));
+        } else {
+          console.error("Could not load inventory batches", batchError);
+        }
+        let ordersRead = false;
+        if (!orderError) {
+          const ids = (orderRows ?? []).map((order) => order.id);
+          const [
+            { data: itemRows, error: itemError },
+            { data: paymentRows, error: paymentError },
+            { data: fulfillmentRows, error: fulfillmentError },
+          ] = ids.length
+            ? await Promise.all([
+              fetchOrderRowsInChunks<OrderItemRow>(ids, (orderIds, from, to) => supabase.from("order_items").select("*")
+                .in("order_id", orderIds).order("id", { ascending: true }).range(from, to)),
+              fetchOrderRowsInChunks<PaymentRow>(ids, (orderIds, from, to) => supabase.from("payments").select("*")
+                .in("order_id", orderIds).order("created_at", { ascending: false }).order("id", { ascending: false }).range(from, to)),
+              fetchOrderRowsInChunks<OrderVendorFulfillmentRow>(ids, (orderIds, from, to) => supabase.from("order_vendor_fulfillments").select("*")
+                .in("order_id", orderIds).order("order_id", { ascending: true }).order("vendor_id", { ascending: true }).range(from, to)),
+            ])
+            : [{ data: [], error: null }, { data: [], error: null }, { data: [], error: null }];
+          if (!active || revision !== loadRevision) return;
+          if (itemError) {
+            console.error("Could not load order lines", itemError);
+          } else {
+            const catalogById = new Map((productResult.data ?? []).map((row) => {
+              const product = row.payload as unknown as Product;
+              return [product.id, product] as const;
+            }));
+            const itemsByOrder = new Map<string, typeof itemRows>();
+            for (const item of itemRows ?? []) itemsByOrder.set(item.order_id, [...(itemsByOrder.get(item.order_id) ?? []), item]);
+            const latestPaymentByOrder = new Map<string, NonNullable<typeof paymentRows>[number]>();
+            for (const payment of paymentRows ?? []) if (payment.order_id && !latestPaymentByOrder.has(payment.order_id)) latestPaymentByOrder.set(payment.order_id, payment);
+            const fulfillmentByOrder = new Map<string, OrderVendorFulfillmentRow[]>();
+            for (const fulfillment of fulfillmentRows ?? []) {
+              fulfillmentByOrder.set(fulfillment.order_id, [...(fulfillmentByOrder.get(fulfillment.order_id) ?? []), fulfillment]);
+            }
+            const allowedStatuses: OrderStatus[] = ["Placed", "Payment Confirmed", "Accepted", "Packed", "Dispatched", "Out for Delivery", "Delivered", "Cancelled"];
+            // Unpaid checkouts are not orders: they are kept apart for the payment screens.
+            setPaymentHolds((orderRows ?? []).filter((row) => isHeldStatus(row.order_status)).map((row) => ({
+              orderNo: row.order_no, amount: Number(row.total) - Number(row.paid_amount), createdAt: row.created_at, customer: row.customer_name || undefined, phone: row.customer_phone || undefined,
+              status: row.order_status as PaymentHold["status"], holdUntil: row.payment_hold_until ?? null, outcome: (row.payment_hold_outcome ?? null) as PaymentHold["outcome"],
+              method: row.payment_method ?? "UPI",
+              lines: (itemsByOrder.get(row.id) ?? []).map((item) => ({ productId: item.product_id, qty: Number(item.qty), name: item.product_name ?? undefined })),
+              moneySeenAt: row.bank_credit_seen_at ?? null,
+              gstBillTo: row.is_b2b && row.customer_gstin ? (row.business_legal_name || row.customer_name || null) : null,
+            })));
+            setOrders((orderRows ?? []).filter((row) => !isHeldStatus(row.order_status)).map((row) => {
+              const orderDate = new Date(row.created_at);
+              const shippingAddress = row.shipping_address && typeof row.shipping_address === "object" && !Array.isArray(row.shipping_address)
+                ? row.shipping_address as Record<string, unknown>
+                : {};
+              const orderItems = (itemsByOrder.get(row.id) ?? []).map((item) => {
+                const product = catalogById.get(item.product_id) ?? {
+                  id: item.product_id, name: item.product_name, sku: item.sku || "", brand: "", vendor: item.vendor || "",
+                  vendorId: item.vendor_id || "", category: "", subcategory: "", image: "", mrp: Number(item.unit_price),
+                  price: Number(item.unit_price), gst: Number(item.gst_rate), rating: 0, reviews: 0, stock: 0, reserved: 0,
+                  sold: 0, weight: "", status: "approved" as const, active: true, tags: [], description: "", specs: [],
+                  created: "", updated: "",
+                };
+                return { product, qty: Number(item.qty), vendor: item.vendor || "", vendorId: item.vendor_id || "", capacity: item.capacity || product.weight, unitPrice: Number(item.unit_price), gstRate: Number(item.gst_rate), dbItemId: item.id, couponShare: Number(item.coupon_share ?? 0) };
+              });
+              const paymentStatus = row.payment_status.toLowerCase();
+              const latestPayment = latestPaymentByOrder.get(row.id);
+              const payment: Order["payment"] = paymentStatus === "paid" ? "Paid" : paymentStatus.includes("partial") ? "Partially Paid" : paymentStatus === "refunded" ? "Refunded" : paymentStatus === "failed" ? "Failed" : "Pending";
+              const vendorStatuses = (fulfillmentByOrder.get(row.id) ?? []).filter((fulfillment) => allowedStatuses.includes(fulfillment.status as OrderStatus))
+                .map((fulfillment) => ({
+                  vendorId: fulfillment.vendor_id,
+                  vendor: orderItems.find((item) => item.vendorId === fulfillment.vendor_id)?.vendor || fulfillment.vendor_id,
+                  status: fulfillment.status as OrderStatus,
+                }));
+              return {
+                id: row.order_no, date: Number.isNaN(orderDate.getTime()) ? row.created_at : orderDate.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }), createdAt: row.created_at,
+                customer: row.customer_name, customerId: row.user_id || "", email: row.customer_email, phone: row.customer_phone || "",
+                ...(row.customer_gstin ? { gstin: row.customer_gstin } : {}),
+                ...(row.business_legal_name ? { businessName: row.business_legal_name } : {}),
+                ...(row.is_b2b ? { isB2b: true } : {}),
+                items: orderItems, subtotal: Number(row.subtotal), discount: Number(row.discount),
+                tax: Number(row.gst_amount), shipping: Number(row.shipping), amount: Number(row.total), payment,
+                ...(Number(row.paid_amount) ? { paidAmount: Number(row.paid_amount) } : {}), method: row.payment_method || "", txn: latestPayment?.txn_ref || "",
+                ...(latestPayment?.txn_ref ? { utr: latestPayment.txn_ref } : {}),
+                status: allowedStatuses.includes(row.order_status as OrderStatus) ? row.order_status as OrderStatus : "Placed",
+                address: String(shippingAddress["line"] || ""), city: String(shippingAddress["city"] || ""), state: String(shippingAddress["state"] || ""),
+                pin: String(shippingAddress["pin"] || ""),
+                delivery: row.shipping_method === "Pickup" ? "Pickup from godown" : row.shipping_method === "Express" ? "Express Freight — next business day" : "Standard Freight — 2 to 4 days",
+                ...(row.branch_id ? { branchId: row.branch_id } : {}),
+                ...(row.coupon ? { coupon: row.coupon } : {}),
+                zohoSalesOrderId: ((row as Record<string, unknown>)["zoho_salesorder_id"] as string | null) || null,
+                zohoOrderStatus: ((row as Record<string, unknown>)["zoho_order_status"] as string | null) || null,
+                pricesIncludeGst: Boolean((row as Record<string, unknown>)["prices_include_gst"]),
+                dbOrderId: row.id,
+                ...(vendorStatuses.length ? { vendorStatuses } : {}),
+              };
+            }));
+          }
+          ordersRead = !itemError;
+          if (paymentError) console.error("Could not load payment references", paymentError);
+          if (fulfillmentError) console.error("Could not load vendor fulfillment statuses", fulfillmentError);
+        } else {
+          console.error("Could not load orders", orderError);
+        }
+        // A page may say "not found" only once they were really read. A failed read is tried again.
+        if (ordersRead) setOrdersLoadedFor(user?.id ?? null);
+        else if (user) { if (refreshTimer) clearTimeout(refreshTimer); refreshTimer = setTimeout(() => void reloadCatalog(), 5000); }
+        const asDate = (value: string) => new Date(value).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+        const liveProducts = (productResult.data ?? []).map((row) => row.payload as unknown as Product);
+        if (!reviewError) {
+          setReviews((reviewRows ?? []).map((row) => {
+            const product = liveProducts.find((item) => item.id === row.product_id);
+            const customer = profiles?.find((profile) => profile.id === row.customer_id);
+            const vendor = profiles?.find((profile) => profile.vendor_id === row.vendor_id);
+            return {
+              id: row.id, product: product?.name ?? row.product_id, productId: row.product_id,
+              customer: customer?.full_name || "Customer", customerId: row.customer_id,
+              avatar: (customer?.full_name || "C").split(/\s+/).map((word) => word[0] ?? "").join("").slice(0, 2),
+              vendor: vendor?.company || vendor?.full_name || "Vendor", vendorId: row.vendor_id,
+              rating: row.rating, title: row.title, body: row.body, date: asDate(row.created_at), status: row.status,
+              ...(row.vendor_reply ? { reply: row.vendor_reply } : {}),
+            };
+          }) as Review[]);
+        } else console.error("Could not load product reviews", reviewError);
+        if (!returnError) {
+          setReturns((returnRows ?? []).map((row) => {
+            const customer = profiles?.find((profile) => profile.id === row.customer_id);
+            const product = liveProducts.find((item) => item.id === row.product_id);
+            const vendor = profiles?.find((profile) => profile.vendor_id === row.vendor_id);
+            const order = orderRows?.find((item) => item.id === row.order_id);
+            return {
+              id: row.id, order: order?.order_no ?? row.order_id, customer: customer?.full_name || order?.customer_name || "Customer",
+              product: product?.name || row.product_id, vendor: vendor?.company || vendor?.full_name || "Vendor",
+              reason: row.reason, amount: Number(row.amount), date: asDate(row.created_at), status: row.status, refund: row.refund_status,
+            };
+          }) as ReturnRequest[]);
+        } else console.error("Could not load return requests", returnError);
+        if (!couponError) {
+          const todayISO = new Date().toISOString().slice(0, 10);
+          setCoupons((couponRows ?? []).map((row) => ({
+            code: row.code, type: row.discount_type,
+            value: row.discount_type === "Percentage" ? `${row.discount_value}%` : `₹${row.discount_value}`,
+            min: Number(row.minimum_order), max: Number(row.maximum_discount),
+            ...(row.maximum_discount === null ? { uncapped: true } : {}),
+            start: asDate(row.starts_on), end: asDate(row.ends_on), limit: row.usage_limit, used: row.used_count,
+            ...(row.zoho_coupon_id ? { source: "zoho" as const } : {}),
+            ...(row.zoho_usage_limit_per_user ? { maxPerUser: row.zoho_usage_limit_per_user } : {}),
+            status: !row.active || row.used_count >= row.usage_limit || row.ends_on < todayISO ? "Expired" : row.starts_on > todayISO ? "Scheduled" : "Active",
+          })));
+        } else console.error("Could not load coupons", couponError);
+        if (!profilesError && !rolesError) {
+          const rolesByUser = new Map<string, Role>();
+          for (const row of roleRows) {
+            const current = rolesByUser.get(row.user_id);
+            const next = preferredRole([...(current ? [current] : []), row.role]);
+            if (next) rolesByUser.set(row.user_id, next);
+          }
+          setVendors(profiles.filter((profile) => rolesByUser.get(profile.id) === "vendor").map((profile) => ({
+            id: profile.vendor_id || profile.id,
+            business: profile.company || profile.full_name,
+            owner: profile.full_name,
+            email: profile.email,
+            phone: profile.phone || "",
+            ...(profile.avatar_url ? { avatar: profile.avatar_url } : {}),
+            ...(profile.business_address ? { businessAddress: profile.business_address } : {}),
+            city: profile.business_city || "",
+            commission: Number(profile.commission_rate),
+            status: profile.status.trim().toLowerCase(),
+            gst: profile.gstin || "",
+            rating: 0,
+            joined: asDate(profile.created_at),
+            bank: "",
+            products: 0,
+            orders: 0,
+            sales: 0,
+          }) as Vendor));
+          setCustomers(profiles.filter((profile) => rolesByUser.get(profile.id) === "customer").map((profile) => {
+            const customerOrders = (orderRows ?? []).filter((order) => order.user_id === profile.id);
+            const latest = customerOrders[0];
+            const address = latest?.shipping_address && typeof latest.shipping_address === "object" && !Array.isArray(latest.shipping_address)
+              ? latest.shipping_address as Record<string, unknown>
+              : {};
+            return {
+              id: profile.id,
+              name: profile.full_name,
+              email: profile.email,
+              phone: profile.phone || "",
+              city: String(address["city"] || ""),
+              state: String(address["state"] || ""),
+              pin: String(address["pin"] || ""),
+              gst: profile.gstin || "",
+              address: String(address["line"] || ""),
+              joined: asDate(profile.created_at),
+              orders: customerOrders.filter((order) => order.order_status !== "Cancelled").length,
+              spend: customerOrders.filter((order) => order.order_status !== "Cancelled").reduce((sum, order) => sum + Number(order.total), 0),
+              lastOrder: latest ? asDate(latest.created_at) : "—",
+              status: profile.status.toLowerCase(),
+              avatar: profile.full_name.split(/\s+/).map((word) => word[0] ?? "").join("").slice(0, 2),
+            } as Customer;
+          }));
+          const activeUserId = user?.id;
+          if (activeUserId && profiles) {
+            const myProf = profiles.find((p) => p.id === activeUserId);
+            if (myProf) {
+              setUser((prev) => {
+                if (!prev) return prev;
+                const nextName = myProf.full_name || prev.name;
+                const nextPhone = (myProf.phone !== undefined && myProf.phone !== null && myProf.phone !== "") ? myProf.phone : (prev.phone || "");
+                const nextEmail = myProf.email || prev.email;
+                if (nextName === prev.name && nextPhone === (prev.phone || "") && nextEmail === prev.email) {
+                  return prev;
+                }
+                const updated: SessionUser = {
+                  ...prev,
+                  name: nextName,
+                  phone: nextPhone,
+                  email: nextEmail,
+                };
+                return updated;
+              });
+            }
+          }
+        } else {
+          console.error("Could not load authorized profile records", profilesError ?? rolesError);
+        }
+        if (user.role === "customer") {
+          const { data: { user: authUser } } = await supabase.auth.getUser();
+          if (authUser) {
+            const writesBefore = addressWrites.current;
+            const { data: addressRows, error: addressError } = await supabase.from("addresses")
+              .select("*").eq("user_id", authUser.id).order("created_at", { ascending: true });
+            if (!active || revision !== loadRevision) return;
+            if (addressError) {
+              console.error("Could not load saved addresses", addressError);
+            } else if (addressWrites.current === writesBefore) {
+              // (A save that finished during this read is newer than what was read, so the read is dropped.)
+              const ownerKey = user.addressKey ?? addressOwnerKey(user);
+              const saved = (addressRows ?? []).map((row) => ({
+                id: row.id, label: row.label, name: row.name, phone: row.phone, line: row.line,
+                city: row.city, state: row.state, pin: row.pin, landmark: row.landmark || "", default: row.is_default,
+                ...(row.latitude !== null && row.longitude !== null ? {
+                  latitude: row.latitude, longitude: row.longitude,
+                  ...(row.location_accuracy_m !== null ? { locationAccuracy: Number(row.location_accuracy_m) } : {}),
+                  ...(row.located_at ? { locatedAt: row.located_at } : {}),
+                } : {}),
+              }) as Address);
+              setAddresses(saved);
+              if (ownerKey) setAddressesByUser((existing) => ({ ...existing, [ownerKey]: saved }));
+            }
+          }
+        }
+      }
+    };
+    const scheduleReload = () => {
+      if (refreshTimer) clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(() => void reloadCatalog(), 100);
+    };
+    // A signed-out visitor's first load already has the catalogue from the page: the realtime updates
+    // keep it live, and a copy that was not fresh is read again once the page has loaded.
+    const seed = user ? null : pageSnapshot.current;
+    pageSnapshot.current = null;
+    let cancelDeferredLoad: (() => void) | undefined;
+    if (seed) {
+      const catalog = snapshotCatalog(seed);
+      writeCatalogCache(catalog.products, catalog.categories);
+      if (!snapshotIsFresh(seed)) cancelDeferredLoad = afterPageLoad(() => void reloadCatalog());
+    } else {
+      void reloadCatalog();
+    }
+    const channel = supabase.channel(`catalog-${user?.role ?? "public"}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "catalog_products" }, scheduleReload)
+      .on("postgres_changes", { event: "*", schema: "public", table: "store_categories" }, scheduleReload)
+      .on("postgres_changes", { event: "*", schema: "public", table: "profiles" }, scheduleReload)
+      .on("postgres_changes", { event: "*", schema: "public", table: "user_roles" }, scheduleReload)
+      .on("postgres_changes", { event: "*", schema: "public", table: "orders" }, scheduleReload)
+      .on("postgres_changes", { event: "*", schema: "public", table: "order_items" }, scheduleReload)
+      .on("postgres_changes", { event: "*", schema: "public", table: "order_vendor_fulfillments" }, scheduleReload)
+      .on("postgres_changes", { event: "*", schema: "public", table: "payments" }, scheduleReload)
+      .on("postgres_changes", { event: "*", schema: "public", table: "product_reviews" }, scheduleReload)
+      .on("postgres_changes", { event: "*", schema: "public", table: "return_requests" }, scheduleReload)
+      .on("postgres_changes", { event: "*", schema: "public", table: "batches" }, scheduleReload)
+      .on("postgres_changes", { event: "*", schema: "public", table: "coupons" }, scheduleReload)
+      .subscribe((status) => {
+        if (status !== "SUBSCRIBED") return;
+        if (hasConnectedOnce) scheduleReload();
+        hasConnectedOnce = true;
+      });
+    return () => {
+      active = false;
+      loadRevision += 1;
+      if (refreshTimer) clearTimeout(refreshTimer);
+      cancelDeferredLoad?.();
+      void supabase.removeChannel(channel);
+    };
+  }, [user]);
+
+  useEffect(() => {
+    if (STATIC_DATA_MODE || !user?.id) return;
+    const recipientId = user.id;
+    let active = true;
+    let loadRevision = 0;
+    let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+    const load = async () => {
+      const revision = ++loadRevision;
+      const { data, error } = await fetchAllRows<NotificationRow>((from, to) => supabase.from("notifications")
+        .select("*").eq("recipient_id", recipientId).order("created_at", { ascending: false })
+        .order("id", { ascending: false }).range(from, to));
+      if (!active || revision !== loadRevision) return;
+      if (error) { console.error("Could not load account notifications", error); return; }
+      const persisted: Notif[] = (data ?? []).map((row) => ({
+        id: Number.parseInt(row.id.replaceAll("-", "").slice(0, 12), 16), databaseId: row.id, source: "live",
+        role: row.recipient_role === "admin" || row.recipient_role === "vendor" ? row.recipient_role : "customer",
+        title: row.title, type: ["success", "warning", "error"].includes(row.status ?? "") ? row.status! : "info", body: row.message,
+        time: new Date(row.created_at).toLocaleString("en-IN"), read: row.read,
+      }));
+      setNotifications(persisted);
+    };
+    const scheduleLoad = () => {
+      if (refreshTimer) clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(() => void load(), 100);
+    };
+    void load();
+    const channel = supabase.channel(`notifications-${recipientId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "notifications", filter: `recipient_id=eq.${recipientId}` }, scheduleLoad)
+      .subscribe((status) => { if (status === "SUBSCRIBED") scheduleLoad(); });
+    return () => {
+      active = false;
+      if (refreshTimer) clearTimeout(refreshTimer);
+      void supabase.removeChannel(channel);
+    };
+  }, [user?.id]);
+
+  const saveProduct = useCallback(async (product: Product, newVendorSubmission = false) => {
+    if (STATIC_DATA_MODE) {
+      if (user?.role === "vendor") {
+        const demoVendor = vendors.find((vendor) => vendor.email.toLowerCase() === user.email.toLowerCase())
+          ?? vendors.find((vendor) => vendor.status === "approved");
+        if (!demoVendor) return false;
+        const previewProduct = {
+          ...product,
+          vendorId: demoVendor.id,
+          vendor: demoVendor.business,
+          ...(newVendorSubmission ? { status: "pending" as const } : {}),
+        };
+        setProducts((list) => list.map((item) => item.id === product.id ? previewProduct : item));
+      }
+      return true;
+    }
+    const { data: { user: authUser } } = await supabase.auth.getUser();
+    if (!authUser) {
+      toast.error("Sign in before saving a catalog item");
+      return false;
+    }
+    let record = product;
+    if (user?.role === "vendor") {
+      const { data: profile, error: profileError } = await supabase.from("profiles")
+        .select("vendor_id, company").eq("id", authUser.id).maybeSingle();
+      if (profileError || !profile?.vendor_id) {
+        toast.error("Your vendor profile is not linked yet. Ask an administrator to assign your vendor account.");
+        return false;
+      }
+      record = {
+        ...product,
+        vendorId: profile.vendor_id,
+        vendor: profile.company || product.vendor,
+        // Every seller change returns the item to the admin review queue.
+        status: "pending",
+      };
+    }
+    const { error } = await supabase.from("catalog_products").upsert({
+      id: record.id,
+      vendor_id: record.vendorId,
+      category: record.category,
+      status: record.status,
+      active: record.active,
+      payload: JSON.parse(JSON.stringify(record)),
+      updated_at: new Date().toISOString(),
+    });
+    if (error) {
+      console.error("Catalog save failed", error);
+      const description = error.code === "42501" && user?.role === "vendor" && !/product's code/.test(error.message)
+        ? "Your vendor account may need approved KYC documents before catalog changes. Open Store Profile → KYC Documents, submit the required files, and wait for admin review."
+        : error.message;
+      toast.error("Could not save this product", { description });
+      return false;
+    }
+    if (record !== product) setProducts((list) => list.map((item) => item.id === product.id ? record : item));
+    return true;
+  }, [user, vendors]);
+
+  const saveCategory = async (category: StoreCategory) => {
+    if (STATIC_DATA_MODE) return true;
+    const { error } = await supabase.from("store_categories").upsert({
+      id: category.id,
+      name: category.name,
+      enabled: category.enabled,
+      sort_order: category.order,
+      payload: JSON.parse(JSON.stringify(category)),
+      updated_at: new Date().toISOString(),
+    });
+    if (error) {
+      console.error("Category save failed", error);
+      toast.error("Could not save this category", { description: error.message });
+      return false;
+    }
+    return true;
+  };
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(KEY);
+      if (raw) {
+        const s = JSON.parse(raw) as Partial<{
+          user: SessionUser | null; cart: CartLine[]; wishlist: string[];
+          categories: StoreCategory[]; products: Product[]; batches: PurchaseBatch[];
+          orders: Order[]; vendors: Vendor[]; customers: Customer[];
+          reviews: Review[]; returns: ReturnRequest[]; coupons: Coupon[]; notifications: Notif[];
+          addressesByUser: Record<string, Address[]>; wishlistsByUser: Record<string, string[]>;
+        }>;
+        // In live mode Supabase Auth is the identity source. Do not restore a
+        // cached role/profile/address as if it were a verified session.
+        const restoredUser = STATIC_DATA_MODE && s.user
+          ? { ...s.user, addressKey: s.user.addressKey ?? addressOwnerKey(s.user) }
+          : null;
+        const savedAddresses = STATIC_DATA_MODE ? s.addressesByUser ?? {} : {};
+        const savedWishlists = s.wishlistsByUser ?? {};
+        setUser(restoredUser);
+        setAddressesByUser(savedAddresses);
+        setAddresses(restoredUser?.addressKey ? savedAddresses[restoredUser.addressKey] ?? [] : []);
+        setWishlistsByUser(savedWishlists);
+        setCart(s.cart ?? []);
+        // Old releases stored one shared wishlist without an account owner. It cannot be
+        // safely attributed to the current customer, so only restore owner-scoped lists.
+        if (STATIC_DATA_MODE && s.categories?.length) {
+          const savedByName = new Map(s.categories.map((category) => [category.name.toLowerCase(), category]));
+          const seededNames = new Set(storeCategorySeed.map((category) => category.name.toLowerCase()));
+          const mergedSeed = storeCategorySeed.map((seedCategory) => {
+            const saved = savedByName.get(seedCategory.name.toLowerCase());
+            if (!saved) return seedCategory;
+            const merged = { ...seedCategory, ...saved, image: saved.image || seedCategory.image };
+            if (merged.name === "Rice" && merged.grades.some((grade) => ["Grade A", "Grade B"].includes(grade))) {
+              merged.grades = ["Raw Rice", "Steam Rice", "Premium Rice"];
+            }
+            return merged;
+          });
+          setCategories([...mergedSeed, ...s.categories.filter((category) => !seededNames.has(category.name.toLowerCase()))]);
+        }
+        if (STATIC_DATA_MODE) {
+          if (s.products?.length) setProducts(s.products);
+          if (s.batches?.length) setBatches(s.batches);
+          if (s.orders?.length) setOrders(s.orders);
+          if (s.vendors?.length) setVendors(s.vendors);
+          if (s.customers?.length) setCustomers(s.customers);
+          if (s.reviews?.length) setReviews(s.reviews);
+          if (s.returns?.length) setReturns(s.returns);
+          if (s.coupons?.length) setCoupons(s.coupons);
+          if (s.notifications?.length) setNotifications(s.notifications);
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+    setHydrated(true);
+  }, []);
+
+  useEffect(() => {
+    if (STATIC_DATA_MODE) return;
+    let active = true;
+
+    const syncAuthSession = async (userCandidate?: { id: string; email?: string; phone?: string; user_metadata?: Record<string, unknown> } | null) => {
+      try {
+        let authUser = userCandidate;
+        if (!authUser) {
+          const { data } = await supabase.auth.getUser();
+          authUser = data.user;
+        }
+        if (!active || !authUser) return;
+
+        const [{ data: profile }, { data: roleRows }] = await Promise.all([
+          supabase.from("profiles").select("id, full_name, email, phone, company, gstin, avatar_url, vendor_id, status").eq("id", authUser.id).maybeSingle(),
+          supabase.from("user_roles").select("role").eq("user_id", authUser.id),
+        ]);
+
+        if (!active) return;
+
+        const meta = (authUser.user_metadata ?? {}) as Record<string, unknown>;
+        const role: Role = preferredRole((roleRows ?? []).map((row) => row.role)) || (meta["role"] as Role) || "customer";
+        const name = profile?.full_name || (meta["full_name"] as string) || (authUser.email ? authUser.email.split("@")[0] : "Customer") || "Customer";
+        const email = profile?.email || authUser.email || "";
+        const phone = profile?.phone || authUser.phone || (meta["phone"] as string) || "";
+
+        setUser((current) => {
+          const base: SessionUser = current ?? {
+            id: authUser.id,
+            name: name || "Customer",
+            email,
+            role,
+            phone,
+          };
+          const nextUser: SessionUser = {
+            ...base,
+            id: authUser.id,
+            name: name || base.name || "Customer",
+            email: email || base.email,
+            phone: phone !== undefined && phone !== "" ? phone : (base.phone || ""),
+            role: role || base.role,
+            addressKey: base.addressKey ?? addressOwnerKey(base),
+          };
+          if (
+            current &&
+            current.id === nextUser.id &&
+            current.name === nextUser.name &&
+            current.email === nextUser.email &&
+            (current.phone || "") === nextUser.phone &&
+            current.role === nextUser.role &&
+            current.addressKey === nextUser.addressKey
+          ) {
+            return current;
+          }
+          return nextUser;
+        });
+      } catch (err) {
+        console.warn("Could not sync auth session:", err);
+      }
+    };
+
+    void syncAuthSession().finally(() => { if (active) setAuthReady(true); });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "SIGNED_IN" || event === "USER_UPDATED" || event === "TOKEN_REFRESHED") {
+        void syncAuthSession(session?.user);
+      } else if (event === "SIGNED_OUT") {
+        setUser(null);
+        setAddresses([]);
+        setCart([]);
+      }
+    });
+
+    return () => {
+      active = false;
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  // A live product edit can lower a purchase cap while a customer already has
+  // the item in their saved cart. Keep those saved quantities inside the new
+  // product limit as soon as the catalog refreshes.
+  useEffect(() => {
+    if (!hydrated || productCatalogStatus !== "ready" || products.length === 0) return;
+    setCart((current) => {
+      let changed = false;
+      const next = current.map((line) => {
+        const product = products.find((candidate) => candidate.id === line.id);
+        if (!product) return line;
+        const limit = getAvailablePurchaseQuantity(product);
+        if (limit === 0) return line;
+        const qty = Math.min(Math.max(1, Math.floor(Number(line.qty) || 1)), limit);
+        if (qty === line.qty) return line;
+        changed = true;
+        return { ...line, qty };
+      });
+      return changed ? next : current;
+    });
+  }, [hydrated, productCatalogStatus, products]);
+
+  useEffect(() => {
+    if (!hydrated || !user?.addressKey) return;
+    setAddressesByUser((saved) => saved[user.addressKey!] === addresses
+      ? saved
+      : { ...saved, [user.addressKey!]: addresses });
+  }, [hydrated, user, addresses]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    try {
+      const persistedState = STATIC_DATA_MODE
+        ? { user, cart, wishlist, wishlistsByUser, categories, products, batches, orders, vendors, customers, reviews, returns, coupons, notifications, addressesByUser }
+        : { cart, wishlistsByUser };
+      localStorage.setItem(
+        KEY,
+        JSON.stringify(persistedState),
+      );
+    } catch {
+      /* quota */
+    }
+  }, [hydrated, user, cart, wishlist, wishlistsByUser, categories, products, batches, orders, vendors, customers, reviews, returns, coupons, notifications, addressesByUser]);
+
+
+  // Keep this action stable across unrelated store updates. PanelLayout uses it
+  // in its access-check effect; recreating it on every catalog/notification
+  // refresh would restart customer verification and flash the secure sign-in
+  // screen while navigating between account pages.
+  const logout = useCallback(() => {
+    void supabase.auth.signOut({ scope: "local" });
+    setUser(null);
+    setAddresses([]);
+    setCart([]);
+  }, []);
+
+  // Shoppers see their godown. With PIN matching ON that is the godown serving the PIN they chose
+  // ("Delivering to"), or before they choose, their default address: only the items it sells, at
+  // its prices and stock. Marketplace items show their vendor's fulfilment point's stock. Admins
+  // and vendors see the catalogue as it is (an admin's branch view is applied further down).
+  const [chosenPin] = useShopperPin();
+  const isShopper = user?.role !== "admin" && user?.role !== "vendor";
+  const fallbackPin = (addresses.find((address) => address.default) ?? addresses[0])?.pin ?? "";
+  const shopperGodown = isShopper && branchState.ready && branchState.features.branchRouting
+    ? branchForPin(branchState.branches, chosenPin || fallbackPin)
+    : null;
+  // Pre-order dates are India's days; recomputed with the view (a page left open over midnight catches up on its next change).
+  const todayIst = istToday();
+  const viewProducts = useMemo(() => {
+    if (!isShopper || !branchState.ready || (!shopperGodown && branchState.vendorPoints.size === 0)) return products;
+    const view: Product[] = [];
+    for (const product of products) {
+      if (product.vendorId.startsWith("zoho:")) { view.push(product); continue; }
+      const point = branchState.vendorPoints.get(product.vendorId);
+      if (point) { view.push({ ...product, stock: branchStockOf(branchState, product.id, point) }); continue; }
+      if (!shopperGodown) { view.push(product); continue; }
+      const price = godownPriceOf(branchState, shopperGodown, product.id, product.price);
+      if (price === null) continue; // not sold at this godown
+      // Pre-order units of this godown's lots (14 Nov 2026): sold after the ready units, collected once they arrive.
+      const arriving = godownArrivingOf(branchState, product.id, shopperGodown.id, todayIst);
+      view.push({
+        ...product,
+        price,
+        mrp: Math.max(product.mrp, price),
+        // A stored per-kg/litre rate belongs to the base price; let it follow the godown price.
+        ...(price !== product.price ? { ratePricing: undefined } : {}),
+        stock: branchStockOf(branchState, product.id, shopperGodown.id),
+        ...(arriving.qty > 0 ? { incoming: arriving.qty, incomingBy: arriving.by, incomingDetail: arriving.detail, incomingGodown: shopperGodown.city || shopperGodown.name } : {}),
+      });
+    }
+    return view;
+  }, [isShopper, branchState, shopperGodown, products, todayIst]);
+
+  const wholeCatalogue = products;
+  const value = useMemo<AppState>(() => {
+    // Everything below reads the shopper's godown view (the full catalogue for admins and vendors).
+    const products = viewProducts;
+    const cartItems = cart
+      .map((line) => ({ product: products.find((p) => p.id === line.id), qty: line.qty }))
+      .filter((line): line is { product: Product; qty: number } => Boolean(line.product));
+
+    const pushNotif = (title: string, body: string, type: string, role: Notif["role"] = "admin") => {
+      if (!STATIC_DATA_MODE) return;
+      setNotifications((n) => [
+        { id: Date.now() + Math.floor(Math.random() * 999), role, title, body, type, time: "just now", read: false, source: "live" },
+        ...n,
+      ]);
+    };
+
+    return {
+      hydrated,
+      authReady,
+      user,
+      login: (u) => {
+        const signedInUser = { ...u, addressKey: u.addressKey ?? addressOwnerKey(u) };
+        setUser(signedInUser);
+        setAddresses(signedInUser.addressKey ? addressesByUser[signedInUser.addressKey] ?? [] : []);
+      },
+      logout,
+      updateProfile: async (p) => {
+        const current = user;
+        if (!current) return false;
+        const changeEmail = Boolean(p.email && p.email.trim().toLowerCase() !== current.email.trim().toLowerCase());
+        const localPatch = { ...p };
+        if (changeEmail) delete localPatch.email;
+        const updatedUser = { ...current, ...localPatch };
+        setUser(updatedUser);
+
+        // Immediately update localStorage so any immediate reload preserves the updated values
+        try {
+          const raw = localStorage.getItem(KEY);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            localStorage.setItem(KEY, JSON.stringify({ ...parsed, user: updatedUser }));
+          }
+        } catch { /* ignore */ }
+
+        // Immediately update customer row in memory so admin customer management reflects right away
+        if (current.id) {
+          setCustomers((list) =>
+            list.map((c) =>
+              c.id === current.id
+                ? {
+                    ...c,
+                    name: updatedUser.name,
+                    email: updatedUser.email,
+                    phone: updatedUser.phone || "",
+                  }
+                : c,
+            ),
+          );
+        }
+
+        if (STATIC_DATA_MODE) return true;
+        try {
+          const { data: { user: authUser }, error: authError } = await supabase.auth.getUser();
+          if (authError || !authUser) throw new Error("Sign in again before updating your profile");
+
+          // 1. Try dedicated RPC
+          let rpcSuccess = false;
+          try {
+            const rpcCaller = supabase.rpc as unknown as (name: string, args: Record<string, unknown>) => Promise<{ error: unknown }>;
+            const { error: rpcError } = await rpcCaller("save_profile", {
+              _full_name: p.name !== undefined ? p.name.trim() : current.name,
+              _phone: p.phone !== undefined ? p.phone.trim() : (current.phone || ""),
+            });
+            if (!rpcError) rpcSuccess = true;
+          } catch {
+            // fallback to direct table
+          }
+
+          // 2. Direct table update / upsert fallback
+          if (!rpcSuccess) {
+            const profilePatch = {
+              ...(p.name !== undefined ? { full_name: p.name.trim() } : {}),
+              ...(p.phone !== undefined ? { phone: p.phone.trim() || null } : {}),
+              updated_at: new Date().toISOString(),
+            };
+            const { error: upsertError } = await supabase.from("profiles").upsert({
+              id: authUser.id,
+              full_name: p.name !== undefined ? p.name.trim() : current.name,
+              email: authUser.email || current.email,
+              phone: p.phone !== undefined ? (p.phone.trim() || null) : (current.phone || null),
+              updated_at: new Date().toISOString(),
+            }, { onConflict: "id" });
+
+            if (upsertError) {
+              const { error: updateError } = await supabase.from("profiles").update(profilePatch).eq("id", authUser.id);
+              if (updateError) throw updateError;
+            }
+          }
+
+          // 3. Keep Supabase Auth user metadata synchronized with name and phone
+          await supabase.auth.updateUser({
+            data: {
+              ...(p.name !== undefined ? { full_name: p.name.trim() } : {}),
+              ...(p.phone !== undefined ? { phone: p.phone.trim() } : {}),
+            },
+            ...(changeEmail && p.email ? { email: p.email.trim().toLowerCase() } : {}),
+          }).catch((err) => console.warn("Could not sync auth metadata:", err));
+
+          if (changeEmail && p.email) {
+            toast.info("Confirm the email change from the message sent to your new address.");
+          }
+          return true;
+        } catch (error) {
+          toast.error("Could not update your profile", { description: error instanceof Error ? error.message : "Please retry." });
+          setUser(current);
+          return false;
+        }
+      },
+
+      cart,
+      cartItems,
+      cartCount: cartItems.reduce((s, l) => s + l.qty, 0),
+      subtotal: cartItems.reduce((s, l) => s + l.product.price * l.qty, 0),
+      productCatalogStatus,
+      categoryCatalogStatus,
+      addToCart: (id, qty = 1) => {
+        // Only the PIN codes our godowns serve can buy: elsewhere show "not in your area yet" instead.
+        const shopperPin = chosenPin || fallbackPin;
+        if (isShopper && branchState.ready && isOutsideServiceArea(branchState.branches, branchState.features.branchRouting, shopperPin)) {
+          window.dispatchEvent(new CustomEvent(OUT_OF_AREA_EVENT, { detail: { pin: shopperPin } }));
+          return;
+        }
+        const product = products.find((item) => item.id === id);
+        const addAmount = Math.max(1, Math.floor(Number(qty) || 1));
+        const available = product ? getAvailablePurchaseQuantity(product) : null;
+        const maxPerOrder = product ? getMaxPurchaseQuantity(product) : null;
+        if (product && available === 0) {
+          toast.error("This product is currently out of stock");
+          return;
+        }
+        const existing = cart.find((line) => line.id === id);
+        const requested = (existing?.qty ?? 0) + addAmount;
+        const safeQty = Math.min(requested, available ?? requested);
+        if (safeQty < requested) {
+          toast.warning(safeQty === maxPerOrder
+            ? `Maximum ${maxPerOrder} units per order for ${product?.name ?? "this product"}`
+            : `Only ${safeQty} unit${safeQty === 1 ? "" : "s"} available`);
+        }
+        setCart((current) => existing
+          ? current.map((line) => line.id === id ? { ...line, qty: safeQty } : line)
+          : [...current, { id, qty: safeQty }]);
+      },
+      reorderLines: (lines) => {
+        // The same check as adding to the cart: only the PIN codes our godowns serve can buy.
+        const shopperPin = chosenPin || fallbackPin;
+        if (isShopper && branchState.ready && isOutsideServiceArea(branchState.branches, branchState.features.branchRouting, shopperPin)) {
+          window.dispatchEvent(new CustomEvent(OUT_OF_AREA_EVENT, { detail: { pin: shopperPin } }));
+          return { items: [], reduced: [], unavailable: [], outOfArea: true };
+        }
+        const plan = reorderPlan(lines, (id) => {
+          const product = products.find((item) => item.id === id);
+          return product && isOnSale(product) ? { name: product.name, available: getAvailablePurchaseQuantity(product) } : null;
+        });
+        if (plan.items.length) setCart((current) => mergeIntoCart(current, plan.items));
+        return { ...plan, outOfArea: false };
+      },
+      setQty: (id, qty) => {
+        const product = products.find((item) => item.id === id);
+        const parsed = Math.max(1, Math.floor(Number(qty) || 1));
+        const available = product ? getAvailablePurchaseQuantity(product) : null;
+        const maxPerOrder = product ? getMaxPurchaseQuantity(product) : null;
+        const safeQty = available === null ? parsed : Math.min(parsed, available);
+        if (product && safeQty === 0) {
+          toast.error("This product is out of stock and has been removed from your cart");
+          setCart((current) => current.filter((line) => line.id !== id));
+          return;
+        }
+        if (safeQty < parsed) {
+          toast.warning(safeQty === maxPerOrder
+            ? `Quantity adjusted to ${safeQty}; that is the maximum purchase for this product`
+            : `Quantity adjusted to ${safeQty}; that is the available stock`);
+        }
+        setCart((current) => current.map((line) => line.id === id ? { ...line, qty: safeQty } : line));
+      },
+      removeFromCart: (id) => setCart((c) => c.filter((l) => l.id !== id)),
+      clearCart: () => setCart([]),
+
+      wishlist,
+      toggleWishlist: (id) => setWishlistsByUser((saved) => {
+        const current = saved[wishlistOwnerKey] ?? [];
+        const next = current.includes(id) ? current.filter((productId) => productId !== id) : [...current, id];
+        return { ...saved, [wishlistOwnerKey]: next };
+      }),
+
+      categories,
+      addCategory: async (c) => {
+        const category = { ...c, id: `C-${crypto.randomUUID()}`, order: categories.length + 1 };
+        if (!await saveCategory(category)) return false;
+        setCategories((list) => [...list, category]);
+        return true;
+      },
+      updateCategory: async (id, patch) => {
+        const category = categories.find((item) => item.id === id);
+        if (!category) return false;
+        const next = { ...category, ...patch };
+        if (!await saveCategory(next)) return false;
+        setCategories((list) => list.map((item) => item.id === id ? next : item));
+        return true;
+      },
+      deleteCategory: async (id) => {
+        const existing = categories.find((category) => category.id === id);
+        if (!existing) return false;
+        if (!STATIC_DATA_MODE) {
+          const { error } = await supabase.from("store_categories").delete().eq("id", id);
+          if (error) { toast.error("Could not delete this category", { description: error.message }); return false; }
+        }
+        setCategories((list) => list.filter((category) => category.id !== id));
+        return true;
+      },
+      moveCategory: (id, dir) =>
+        setCategories((l) => {
+          const sorted = [...l].sort((a, b) => a.order - b.order);
+          const i = sorted.findIndex((c) => c.id === id);
+          const j = i + dir;
+          if (i < 0 || j < 0 || j >= sorted.length) return l;
+          [sorted[i]!, sorted[j]!] = [sorted[j]!, sorted[i]!];
+          const reordered = sorted.map((c, k) => ({ ...c, order: k + 1 }));
+          reordered.forEach((category) => { void saveCategory(category); });
+          return reordered;
+        }),
+
+      products,
+      addProduct: async (p) => {
+        setProducts((list) => [p, ...list.filter((item) => item.id !== p.id)]);
+        const saved = await saveProduct(p, user?.role === "vendor");
+        if (!saved) setProducts((list) => list.filter((item) => item.id !== p.id));
+        else {
+          // New stock is booked to the default godown; move it to the branch being worked in.
+          const defaultBranch = defaultBranchOf(branchState.branches);
+          if (user?.role === "admin" && !STATIC_DATA_MODE && adminBranchId !== "all" && defaultBranch && adminBranchId !== defaultBranch.id && p.stock > 0) {
+            await supabase.rpc("admin_set_branch_stock", { _branch_id: adminBranchId, _product_id: p.id, _stock: p.stock });
+            await supabase.rpc("admin_set_branch_stock", { _branch_id: defaultBranch.id, _product_id: p.id, _stock: 0 });
+          }
+          pushProductsToZohoInBackground([p.id]);
+        }
+        return saved;
+      },
+      updateProduct: async (id, patch) => {
+        // Enforce Admin-only pricing and cost modifications (Requirement 3)
+        const hasPriceOrCostChange =
+          patch.price !== undefined ||
+          patch.mrp !== undefined ||
+          patch.purchasePrice !== undefined;
+
+        if (user && user.role !== "admin" && hasPriceOrCostChange) {
+          throw new Error("Unauthorized: Only an Administrator is permitted to modify pricing and cost.");
+        }
+
+        const existing = products.find((product) => product.id === id);
+        if (!existing) return false;
+        // Full edit forms send every field. A stock value left as the form loaded it is the page's
+        // old copy, not a new count (orders may have sold units since): drop it so the database's
+        // current stock is kept. A stock-only change is always applied.
+        if (patch.stock !== undefined && Object.keys(patch).length > 1 && Number(patch.stock) === Number(existing.stock)) {
+          const { stock: _unchangedStock, ...rest } = patch;
+          patch = rest;
+        }
+        // Admin stock is kept per godown: the change goes to the branch being worked in.
+        if (user?.role === "admin" && patch.stock !== undefined && !STATIC_DATA_MODE && !existing.vendorId.startsWith("zoho:")) {
+          const activeBranches = branchState.branches.filter((branch) => branch.active);
+          const targetBranch = adminBranchId !== "all" ? adminBranchId : activeBranches.length === 1 ? activeBranches[0]!.id : null;
+          if (!targetBranch) {
+            toast.error("Choose a branch first", { description: "Stock is kept per godown. Pick the branch at the top of the admin panel, then change its stock." });
+            return false;
+          }
+          const { data: total, error } = await supabase.rpc("admin_set_branch_stock", {
+            _branch_id: targetBranch, _product_id: id, _stock: Math.max(0, Math.round(Number(patch.stock) || 0)),
+          });
+          if (error || total === null) {
+            toast.error("Could not update stock", { description: error?.message ?? "Please retry." });
+            return false;
+          }
+          setProducts((list) => list.map((p) => (p.id === id ? { ...p, stock: Number(total), updated: today() } : p)));
+          const rest = { ...patch };
+          delete rest.stock;
+          if (Object.keys(rest).length === 0) {
+            pushProductsToZohoInBackground([id]);
+            return true;
+          }
+          patch = { ...rest, stock: Number(total) };
+        }
+        // A vendor's stock count is not a listing change: the product stays live (no re-review).
+        const stockOnly = Object.keys(patch).length === 1 && patch.stock !== undefined;
+        if (user?.role === "vendor" && stockOnly && !STATIC_DATA_MODE) {
+          const stock = Math.round(patch.stock ?? 0);
+          const { data: done, error } = await supabase.rpc("vendor_set_product_stock", { _product_id: id, _stock: stock });
+          if (error || !done) {
+            toast.error("Could not update stock", { description: error?.message ?? "This product is not in your store." });
+            return false;
+          }
+          setProducts((list) => list.map((p) => (p.id === id ? { ...p, stock, updated: today() } : p)));
+          pushProductsToZohoInBackground([id]);
+          return true;
+        }
+        // Pausing or resuming an approved listing takes effect at once (no re-review).
+        const activeOnly = Object.keys(patch).length === 1 && patch.active !== undefined;
+        if (user?.role === "vendor" && activeOnly && existing.status === "approved" && !STATIC_DATA_MODE) {
+          const active = !!patch.active;
+          const { data: done, error } = await supabase.rpc("vendor_set_product_active", { _product_id: id, _active: active });
+          if (error || !done) {
+            toast.error(active ? "Could not resume this product" : "Could not pause this product", { description: error?.message ?? "This product is not in your store." });
+            return false;
+          }
+          setProducts((list) => list.map((p) => (p.id === id ? { ...p, active, updated: today() } : p)));
+          pushProductsToZohoInBackground([id]);
+          return true;
+        }
+        // The save writes the whole payload, and stock and sales counts change with every order.
+        // Take them from the database rather than this page's copy, so saving another field never
+        // undoes an order's stock deduction (the stock trigger would book it as a stock movement).
+        const live: Partial<Pick<Product, "stock" | "sold" | "reserved" | "productCode">> = {};
+        if (!STATIC_DATA_MODE) {
+          const { data: row } = await supabase.from("catalog_products").select("payload").eq("id", id).maybeSingle();
+          const payload = (row?.payload ?? {}) as Record<string, unknown>;
+          for (const key of ["stock", "sold", "reserved"] as const) {
+            if (typeof payload[key] === "number") live[key] = payload[key];
+          }
+          // The same for its code, which another tab may have just changed.
+          if (row) live.productCode = typeof payload["productCode"] === "string" ? payload["productCode"] : undefined;
+        }
+        const updated = { ...existing, ...live, ...patch, updated: today() };
+        setProducts((list) => list.map((p) => (p.id === id ? updated : p)));
+        const ok = await saveProduct(updated, user?.role === "vendor");
+        if (!ok) setProducts((list) => list.map((item) => item.id === id ? existing : item));
+        else pushProductsToZohoInBackground([id]);
+        return ok;
+      },
+      setProductCode: async (id, code) => {
+        if (!STATIC_DATA_MODE) {
+          const { data: done, error } = await supabase.rpc("admin_set_product_code", { _product_id: id, _code: code ?? "" });
+          if (error || !done) {
+            toast.error("Could not change this product's code", { description: error?.message ?? "This product no longer exists." });
+            return false;
+          }
+        }
+        setProducts((list) => list.map((p) => (p.id === id ? { ...p, productCode: code } : p)));
+        return true;
+      },
+      deleteProduct: async (id) => {
+        const existing = products.find((product) => product.id === id);
+        if (!existing) return false;
+        if (!STATIC_DATA_MODE) {
+          const { data: deleted, error } = await supabase.from("catalog_products").delete().eq("id", id).select("id");
+          if (error) { toast.error("Could not delete this product", { description: error.message }); return false; }
+          // Row rules remove nothing (without an error) when deletion is not allowed.
+          if (!deleted?.length) {
+            toast.error("This product cannot be deleted", {
+              description: user?.role === "vendor"
+                ? "It has orders or reviews, so its history must stay. Switch it off instead."
+                : "It may already be gone. Refresh the page.",
+            });
+            return false;
+          }
+        }
+        setProducts((list) => list.filter((p) => p.id !== id));
+        return true;
+      },
+
+      batches,
+      addBatch: async (batchData) => {
+        if (user && user.role !== "admin") {
+          throw new Error("Unauthorized: Only an Administrator can add purchase batches.");
+        }
+        if (!STATIC_DATA_MODE) {
+          const { data, error } = await supabase.rpc("admin_receive_inventory_batch", {
+            _batch_code: batchData.batchCode, _product_id: batchData.productId,
+            _quantity: batchData.quantity, _unit_cost: batchData.unitCost,
+            _purchase_date: batchData.purchaseDate || null, _warehouse: batchData.warehouse,
+          });
+          if (error || !data) { toast.error("Could not save this inventory batch", { description: error?.message ?? "Product not found." }); return false; }
+          const persisted = { ...batchData, id: data, status: batchData.remainingQty > 0 ? "Active" : "Depleted" } as PurchaseBatch;
+          setBatches((list) => [persisted, ...list]);
+          setProducts((list) => list.map((p) => p.id === batchData.productId ? { ...p, stock: p.stock + batchData.remainingQty, updated: today() } : p));
+          return true;
+        }
+        const newBatch: PurchaseBatch = {
+          ...batchData,
+          id: `BATCH-${Date.now().toString().slice(-6)}`,
+          status: batchData.remainingQty > 0 ? "Active" : "Depleted",
+        };
+        setBatches((curr) => [newBatch, ...curr]);
+        // Sync product stock
+        setProducts((list) =>
+          list.map((p) =>
+            p.id === batchData.productId ? { ...p, stock: p.stock + batchData.remainingQty } : p,
+          ),
+        );
+        const product = products.find((item) => item.id === batchData.productId);
+        if (product) void saveProduct({ ...product, stock: product.stock + batchData.remainingQty, updated: today() });
+        return true;
+      },
+      updateBatch: (batchId, patch) => {
+        if (user && user.role !== "admin" && patch.unitCost !== undefined) {
+          throw new Error("Unauthorized: Only an Administrator can modify batch purchase costs.");
+        }
+        const existing = batches.find((batch) => batch.id === batchId);
+        setBatches((curr) => curr.map((b) => (b.id === batchId ? { ...b, ...patch } : b)));
+        if (existing) {
+          const dbPatch = {
+            ...(patch.batchCode !== undefined ? { batch_code: patch.batchCode } : {}),
+            ...(patch.productId !== undefined ? { product_id: patch.productId } : {}),
+            ...(patch.productName !== undefined ? { product_name: patch.productName } : {}),
+            ...(patch.vendor !== undefined ? { vendor: patch.vendor } : {}),
+            ...(patch.vendorId !== undefined ? { vendor_id: patch.vendorId || null } : {}),
+            ...(patch.purchaseDate !== undefined ? { purchase_date: patch.purchaseDate || null } : {}),
+            ...(patch.quantity !== undefined ? { quantity: patch.quantity } : {}),
+            ...(patch.remainingQty !== undefined ? { remaining_quantity: patch.remainingQty } : {}),
+            ...(patch.unitCost !== undefined ? { unit_cost: patch.unitCost } : {}),
+            ...(patch.warehouse !== undefined ? { warehouse: patch.warehouse } : {}),
+            ...(patch.status !== undefined ? { status: patch.status } : {}),
+          };
+          if (!STATIC_DATA_MODE) void supabase.from("batches").update(dbPatch).eq("id", batchId).then(({ error }) => {
+            if (error) {
+              toast.error("Could not update this inventory batch", { description: error.message });
+              setBatches((list) => list.map((batch) => batch.id === batchId ? existing : batch));
+            }
+          });
+        }
+      },
+      deleteBatch: (batchId) => {
+        if (user && user.role !== "admin") {
+          throw new Error("Unauthorized: Only an Administrator can delete purchase batches.");
+        }
+        const existing = batches.find((batch) => batch.id === batchId);
+        setBatches((curr) => curr.filter((b) => b.id !== batchId));
+        if (!STATIC_DATA_MODE) void supabase.from("batches").delete().eq("id", batchId).then(({ error }) => {
+          if (error) {
+            toast.error("Could not delete this inventory batch", { description: error.message });
+            if (existing) setBatches((list) => [existing, ...list]);
+          }
+        });
+      },
+      getFIFOCost: (productId) => getCurrentFIFOCost(productId, batches),
+      getInventoryValuation: (productId) => calculateInventoryValuation(productId, batches),
+      getAverageSellingPrice: (product) => getProductAverageSellingPrice(product, orders),
+
+      orders,
+      placeOrder: async ({ lines, method, payment, coupon, customerIndex = 0, customerOverride, shippingAddress, delivery, subtotal, discount, tax, shipping, source, paymentDueDate, payFirst = false, business, acceptPreorder = false }) => {
+        if (method === "Cash on Delivery" || method === "COD") {
+          throw new Error("Cash on delivery is not enabled for this store. Please select an online payment method (UPI, NEFT or RTGS).");
+        }
+        const requestedByProduct = new Map<string, number>();
+        for (const line of lines) {
+          const qty = Number(line.qty);
+          if (!Number.isSafeInteger(qty) || qty < 1) throw new Error("Order quantities must be whole numbers of at least 1");
+          requestedByProduct.set(line.product.id, (requestedByProduct.get(line.product.id) ?? 0) + qty);
+        }
+        for (const [productId, requested] of requestedByProduct) {
+          const product = products.find((candidate) => candidate.id === productId)
+            ?? lines.find((line) => line.product.id === productId)!.product;
+          const limit = getMaxPurchaseQuantity(product);
+          if (requested > limit) {
+            const message = `Maximum purchase quantity for ${product.name} is ${limit}`;
+            toast.error("Order quantity exceeds the product limit", { description: message });
+            throw new Error(message);
+          }
+        }
+        // A provisional number for the demo / preview: the live database numbers the order itself
+        // by its godown, delivery PIN and time (e.g. CLK-577522-261026-143215) and returns it.
+        const id = `ORD-${new Date().toISOString().slice(2, 10).replace(/-/g, "")}${String(Math.floor(Math.random() * 100000)).padStart(5, "0")}`;
+        const order = buildOrder(
+          id,
+          today(),
+          customerIndex,
+          lines.map((l) => ({ product: l.product, qty: l.qty, vendor: l.product.vendor, vendorId: l.product.vendorId, capacity: l.capacity ?? l.product.weight, unitPrice: l.unitPrice ?? l.product.price })),
+          payment,
+          method,
+          payment === "Paid" ? "Payment Confirmed" : "Placed",
+          coupon,
+        );
+        if (customerOverride) {
+          order.customer = customerOverride.name;
+          order.customerId = customerOverride.id;
+          order.email = customerOverride.email;
+          order.phone = customerOverride.phone;
+          order.gstin = customerOverride.gst;
+          order.address = customerOverride.address;
+          order.city = customerOverride.city;
+          order.state = customerOverride.state;
+          order.pin = customerOverride.pin;
+        } else if (user) {
+          order.customer = user.name;
+          order.email = user.email;
+          if (user.phone) order.phone = user.phone;
+        }
+        if (delivery) order.delivery = delivery;
+        if (shippingAddress) {
+          order.address = shippingAddress.line;
+          order.city = shippingAddress.city;
+          order.state = shippingAddress.state;
+          order.pin = shippingAddress.pin;
+          order.phone = shippingAddress.phone;
+        }
+        // Prices include GST: subtotal is the goods as the customer sees them, tax the GST inside. The order keeps the goods before GST.
+        order.pricesIncludeGst = true;
+        if (tax !== undefined) order.tax = tax;
+        if (subtotal !== undefined) order.subtotal = toPaise(subtotal - (tax ?? 0));
+        if (discount !== undefined) order.discount = discount;
+        if (shipping !== undefined) order.shipping = shipping;
+        if (subtotal !== undefined || discount !== undefined || tax !== undefined || shipping !== undefined) {
+          order.amount = toPaise((order.subtotal ?? 0) + (order.tax ?? 0) - (order.discount ?? 0) + (order.shipping ?? 0));
+        }
+        if (source) order.source = source;
+        if (paymentDueDate) order.paymentDueDate = paymentDueDate;
+        if (!STATIC_DATA_MODE) {
+          const { data: { user: authUser }, error: authError } = await supabase.auth.getUser();
+          if (authError || !authUser) throw new Error("Sign in again before placing your order.");
+          order.customerId = customerOverride?.id ?? authUser.id;
+          if (!customerOverride) delete order.gstin;
+          const addressPayload = {
+            id: shippingAddress?.id,
+            name: shippingAddress?.name ?? customerOverride?.name ?? order.customer,
+            phone: shippingAddress?.phone ?? customerOverride?.phone ?? order.phone,
+            line: order.address,
+            city: order.city,
+            state: order.state,
+            pin: order.pin,
+          };
+          const { data, error } = await supabase.rpc(payFirst ? "start_paid_checkout" : "place_marketplace_order_with_coupon", {
+            _order_no: id,
+            _target_user_id: customerOverride?.id ?? authUser.id,
+            _customer_name: order.customer,
+            _customer_email: order.email,
+            _customer_phone: order.phone || null,
+            _customer_gstin: order.gstin || null,
+            _shipping_address: addressPayload,
+            _shipping_method: delivery?.toLowerCase().startsWith("pickup") ? "Pickup" : delivery?.toLowerCase().includes("express") ? "Express" : "Standard",
+            _payment_method: method,
+            // accept_preorder: the customer's tick, per line; place_marketplace_order takes arriving units only with it.
+            _items: lines.map((line) => ({ product_id: line.product.id, qty: line.qty, ...(acceptPreorder ? { accept_preorder: true } : {}) })),
+            _coupon: coupon ?? null,
+            ...(payFirst && business ? {
+              _is_b2b: business.isB2b,
+              _business_gstin: business.isB2b ? business.gstin ?? null : null,
+              _business_name: business.isB2b ? business.legalName ?? null : null,
+            } : {}),
+          });
+          if (error || !data) {
+            const message = error?.message ?? "The order could not be saved";
+            toast.error("Order was not placed", { description: message });
+            throw new Error(message);
+          }
+          const saved = data as { order_no?: string; subtotal: number; discount: number; gst_amount: number; shipping: number; total: number; items: Array<{ product_id: string; unit_price: number; preorder_qty?: number; preorder_by?: string | null }>; order_status?: string; hold_until?: string | null };
+          if (saved.order_no) order.id = saved.order_no;
+          const preorderLines = (saved.items ?? []).filter((item) => Number(item.preorder_qty) > 0)
+            .map((item) => ({ productId: item.product_id, qty: Number(item.preorder_qty), by: item.preorder_by ?? null }));
+          if (preorderLines.length) Object.assign(order, { preorderLines });
+          // A held checkout is not an order yet: Zoho gets it when the payment is matched.
+          if (saved.order_status !== AWAITING_PAYMENT) pushOrderToZohoInBackground(order.id);
+          if (saved.order_status === AWAITING_PAYMENT) order.holdUntil = saved.hold_until ?? null;
+          if (business?.isB2b && business.gstin) {
+            order.gstin = business.gstin;
+            order.businessName = business.legalName ?? "";
+            order.isB2b = true;
+          }
+          order.subtotal = Number(saved.subtotal);
+          order.discount = Number(saved.discount);
+          order.tax = Number(saved.gst_amount);
+          order.shipping = Number(saved.shipping);
+          order.amount = Number(saved.total);
+          order.payment = saved.order_status === "Payment Confirmed" ? "Paid" : "Pending";
+          order.status = saved.order_status === "Payment Confirmed" ? "Payment Confirmed" : "Placed";
+          order.paidAmount = saved.order_status === "Payment Confirmed" ? order.amount : 0;
+          order.txn = "";
+          order.items = order.items.map((item) => ({
+            ...item,
+            unitPrice: Number(saved.items.find((savedItem) => savedItem.product_id === item.product.id)?.unit_price ?? item.unitPrice),
+          }));
+        }
+        if (payFirst && STATIC_DATA_MODE) {
+          // The demo holds the checkout for the admin's payment window, like the database does.
+          const minutes = isBankMethod(method) ? 60 : Math.min(60, Math.max(5, (await loadUpiSettings()).payWindowMinutes || 15));
+          order.holdUntil = new Date(Date.now() + minutes * 60_000).toISOString();
+        }
+        const held = Boolean(order.holdUntil);
+        if (held) {
+          setPaymentHolds((list) => [{
+            orderNo: order.id, amount: order.amount, status: AWAITING_PAYMENT, holdUntil: order.holdUntil ?? null, createdAt: new Date().toISOString(), customer: order.customer,
+            method,
+            lines: lines.map((line) => ({ productId: line.product.id, qty: line.qty, name: line.product.name })),
+          }, ...list.filter((hold) => hold.orderNo !== order.id)]);
+          if (STATIC_DATA_MODE) demoHeldOrders.set(order.id, order);
+        } else {
+          setOrders((o) => [order, ...o]);
+        }
+
+        // Consume inventory stock
+        setProducts((list) =>
+          list.map((p) => {
+            const line = lines.find((l) => l.product.id === p.id);
+            return line ? { ...p, stock: Math.max(0, p.stock - line.qty), sold: p.sold + line.qty } : p;
+          }),
+        );
+
+        // Consume FIFO purchase batch layers
+        setBatches((currentBatches) => {
+          const nextBatches = [...currentBatches];
+          for (const line of lines) {
+            let needed = line.qty;
+            const prodBatchIndices = nextBatches
+              .map((b, idx) => ({ ...b, originalIdx: idx }))
+              .filter((b) => b.productId === line.product.id && b.remainingQty > 0)
+              .sort((a, b) => new Date(a.purchaseDate).getTime() - new Date(b.purchaseDate).getTime());
+
+            for (const b of prodBatchIndices) {
+              if (needed <= 0) break;
+              const take = Math.min(needed, b.remainingQty);
+              const remaining = b.remainingQty - take;
+              nextBatches[b.originalIdx] = {
+                ...nextBatches[b.originalIdx]!,
+                remainingQty: remaining,
+                status: remaining === 0 ? "Depleted" : "Active",
+              };
+              needed -= take;
+            }
+          }
+          return nextBatches;
+        });
+
+        if (!held) pushNotif("New order received", `${order.id} was placed worth ₹${order.amount.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}.`, "info");
+        return order;
+      },
+      paymentHolds,
+      ordersLoaded: STATIC_DATA_MODE || ordersLoadedFor === (user?.id ?? null),
+      refreshHeldCheckouts: async (orderNos) => {
+        if (STATIC_DATA_MODE || orderNos.length === 0) return;
+        const { data } = await supabase.from("orders").select("order_no, order_status, payment_hold_until, payment_hold_outcome, bank_credit_seen_at").in("order_no", orderNos);
+        if (!data) return;
+        const byNo = new Map(data.map((row) => [row.order_no, row]));
+        setPaymentHolds((list) => list.flatMap((item) => {
+          if (!orderNos.includes(item.orderNo)) return [item];
+          const row = byNo.get(item.orderNo);
+          if (!row) return [];
+          if (!isHeldStatus(row.order_status)) return [{ ...item, status: "Payment Confirmed" as const, holdUntil: null }];
+          return [{ ...item, status: row.order_status as PaymentHold["status"], holdUntil: row.payment_hold_until ?? null, outcome: (row.payment_hold_outcome ?? null) as PaymentHold["outcome"], moneySeenAt: row.bank_credit_seen_at ?? null }];
+        }));
+      },
+      forgetOrder: (orderNo) => {
+        setPaymentHolds((list) => list.filter((item) => item.orderNo !== orderNo));
+        setOrders((list) => list.filter((order) => order.id !== orderNo));
+      },
+      cancelPaymentHold: async (orderNo) => {
+        if (!STATIC_DATA_MODE) {
+          const { error } = await supabase.rpc("cancel_payment_hold", { _order_no: orderNo });
+          if (error) { toast.error("Could not cancel", { description: error.message }); return false; }
+        }
+        const hold = paymentHolds.find((item) => item.orderNo === orderNo);
+        setPaymentHolds((list) => list.map((item) => item.orderNo === orderNo ? { ...item, status: "Payment Expired", holdUntil: null, outcome: "dropped" } : item));
+        if (STATIC_DATA_MODE && hold) {
+          // The reserved stock goes back.
+          setProducts((list) => list.map((p) => {
+            const qty = hold.lines.filter((line) => line.productId === p.id).reduce((sum, line) => sum + line.qty, 0);
+            return qty ? { ...p, stock: p.stock + qty, sold: Math.max(0, p.sold - qty) } : p;
+          }));
+          demoHeldOrders.delete(orderNo);
+        }
+        return true;
+      },
+      simulateBankAlert: (orderNo) => {
+        if (!STATIC_DATA_MODE) return;
+        const order = demoHeldOrders.get(orderNo);
+        if (!order) return;
+        demoHeldOrders.delete(orderNo);
+        setPaymentHolds((list) => list.map((item) => item.orderNo === orderNo ? { ...item, status: "Payment Confirmed", holdUntil: null } : item));
+        setOrders((o) => [{ ...order, holdUntil: null, status: "Payment Confirmed", payment: "Paid", paidAmount: order.amount }, ...o]);
+        pushNotif("New order received", `${order.id} was paid by ${order.method} and placed worth ₹${order.amount.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}.`, "info");
+      },
+      updateOrderStatus: async (id, status) => {
+        const existing = orders.find((order) => order.id === id);
+        if (!existing) return false;
+        const currentVendorId = user?.role === "vendor"
+          ? vendors.find((vendor) => vendor.email.toLowerCase() === user.email.toLowerCase())?.id
+          : undefined;
+        const previousStatus = user?.role === "vendor"
+          ? existing.vendorStatuses?.find((fulfillment) => fulfillment.vendorId === currentVendorId)?.status
+          : existing.status;
+        if (previousStatus === "Cancelled" && status !== "Cancelled") {
+          toast.error("Cancelled orders cannot be reopened", { description: "Create a new order to fulfil this purchase." });
+          return false;
+        }
+        if (status === "Cancelled") {
+          const actor = user?.role === "customer" ? "customer" : user?.role === "admin" ? "admin" : null;
+          if (!actor || !canCancelOrder(existing, actor)) {
+            toast.error("This order cannot be cancelled", {
+              description: existing.paidAmount || existing.payment === "Paid" || existing.payment === "Partially Paid"
+                ? "A verified refund must be completed before a paid order can be cancelled. Refund processing is not configured yet."
+                : "This order has passed the cancellation stage for your account.",
+            });
+            return false;
+          }
+        }
+        // Admins may override the payment rules, but never by accident: confirm first.
+        if (user?.role === "admin" && typeof window !== "undefined") {
+          const paid = getOrderPaymentsReceived(existing);
+          const advancePercent = existing.advancePercent ?? 30;
+          const advanceDue = Math.round(existing.amount * advancePercent) / 100;
+          const needsFull = status === "Dispatched" || status === "Out for Delivery" || status === "Delivered";
+          const needsAdvance = status === "Accepted" || status === "Packed";
+          if ((needsFull && existing.payment !== "Paid") || (needsAdvance && paid < advanceDue)) {
+            const rule = needsFull ? "Full payment" : `The ${advancePercent}% advance (₹${advanceDue.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`;
+            const ok = window.confirm(
+              `${id} has ₹${paid.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} paid of ₹${existing.amount.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}. ${rule} is normally required before "${status}". Move it anyway?`,
+            );
+            if (!ok) return false;
+          }
+        }
+        const optimisticUpdate = STATIC_DATA_MODE || user?.role !== "vendor";
+        if (optimisticUpdate) {
+          setOrders((list) => list.map((order) => order.id === id ? { ...order, status } : order));
+        }
+        if (!STATIC_DATA_MODE) {
+          const result = status === "Cancelled"
+            ? await supabase.rpc("cancel_marketplace_order", { _order_no: id })
+            : user?.role === "vendor"
+              ? await supabase.rpc("vendor_update_order_fulfillment", { _order_no: id, _status: status })
+              : user?.role === "admin"
+                ? await supabase.rpc("admin_update_order_status", { _order_no: id, _status: status })
+                : { error: { message: "Only administrators can update this order status." } };
+          const { error } = result;
+          if (error) {
+            toast.error("Could not update order status", { description: error.message });
+            if (optimisticUpdate) setOrders((list) => list.map((order) => order.id === id ? existing : order));
+            return false;
+          }
+          pushOrderToZohoInBackground(id);
+        }
+        return true;
+      },
+      updateOrderDelivery: (orderId, delivery) => {
+        const existing = orders.find((order) => order.id === orderId);
+        setOrders((list) => list.map((order) => order.id === orderId ? { ...order, delivery } : order));
+        if (!STATIC_DATA_MODE) void supabase.from("orders").update({
+          shipping_method: delivery.toLowerCase().startsWith("pickup") ? "Pickup" : delivery.toLowerCase().includes("express") ? "Express" : "Standard",
+        }).eq("order_no", orderId).then(({ error }) => {
+          if (error) {
+            toast.error("Could not update delivery method", { description: error.message });
+            if (existing) setOrders((list) => list.map((order) => order.id === orderId ? existing : order));
+          }
+        });
+      },
+      updateOrderItem: async (orderId, index, patch) => {
+        const order = orders.find((candidate) => candidate.id === orderId);
+        const item = order?.items[index];
+        if (!order || !item || order.status === "Cancelled") return false;
+        const nextQty = patch.qty ?? item.qty;
+        if (!Number.isInteger(nextQty) || nextQty < 1) return false;
+        const nextCapacity = (patch.capacity ?? item.capacity ?? item.product.weight).trim();
+        const nextUnitPrice = patch.unitPrice ?? item.unitPrice ?? item.product.price;
+        if (!nextCapacity || !Number.isFinite(nextUnitPrice) || nextUnitPrice < 0) return false;
+        if (!STATIC_DATA_MODE) {
+          if (user?.role !== "admin" || !item.dbItemId) {
+            toast.error("This order line cannot be edited from the current account");
+            return false;
+          }
+          const { data, error } = await supabase.rpc("admin_update_order_item", {
+            _order_no: orderId,
+            _order_item_id: item.dbItemId,
+            _qty: nextQty,
+            _capacity: nextCapacity,
+            _unit_price: nextUnitPrice,
+          });
+          if (error || !data || typeof data !== "object" || Array.isArray(data)) {
+            toast.error("Could not update this order item", { description: error?.message ?? "The server returned an invalid order update." });
+            return false;
+          }
+          const result = data as { qty?: number; capacity?: string; unit_price?: number; line_total?: number; subtotal?: number; gst_amount?: number; total?: number };
+          setOrders((list) => list.map((candidate) => candidate.id !== orderId ? candidate : {
+            ...candidate,
+            items: candidate.items.map((line, lineIndex) => lineIndex === index ? {
+              ...line,
+              qty: Number(result.qty ?? nextQty),
+              capacity: result.capacity ?? nextCapacity,
+              unitPrice: Number(result.unit_price ?? nextUnitPrice),
+            } : line),
+            subtotal: Number(result.subtotal ?? candidate.subtotal),
+            tax: Number(result.gst_amount ?? candidate.tax),
+            amount: Number(result.total ?? candidate.amount),
+          }));
+          pushOrderToZohoInBackground(orderId);
+          return true;
+        }
+        const delta = nextQty - item.qty;
+        const product = products.find((candidate) => candidate.id === item.product.id);
+        if (delta > 0 && product && product.stock < delta) return false;
+        if (delta !== 0 && product) {
+          setProducts((list) => list.map((candidate) => candidate.id === product.id
+            ? { ...candidate, stock: Math.max(0, candidate.stock - delta), sold: Math.max(0, candidate.sold + delta) }
+            : candidate));
+          setBatches((current) => {
+            const next = [...current];
+            if (delta > 0) {
+              let needed = delta;
+              const fifo = next.map((batch, batchIndex) => ({ batch, batchIndex }))
+                .filter(({ batch }) => batch.productId === product.id && batch.remainingQty > 0)
+                .sort((a, b) => a.batch.purchaseDate.localeCompare(b.batch.purchaseDate));
+              for (const { batch, batchIndex } of fifo) {
+                if (!needed) break;
+                const taken = Math.min(needed, batch.remainingQty);
+                next[batchIndex] = { ...batch, remainingQty: batch.remainingQty - taken, status: batch.remainingQty === taken ? "Depleted" : "Active" };
+                needed -= taken;
+              }
+            } else {
+              const latest = next.map((batch, batchIndex) => ({ batch, batchIndex }))
+                .filter(({ batch }) => batch.productId === product.id)
+                .sort((a, b) => b.batch.purchaseDate.localeCompare(a.batch.purchaseDate))[0];
+              if (latest) next[latest.batchIndex] = { ...latest.batch, remainingQty: latest.batch.remainingQty + Math.abs(delta), status: "Active" };
+            }
+            return next;
+          });
+        }
+        const items = order.items.map((line, lineIndex) => lineIndex === index ? { ...line, qty: nextQty, capacity: nextCapacity, unitPrice: nextUnitPrice } : line);
+        const lineAmount = (line: (typeof items)[number]) => (line.unitPrice ?? line.product.price) * line.qty;
+        // Preview only: an order whose prices include GST keeps its total and splits out the GST inside; an older one adds 5% on top.
+        const goods = items.reduce((sum, line) => sum + lineAmount(line), 0);
+        const tax = order.pricesIncludeGst
+          ? items.reduce((sum, line) => sum + lineGstInside(line.unitPrice ?? line.product.price, line.qty, line.gstRate ?? line.product.gst), 0)
+          : Math.round(Math.max(0, goods - order.discount) * 0.05);
+        const subtotal = order.pricesIncludeGst ? toPaise(goods - tax) : goods;
+        const amount = toPaise(subtotal - order.discount + tax + order.shipping);
+        const paidAmount = order.paidAmount ?? (order.payment === "Paid" ? order.amount : 0);
+        const payment = paidAmount >= amount ? "Paid" : paidAmount > 0 ? "Partially Paid" : order.payment === "COD" ? "COD" : "Pending";
+        setOrders((list) => list.map((candidate) => candidate.id === orderId
+          ? { ...candidate, items, subtotal, tax, amount, payment, paidAmount }
+          : candidate));
+        pushNotif("Order updated", `${orderId} item details were updated.`, "info", "admin");
+        return true;
+      },
+      confirmPayment: async (id, amount, utr, advancePercent = 30, method) => {
+        if (!STATIC_DATA_MODE) {
+          const { data, error } = await supabase.rpc("admin_confirm_manual_payment", { _order_no: id, _amount: amount, _utr: utr.trim(), ...(method ? { _method: method } : {}) });
+          if (error || !data) { toast.error("Could not record payment", { description: error?.message ?? "Order not found." }); return false; }
+          pushOrderToZohoInBackground(id);
+          return true;
+        }
+        const order = orders.find((candidate) => candidate.id === id);
+        if (!order || !Number.isFinite(amount) || amount <= 0) return false;
+        const paidAmount = Math.min(order.amount, (order.paidAmount ?? (order.payment === "Paid" ? order.amount : 0)) + amount);
+        setOrders((list) => list.map((candidate) => candidate.id === id ? {
+          ...candidate,
+          paidAmount,
+          ...(utr.trim() ? { utr: utr.trim() } : candidate.utr ? { utr: candidate.utr } : {}),
+          advancePercent,
+          payment: paidAmount >= candidate.amount ? "Paid" : "Partially Paid",
+          status: paidAmount > 0 && candidate.status === "Placed" ? "Payment Confirmed" : candidate.status,
+        } : candidate));
+        pushNotif("Payment confirmed", `${inr(amount)} confirmed for ${id}${utr.trim() ? ` Â· UTR ${utr.trim()}` : ""}.`, "success", "admin");
+        pushNotif("Payment confirmed", `We have confirmed your payment of ${inr(amount)} for order ${id}.`, "success", "customer");
+        return true;
+      },
+      refundOrder: async (id) => {
+        if (!STATIC_DATA_MODE) {
+          toast.error("Refunds are not connected to a payment provider yet");
+          return false;
+        }
+        setOrders((list) => list.map((o) => (o.id === id ? { ...o, payment: "Refunded", status: "Cancelled" } : o)));
+        return true;
+      },
+      cancelOrderAsAdmin: async (id, input) => {
+        if (!STATIC_DATA_MODE) {
+          const { error } = await supabase.rpc("admin_cancel_order", {
+            _order_no: id, _reason: input.reason.trim(), _goods_back: input.goodsBack, _refund: input.refund,
+          });
+          if (error) { toast.error("Could not cancel the order", { description: error.message }); return false; }
+          pushOrderToZohoInBackground(id);
+        }
+        setOrders((list) => list.map((o) => o.id !== id ? o : {
+          ...o,
+          status: "Cancelled",
+          ...(input.refund ? { payment: "Refunded" as const, paidAmount: 0 } : {}),
+          ...(o.vendorStatuses ? { vendorStatuses: o.vendorStatuses.map((vendor) => ({ ...vendor, status: "Cancelled" as const })) } : {}),
+        }));
+        return true;
+      },
+
+      vendors,
+      setVendorStatus: async (id, status) => {
+        if (!STATIC_DATA_MODE) {
+          const { data: profile, error: lookupError } = await supabase.from("profiles").select("id").eq("vendor_id", id).maybeSingle();
+          if (lookupError || !profile) {
+            toast.error("Could not update vendor status", { description: lookupError?.message ?? "No matching vendor profile was found." });
+            return false;
+          }
+          const { data, error } = await supabase.rpc("admin_set_profile_status", { _profile_id: profile.id, _status: status });
+          if (error || !data) {
+            toast.error("Could not update vendor status", { description: error?.message ?? "No matching vendor profile was found." });
+            return false;
+          }
+        }
+        setVendors((list) => list.map((vendor) => vendor.id === id ? { ...vendor, status } : vendor));
+        return true;
+      },
+      setVendorCommission: async (id, rate) => {
+        if (!Number.isFinite(rate) || rate < 0 || rate > 100) return false;
+        if (!STATIC_DATA_MODE) {
+          const { data, error } = await supabase.rpc("admin_set_vendor_commission", { _vendor_id: id, _rate: rate });
+          if (error || !data) {
+            toast.error("Could not save vendor commission", { description: error?.message ?? "No matching vendor profile was found." });
+            return false;
+          }
+        }
+        setVendors((list) => list.map((vendor) => vendor.id === id ? { ...vendor, commission: rate } : vendor));
+        return true;
+      },
+      customers,
+      setCustomerStatus: async (id, status) => {
+        const previous = customers.find((customer) => customer.id === id);
+        if (!STATIC_DATA_MODE) {
+          const { data, error } = await supabase.rpc("admin_set_profile_status", { _profile_id: id, _status: status });
+          if (error || !data) {
+            toast.error("Could not update customer status", { description: error?.message ?? "No matching customer profile was found." });
+            return false;
+          }
+        }
+        setCustomers((list) => list.map((customer) => customer.id === id ? { ...customer, status } : customer));
+        if (previous && previous.status !== status) pushNotif("Customer status updated", `${previous.name}: ${previous.status} â†’ ${status}.`, "info", "admin");
+        return true;
+      },
+
+      reviews,
+      setReviewStatus: async (id, status) => {
+        if (!STATIC_DATA_MODE) {
+          const { data, error } = await supabase.rpc("admin_set_review_status", { _id: id, _status: status });
+          if (error || !data) { toast.error("Could not update review status", { description: error?.message ?? "Review not found." }); return false; }
+        }
+        setReviews((list) => list.map((review) => review.id === id ? { ...review, status } : review));
+        return true;
+      },
+      deleteReview: async (id) => {
+        if (!STATIC_DATA_MODE) {
+          const { data, error } = await supabase.rpc("admin_delete_review", { _id: id });
+          if (error || !data) { toast.error("Could not delete review", { description: error?.message ?? "Review not found." }); return false; }
+        }
+        setReviews((list) => list.filter((review) => review.id !== id));
+        return true;
+      },
+      replyReview: async (id, reply) => {
+        if (!reply.trim()) return false;
+        if (!STATIC_DATA_MODE) {
+          const { data, error } = await supabase.rpc("vendor_reply_to_review", { _id: id, _reply: reply.trim() });
+          if (error || !data) { toast.error("Could not post review reply", { description: error?.message ?? "Review not found for this vendor." }); return false; }
+        }
+        setReviews((list) => list.map((review) => review.id === id ? { ...review, reply: reply.trim() } : review));
+        return true;
+      },
+      reportReview: async (id, reason) => {
+        if (STATIC_DATA_MODE) return false;
+        const { data, error } = await supabase.rpc("vendor_report_review", { _id: id, _reason: reason.trim() });
+        if (error || !data) { toast.error("Could not report review", { description: error?.message ?? "Review not found for this vendor." }); return false; }
+        return true;
+      },
+
+      returns,
+      setReturnStatus: async (id, status, refund) => {
+        if (!STATIC_DATA_MODE) {
+          const { data, error } = await supabase.rpc("admin_update_return", { _id: id, _status: status, _refund_status: refund ?? "Pending" });
+          if (error || !data) { toast.error("Could not update return request", { description: error?.message ?? "Return request not found." }); return false; }
+        }
+        setReturns((list) => list.map((item) => item.id === id ? { ...item, status, refund: refund ?? item.refund } : item));
+        return true;
+      },
+      requestReturn: async (orderItemId, quantity, reason) => {
+        if (STATIC_DATA_MODE) return true;
+        const { data, error } = await supabase.rpc("customer_request_return", { _order_item_id: orderItemId, _quantity: quantity, _reason: reason });
+        if (error || !data) { toast.error("Could not submit return request", { description: error?.message ?? "Try again." }); return false; }
+        return true;
+      },
+
+      coupons,
+      addCoupon: async (c) => {
+        if (!STATIC_DATA_MODE) {
+          const { data: { user: authUser } } = await supabase.auth.getUser();
+          const value = Number.parseFloat(c.value.replace(/[^\d.]/g, ""));
+          const startsOn = new Date(c.start).toISOString().slice(0, 10);
+          const endsOn = new Date(c.end).toISOString().slice(0, 10);
+          const { error } = await supabase.from("coupons").insert({
+            code: c.code.toUpperCase(), discount_type: c.type, discount_value: value,
+            minimum_order: c.min, maximum_discount: c.max, starts_on: startsOn, ends_on: endsOn,
+            usage_limit: c.limit, active: c.status !== "Expired", created_by: authUser?.id ?? null,
+          });
+          if (error) { toast.error("Could not save coupon", { description: error.message }); return false; }
+        }
+        setCoupons((list) => [c, ...list]);
+        return true;
+      },
+      deleteCoupon: async (code) => {
+        if (!STATIC_DATA_MODE) {
+          const { error } = await supabase.from("coupons").delete().eq("code", code);
+          if (error) { toast.error("Could not delete coupon", { description: error.message }); return false; }
+        }
+        setCoupons((list) => list.filter((coupon) => coupon.code !== code));
+        return true;
+      },
+
+      notifications,
+      markRead: async (id) => {
+        const notification = notifications.find((item) => item.id === id);
+        if (!notification) return false;
+        if (!STATIC_DATA_MODE && notification.databaseId) {
+          const { error } = await supabase.from("notifications").update({ read: true }).eq("id", notification.databaseId).eq("recipient_id", user?.id ?? "");
+          if (error) { toast.error("Could not mark notification read", { description: error.message }); return false; }
+        }
+        setNotifications((list) => list.map((item) => item.id === id ? { ...item, read: true } : item));
+        return true;
+      },
+      markAllRead: async () => {
+        if (!STATIC_DATA_MODE && user?.id) {
+          const { error } = await supabase.from("notifications").update({ read: true }).eq("recipient_id", user.id).eq("read", false);
+          if (error) { toast.error("Could not mark notifications read", { description: error.message }); return false; }
+        }
+        setNotifications((list) => list.map((item) => ({ ...item, read: true })));
+        return true;
+      },
+      deleteNotification: async (id) => {
+        const notification = notifications.find((item) => item.id === id);
+        if (!notification) return false;
+        if (!STATIC_DATA_MODE && notification.databaseId) {
+          const { error } = await supabase.from("notifications").delete().eq("id", notification.databaseId).eq("recipient_id", user?.id ?? "");
+          if (error) { toast.error("Could not delete notification", { description: error.message }); return false; }
+        }
+        setNotifications((list) => list.filter((item) => item.id !== id));
+        return true;
+      },
+
+      addresses,
+      addAddress: async (a) => {
+        if (!STATIC_DATA_MODE) {
+          const { data: { user: authUser }, error: authError } = await supabase.auth.getUser();
+          if (authError || !authUser) {
+            toast.error("Sign in again before saving an address");
+            return false;
+          }
+          const { error } = await supabase.from("addresses").insert({
+            id: a.id, user_id: authUser.id, label: a.label, name: a.name, phone: a.phone,
+            line: a.line, city: a.city, state: a.state, pin: a.pin, landmark: a.landmark || null, is_default: a.default,
+            latitude: a.latitude ?? null, longitude: a.longitude ?? null,
+            location_accuracy_m: a.locationAccuracy ?? null, located_at: a.locatedAt ?? null,
+          });
+          if (error) {
+            toast.error("Could not save this address", { description: error.message });
+            return false;
+          }
+          addressWrites.current += 1;
+        }
+        setAddresses((list) => [...list, a]);
+        return true;
+      },
+      productNameOf: (id) => wholeCatalogue.find((product) => product.id === id)?.name ?? "",
+      updateAddress: async (id, patch) => {
+        const existing = addresses.find((address) => address.id === id);
+        if (!existing) {
+          toast.error("Could not update this address", { description: "Please refresh the page and try again." });
+          return false;
+        }
+        const updated = { ...existing, ...patch } as Address;
+        if (!STATIC_DATA_MODE) {
+          const { data, error } = await supabase.from("addresses").update({
+            ...(patch.label !== undefined ? { label: patch.label } : {}),
+            ...(patch.name !== undefined ? { name: patch.name } : {}),
+            ...(patch.phone !== undefined ? { phone: patch.phone } : {}),
+            ...(patch.line !== undefined ? { line: patch.line } : {}),
+            ...(patch.city !== undefined ? { city: patch.city } : {}),
+            ...(patch.state !== undefined ? { state: patch.state } : {}),
+            ...(patch.pin !== undefined ? { pin: patch.pin } : {}),
+            ...(patch.landmark !== undefined ? { landmark: patch.landmark || null } : {}),
+            // A point of undefined removes the saved one (the PIN was typed over with another place's).
+            ...("latitude" in patch ? { latitude: patch.latitude ?? null, longitude: patch.longitude ?? null, location_accuracy_m: patch.locationAccuracy ?? null, located_at: patch.locatedAt ?? null } : {}),
+          }).eq("id", id).eq("user_id", user?.id ?? "").select("id");
+          if (error) { toast.error("Could not update this address", { description: error.message }); return false; }
+          // No error and no row: the address was removed elsewhere, or this account can no longer change it.
+          if (!data?.length) { toast.error("Could not update this address", { description: "Please refresh the page and try again." }); return false; }
+          addressWrites.current += 1;
+        }
+        setAddresses((list) => list.map((address) => address.id === id ? updated : address));
+        return true;
+      },
+      deleteAddress: async (id) => {
+        const existing = addresses.find((address) => address.id === id);
+        if (!existing) return false;
+        if (!STATIC_DATA_MODE) {
+          const { error } = await supabase.from("addresses").delete().eq("id", id).eq("user_id", user?.id ?? "");
+          if (error) { toast.error("Could not delete this address", { description: error.message }); return false; }
+          addressWrites.current += 1;
+        }
+        setAddresses((list) => list.filter((address) => address.id !== id));
+        return true;
+      },
+      setDefaultAddress: async (id) => {
+        if (!addresses.some((address) => address.id === id)) return false;
+        if (!STATIC_DATA_MODE) {
+          const { data, error } = await supabase.rpc("customer_set_default_address", { _id: id });
+          if (error || !data) { toast.error("Could not change your default address", { description: error?.message ?? "Address not found." }); return false; }
+          addressWrites.current += 1;
+        }
+        setAddresses((list) => list.map((address) => ({ ...address, default: address.id === id })));
+        return true;
+      },
+    };
+  }, [branchState, chosenPin, fallbackPin, isShopper, adminBranchId, hydrated, authReady, user, cart, wishlist, wishlistsByUser, categories, viewProducts, batches, orders, paymentHolds, ordersLoadedFor, vendors, customers, reviews, returns, coupons, notifications, addresses, addressesByUser, productCatalogStatus, categoryCatalogStatus, saveProduct, logout]);
+
+  // An administrator working in one godown sees that branch's orders, and stock as that branch's count.
+  const scopedValue = useMemo<AppState>(() => {
+    // (Shoppers already see their godown: see viewProducts above.)
+    // A branch that no longer exists (deleted elsewhere) counts as "All branches".
+    if (user?.role !== "admin" || adminBranchId === "all" || !branchState.ready
+      || !branchState.branches.some((branch) => branch.id === adminBranchId)) return value;
+    const defaultBranch = defaultBranchOf(branchState.branches);
+    return {
+      ...value,
+      orders: value.orders.filter((order) => (order.branchId ?? defaultBranch?.id) === adminBranchId),
+      products: value.products.map((product) => product.vendorId.startsWith("zoho:")
+        ? product
+        : {
+          ...product, stock: branchStockOf(branchState, product.id, adminBranchId),
+          // Arriving units of this godown's pre-order batches (read-only here: they come in with their bill).
+          ...((branchState.incoming.get(product.id)?.get(adminBranchId)?.qty ?? 0) > 0
+            ? { incoming: branchState.incoming.get(product.id)?.get(adminBranchId)?.qty ?? 0 } : {}),
+        }),
+    };
+  }, [value, user?.role, adminBranchId, branchState]);
+
+  return <AppContext.Provider value={scopedValue}>{children}</AppContext.Provider>;
+}
+
+const today = () =>
+  new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }).replace(/ /g, " ");
+
+function addressOwnerKey(user: SessionUser | null) {
+  if (!user || user.role !== "customer") return "";
+  if (user.addressKey) return user.addressKey;
+  if (user.id) return `uid:${user.id}`;
+  const phone = user.phone?.replace(/\D/g, "").slice(-10);
+  if (phone) return `phone:${phone}`;
+  const email = user.email?.trim().toLowerCase();
+  return email ? `email:${email}` : "";
+}
+
+export function useApp() {
+  const ctx = useContext(AppContext);
+  if (!ctx) throw new Error("useApp must be used inside AppProvider");
+  return ctx;
+}
+
+/* ---------- derived helpers ---------- */
+export const CURRENT_VENDOR_ID = "V01";
+
+export function useVendorScope() {
+  const { products, orders, reviews, vendors, user } = useApp();
+  const [vendorId, setVendorId] = useState("");
+  useEffect(() => {
+    let active = true;
+    if (user?.role !== "vendor") {
+      setVendorId("");
+      return () => { active = false; };
+    }
+    void (async () => {
+      if (STATIC_DATA_MODE) {
+        const demoVendor = vendors.find((vendor) => vendor.email.toLowerCase() === user.email.toLowerCase()) ?? vendors.find((vendor) => vendor.status === "approved");
+        if (active) setVendorId(demoVendor?.id ?? "");
+        return;
+      }
+      const { data: { user: authUser } } = await supabase.auth.getUser();
+      if (!authUser) return;
+      const { data, error } = await supabase.from("profiles").select("vendor_id").eq("id", authUser.id).maybeSingle();
+      if (active && !error) setVendorId(data?.vendor_id ?? "");
+    })();
+    return () => { active = false; };
+  }, [user?.role, user?.email, vendors]);
+  const vendorProducts = products.filter((p) => p.vendorId === vendorId);
+  const vendorOrders = orders.filter((o) => o.items.some((i) => i.vendorId === vendorId)).map((order) => ({
+    ...order,
+    status: order.vendorStatuses?.find((fulfillment) => fulfillment.vendorId === vendorId)?.status ?? order.status,
+  }));
+  const vendorReviews = reviews.filter((r) => r.vendorId === vendorId);
+  const vendor = vendors.find((item) => item.id === vendorId) ?? null;
+  const revenue = vendorOrders.reduce(
+    (s, o) => s + (o.payment === "Paid" && o.status !== "Cancelled"
+      ? o.items.filter((i) => i.vendorId === vendorId).reduce((t, i) => t + getOrderItemTotal(i), 0)
+      : 0),
+    0,
+  );
+  return { vendorId, vendor, vendorProducts, vendorOrders, vendorReviews, revenue, user };
+}

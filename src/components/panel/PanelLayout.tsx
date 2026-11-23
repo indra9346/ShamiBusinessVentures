@@ -1,0 +1,847 @@
+import { Link, useNavigate, useRouter, useRouterState } from "@tanstack/react-router";
+import { AlertTriangle, Bell, ChevronDown, ChevronsLeft, ChevronsRight, LogOut, Menu, RefreshCw, X } from "lucide-react";
+import { useState, useMemo, useEffect, useLayoutEffect, useRef, useCallback, type ReactNode } from "react";
+import { toast } from "sonner";
+import { BrandLogo, LogoMark } from "@/components/brand/Logo";
+import { useApp } from "@/lib/store";
+import { getProductImageFallback, isStorefrontProduct } from "@/lib/data";
+import { orderBelongsToUser } from "@/lib/account-identity";
+import { cn } from "@/lib/utils";
+import { notificationTarget } from "@/lib/notification-target";
+import { notificationBelongsToUser } from "@/lib/account-identity";
+import { LanguageSwitcher } from "@/components/site/LanguageSwitcher";
+import { supabase } from "@/integrations/supabase/client";
+import { adminActivityKey, clearAdminIdleClock } from "@/lib/admin-idle";
+import { STATIC_DATA_MODE } from "@/lib/demo-mode";
+import { AdminBranchSelect } from "@/components/panel/AdminBranchSelect";
+import { CustomerCareLine } from "@/components/panel/CustomerCareLine";
+import { AccountMenu } from "@/components/panel/AccountMenu";
+import { FavouriteToggle, FavouritesNav, PanelSearch, type PanelDataResult } from "@/components/panel/PanelSearch";
+import { useBranches } from "@/lib/branches";
+import { OrderAlerts } from "@/components/panel/OrderAlerts";
+import {
+  activeNavTarget,
+  adminNavGroups,
+  forgetPanelAccess,
+  groupOpenState,
+  hasRecentPanelAccess,
+  keepInView,
+  nextGroupOpenState,
+  readMenuGroups,
+  readMenuScroll,
+  rememberMenuScroll,
+  rememberPanelAccess,
+  saveMenuGroups,
+} from "@/lib/panel-menu";
+
+export type NavItem = {
+  label: string;
+  to: string;
+  icon: React.ComponentType<{ className?: string }>;
+};
+
+const ROLE_VERIFICATION_TIMEOUT_MS = 15_000;
+const SIDEBAR_COLLAPSED_KEY = "gb-panel-sidebar-collapsed";
+
+export function PanelLayout({
+  items,
+  tone,
+  title,
+  subtitle,
+  children,
+}: {
+  items: NavItem[];
+  tone: "customer" | "vendor" | "admin";
+  title: string;
+  subtitle?: string;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  // Desktop sidebar: full width, or a narrow rail of icons with small labels (like Zoho). Remembered
+  // on this device.
+  // Read before the first paint, so a folded menu does not open wide and then snap shut on every page. The menu
+  // only draws after the sign-in check, which never happens on the server, so this cannot upset hydration.
+  const [collapsed, setCollapsed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    try { return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1"; } catch { return false; /* storage blocked */ }
+  });
+  const toggleCollapsed = () => {
+    const next = !collapsed;
+    setCollapsed(next);
+    try { localStorage.setItem(SIDEBAR_COLLAPSED_KEY, next ? "1" : "0"); } catch { /* storage blocked */ }
+  };
+  const [notifOpen, setNotifOpen] = useState(false);
+  const {
+    user,
+    hydrated,
+    logout,
+    notifications,
+    markRead,
+    markAllRead,
+    products,
+    categories,
+    customers,
+    vendors,
+    orders,
+    paymentHolds,
+  } = useApp();
+  const branchState = useBranches();
+  const navigate = useNavigate();
+  /** Log out of this browser only (other browsers stay signed in), from the side menu or the account menu. */
+  const signOutHere = async () => {
+    if (user?.id) clearAdminIdleClock(user.id);
+    forgetPanelAccess();
+    await supabase.auth.signOut({ scope: "local" });
+    logout();
+    navigate({ to: "/" });
+  };
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  // The menu item for this page, also on pages inside it (an order lights up Orders).
+  const activeTo = useMemo(() => activeNavTarget(pathname, items), [pathname, items]);
+  // The admin menu in sections. Read before the first paint: the menu's height must be right when its scroll is put back.
+  const navGroups = useMemo(() => (tone === "admin" ? adminNavGroups(items) : [{ key: "", label: "", items }]), [tone, items]);
+  const activeGroup = navGroups.find((group) => group.items.some((item) => item.to === activeTo))?.key;
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() => readMenuGroups());
+  // Each page starts with its own section open, so where you are always shows; closing it lasts until you move on.
+  const [closedHere, setClosedHere] = useState(false);
+  useEffect(() => { setClosedHere(false); }, [activeTo]);
+  const isGroupOpen = (key: string) => (key === activeGroup && closedHere ? false : groupOpenState(key, openGroups, activeGroup));
+  const toggleGroup = (key: string) => {
+    const open = !isGroupOpen(key);
+    if (key === activeGroup) setClosedHere(!open);
+    const next = nextGroupOpenState(openGroups, key, open);
+    setOpenGroups(next);
+    saveMenuGroups(next);
+  };
+  // Passed the sign-in check a moment ago in this tab: draw the page at once, the check runs again behind it.
+  // Who passed the check: the signed-in account (the preview demo has no account id, so its email).
+  const accessKey = user?.id || user?.email || undefined;
+  const [verifiedRole, setVerifiedRole] = useState(() => hasRecentPanelAccess(accessKey, tone));
+  const [roleCheckError, setRoleCheckError] = useState("");
+  const [verificationAttempt, setVerificationAttempt] = useState(0);
+  const [adminIdleTimeoutMinutes, setAdminIdleTimeoutMinutes] = useState(30);
+
+  useEffect(() => {
+    if (tone !== "admin" || STATIC_DATA_MODE) return;
+    let active = true;
+    void supabase
+      .from("settings")
+      .select("value")
+      .eq("key", "security_config")
+      .maybeSingle()
+      .then(({ data, error }) => {
+        if (!active || error) return;
+        const config =
+          data?.value && typeof data.value === "object" && !Array.isArray(data.value)
+            ? (data.value as Record<string, unknown>)
+            : {};
+        const rawAutoLogout = config["autoLogout"];
+        const rawSessionHours = config["session_hours"];
+        let configured: number | null = null;
+        if (rawAutoLogout !== null && rawAutoLogout !== undefined && rawAutoLogout !== "") {
+          const num = Number(rawAutoLogout);
+          if (Number.isFinite(num)) configured = num;
+        } else if (
+          rawSessionHours !== null &&
+          rawSessionHours !== undefined &&
+          rawSessionHours !== ""
+        ) {
+          const hours = Number(rawSessionHours);
+          if (Number.isFinite(hours) && hours > 0) configured = hours * 60;
+        }
+        if (configured !== null && Number.isFinite(configured) && configured >= 5) {
+          setAdminIdleTimeoutMinutes(Math.min(1440, configured));
+        }
+      });
+    const applySavedTimeout = (event: Event) => {
+      const value = Number((event as CustomEvent<number>).detail);
+      if (Number.isFinite(value) && value >= 5) setAdminIdleTimeoutMinutes(Math.min(1440, value));
+    };
+    window.addEventListener("admin-idle-timeout-updated", applySavedTimeout);
+    return () => {
+      active = false;
+      window.removeEventListener("admin-idle-timeout-updated", applySavedTimeout);
+    };
+  }, [tone]);
+
+  useEffect(() => {
+    if (tone !== "admin" || !user?.id || !verifiedRole || typeof window === "undefined") return;
+    const key = adminActivityKey(user.id);
+    const timeoutMs = adminIdleTimeoutMinutes * 60_000;
+    if (!localStorage.getItem(key)) localStorage.setItem(key, String(Date.now()));
+    let signingOut = false;
+    const recordActivity = () => {
+      localStorage.setItem(key, String(Date.now()));
+    };
+    const expireIfIdle = () => {
+      if (document.visibilityState !== "visible") return;
+      const lastActivity = Number(localStorage.getItem(key) ?? 0);
+      if (signingOut || !lastActivity || Date.now() - lastActivity < timeoutMs) return;
+      signingOut = true;
+      forgetPanelAccess();
+      void supabase.auth.signOut({ scope: "local" }).finally(() => {
+        localStorage.removeItem(key);
+        logout();
+        navigate({ to: "/admin/login", replace: true });
+      });
+    };
+    const activityEvents = ["pointerdown", "keydown", "scroll", "touchstart"] as const;
+    for (const eventName of activityEvents)
+      window.addEventListener(eventName, recordActivity, { passive: true });
+    const storageListener = (event: StorageEvent) => {
+      if (event.key === key) expireIfIdle();
+    };
+    window.addEventListener("storage", storageListener);
+    const interval = window.setInterval(expireIfIdle, 15_000);
+    const handleVisibilityChange = () => {
+      // Switching to another browser tab is not activity in this tab. Reset the
+      // idle clock when the administrator returns so the tab switch itself
+      // cannot unexpectedly end an otherwise valid admin session.
+      if (document.visibilityState === "visible") recordActivity();
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    expireIfIdle();
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("storage", storageListener);
+      for (const eventName of activityEvents) window.removeEventListener(eventName, recordActivity);
+    };
+  }, [tone, user?.id, verifiedRole, adminIdleTimeoutMinutes, logout, navigate]);
+
+  useEffect(() => {
+    let active = true;
+    let profileChannel: ReturnType<typeof supabase.channel> | undefined;
+    let accountBlocked = false;
+    if (!hasRecentPanelAccess(accessKey, tone)) setVerifiedRole(false);
+    setRoleCheckError("");
+    // Anything short of a clear pass shows the check screen again and forgets the earlier pass.
+    const deny = () => {
+      forgetPanelAccess();
+      setVerifiedRole(false);
+    };
+    if (!hydrated)
+      return () => {
+        active = false;
+      };
+    if (STATIC_DATA_MODE) {
+      if (user?.role === tone) {
+        if (accessKey) rememberPanelAccess(accessKey, tone);
+        setVerifiedRole(true);
+      } else {
+        deny();
+        navigate({
+          to: tone === "admin" ? "/admin/login" : tone === "vendor" ? "/vendor/login" : "/login",
+          replace: true,
+        });
+      }
+      return () => {
+        active = false;
+      };
+    }
+    const verificationAbort = new AbortController();
+    let verificationTimedOut = false;
+    const verificationTimeout = window.setTimeout(() => {
+      if (!active) return;
+      verificationTimedOut = true;
+      verificationAbort.abort();
+      deny();
+      setRoleCheckError(
+        "The secure sign-in check took too long. Your session is still saved; check your connection and try again.",
+      );
+    }, ROLE_VERIFICATION_TIMEOUT_MS);
+    void (async () => {
+      const {
+        data: { session },
+        error: sessionError,
+      } = await supabase.auth.getSession();
+      if (!active || verificationTimedOut) return;
+      if (sessionError) {
+        deny();
+        setRoleCheckError(
+          "We could not verify your sign-in right now. Your session has been kept; try again when your connection is available.",
+        );
+        return;
+      }
+      if (!session?.user) {
+        // No session at all (e.g. signed out in another tab) but the app still remembers a user:
+        // clear it, or the login page would bounce straight back here.
+        deny();
+        if (user) logout();
+        navigate({
+          to: tone === "admin" ? "/admin/login" : tone === "vendor" ? "/vendor/login" : "/login",
+          replace: true,
+        });
+        return;
+      }
+      // The session's user id is sufficient for this UI gate: the following
+      // role/profile reads are still authenticated by Supabase and enforced by
+      // RLS, so a second Auth user-info request only adds latency here.
+      const authUser = session.user;
+      const roleQuery = supabase
+        .from("user_roles")
+        .select("role")
+        .eq("user_id", authUser.id)
+        .eq("role", tone)
+        .abortSignal(verificationAbort.signal)
+        .maybeSingle();
+      const profileQuery = tone === "customer"
+        ? supabase
+            .from("profiles")
+            .select("status")
+            .eq("id", authUser.id)
+            .abortSignal(verificationAbort.signal)
+            .maybeSingle()
+        : Promise.resolve({ data: null, error: null });
+      const [roleResult, profileResult] = await Promise.all([roleQuery, profileQuery]);
+      if (!active || verificationTimedOut) return;
+      const { data: roleRecord, error } = roleResult;
+      if (error) {
+        deny();
+        setRoleCheckError(
+          "We could not confirm this account’s panel access. Your sign-in has been kept; try again when your connection is available.",
+        );
+        return;
+      }
+      if (!roleRecord) {
+        // Signed in, but not with this panel's role (e.g. an admin opening the vendor panel):
+        // do not sign out, since the session is shared by every tab; show this panel's login.
+        // If the app still believes this user HAS the role, the session is stale (expired or
+        // replaced): sign out, or the login page would send the user straight back here.
+        deny();
+        if (user?.role === tone) logout();
+        navigate({
+          to: tone === "admin" ? "/admin/login" : tone === "vendor" ? "/vendor/login" : "/login",
+          replace: true,
+        });
+        return;
+      }
+      const signOutBlockedAccount = (message: string) => {
+        if (!active || accountBlocked) return;
+        accountBlocked = true;
+        deny();
+        logout();
+        toast.error(message, {
+          description: "Contact Shami support if you think this is a mistake.",
+        });
+        navigate({ to: "/login", replace: true });
+      };
+      if (tone === "customer") {
+        if (profileResult.error) {
+          deny();
+          setRoleCheckError(
+            "We could not verify that this customer account is active. Your sign-in has been kept; try again when your connection is available.",
+          );
+          return;
+        }
+        const allowedStatuses = ["active", "approved"];
+        const profile = profileResult.data;
+        const status = (profile?.status ?? "").trim().toLowerCase();
+        if (!profile || !allowedStatuses.includes(status)) {
+          signOutBlockedAccount("This customer account is not active");
+          return;
+        }
+        profileChannel = supabase
+          .channel(`customer-account-status-${authUser.id}`)
+          .on("postgres_changes", {
+            event: "UPDATE",
+            schema: "public",
+            table: "profiles",
+            filter: `id=eq.${authUser.id}`,
+          }, (payload) => {
+            const updated = payload.new as { status?: string };
+            if (!allowedStatuses.includes((updated.status ?? "").trim().toLowerCase())) {
+              signOutBlockedAccount("This customer account is no longer active");
+            }
+          })
+          .subscribe((status) => {
+            if (status !== "SUBSCRIBED") return;
+            void supabase.from("profiles").select("status").eq("id", authUser.id).maybeSingle()
+              .then(({ data: latest, error: latestError }) => {
+                if (latestError || !active) return;
+                if (!allowedStatuses.includes((latest?.status ?? "").trim().toLowerCase())) {
+                  signOutBlockedAccount("This customer account is no longer active");
+                }
+              });
+          });
+      }
+      rememberPanelAccess(authUser.id, tone);
+      setVerifiedRole(true);
+    })().catch(() => {
+      if (active && !verificationTimedOut) {
+        deny();
+        setRoleCheckError(
+          "We could not verify your sign-in. Your session has been kept; retry the access check.",
+        );
+      }
+    }).finally(() => window.clearTimeout(verificationTimeout));
+    return () => {
+      active = false;
+      window.clearTimeout(verificationTimeout);
+      verificationAbort.abort();
+      if (profileChannel) void supabase.removeChannel(profileChannel);
+    };
+  }, [hydrated, tone, logout, navigate, accessKey, user?.role, verificationAttempt]);
+
+  const relevantNotifs = useMemo(() => {
+    return notifications.filter((n) => {
+      if (tone === "admin") return n.role === "admin" || !n.role;
+      if (tone === "vendor") return n.role === "vendor" || !n.role;
+      return (n.role === "customer" || !n.role) && (Boolean(n.databaseId) || notificationBelongsToUser(n, user, orders));
+    });
+  }, [notifications, tone, user, orders]);
+
+  const unreadCount = useMemo(() => {
+    return relevantNotifs.filter((n) => !n.read).length;
+  }, [relevantNotifs]);
+
+  const dataResults = useCallback((typed: string): PanelDataResult[] => {
+    const query = typed.trim().toLowerCase();
+    if (!query) return [];
+    const vendor = vendors.find((item) => item.email.toLowerCase() === user?.email.toLowerCase());
+    const availableProducts = tone === "vendor"
+      ? products.filter((item) => item.vendorId === vendor?.id || item.vendor === vendor?.business)
+      : tone === "customer" ? products.filter(isStorefrontProduct) : products;
+    const availableOrders = tone === "admin"
+      ? orders
+      : tone === "vendor"
+        ? orders.filter((item) => item.items.some((line) => line.vendorId === vendor?.id))
+        : orders.filter((item) => orderBelongsToUser(item, user));
+    return [
+      ...availableProducts
+        .filter((item) => `${item.name} ${item.sku} ${item.category} ${item.vendor}`.toLowerCase().includes(query))
+        .map((item) => ({
+          label: item.name,
+          detail: `${item.sku} · Product`,
+          to: tone === "admin" ? `/admin/products/${item.id}` : tone === "vendor" ? `/vendor/products?q=${encodeURIComponent(query)}` : `/shop?q=${encodeURIComponent(query)}`,
+          image: item.image || getProductImageFallback(item.category, item.name),
+          fallbackImage: getProductImageFallback(item.category, item.name),
+        })),
+      ...(tone === "admin" ? categories : [])
+        .filter((item) => item.name.toLowerCase().includes(query))
+        .map((item) => ({ label: item.name, detail: "Category", to: "/admin/categories" })),
+      ...(tone === "admin" ? customers : [])
+        .filter((item) => `${item.name} ${item.email} ${item.phone}`.toLowerCase().includes(query))
+        .map((item) => ({
+          label: item.name,
+          detail: `${item.phone} · Customer`,
+          to: `/admin/customers/${item.id}`,
+        })),
+      ...(tone === "admin" ? vendors : [])
+        .filter((item) =>
+          `${item.business} ${item.owner} ${item.email} ${item.phone}`
+            .toLowerCase()
+            .includes(query),
+        )
+        .map((item) => ({
+          label: item.business,
+          detail: `${item.phone} · Vendor`,
+          to: `/admin/vendors/${item.id}`,
+        })),
+      ...availableOrders
+        .filter((item) => {
+          const searchable = tone === "admin"
+            ? `${item.id} ${item.customer} ${item.phone} ${item.txn} ${item.utr ?? ""} ${item.status} ${item.payment}`
+            : `${item.id} ${item.customer} ${item.status} ${item.items.filter((line) => tone !== "vendor" || line.vendorId === vendor?.id).map((line) => `${line.product.name} ${line.product.sku}`).join(" ")}`;
+          return searchable.toLowerCase().includes(query);
+        })
+        .map((item) => ({
+          label: item.id,
+          detail: `${item.customer} · Order`,
+          to: tone === "admin" ? `/admin/orders/${item.id}` : tone === "vendor" ? `/vendor/orders?q=${encodeURIComponent(query)}` : `/account/orders?q=${encodeURIComponent(query)}`,
+        })),
+    ].slice(0, 8);
+  }, [products, categories, customers, vendors, orders, tone, user]);
+
+  // Side menu scroll: each page builds the menu again, so remember where it was scrolled to (per panel, and per
+  // wide, folded and phone menu) and put it back before the page paints. Then bring this page's item into view,
+  // moving the menu only as far as needed, so the admin always sees where they are.
+  const sideMenu = useRef<HTMLElement | null>(null);
+  const drawerMenu = useRef<HTMLElement | null>(null);
+  const pendingScroll = useRef<{ key: string; top: number } | null>(null);
+  const menuKey = (place: "side" | "drawer") => `${tone}:${place === "drawer" ? "drawer" : collapsed ? "rail" : "full"}`;
+  const menuShown = hydrated && verifiedRole;
+  const placeMenus = (restore: boolean) => {
+    for (const [menu, place] of [[sideMenu.current, "side"], [drawerMenu.current, "drawer"]] as const) {
+      if (!menu || menu.clientHeight === 0) continue; // the wide menu is hidden on phones; the drawer may be shut
+      const key = menuKey(place);
+      if (restore) {
+        // A scroll the admin just made and that is not saved yet wins over the saved one.
+        const pending = pendingScroll.current;
+        menu.scrollTop = pending && pending.key === key ? pending.top : readMenuScroll(key);
+      }
+      const item = menu.querySelector<HTMLElement>("[data-nav-active]");
+      if (item) keepInView(menu, item);
+      rememberMenuScroll(key, menu.scrollTop);
+    }
+  };
+  useLayoutEffect(() => {
+    if (!menuShown) return;
+    placeMenus(true);
+    // Once more after the page has drawn, in case its layout moved: only brings the item in, never back to the top.
+    const settle = window.requestAnimationFrame(() => placeMenus(false));
+    return () => window.cancelAnimationFrame(settle);
+    // placeMenus only reads tone and collapsed, both listed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [menuShown, collapsed, open, activeTo, tone]);
+  // The router's own scroll memory (scrollRestoration in router.tsx) also puts every box that was scrolled back where
+  // it was, once the new page has finished loading. For the menu that copy is often stale (the top) and it lands after
+  // the placing above, which is what made the menu jump. So place the menu again straight after the router has.
+  const router = useRouter();
+  // Subscribed while this page draws, so the router's first "rendered" signal for it is not missed.
+  useLayoutEffect(() => {
+    if (!menuShown) return;
+    return router.subscribe("onRendered", () => placeMenus(true));
+    // placeMenus only reads tone and collapsed, both listed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [router, menuShown, collapsed, tone]);
+  const saveMenuScroll = (place: "side" | "drawer", menu: HTMLElement) => {
+    // Read now (a menu taken off the page reads 0), save once per frame.
+    const first = pendingScroll.current === null;
+    pendingScroll.current = { key: menuKey(place), top: menu.scrollTop };
+    if (!first) return;
+    window.requestAnimationFrame(() => {
+      const latest = pendingScroll.current;
+      pendingScroll.current = null;
+      if (latest) rememberMenuScroll(latest.key, latest.top);
+    });
+  };
+
+  // Keep hooks above this guard. React requires the same hooks on the initial
+  // loading render and on the later authenticated render.
+  if (!hydrated || !verifiedRole) {
+    return (
+      <div className="grid min-h-screen place-items-center bg-panel p-6 text-sm text-slate">
+        {roleCheckError ? (
+          <div
+            role="alert"
+            className="max-w-md rounded-lg border border-amber-200 bg-card p-6 text-center shadow-card"
+          >
+            <AlertTriangle className="mx-auto h-8 w-8 text-amber-600" />
+            <p className="mt-3 font-semibold text-navy">
+              {tone === "admin"
+                ? "Administrator access could not be checked"
+                : tone === "vendor"
+                  ? "Vendor access could not be checked"
+                  : "Account access could not be checked"}
+            </p>
+            <p className="mt-2 leading-relaxed">{roleCheckError}</p>
+            <button
+              type="button"
+              onClick={() => setVerificationAttempt((attempt) => attempt + 1)}
+              className="mt-4 inline-flex items-center gap-2 rounded-md bg-navy px-4 py-2 font-medium text-white hover:bg-navy/90"
+            >
+              <RefreshCw className="h-4 w-4" /> Try again
+            </button>
+          </div>
+        ) : (
+          <div className="inline-flex items-center gap-2">
+            <RefreshCw className="h-4 w-4 animate-spin" /> Checking your secure sign-in…
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  const sidebarBg =
+    tone === "customer" ? "bg-navy" : tone === "vendor" ? "bg-midnight" : "bg-midnight";
+  const pageBg = tone === "admin" ? "bg-[oklch(0.972_0.004_258)]" : "bg-panel";
+
+  const renderSidebar = (rail: boolean, place: "side" | "drawer") => (
+    <div
+      className={cn("flex h-full flex-col transition-[width] duration-200 ease-out", rail ? "w-[88px]" : "w-64", sidebarBg)}
+      // Folding or unfolding re-flows the labels, so bring this page's item into view again once it has settled.
+      onTransitionEnd={(event) => { if (event.propertyName === "width" && event.target === event.currentTarget) placeMenus(false); }}
+    >
+      <div className={cn("flex items-center gap-2 border-b border-white/10 py-4", rail ? "justify-center px-2" : "justify-between px-4")}>
+        <Link to="/" className="flex min-w-0 items-center" title="Grain Bazar" aria-label="Grain Bazar home">
+          {/* White and gold on the dark menu, like Flipkart's header: the ring alone when the menu is folded. */}
+          {rail
+            ? <LogoMark onDark className="h-11 w-11" />
+            : <BrandLogo shape="wide" onDark eager className="h-10 w-auto" sizes="187px" />}
+        </Link>
+        <button
+          onClick={() => setOpen(false)}
+          className="text-white/60 lg:hidden"
+          aria-label="Close menu"
+        >
+          <X className="h-5 w-5" />
+        </button>
+      </div>
+      {!rail && (
+        <p className="px-5 pt-5 pb-2 text-[11px] font-semibold tracking-[0.18em] text-gold uppercase">
+          {tone} panel
+        </p>
+      )}
+      <nav
+        ref={place === "side" ? sideMenu : drawerMenu}
+        onScroll={(event) => saveMenuScroll(place, event.currentTarget)}
+        className={cn("flex-1 overflow-x-hidden overflow-y-auto pb-6", rail ? "space-y-0.5 px-1 pt-3 [scrollbar-width:thin]" : "space-y-1 px-3")}>
+        <FavouritesNav panel={tone} rail={rail} onPick={() => setOpen(false)} />
+        {navGroups.map((group, groupIndex) => {
+          // The folded rail has no room for headings: all its icons, with a thin line between sections.
+          const collapsible = !rail && Boolean(group.key);
+          const showItems = !collapsible || isGroupOpen(group.key);
+          const panelId = `panel-menu-${place}-${group.key || "top"}`;
+          return (
+            <div key={group.key || "top"} className={cn(rail && groupIndex > 0 && "mt-1 border-t border-white/10 pt-1")}>
+              {collapsible && (
+                <button
+                  type="button"
+                  onClick={() => toggleGroup(group.key)}
+                  aria-expanded={showItems}
+                  aria-controls={panelId}
+                  className={cn(
+                    "mt-1 flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-xs font-semibold tracking-wide uppercase transition-colors hover:bg-white/5 hover:text-gold",
+                    group.key === activeGroup ? "text-gold" : "text-white/55",
+                  )}
+                >
+                  <span className="truncate">{group.label}</span>
+                  <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 transition-transform", showItems && "rotate-180")} />
+                </button>
+              )}
+              {showItems && (
+                <div id={panelId} className={cn(rail ? "space-y-0.5" : "space-y-1")}>
+                  {group.items.map((item) => {
+                    const active = item.to === activeTo;
+                    return (
+                      <Link
+                        key={item.to}
+                        to={item.to}
+                        data-nav-active={active ? "" : undefined}
+                        onClick={() => setOpen(false)}
+                        title={rail ? item.label : undefined}
+                        aria-label={rail ? item.label : undefined}
+                        className={cn(
+                          "rounded-lg font-medium transition-colors",
+                          rail
+                            ? "flex flex-col items-center gap-1 px-0.5 py-2 text-[10px] leading-tight"
+                            : "flex items-center gap-3 px-3 py-2.5 text-sm",
+                          active
+                            ? rail
+                              ? "bg-white/10 text-gold"
+                              : "bg-white/10 text-gold shadow-[inset_3px_0_0_0_var(--gold)]"
+                            : "text-white/70 hover:bg-white/5 hover:text-gold",
+                        )}
+                      >
+                        <item.icon className={cn("shrink-0", rail ? "h-5 w-5" : "h-4 w-4")} />
+                        <span className={cn(rail ? "line-clamp-2 w-full text-center" : "truncate")}>{item.label}</span>
+                      </Link>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })}
+        <button
+          onClick={() => void signOutHere()}
+          title={rail ? "Logout" : undefined}
+          className={cn(
+            "mt-2 w-full rounded-lg font-medium text-white/70 transition-colors hover:bg-white/5 hover:text-danger",
+            rail ? "flex flex-col items-center gap-1 px-1 py-2 text-[10px]" : "flex items-center gap-3 px-3 py-2.5 text-sm",
+          )}
+        >
+          <LogOut className={rail ? "h-5 w-5" : "h-4 w-4"} /> Logout
+        </button>
+      </nav>
+      <button
+        type="button"
+        onClick={toggleCollapsed}
+        title={rail ? "Expand menu" : "Collapse menu"}
+        aria-label={rail ? "Expand menu" : "Collapse menu"}
+        aria-expanded={!rail}
+        className={cn(
+          "hidden items-center border-t border-white/10 py-3 text-white/60 transition-colors hover:bg-white/5 hover:text-gold lg:flex",
+          rail ? "justify-center" : "justify-end gap-2 px-5 text-xs font-medium",
+        )}
+      >
+        {rail ? <ChevronsRight className="h-5 w-5" /> : <>Collapse <ChevronsLeft className="h-4 w-4" /></>}
+      </button>
+    </div>
+  );
+
+  return (
+    <div className={cn("flex min-h-screen w-full", pageBg)}>
+      <aside className="sticky top-0 hidden h-screen shrink-0 lg:block">{renderSidebar(collapsed, "side")}</aside>
+      {open && (
+        <div className="fixed inset-0 z-50 flex lg:hidden">
+          <div className="animate-rise">{renderSidebar(false, "drawer")}</div>
+          <button
+            className="flex-1 bg-midnight/60"
+            onClick={() => setOpen(false)}
+            aria-label="Close"
+          />
+        </div>
+      )}
+
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header className="sticky top-0 z-40 border-b border-border bg-card/90 backdrop-blur">
+          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-4 py-3 sm:px-6">
+            <div className="flex min-w-0 items-center gap-3">
+              <button
+                onClick={() => setOpen(true)}
+                className="text-navy lg:hidden"
+                aria-label="Open menu"
+              >
+                <Menu className="h-5 w-5" />
+              </button>
+              <div className="min-w-0">
+                <div className="flex min-w-0 items-center gap-1">
+                  <h1 className="truncate text-lg font-bold text-navy sm:text-xl">{title}</h1>
+                  <FavouriteToggle panel={tone} label={title} />
+                </div>
+                {subtitle && <p className="truncate text-xs text-slate">{subtitle}</p>}
+              </div>
+            </div>
+            <div className="flex items-center gap-2 sm:gap-3">
+              {tone === "admin" && <AdminBranchSelect className="hidden sm:flex" />}
+              <LanguageSwitcher compact className="sm:hidden" />
+              <LanguageSwitcher className="hidden sm:inline-flex" />
+              <PanelSearch panel={tone} dataResults={dataResults} />
+              {tone === "admin" && <OrderAlerts />}
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setNotifOpen((v) => !v)}
+                  className={cn(
+                    "relative rounded-full border border-border p-2 text-navy transition-colors hover:border-gold hover:text-gold",
+                    notifOpen && "border-gold text-gold bg-gold/10",
+                  )}
+                  aria-label="Notifications"
+                >
+                  <Bell className="h-4 w-4" />
+                  {unreadCount > 0 && (
+                    <span className="absolute -top-1 -right-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-gold px-1 text-[9px] font-black text-midnight shadow-xs ring-1 ring-white">
+                      {unreadCount > 9 ? "9+" : unreadCount}
+                    </span>
+                  )}
+                </button>
+
+                {notifOpen && (
+                  <>
+                    <div
+                      className="fixed inset-0 z-40"
+                      onClick={() => setNotifOpen(false)}
+                      aria-hidden="true"
+                    />
+                    <div className="absolute right-0 top-full mt-2 w-80 sm:w-96 rounded-xl border border-border bg-card shadow-2xl z-50 overflow-hidden animate-rise">
+                      <div className="flex items-center justify-between border-b border-border bg-ivory/60 px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-bold text-navy">Notifications</span>
+                          {unreadCount > 0 && (
+                            <span className="rounded-full bg-gold/20 px-2 py-0.5 text-[10px] font-bold text-navy">
+                              {unreadCount} new
+                            </span>
+                          )}
+                        </div>
+                        {unreadCount > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => markAllRead()}
+                            className="text-xs font-semibold text-gold hover:text-navy hover:underline transition-colors"
+                          >
+                            Mark all as read
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="max-h-[360px] overflow-y-auto divide-y divide-border/60">
+                        {relevantNotifs.length === 0 ? (
+                          <div className="p-6 text-center text-xs text-slate">
+                            No notifications right now
+                          </div>
+                        ) : (
+                          relevantNotifs.slice(0, 6).map((n) => (
+                            <button
+                              key={n.id}
+                              type="button"
+                              onClick={() => {
+                                markRead(n.id);
+                                setNotifOpen(false);
+                                const target = notificationTarget(n, tone, user, orders, paymentHolds);
+                                navigate({ to: target as never });
+                              }}
+                              className={cn(
+                                "flex w-full items-start gap-3 p-3.5 text-left transition-colors hover:bg-ivory/80",
+                                !n.read && "bg-amber-50/40",
+                              )}
+                            >
+                              <div
+                                className={cn(
+                                  "mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full text-xs font-bold",
+                                  n.type === "success" && "bg-emerald-100 text-emerald-700",
+                                  n.type === "warning" && "bg-amber-100 text-amber-700",
+                                  n.type === "info" && "bg-emerald-100 text-emerald-900",
+                                )}
+                              >
+                                {n.type === "success" ? "✓" : n.type === "warning" ? "!" : "i"}
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center justify-between gap-1">
+                                  <p
+                                    className={cn(
+                                      "text-xs leading-tight text-navy",
+                                      !n.read ? "font-bold" : "font-semibold",
+                                    )}
+                                  >
+                                    {n.title}
+                                  </p>
+                                  <span className="text-[10px] text-slate shrink-0">{n.time}</span>
+                                </div>
+                                <p className="mt-1 line-clamp-2 text-[11px] text-slate leading-normal">
+                                  {n.body}
+                                </p>
+                              </div>
+                              {!n.read && (
+                                <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-gold" />
+                              )}
+                            </button>
+                          ))
+                        )}
+                      </div>
+
+                      <div className="border-t border-border bg-ivory/40 p-2.5 text-center">
+                        <Link
+                          to={
+                            tone === "admin"
+                              ? "/admin/notifications"
+                              : tone === "vendor"
+                                ? "/vendor/notifications"
+                                : "/account/notifications"
+                          }
+                          onClick={() => setNotifOpen(false)}
+                          className="block text-xs font-bold text-navy hover:text-gold transition-colors py-1"
+                        >
+                          {tone === "admin"
+                            ? "View All Notifications →"
+                            : "View Notification Centre →"}
+                        </Link>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+              <AccountMenu tone={tone} user={user} onSignOut={signOutHere} />
+            </div>
+          </div>
+          {/* On phones the branch picker gets its own row so the title and icons still fit. */}
+          {tone === "admin" && (
+            <div className="border-t border-border px-4 py-2 empty:hidden sm:hidden">
+              <AdminBranchSelect className="w-full [&>select]:max-w-none [&>select]:flex-1" />
+            </div>
+          )}
+        </header>
+        <main className="min-w-0 flex-1 p-4 sm:p-6">
+          {tone === "vendor" && !STATIC_DATA_MODE && branchState.ready && !branchState.features.marketplaceVendors ? (
+            <div className="mx-auto max-w-xl rounded-lg border border-gold/40 bg-ivory/70 p-6 text-center">
+              <h2 className="text-lg font-bold text-navy">The vendor marketplace is not open yet</h2>
+              <p className="mt-2 text-sm text-slate">Grain Bazar is currently selling its own products only. Your vendor account is kept; this panel opens again when Grain Bazar starts the marketplace.</p>
+            </div>
+          ) : children}
+          {tone === "customer" && <CustomerCareLine />}
+        </main>
+      </div>
+    </div>
+  );
+}
