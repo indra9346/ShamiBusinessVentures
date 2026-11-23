@@ -8322,3 +8322,126 @@ export async function preorderZohoKit() {
     adminName: (userId: string) => adminName(db, userId),
   };
 }
+
+/**
+ * Daily stock dashboard (client's sheet and owner, 23 Nov 2026): one godown's batches for one day: opening, receipts and
+ * returns, sent to other godowns, adjustments, sales, handed over, undelivered and the expected balance, with Zoho's
+ * on-hand (today only) and the variance. Admins pick any godown; a channel partner always gets their own godown, decided
+ * here from their login, whatever the page asks for. Zoho is never guessed: when it can't be read the figure is empty.
+ */
+export const stockDashboard = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .validator(z.object({ branchId: z.string().trim().max(100).default(""), day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) }))
+  .handler(async ({ data, context }) => {
+    const db = await dbAdmin();
+    const { data: roles } = await db.from("user_roles").select("role").eq("user_id", context.userId);
+    const admin = (roles ?? []).some((r) => r.role === "admin");
+    let branchId = data.branchId;
+    if (!admin) {
+      const { data: partner } = await db.from("channel_partners").select("branch_id,status").eq("user_id", context.userId).maybeSingle();
+      if (!partner || partner.status !== "active" || !partner.branch_id) throw new Error("Only administrators and active channel partners can see the stock dashboard");
+      branchId = partner.branch_id;
+    }
+    const { data: branches } = await db.from("branches").select("id,name,zoho_location_id,active").order("name");
+    const branch = (branches ?? []).find((b) => b.id === branchId) ?? (admin ? (branches ?? []).find((b) => b.active) : undefined);
+    if (!branch) throw new Error("Godown not found");
+    const { stockDay, withZoho, istDay } = await import("@/lib/stock-dashboard");
+    const { data: batchRows, error: batchError } = await db.from("batches")
+      .select("id,batch_code,lot_no,product_id,product_name,quantity,created_at,parent_batch_id,stage,branch_id")
+      .eq("branch_id", branch.id).neq("stage", "incoming");
+    if (batchError) throw new Error(batchError.message);
+    const batches = batchRows ?? [];
+    const ids = batches.map((b) => b.id);
+    const chunks = <T,>(list: T[], size = 150) => Array.from({ length: Math.ceil(list.length / size) }, (_, i) => list.slice(i * size, i * size + size));
+    type Move = import("@/lib/stock-dashboard").DashMove;
+    const moves: Move[] = batches.map((b) => ({ batchId: b.id, at: b.created_at, kind: "receipt" as const, qty: Number(b.quantity) || 0 }));
+    for (const part of chunks(ids)) {
+      const [{ data: children }, { data: adjustments }, { data: allocations }] = await Promise.all([
+        db.from("batches").select("parent_batch_id,quantity,created_at").in("parent_batch_id", part),
+        db.from("batch_adjustments").select("batch_id,qty,reason,created_at").in("batch_id", part),
+        db.from("order_item_batch_allocations").select("batch_id,order_item_id,reserved_quantity,released_quantity").in("batch_id", part),
+      ]);
+      for (const c of children ?? []) if (c.parent_batch_id) moves.push({ batchId: c.parent_batch_id, at: c.created_at, kind: "sent", qty: Number(c.quantity) || 0 });
+      for (const a of adjustments ?? []) {
+        const qty = Number(a.qty) || 0;
+        moves.push({ batchId: a.batch_id, at: a.created_at, kind: /return/i.test(a.reason) && qty > 0 ? "return" : "adjustment", qty });
+      }
+      // Sales: what the paid orders took from each batch, on the day the order was made; hand-overs on the day the order
+      // was handed over in full (QR hand-overs, reopened ones left out), or, for an order marked Delivered without any,
+      // the day it was last changed.
+      const allocs = (allocations ?? []).map((a) => ({ batchId: a.batch_id, itemId: a.order_item_id, qty: Math.max(0, (Number(a.reserved_quantity) || 0) - (Number(a.released_quantity) || 0)) })).filter((a) => a.qty > 0);
+      const itemIds = [...new Set(allocs.map((a) => a.itemId))];
+      const orderOfItem = new Map<string, string>();
+      for (const items of chunks(itemIds)) {
+        const { data: rows } = await db.from("order_items").select("id,order_id").in("id", items);
+        for (const r of rows ?? []) orderOfItem.set(r.id, r.order_id);
+      }
+      const orderIds = [...new Set([...orderOfItem.values()])];
+      const orders = new Map<string, { created_at: string; updated_at: string; order_status: string }>();
+      const handedAt = new Map<string, string>();
+      for (const list of chunks(orderIds)) {
+        const [{ data: rows }, { data: notes }] = await Promise.all([
+          db.from("orders").select("id,created_at,updated_at,order_status").in("id", list),
+          db.from("delivery_notes").select("id,order_id").in("order_id", list),
+        ]);
+        for (const r of rows ?? []) orders.set(r.id, r);
+        const noteOrder = new Map((notes ?? []).map((n) => [n.id, n.order_id]));
+        for (const noteIds of chunks([...noteOrder.keys()])) {
+          const [{ data: handovers }, { data: reopens }] = await Promise.all([
+            db.from("delivery_handovers").select("id,note_id,handed_over_at").in("note_id", noteIds),
+            db.from("delivery_handover_reopens").select("handover_id").in("note_id", noteIds),
+          ]);
+          const reopened = new Set((reopens ?? []).map((r) => r.handover_id));
+          for (const h of handovers ?? []) {
+            if (reopened.has(h.id)) continue;
+            const orderId = noteOrder.get(h.note_id);
+            if (orderId && (!handedAt.has(orderId) || h.handed_over_at > handedAt.get(orderId)!)) handedAt.set(orderId, h.handed_over_at);
+          }
+        }
+      }
+      for (const a of allocs) {
+        const orderId = orderOfItem.get(a.itemId);
+        const order = orderId ? orders.get(orderId) : undefined;
+        if (!order || !["Placed", "Payment Confirmed", "Accepted", "Packed", "Dispatched", "Out for Delivery", "Delivered"].includes(order.order_status)) continue;
+        moves.push({ batchId: a.batchId, at: order.created_at, kind: "sale", qty: a.qty });
+        if (order.order_status === "Delivered") moves.push({ batchId: a.batchId, at: handedAt.get(orderId!) ?? order.updated_at, kind: "handover", qty: a.qty });
+      }
+    }
+    const products = stockDay(
+      batches.map((b) => ({ id: b.id, code: b.batch_code, lotNo: str(b.lot_no), productId: b.product_id, productName: b.product_name })),
+      moves, data.day,
+    );
+    const today = istDay(new Date().toISOString());
+    const onHand = new Map<string, number>();
+    let zohoNote = "";
+    if (data.day === today && products.length) {
+      if (!str(branch.zoho_location_id)) zohoNote = "This godown is not linked to a Zoho location, so Zoho's stock can't be shown.";
+      else {
+        try {
+          const productIds = products.map((p) => p.productId).slice(0, 80);
+          const { data: links } = await db.from("zoho_item_links").select("product_id,zoho_item_id").in("product_id", productIds);
+          const { region, organizationId, token } = await zohoOrderContext(db);
+          const list = (links ?? []).filter((l) => l.zoho_item_id);
+          for (let i = 0; i < list.length; i += 3) {
+            await Promise.all(list.slice(i, i + 3).map(async (link) => {
+              try {
+                const response = await inventoryRequest<{ item?: Record<string, unknown> }>(region, organizationId, token, `items/${encodeURIComponent(link.zoho_item_id)}`, "GET");
+                const zoho = zohoLocationStock(response.item ?? {}, branch.zoho_location_id);
+                if (zoho) onHand.set(link.product_id, zoho.physical);
+              } catch { /* that item stays empty: never a guess */ }
+            }));
+          }
+          if (products.length > 80) zohoNote = "Zoho's stock is shown for the first 80 products only.";
+        } catch (cause) {
+          zohoNote = `Zoho could not be read now (${errorText(cause).slice(0, 120)}), so its stock is left empty.`;
+        }
+      }
+    } else if (data.day !== today) {
+      zohoNote = "Zoho only gives today's stock, so past days show the expected balance only.";
+    }
+    return {
+      admin, branchId: branch.id, branchName: branch.name, day: data.day, today, zohoNote,
+      branches: admin ? (branches ?? []).map((b) => ({ id: b.id, name: b.name })) : [],
+      products: withZoho(products, onHand, data.day === today),
+    };
+  });

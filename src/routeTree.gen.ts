@@ -55,6 +55,7 @@ import { Route as AdminIndentsRouteImport } from './routes/admin.indents'
 import { Route as AdminInventoryRouteImport } from './routes/admin.inventory'
 import { Route as AdminLoginRouteImport } from './routes/admin.login'
 import { Route as AdminLotsRouteImport } from './routes/admin.lots'
+import { Route as AdminStockDashboardRouteImport } from './routes/admin.stock-dashboard'
 import { Route as AdminNotificationsRouteImport } from './routes/admin.notifications'
 import { Route as AdminOrdersRouteImport } from './routes/admin.orders'
 import { Route as AdminPartnerIncomeRouteImport } from './routes/admin.partner-income'
@@ -92,6 +93,7 @@ import { Route as PartnerOrdersRouteImport } from './routes/partner.orders'
 import { Route as PartnerPaymentsRouteImport } from './routes/partner.payments'
 import { Route as PartnerReportRouteImport } from './routes/partner.report'
 import { Route as PartnerStockRouteImport } from './routes/partner.stock'
+import { Route as PartnerStockDashboardRouteImport } from './routes/partner.stock-dashboard'
 import { Route as ProductIdRouteImport } from './routes/product.$id'
 import { Route as StaffIndexRouteImport } from './routes/staff.index'
 import { Route as StaffDeviceRouteImport } from './routes/staff.device'
@@ -355,6 +357,11 @@ const AdminLotsRoute = AdminLotsRouteImport.update({
   path: '/admin/lots',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdminStockDashboardRoute = AdminStockDashboardRouteImport.update({
+  id: '/admin/stock-dashboard',
+  path: '/admin/stock-dashboard',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AdminNotificationsRoute = AdminNotificationsRouteImport.update({
   id: '/admin/notifications',
   path: '/admin/notifications',
@@ -538,6 +545,11 @@ const PartnerReportRoute = PartnerReportRouteImport.update({
 const PartnerStockRoute = PartnerStockRouteImport.update({
   id: '/stock',
   path: '/stock',
+  getParentRoute: () => PartnerRoute,
+} as any)
+const PartnerStockDashboardRoute = PartnerStockDashboardRouteImport.update({
+  id: '/stock-dashboard',
+  path: '/stock-dashboard',
   getParentRoute: () => PartnerRoute,
 } as any)
 const ProductIdRoute = ProductIdRouteImport.update({
@@ -748,6 +760,7 @@ export interface FileRoutesByFullPath {
   '/admin/inventory': typeof AdminInventoryRoute
   '/admin/login': typeof AdminLoginRoute
   '/admin/lots': typeof AdminLotsRoute
+  '/admin/stock-dashboard': typeof AdminStockDashboardRoute
   '/admin/notifications': typeof AdminNotificationsRoute
   '/admin/orders': typeof AdminOrdersRouteWithChildren
   '/admin/partner-income': typeof AdminPartnerIncomeRoute
@@ -783,6 +796,7 @@ export interface FileRoutesByFullPath {
   '/partner/payments': typeof PartnerPaymentsRoute
   '/partner/report': typeof PartnerReportRoute
   '/partner/stock': typeof PartnerStockRoute
+  '/partner/stock-dashboard': typeof PartnerStockDashboardRoute
   '/product/$id': typeof ProductIdRoute
   '/staff/device': typeof StaffDeviceRoute
   '/staff/login': typeof StaffLoginRoute
@@ -863,6 +877,7 @@ export interface FileRoutesByTo {
   '/admin/inventory': typeof AdminInventoryRoute
   '/admin/login': typeof AdminLoginRoute
   '/admin/lots': typeof AdminLotsRoute
+  '/admin/stock-dashboard': typeof AdminStockDashboardRoute
   '/admin/notifications': typeof AdminNotificationsRoute
   '/admin/orders': typeof AdminOrdersRouteWithChildren
   '/admin/partner-income': typeof AdminPartnerIncomeRoute
@@ -898,6 +913,7 @@ export interface FileRoutesByTo {
   '/partner/payments': typeof PartnerPaymentsRoute
   '/partner/report': typeof PartnerReportRoute
   '/partner/stock': typeof PartnerStockRoute
+  '/partner/stock-dashboard': typeof PartnerStockDashboardRoute
   '/product/$id': typeof ProductIdRoute
   '/staff/device': typeof StaffDeviceRoute
   '/staff/login': typeof StaffLoginRoute
@@ -981,6 +997,7 @@ export interface FileRoutesById {
   '/admin/inventory': typeof AdminInventoryRoute
   '/admin/login': typeof AdminLoginRoute
   '/admin/lots': typeof AdminLotsRoute
+  '/admin/stock-dashboard': typeof AdminStockDashboardRoute
   '/admin/notifications': typeof AdminNotificationsRoute
   '/admin/orders': typeof AdminOrdersRouteWithChildren
   '/admin/partner-income': typeof AdminPartnerIncomeRoute
@@ -1016,6 +1033,7 @@ export interface FileRoutesById {
   '/partner/payments': typeof PartnerPaymentsRoute
   '/partner/report': typeof PartnerReportRoute
   '/partner/stock': typeof PartnerStockRoute
+  '/partner/stock-dashboard': typeof PartnerStockDashboardRoute
   '/product/$id': typeof ProductIdRoute
   '/staff/device': typeof StaffDeviceRoute
   '/staff/login': typeof StaffLoginRoute
@@ -1100,6 +1118,7 @@ export interface FileRouteTypes {
     | '/admin/inventory'
     | '/admin/login'
     | '/admin/lots'
+    | '/admin/stock-dashboard'
     | '/admin/notifications'
     | '/admin/orders'
     | '/admin/partner-income'
@@ -1135,6 +1154,7 @@ export interface FileRouteTypes {
     | '/partner/payments'
     | '/partner/report'
     | '/partner/stock'
+    | '/partner/stock-dashboard'
     | '/product/$id'
     | '/staff/device'
     | '/staff/login'
@@ -1215,6 +1235,7 @@ export interface FileRouteTypes {
     | '/admin/inventory'
     | '/admin/login'
     | '/admin/lots'
+    | '/admin/stock-dashboard'
     | '/admin/notifications'
     | '/admin/orders'
     | '/admin/partner-income'
@@ -1250,6 +1271,7 @@ export interface FileRouteTypes {
     | '/partner/payments'
     | '/partner/report'
     | '/partner/stock'
+    | '/partner/stock-dashboard'
     | '/product/$id'
     | '/staff/device'
     | '/staff/login'
@@ -1332,6 +1354,7 @@ export interface FileRouteTypes {
     | '/admin/inventory'
     | '/admin/login'
     | '/admin/lots'
+    | '/admin/stock-dashboard'
     | '/admin/notifications'
     | '/admin/orders'
     | '/admin/partner-income'
@@ -1367,6 +1390,7 @@ export interface FileRouteTypes {
     | '/partner/payments'
     | '/partner/report'
     | '/partner/stock'
+    | '/partner/stock-dashboard'
     | '/product/$id'
     | '/staff/device'
     | '/staff/login'
@@ -1440,6 +1464,7 @@ export interface RootRouteChildren {
   AdminInventoryRoute: typeof AdminInventoryRoute
   AdminLoginRoute: typeof AdminLoginRoute
   AdminLotsRoute: typeof AdminLotsRoute
+  AdminStockDashboardRoute: typeof AdminStockDashboardRoute
   AdminNotificationsRoute: typeof AdminNotificationsRoute
   AdminOrdersRoute: typeof AdminOrdersRouteWithChildren
   AdminPartnerIncomeRoute: typeof AdminPartnerIncomeRoute
@@ -1813,6 +1838,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminLotsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/admin/stock-dashboard': {
+      id: '/admin/stock-dashboard'
+      path: '/admin/stock-dashboard'
+      fullPath: '/admin/stock-dashboard'
+      preLoaderRoute: typeof AdminStockDashboardRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/admin/notifications': {
       id: '/admin/notifications'
       path: '/admin/notifications'
@@ -2070,6 +2102,13 @@ declare module '@tanstack/react-router' {
       path: '/stock'
       fullPath: '/partner/stock'
       preLoaderRoute: typeof PartnerStockRouteImport
+      parentRoute: typeof PartnerRoute
+    }
+    '/partner/stock-dashboard': {
+      id: '/partner/stock-dashboard'
+      path: '/stock-dashboard'
+      fullPath: '/partner/stock-dashboard'
+      preLoaderRoute: typeof PartnerStockDashboardRouteImport
       parentRoute: typeof PartnerRoute
     }
     '/product/$id': {
@@ -2378,6 +2417,7 @@ interface PartnerRouteChildren {
   PartnerPaymentsRoute: typeof PartnerPaymentsRoute
   PartnerReportRoute: typeof PartnerReportRoute
   PartnerStockRoute: typeof PartnerStockRoute
+  PartnerStockDashboardRoute: typeof PartnerStockDashboardRoute
   PartnerIndexRoute: typeof PartnerIndexRoute
 }
 
@@ -2393,6 +2433,7 @@ const PartnerRouteChildren: PartnerRouteChildren = {
   PartnerPaymentsRoute: PartnerPaymentsRoute,
   PartnerReportRoute: PartnerReportRoute,
   PartnerStockRoute: PartnerStockRoute,
+  PartnerStockDashboardRoute: PartnerStockDashboardRoute,
   PartnerIndexRoute: PartnerIndexRoute,
 }
 
@@ -2519,6 +2560,7 @@ const rootRouteChildren: RootRouteChildren = {
   AdminInventoryRoute: AdminInventoryRoute,
   AdminLoginRoute: AdminLoginRoute,
   AdminLotsRoute: AdminLotsRoute,
+  AdminStockDashboardRoute: AdminStockDashboardRoute,
   AdminNotificationsRoute: AdminNotificationsRoute,
   AdminOrdersRoute: AdminOrdersRouteWithChildren,
   AdminPartnerIncomeRoute: AdminPartnerIncomeRoute,
