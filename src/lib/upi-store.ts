@@ -319,6 +319,22 @@ export const PARTNER_PAYMENT_CHECKS: { value: PartnerPaymentCheck; label: string
  * The godown's channel partner approves the UTR they looked at (owner, 16 Nov 2026). The database checks everything an
  * admin's Confirm checks, for an order of the partner's own godown only, and tells our office.
  */
+/** The godown's channel partner rejects a UTR they could not find in the bank (Sandesh, 21 Nov 2026). */
+export async function rejectPartnerPayment(orderNo: string, utr: string, reason: string) {
+  const { error } = await (supabase.rpc as unknown as (name: string, args: Record<string, unknown>) => Promise<{ error: { message: string } | null }>)
+    .call(supabase, "partner_reject_payment", { _order_no: orderNo, _expected_utr: utr, _reason: reason });
+  if (error) throw new Error(error.message);
+  changed();
+}
+
+/** The customer takes back a UTR they sent by mistake while it is still being checked (Sandesh, 21 Nov 2026). */
+export async function withdrawMyUtr(orderNo: string) {
+  const { error } = await (supabase.rpc as unknown as (name: string, args: Record<string, unknown>) => Promise<{ error: { message: string } | null }>)
+    .call(supabase, "customer_withdraw_utr", { _order_no: orderNo });
+  if (error) throw new Error(error.message);
+  changed();
+}
+
 export async function approvePartnerPayment(orderNo: string, utr: string, checked: PartnerPaymentCheck) {
   const { data, error } = await supabase.rpc("partner_approve_payment", { _order_no: orderNo, _expected_utr: utr, _checked: checked });
   if (error) throw new Error(error.message);

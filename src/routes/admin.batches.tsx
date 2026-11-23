@@ -768,7 +768,7 @@ function BatchDetail({ row, report, data, adjustments, orderId, go, onEdit, onDe
         </div>
       </Panel>
 
-      <BatchProfitPanel row={row} />
+      <BatchProfitPanel row={row} report={report} />
       <BatchExpensesPanel row={row} report={report} data={data} onChanged={onChanged} />
 
       {order ? <div id="batch-order-customer" className="scroll-mt-4"><OrderCustomer sale={order} report={report} go={go} /></div> : null}

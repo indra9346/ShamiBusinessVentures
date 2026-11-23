@@ -1,6 +1,7 @@
 import { EndedCheckouts } from "@/components/panel/EndedCheckouts";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useZohoNumbers, zohoNumbersText } from "@/lib/zoho-numbers";
 import { renderSVG } from "uqr";
 import { toast } from "sonner";
 import { CheckCircle2, Clock, KeyRound, Landmark, MessageSquare, QrCode, ShieldAlert, Smartphone, Trash2, XCircle } from "lucide-react";
@@ -97,6 +98,7 @@ function AdminUpiPayments() {
   const [approver, setApprover] = useState("");
   const approvers = [...new Set(done.map((s) => s.reviewedBy).filter((name): name is string => Boolean(name)))].sort((a, b) => a.localeCompare(b));
   const doneShown = done.filter((s) => inDoneFilter(s) && (!approver || s.reviewedBy === approver));
+  const zohoNumbers = useZohoNumbers(useMemo(() => doneShown.map((s) => s.orderNo), [doneShown]));
   const openDone = (status: "confirmed" | "rejected") => {
     setDoneFilter(status);
     scrollToSection("checked-payments");
@@ -401,6 +403,7 @@ function AdminUpiPayments() {
                     <td className="whitespace-nowrap px-2 py-2 text-xs text-slate">{s.reviewedAt ? istTime(s.reviewedAt) : "—"}</td>
                     <td className="px-2 py-2 font-mono text-xs">
                       {s.orderNo}
+                      {zohoNumbersText(zohoNumbers.get(s.orderNo)) && <span className="mt-0.5 block font-sans text-[11px] font-semibold text-navy">{zohoNumbersText(zohoNumbers.get(s.orderNo))}</span>}
                       {hold && hold.status !== "Payment Confirmed" && <span className="mt-0.5 block font-sans text-[11px] text-slate">{hold.lines.map((line) => `${line.name ?? line.productId} × ${line.qty}`).join(", ")}</span>}
                     </td>
                     <td className="px-2 py-2 text-right tabular-nums">{inrPrecise(s.amount)}</td>

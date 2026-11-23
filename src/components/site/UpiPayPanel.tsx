@@ -7,6 +7,7 @@ import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { normaliseUtr, settingsProblem, upiPaymentUri, utrProblem, type UpiSettings } from "@/lib/upi-pay";
 import { UpiAppButtons } from "@/components/site/UpiAppButtons";
 import { GalleryQrLimitNote } from "@/components/site/GalleryQrLimitNote";
+import { WithdrawUtrButton } from "@/components/site/WithdrawUtrButton";
 import { UpiIdPay } from "@/components/site/UpiIdPay";
 import { payPanelId } from "@/lib/upi-return";
 import { BankTransferDetails, BankUtrForm } from "@/components/site/BankTransferPay";
@@ -128,8 +129,9 @@ export function UpiPayPanel({ settings, orderNo, amount, customer }: { settings:
 
       {submission?.status === "submitted" ? (
         <div className="mt-4 rounded-md border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">
-          <p className="flex items-center gap-2 font-semibold"><ShieldCheck className="h-4 w-4" /> Payment being verified</p>
+          <p className="flex items-center gap-2 font-semibold"><ShieldCheck className="h-4 w-4" /> Order placed · payment being verified</p>
           <p className="mt-1">UTR {submission.utr} sent. We confirm it against our bank account, usually within a few minutes in working hours, and your order moves to "Payment Confirmed".</p>
+          {!STATIC_DATA_MODE && <WithdrawUtrButton orderNo={orderNo} utr={submission.utr} />}
         </div>
       ) : (
         <div className="mt-4 grid gap-4 sm:grid-cols-[180px_minmax(0,1fr)]">

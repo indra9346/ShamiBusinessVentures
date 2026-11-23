@@ -21,11 +21,14 @@ export function compactInr(value: number) {
 }
 
 /** Like inr, but keeps paise when there are any: ₹2,650 and ₹43.50. */
+/**
+ * Rupees with exactly two decimals, minus sign before the ₹ (Sandesh, 19 Nov 2026: "Numbers decimals are not standard,
+ * make all the numbers show 2 digit decimals"; the P&L showed ₹2,93,763 next to ₹2,70,774.28 and "₹-0").
+ */
 export const inrPrecise = (n: number) => {
-  const paise = Math.round(n * 100);
-  return paise % 100 === 0
-    ? inr(paise / 100)
-    : "₹" + (paise / 100).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const paise = Math.round((Number.isFinite(n) ? n : 0) * 100);
+  const text = "₹" + (Math.abs(paise) / 100).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return paise < 0 ? `−${text}` : text;
 };
 
 /* ---------- deterministic pseudo random ---------- */

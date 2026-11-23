@@ -18,6 +18,7 @@ import { isBankMethod, lapsedTransfer, REFUNDED_UTR_NOTE, REUSED_UTR_NOTE, UNCHE
 import { useBankDetails, useUpiPayments } from "@/lib/upi-store";
 import { SendUtrForm, UpiIdPay, UpiUtrForm } from "@/components/site/UpiIdPay";
 import { GalleryQrLimitNote } from "@/components/site/GalleryQrLimitNote";
+import { WithdrawUtrButton } from "@/components/site/WithdrawUtrButton";
 import { cn } from "@/lib/utils";
 
 /**
@@ -226,10 +227,9 @@ export function HeldCheckoutPay({ settings, orderNo, amount, holdUntil, customer
         </div>
       ) : view === "verifying" ? (
         <div className="mt-4 rounded-md border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">
-          <p className="flex items-center gap-2 font-semibold"><ShieldCheck className="h-4 w-4" /> Checking UTR {submission?.utr} with our bank</p>
-          <p className="mt-1">{byBank
-            ? "Your order is placed once we confirm this payment in our bank account. You can close this page; you will get a notification."
-            : "Your order is placed once our team confirms this payment with our bank. You can close this page; you will get a notification."}</p>
+          <p className="flex items-center gap-2 font-semibold"><CheckCircle2 className="h-4 w-4" /> {`Your order ${orderNo} has been placed`}</p>
+          <p className="mt-1">{`We are checking UTR ${submission?.utr ?? ""} with our bank. Once it matches, your order moves to Payment Confirmed and you get a notification. You can close this page.`}</p>
+          {submission?.utr && !STATIC_DATA_MODE && <WithdrawUtrButton orderNo={orderNo} utr={submission.utr} />}
         </div>
       ) : byBank ? (
         <>
