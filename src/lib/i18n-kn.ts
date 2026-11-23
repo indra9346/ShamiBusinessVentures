@@ -4644,6 +4644,10 @@ export const kn: Record<string, string> = {
   "The purchase date is in the future": "ಖರೀದಿ ದಿನಾಂಕ ಭವಿಷ್ಯದಲ್ಲಿದೆ",
   "Choose an active godown": "ಸಕ್ರಿಯ ಗೋದಾಮು ಆಯ್ಕೆಮಾಡಿ",
   "Batch number {0} is already used. Each purchase needs its own number.": "ಬ್ಯಾಚ್ ಸಂಖ್ಯೆ {0} ಈಗಾಗಲೇ ಬಳಕೆಯಲ್ಲಿದೆ. ಪ್ರತಿ ಖರೀದಿಗೆ ತನ್ನದೇ ಸಂಖ್ಯೆ ಬೇಕು.",
+  "SMS codes to this number are paused for a few minutes. Use Email OTP to continue now, or try SMS again shortly.": "ಈ ಸಂಖ್ಯೆಗೆ SMS ಕೋಡ್‌ಗಳನ್ನು ಕೆಲವು ನಿಮಿಷ ನಿಲ್ಲಿಸಲಾಗಿದೆ. ಈಗಲೇ ಮುಂದುವರಿಯಲು ಇಮೇಲ್ OTP ಬಳಸಿ, ಅಥವಾ ಸ್ವಲ್ಪ ಸಮಯದ ನಂತರ SMS ಪ್ರಯತ್ನಿಸಿ.",
+  "Continue with Email OTP": "ಇಮೇಲ್ OTP ಮೂಲಕ ಮುಂದುವರಿಯಿರಿ",
+  "SMS codes to this number are paused for a few minutes, so we switched to Email OTP. Enter your email to get the code now, or try SMS again shortly.": "ಈ ಸಂಖ್ಯೆಗೆ SMS ಕೋಡ್‌ಗಳನ್ನು ಕೆಲವು ನಿಮಿಷ ನಿಲ್ಲಿಸಲಾಗಿದೆ, ಆದ್ದರಿಂದ ಇಮೇಲ್ OTP ಗೆ ಬದಲಾಯಿಸಿದ್ದೇವೆ. ಈಗಲೇ ಕೋಡ್ ಪಡೆಯಲು ನಿಮ್ಮ ಇಮೇಲ್ ನಮೂದಿಸಿ, ಅಥವಾ ಸ್ವಲ್ಪ ಸಮಯದ ನಂತರ SMS ಪ್ರಯತ್ನಿಸಿ.",
+  "Please wait a minute before requesting another code.": "ಇನ್ನೊಂದು ಕೋಡ್ ಕೇಳುವ ಮೊದಲು ದಯವಿಟ್ಟು ಒಂದು ನಿಮಿಷ ಕಾಯಿರಿ.",
   "Too many codes were sent to this number. Please wait 10 minutes and try again.": "ಈ ಸಂಖ್ಯೆಗೆ ಹಲವು ಕೋಡ್‌ಗಳನ್ನು ಕಳುಹಿಸಲಾಗಿದೆ. ದಯವಿಟ್ಟು 10 ನಿಮಿಷ ಕಾಯಿರಿ, ನಂತರ ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ.",
   // Attendance v2: password login, godown devices, presence photos, reports (31 Oct 2026)
   "{0} hr {1} min": "{0} ಗಂ {1} ನಿ",

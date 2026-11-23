@@ -92,9 +92,26 @@ export function fast2smsOutcome(status: number, body: unknown): { ok: true; requ
   return { ok: false, code, message: `Fast2SMS refused the SMS${code !== null ? ` (${code})` : ""}: ${message}`.slice(0, 300) };
 }
 
+/**
+ * The same code by Fast2SMS's Quick SMS route, as our own text. Used only when the OTP route refuses a number for
+ * "spamming" (several codes in a few minutes): Sandesh, 23 Nov 2026: "this 10 mins barrier, customers get irritated and
+ * leave the site". The customer still gets their code at once instead of being told to wait.
+ */
+export function fast2smsQuickOtpRequest(apiKey: string, mobile: string, otp: string): { url: string; init: RequestInit } {
+  return {
+    url: FAST2SMS_URL,
+    init: {
+      method: "POST",
+      headers: { authorization: apiKey, "Content-Type": "application/json", accept: "application/json" },
+      body: JSON.stringify({ route: "q", message: `${otp} is your Grain Bazar verification code. It is valid for 5 minutes. Do not share it with anyone.`, language: "english", numbers: mobile, flash: "0" }),
+    },
+  };
+}
+
 /** Fast2SMS refuses more codes to a number that just got several ("Spamming detected"). */
 export const FAST2SMS_SPAM_CODE = 995;
-export const SMS_TOO_MANY_MESSAGE = "Too many codes were sent to this number. Please wait 10 minutes and try again.";
+/** Only when both SMS routes refused: point the customer to Email OTP at once instead of a long wait. */
+export const SMS_TOO_MANY_MESSAGE = "SMS codes to this number are paused for a few minutes. Use Email OTP to continue now, or try SMS again shortly.";
 export const SMS_FAILED_MESSAGE = "Could not send the SMS right now. Please try again or sign in with email.";
 
 /** What the customer is told when Fast2SMS refuses (HTTP code and message for Supabase). */

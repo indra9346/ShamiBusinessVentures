@@ -114,8 +114,15 @@ export function useEmailOtp({ shouldCreateUser = true, requiredRole }: OtpOption
           showAuthNotice("No Account Found", "No registered customer account exists with this phone or email. Please register first.");
           return false;
         }
-        if (errCode === "over_sms_send_rate_limit" || msg.toLowerCase().includes("rate limit")) {
-          showAuthNotice("Too Many Requests", "Please wait a few moments before requesting another OTP code.");
+        // SMS paused for this number (our SMS provider's or Supabase's limit): never leave the customer waiting; switch to
+        // Email OTP at once so they can carry on (Sandesh, 23 Nov 2026: "this 10 mins barrier, customers leave the site").
+        if (via === "phone" && (errCode === "over_sms_send_rate_limit" || /rate limit|too many codes|codes to this number are paused/i.test(msg))) {
+          setChannel("email");
+          showAuthNotice("Continue with Email OTP", "SMS codes to this number are paused for a few minutes, so we switched to Email OTP. Enter your email to get the code now, or try SMS again shortly.", "info");
+          return false;
+        }
+        if (errCode === "over_email_send_rate_limit" || msg.toLowerCase().includes("rate limit")) {
+          showAuthNotice("Too Many Requests", "Please wait a minute before requesting another code.");
           return false;
         }
         showAuthNotice("Could not send the verification code", result.error.message);

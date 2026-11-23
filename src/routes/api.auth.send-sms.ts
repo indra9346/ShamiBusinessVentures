@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import {
-  SMS_FAILED_MESSAGE, fast2smsOtpRequest, fast2smsOutcome, hookErrorBody, smsFailureForCustomer, smsFromHookPayload, verifyHookSignature,
+  FAST2SMS_SPAM_CODE, SMS_FAILED_MESSAGE, fast2smsOtpRequest, fast2smsOutcome, fast2smsQuickOtpRequest, hookErrorBody, smsFailureForCustomer, smsFromHookPayload, verifyHookSignature,
 } from "@/lib/sms-hook";
 
 /**
@@ -43,18 +43,19 @@ export const Route = createFileRoute("/api/auth/send-sms")({
         const sms = smsFromHookPayload(payload);
         if (!sms) return hookError(400, "Enter a valid 10-digit Indian mobile number");
 
-        const { url, init } = fast2smsOtpRequest(apiKey, sms.mobile, sms.otp);
-        let status = 0;
-        let reply: unknown = null;
-        try {
+        const call = async ({ url, init }: { url: string; init: RequestInit }) => {
           const response = await fetch(url, { ...init, signal: AbortSignal.timeout(10_000) });
-          status = response.status;
-          reply = await response.json().catch(() => null);
+          return fast2smsOutcome(response.status, await response.json().catch(() => null));
+        };
+        let outcome;
+        try {
+          outcome = await call(fast2smsOtpRequest(apiKey, sms.mobile, sms.otp));
+          // "Spamming detected" on the OTP route: the same code by the Quick SMS route instead of a wait (23 Nov 2026).
+          if (!outcome.ok && outcome.code === FAST2SMS_SPAM_CODE) outcome = await call(fast2smsQuickOtpRequest(apiKey, sms.mobile, sms.otp));
         } catch (cause) {
           console.error("send-sms hook: Fast2SMS unreachable:", cause instanceof Error ? cause.message : String(cause));
           return hookError(502, SMS_FAILED_MESSAGE);
         }
-        const outcome = fast2smsOutcome(status, reply);
         // Never log the code; the last 4 digits of the number are enough to trace a delivery.
         if (!outcome.ok) {
           console.error(`send-sms hook: ******${sms.mobile.slice(-4)}:`, outcome.message);
