@@ -2637,6 +2637,17 @@ async function syncLinkedZohoOrder(
   };
   let zoho = await load();
   const zohoStatus = () => str(zoho["order_status"] ?? zoho["status"]).toLowerCase();
+  // Keep Zoho's own sales order number (CLK-SO-…) on the order, to show it in our panels (Sandesh, 21 Nov 2026). The
+  // table comes with 20261123110000_order_zoho_numbers.sql; until it is there the write fails quietly.
+  const zohoNumber = str(zoho["salesorder_number"]).trim();
+  if (zohoNumber) {
+    try {
+      await (db as unknown as { from: (table: string) => { upsert: (row: unknown, options: unknown) => Promise<unknown> } }).from("order_zoho_numbers")
+        .upsert({ order_id: order.id, order_no: order.order_no, salesorder_number: zohoNumber, updated_at: new Date().toISOString() }, { onConflict: "order_id" });
+    } catch {
+      /* the number shows once the table exists */
+    }
+  }
 
   // Problems with the money in Zoho Books, raised once the goods side is done.
   const moneyIssues: ZohoMoneyIssues = { review: [], retry: [] };

@@ -1,4 +1,5 @@
 import { EndedCheckouts } from "@/components/panel/EndedCheckouts";
+import { useZohoNumbers } from "@/lib/zoho-numbers";
 import { CancelOrderButton } from "@/components/panel/CancelOrderDialog";
 import { CustomersPayingNow } from "@/components/panel/CustomersPayingNow";
 import { createFileRoute, Link, Outlet, useRouterState } from "@tanstack/react-router";
@@ -310,6 +311,13 @@ function AdminOrders() {
     });
     return list;
   }, [orders, contactNumbers, q, status, payment, sort, range.from, range.to, waitingOrders]);
+  // Zoho's SO and invoice numbers of the page shown (before the early return: hooks run on every render).
+  const pageOrderNos = useMemo(() => {
+    const count = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+    const at = Math.min(page, count);
+    return filtered.slice((at - 1) * PAGE_SIZE, at * PAGE_SIZE).map((o) => o.id);
+  }, [filtered, page]);
+  const zohoNumbers = useZohoNumbers(pageOrderNos);
 
   if (pathname !== "/admin/orders" && pathname !== "/admin/orders/") {
     return <Outlet />;
@@ -528,7 +536,7 @@ function AdminOrders() {
                 )}
                 {o.zohoSalesOrderId ? (
                   <span className="mt-0.5 inline-flex items-center gap-1 rounded bg-emerald-50 border border-emerald-200 px-1.5 py-0.2 text-[10px] font-semibold text-emerald-800">
-                    Zoho: {o.zohoSalesOrderId}
+                    {zohoNumbers.get(o.id)?.salesOrder ? `SO ${zohoNumbers.get(o.id)!.salesOrder}` : `Zoho: ${o.zohoSalesOrderId}`}
                     {o.zohoOrderStatus && (
                       <span className={["void", "cancelled"].includes(o.zohoOrderStatus) && o.status !== "Cancelled" ? "font-bold text-danger" : ""}>
                         {" · "}{o.zohoOrderStatus}
@@ -540,6 +548,7 @@ function AdminOrders() {
                     Zoho ready
                   </span>
                 )}
+                {zohoNumbers.get(o.id)?.invoice && <span className="mt-0.5 block text-[10px] font-semibold text-navy">{`Invoice ${zohoNumbers.get(o.id)!.invoice}`}</span>}
               </div>,
               o.date,
               <div>

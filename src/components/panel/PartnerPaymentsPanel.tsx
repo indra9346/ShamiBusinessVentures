@@ -1,14 +1,15 @@
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
-import { CheckCircle2, Loader2, RefreshCw } from "lucide-react";
+import { CheckCircle2, Loader2, RefreshCw, XCircle } from "lucide-react";
 import { Panel } from "@/components/panel/widgets";
 import { PARTNER_REFRESH_EVENT, useLiveRefresh } from "@/components/partners/PartnerWidgets";
 import { SendUtrForm } from "@/components/site/UpiIdPay";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { inrPrecise } from "@/lib/data";
 import { pushOrderToZohoInBackground } from "@/lib/store";
-import { approvePartnerPayment, loadPartnerCheckouts, PARTNER_PAYMENT_CHECKS, type PartnerCheckout, type PartnerPaymentCheck } from "@/lib/upi-store";
+import { approvePartnerPayment, loadPartnerCheckouts, rejectPartnerPayment, PARTNER_PAYMENT_CHECKS, type PartnerCheckout, type PartnerPaymentCheck } from "@/lib/upi-store";
 import { orderToneClass } from "@/lib/order-status-tone";
 import { cn } from "@/lib/utils";
 
@@ -39,6 +40,7 @@ export function PartnerPaymentsPanel() {
   const [failed, setFailed] = useState("");
   const [asking, setAsking] = useState<PartnerCheckout | null>(null);
   const [approving, setApproving] = useState("");
+  const [rejecting, setRejecting] = useState<PartnerCheckout | null>(null);
   // Reads again every 30 seconds, on focus and after any partner step (16 Nov 2026: a page opened earlier kept showing
   // an old state), as Orders to confirm does.
   const load = useCallback(async (): Promise<PartnerCheckout[] | null> => {
@@ -73,6 +75,22 @@ export function PartnerPaymentsPanel() {
       window.dispatchEvent(new Event(PARTNER_REFRESH_EVENT));
     } catch (cause) {
       toast.error("Could not approve the payment", { description: cause instanceof Error ? cause.message : undefined });
+      void load();
+    } finally {
+      setApproving("");
+    }
+  };
+
+  const reject = async (row: PartnerCheckout, reason: string) => {
+    if (!row.utr) return;
+    setApproving(row.orderNo);
+    try {
+      await rejectPartnerPayment(row.orderNo, row.utr, reason);
+      toast.success(`UTR ${row.utr} rejected`, { description: "The customer and our office are told. The customer can send the right UTR while the time lasts." });
+      setRejecting(null);
+      void load();
+    } catch (cause) {
+      toast.error("Could not reject the UTR", { description: cause instanceof Error ? cause.message : undefined });
       void load();
     } finally {
       setApproving("");
@@ -114,10 +132,15 @@ export function PartnerPaymentsPanel() {
                       {row.utrLate && <span> · <span>after the checkout ended</span></span>}
                     </p>
                     <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-                      <p className="min-w-0 text-[11px]">Seen this money arrive? Approve it, or leave it for our office.</p>
-                      <Button size="sm" className="bg-emerald-700 text-white hover:bg-emerald-800" disabled={!!approving} onClick={() => setAsking(row)}>
-                        <CheckCircle2 className="mr-1.5 h-4 w-4" />{approving === row.orderNo ? "Approving…" : "Approve payment"}
-                      </Button>
+                      <p className="min-w-0 text-[11px]">Seen this money arrive? Approve it. Not in the bank, or another amount? Reject it. Or leave it for our office.</p>
+                      <div className="flex flex-wrap gap-2">
+                        <Button size="sm" variant="outline" className="border-red-300 text-red-700 hover:bg-red-50" disabled={!!approving} onClick={() => setRejecting(row)}>
+                          <XCircle className="mr-1.5 h-4 w-4" />Reject UTR
+                        </Button>
+                        <Button size="sm" className="bg-emerald-700 text-white hover:bg-emerald-800" disabled={!!approving} onClick={() => setAsking(row)}>
+                          <CheckCircle2 className="mr-1.5 h-4 w-4" />{approving === row.orderNo ? "Approving…" : "Approve payment"}
+                        </Button>
+                      </div>
                     </div>
                   </div>
                 ) : row.utrStatus === "submitted" ? (
@@ -130,11 +153,46 @@ export function PartnerPaymentsPanel() {
             ))}
           </ul>
         )}
+      {rejecting && (
+        <RejectPaymentDialog row={rejecting} busy={approving === rejecting.orderNo}
+          onClose={() => { if (!approving) setRejecting(null); }} onReject={(reason) => void reject(rejecting, reason)} />
+      )}
       {asking && (
         <ApprovePaymentDialog row={asking} busy={approving === asking.orderNo}
           onClose={() => { if (!approving) setAsking(null); }} onApprove={(checked) => void approve(asking, checked)} />
       )}
     </Panel>
+  );
+}
+
+/** The partner says why the UTR doesn't match; the database checks it is their godown's and tells our office. */
+function RejectPaymentDialog({ row, busy, onClose, onReject }: { row: PartnerCheckout; busy: boolean; onClose: () => void; onReject: (reason: string) => void }) {
+  const [reason, setReason] = useState("");
+  const reasons = ["Not in the bank account", "Different amount in the bank", "UTR belongs to another payment"];
+  return (
+    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle className="break-words pr-6">{`Reject UTR ${row.utr ?? ""} on ${row.orderNo}?`}</DialogTitle>
+          <DialogDescription>Only reject after checking the bank account. The customer is told to check their UTR, and our office is told too.</DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-2">
+          {reasons.map((text) => (
+            <label key={text} className="flex items-center gap-2 text-sm text-navy">
+              <input type="radio" name="partner-reject-reason" className="h-4 w-4" checked={reason === text} onChange={() => setReason(text)} />
+              <span>{text}</span>
+            </label>
+          ))}
+          <Input placeholder="Or type the reason" value={reasons.includes(reason) ? "" : reason} onChange={(event) => setReason(event.target.value)} maxLength={160} />
+        </div>
+        <DialogFooter>
+          <Button variant="outline" disabled={busy} onClick={onClose}>Cancel</Button>
+          <Button className="bg-red-700 text-white hover:bg-red-800" disabled={busy || reason.trim().length < 3} onClick={() => onReject(reason.trim())}>
+            {busy ? "Rejecting…" : "Reject UTR"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

@@ -304,6 +304,8 @@ export type BatchSale = {
   batchId: string; batchCode: string; orderItemId: string; orderId: string; orderNo: string; orderDate: string; orderStatus: string; held: boolean;
   customerKey: string; customerName: string; customerPhone: string; customerEmail: string; customerAddress: string;
   productName: string; qty: number; rate: number; value: number; cost: number; profit: number;
+  /** GST charged on this sale's value (value × the line's GST rate): sales with GST = value + gst. */
+  gst?: number;
   /** Held (awaiting payment): when the hold ends, if known. */
   holdUntil?: string | null;
 };
@@ -314,6 +316,11 @@ export type BatchTotals = {
   /** A pre-order batch's units still to come (its quantity while it waits for its bill); 0 for every other batch. */
   expected: number;
   purchaseValue: number; sales: number; costOfSold: number; lossValue: number; stockValue: number;
+  /**
+   * GST on the sold units (Sandesh, 19 Nov 2026: "profit & loss before GST, make it show with GST too"): the GST
+   * charged on the sales and the GST paid on their purchase (bill cost with GST − before GST). 0 where unknown.
+   */
+  salesGstValue: number; costOfSoldGstValue: number;
   /** sales − cost of sold − stock lost: the profit before any expense. */
   profitBeforeExpenses: number;
   /** Profit after expenses: profitBeforeExpenses − expenses on the sold units − expenses on the units lost. */
@@ -376,7 +383,7 @@ export type BatchCustomer = {
 
 const emptyTotals = (): BatchTotals => ({
   purchased: 0, received: 0, sent: 0, sold: 0, delivered: 0, held: 0, lost: 0, gained: 0, available: 0, expected: 0,
-  purchaseValue: 0, sales: 0, costOfSold: 0, lossValue: 0, stockValue: 0, profitBeforeExpenses: 0, profit: 0,
+  purchaseValue: 0, sales: 0, costOfSold: 0, lossValue: 0, stockValue: 0, salesGstValue: 0, costOfSoldGstValue: 0, profitBeforeExpenses: 0, profit: 0,
   expenseValue: 0, inheritedExpenseValue: 0, expenseOnSoldValue: 0, expenseOnHeldValue: 0, expenseOnSentValue: 0, expenseOnLostValue: 0,
   expenseInStockValue: 0, expenseInTransitValue: 0, landedStockValue: 0, costVarianceValue: 0, estimatedCostValue: 0,
 });
@@ -477,12 +484,13 @@ export function buildBatchReport(input: {
       const rateBeforeGst = inclusive ? (num(item.unit_price) * 100) / (100 + num(item.gst_rate)) : num(item.unit_price);
       const value = paise(net * rateBeforeGst * share);
       const cost = paise(net * costCopyBeforeGst(batch, allocation.unit_cost));
+      const saleGst = paise(value * Math.max(0, num(item.gst_rate)) / 100);
       const key = customerKeyOf(order);
       sales.push({
         batchId: batch.id, batchCode: batch.batch_code, orderItemId: item.id, orderId: order.id, orderNo: order.order_no, orderDate: order.created_at,
         orderStatus: order.order_status, held, customerKey: key, customerName: order.customer_name ?? "",
         customerPhone: order.customer_phone ?? "", customerEmail: order.customer_email ?? "", customerAddress: addressLine(order.shipping_address),
-        productName: item.product_name || batch.product_name, qty: net, rate: paise(rateBeforeGst * share), value, cost,
+        productName: item.product_name || batch.product_name, qty: net, rate: paise(rateBeforeGst * share), value, cost, gst: saleGst,
         profit: held ? 0 : paise(value - cost),
         holdUntil: held ? order.payment_hold_until ?? null : null,
       });
@@ -496,6 +504,8 @@ export function buildBatchReport(input: {
       if (order.order_status === "Delivered") t.delivered = qty(t.delivered + net);
       t.sales = paise(t.sales + value);
       t.costOfSold = paise(t.costOfSold + cost);
+      t.salesGstValue = paise(t.salesGstValue + saleGst);
+      t.costOfSoldGstValue = paise(t.costOfSoldGstValue + cost * purchaseGstRatio(batch));
       orderIds.add(order.id);
       customers.add(key);
       if (!firstSale || order.created_at < firstSale) firstSale = order.created_at;
@@ -734,6 +744,12 @@ export function costCopyBeforeGst(batch: CostFields, copied: number | string | n
 
 /** The batch's purchase cost per unit before GST: what its profit is worked out with. */
 export const costBeforeGst = (batch: CostFields) => costCopyBeforeGst(batch, batch.unit_cost);
+
+/** GST paid on the purchase per rupee before GST (bill cost with GST ÷ before GST − 1); 0 when the bill didn't give both. */
+export function purchaseGstRatio(batch: CostFields) {
+  const ex = costBeforeGst(batch), inc = num(batch.unit_cost_inc_gst);
+  return ex > 0 && inc > ex ? inc / ex - 1 : 0;
+}
 
 /** The batch's purchase cost per unit with GST, when the bill gave it (null for a cost typed in). */
 export const costWithGst = (batch: CostFields) => (num(batch.unit_cost_inc_gst) > 0 ? num(batch.unit_cost_inc_gst) : null);

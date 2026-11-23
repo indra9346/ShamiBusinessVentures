@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { toast } from "sonner";
-import { AlertTriangle, CheckCircle2, FileText, IndianRupee, ReceiptText, RefreshCw, Scale, Split, Trash2 } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronDown, ChevronUp, FileText, IndianRupee, ReceiptText, RefreshCw, Scale, Split, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -127,34 +127,98 @@ function DocumentList({ rows, data, onChanged, batchId }: { rows: BatchExpenseRo
   );
 }
 
-/** Batch detail: its profit and loss before GST, with expenses and landed cost (spec 9.3). */
-export function BatchProfitPanel({ row }: { row: BatchReportRow }) {
+/** A section of the profit and loss that opens and closes (Sandesh, 19 Nov 2026: "give option to hide & expand"). */
+function Fold({ title, summary, open, onToggle, children }: { title: string; summary: string; open: boolean; onToggle: () => void; children: ReactNode }) {
+  return (
+    <div className="rounded-md border border-border">
+      <button type="button" onClick={onToggle} aria-expanded={open} className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left">
+        <span className="min-w-0">
+          <span className="block font-semibold text-navy">{title}</span>
+          <span className="block text-xs text-slate">{summary}</span>
+        </span>
+        {open ? <ChevronUp className="h-4 w-4 shrink-0 text-slate" /> : <ChevronDown className="h-4 w-4 shrink-0 text-slate" />}
+      </button>
+      {open && <div className="border-t border-border px-3 py-2">{children}</div>}
+    </div>
+  );
+}
+
+const FOLD_KEY = "gb.batchProfitFolds";
+function useFolds() {
+  const [folds, setFolds] = useState<Record<string, boolean>>(() => {
+    try {
+      return { before: true, withGst: true, landed: false, ...(JSON.parse(globalThis.localStorage?.getItem(FOLD_KEY) ?? "{}") as Record<string, boolean>) };
+    } catch {
+      return { before: true, withGst: true, landed: false };
+    }
+  });
+  const toggle = (key: string) => setFolds((current) => {
+    const next = { ...current, [key]: !current[key] };
+    try { globalThis.localStorage?.setItem(FOLD_KEY, JSON.stringify(next)); } catch { /* the choice just isn't remembered */ }
+    return next;
+  });
+  return [folds, toggle] as const;
+}
+
+/**
+ * Batch detail: its profit and loss before GST and with GST, side by side, each one opens and closes, and the landed
+ * cost (spec 9.3). Before GST is the business's own profit; with GST adds the GST charged on sales and paid on the
+ * purchase and on expenses (claimable GST), which goes to the government, so the profit before GST is the real one.
+ */
+export function BatchProfitPanel({ row, report }: { row: BatchReportRow; report?: BatchReport }) {
   const b = row.batch;
   const lot = b.stage === "incoming";
+  const [folds, toggle] = useFolds();
   const expenses = Math.round((row.expenseValue + row.inheritedExpenseValue) * 100) / 100;
   const line = (label: string, value: number, tone?: "good" | "bad", strong?: boolean) => (
     <div className="flex items-baseline justify-between gap-3 border-b border-border/60 py-1 last:border-0">
       <span className={cn("text-slate", strong && "font-semibold text-charcoal")}>{label}</span>
-      <span className={cn("font-semibold", tone === "good" && "text-emerald-700", tone === "bad" && "text-red-700")}>{money(value)}</span>
+      <span className={cn("whitespace-nowrap font-semibold tabular-nums", tone === "good" && "text-emerald-700", tone === "bad" && "text-red-700")}>{money(value)}</span>
     </div>
   );
+  const tone = (n: number) => (n < 0 ? "bad" : "good") as const;
+  // Claimable GST on this batch's own expenses, on the share of them that went with the sold units.
+  const ownRows = (report?.expenses ?? []).filter((e) => e.batchId === b.id && !e.gone);
+  const expenseGst = ownRows.reduce((sum, e) => sum + (e.claimable && e.beforeGst > 0 ? e.effective * (e.gst / e.beforeGst) : 0), 0);
+  const soldShare = expenses > 0 ? row.expenseOnSoldValue / expenses : 0;
+  const expenseOnSoldGst = Math.round(expenseGst * soldShare * 100) / 100;
+  const salesWithGst = row.sales + row.salesGstValue;
+  const costWithGstSold = row.costOfSold + row.costOfSoldGstValue;
+  const expensesWithGst = row.expenseOnSoldValue + expenseOnSoldGst;
+  const profitWithGst = salesWithGst - costWithGstSold - row.lossValue - expensesWithGst - row.expenseOnLostValue;
+  const gstPayable = row.salesGstValue - row.costOfSoldGstValue - expenseOnSoldGst;
   return (
-    <Panel title="Profit and loss (before GST)">
-      <div className="grid gap-4 text-sm lg:grid-cols-2">
-        <div>
+    <Panel title="Profit and loss">
+      <div className="grid gap-3 text-sm lg:grid-cols-2">
+        <Fold title="Before GST" summary={`Profit before expenses ${money(row.profitBeforeExpenses)} · after expenses ${money(row.profit)}`} open={folds["before"] ?? true} onToggle={() => toggle("before")}>
           {line("Sales", row.sales)}
           {line(lot ? "Cost of sold (estimate)" : "Cost of sold (bill cost)", -row.costOfSold)}
           {row.lossValue !== 0 && line(row.lossValue < 0 ? "Stock found" : "Stock lost", -row.lossValue)}
-          {line("Profit before expenses", row.profitBeforeExpenses, row.profitBeforeExpenses < 0 ? "bad" : "good")}
-          {line("Expenses on sold", -row.expenseOnSoldValue)}
+          {line("Profit before expenses", row.profitBeforeExpenses, tone(row.profitBeforeExpenses))}
+          {line("Expenses on sold (transport, hamali, commission …)", -row.expenseOnSoldValue)}
           {row.expenseOnLostValue !== 0 && line("Expenses on lost", -row.expenseOnLostValue)}
-          {line("Profit after expenses", row.profit, row.profit < 0 ? "bad" : "good", true)}
+          {line("Profit after expenses", row.profit, tone(row.profit), true)}
           {lot && <p className="mt-1 rounded bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-900">{`${COST_STATUS_NAMES.estimated}: costed with the estimate ${money(costBeforeGst(b))} per unit until the bill is matched.`}</p>}
           {row.costVarianceValue !== 0 && (
             <p className="mt-1 text-xs text-slate">{`Cost variance on sold: ${money(row.costVarianceValue)} (bill ${money(costBeforeGst(b))} vs estimate ${money(b.est_unit_cost_ex_gst ?? 0)} per unit)`}</p>
           )}
-        </div>
-        <div>
+        </Fold>
+        <Fold title="With GST" summary={`Profit after expenses ${money(profitWithGst)} · GST to pay on sold ${money(gstPayable)}`} open={folds["withGst"] ?? true} onToggle={() => toggle("withGst")}>
+          {line("Sales with GST", salesWithGst)}
+          {line("Cost of sold with GST", -costWithGstSold)}
+          {row.lossValue !== 0 && line(row.lossValue < 0 ? "Stock found" : "Stock lost", -row.lossValue)}
+          {line("Profit before expenses", salesWithGst - costWithGstSold - row.lossValue, tone(salesWithGst - costWithGstSold - row.lossValue))}
+          {line("Expenses on sold, with GST", -expensesWithGst)}
+          {row.expenseOnLostValue !== 0 && line("Expenses on lost", -row.expenseOnLostValue)}
+          {line("Profit after expenses", profitWithGst, tone(profitWithGst), true)}
+          {line("GST collected on sales", row.salesGstValue)}
+          {line("GST paid on purchase and expenses (claimed back)", -(row.costOfSoldGstValue + expenseOnSoldGst))}
+          {line("GST to pay the government on sold", gstPayable, undefined, true)}
+          <p className="mt-1 text-xs text-slate">These amounts include GST; the GST goes to the government, so the profit before GST is the business's own.</p>
+        </Fold>
+      </div>
+      <div className="mt-3 text-sm">
+        <Fold title="Landed cost and unsold stock" summary={`Landed cost per unit ${money(row.landedUnitCost)} (before GST) · unsold stock ${money(row.landedStockValue)}`} open={folds["landed"] ?? false} onToggle={() => toggle("landed")}>
           {line("Expenses tagged here", row.expenseValue)}
           {row.inheritedExpenseValue !== 0 && line("Expenses that came with its units", row.inheritedExpenseValue)}
           {line("Expense per unit", row.expensePerUnit)}
@@ -171,7 +235,7 @@ export function BatchProfitPanel({ row }: { row: BatchReportRow }) {
                 ? `Cost check: off by ${money(row.costCheckGap)}, which is the ledger gap of ${units(row.ledgerGap)} units at ${money(row.landedUnitCost)}.`
                 : `Cost check: off by ${money(row.costCheckGap)} (orders copied another cost than the batch's).`}
           </p>
-        </div>
+        </Fold>
       </div>
     </Panel>
   );
