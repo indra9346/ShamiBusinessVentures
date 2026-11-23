@@ -235,6 +235,35 @@ export function handoverWords(
   return { done: true, all, lines };
 }
 
+/** One labelled row of a hand-over: the English and Kannada label and the value (names and times stay as stored). */
+export type HandoverField = { en: string; kn: string; value: string };
+
+/**
+ * The hand-overs as neat labelled rows, one block per person and moment (Sandesh, 21 Nov 2026: "showing Handed Over,
+ * Delivery Time, Handed Over By name and Mobile Number, Location one below one neatly"). Empty before any hand-over.
+ */
+export function handoverDetails(delivery: (Pick<InvoiceDelivery, "handovers">) | null | undefined): HandoverField[][] {
+  const handovers = delivery?.handovers ?? [];
+  const groups: InvoiceHandover[][] = [];
+  for (const entry of [...handovers].sort((a, b) => a.at.localeCompare(b.at) || a.line - b.line)) {
+    const last = groups.at(-1)?.[0];
+    if (last && last.by === entry.by && last.phone === entry.phone && last.godown === entry.godown && Math.abs(Date.parse(last.at) - Date.parse(entry.at)) < 60_000) groups.at(-1)!.push(entry);
+    else groups.push([entry]);
+  }
+  return groups.map((group) => {
+    const first = group[0]!;
+    const role = ROLE[first.role] ?? { en: first.role, kn: first.role };
+    const rows: HandoverField[] = [
+      { en: "Handed over", kn: "ಹಸ್ತಾಂತರಿಸಿದ ವಸ್ತು", value: group.map((entry) => `${entry.line}. ${entry.item}${entry.qty ? ` x${entry.qty}` : ""}`).join(", ") },
+      { en: "Delivery time", kn: "ವಿತರಣೆ ಸಮಯ", value: handoverTime(first.at) },
+      { en: "Handed over by", kn: "ಹಸ್ತಾಂತರಿಸಿದವರು", value: `${first.by} (${role.en})` },
+    ];
+    if (first.phone) rows.push({ en: "Mobile number", kn: "ಮೊಬೈಲ್ ಸಂಖ್ಯೆ", value: first.phone });
+    rows.push({ en: "Location", kn: "ಸ್ಥಳ", value: first.godown || "Office" });
+    return rows;
+  });
+}
+
 /**
  * "Grain Bazar Challakere Godown, Pavagada Road, Challakere, Karnataka 577522 · Phone 99… · GSTIN … · Channel partner
  * Vamshi (mobile 9…)": the godown that gives the goods, with its channel partner. `lang` "kn" gives the small labels

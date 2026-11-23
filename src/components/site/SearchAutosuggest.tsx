@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { ArrowRight, CheckCircle2, ChevronRight, Layers, Package, Search, Tag, X } from "lucide-react";
 import { useApp } from "@/lib/store";
-import { getProductImageFallback, inr } from "@/lib/data";
+import { getProductImageFallback, inr, showsMrpSavings } from "@/lib/data";
 import { cn } from "@/lib/utils";
 import { resizedImage } from "@/lib/image-url";
 import { useStorefrontDisplay } from "@/lib/storefront-display";
@@ -259,7 +259,7 @@ export function SearchAutosuggest({
                         <span>{product.category}</span>
                         <span>•</span>
                         <span className="font-semibold text-navy">{inr(product.price)}</span>
-                        {display.showMrpSavings && product.mrp > product.price && (
+                        {showsMrpSavings(product, display.showMrpSavings) && product.mrp > product.price && (
                           <span className="line-through text-slate/70 text-[11px]">{inr(product.mrp)}</span>
                         )}
                         <span>•</span>

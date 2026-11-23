@@ -5419,6 +5419,7 @@ export const kn: Record<string, string> = {
   "Come back here and enter the 12-digit UPI Ref No. (UTR) from the payment receipt. Our team confirms it with our bank and your order is placed.": "ಇಲ್ಲಿಗೆ ಹಿಂತಿರುಗಿ, ಪಾವತಿ ರಸೀದಿಯಲ್ಲಿರುವ 12 ಅಂಕಿಯ UPI Ref No. (UTR) ನಮೂದಿಸಿ. ನಮ್ಮ ತಂಡ ಅದನ್ನು ನಮ್ಮ ಬ್ಯಾಂಕ್‌ನೊಂದಿಗೆ ಖಚಿತಪಡಿಸುತ್ತದೆ ಮತ್ತು ನಿಮ್ಮ ಆರ್ಡರ್ ಆಗುತ್ತದೆ.",
   "Payment done? Enter its UPI Ref No. now": "ಪಾವತಿ ಆಯಿತೇ? ಈಗಲೇ ಅದರ UPI Ref No. ನಮೂದಿಸಿ",
   "It is the 12-digit number on the receipt in your UPI app (UPI Ref No., UPI transaction ID or UTR). Your order is kept for you while you enter it.": "ಇದು ನಿಮ್ಮ UPI ಆ್ಯಪ್‌ನ ರಸೀದಿಯಲ್ಲಿರುವ 12 ಅಂಕಿಯ ಸಂಖ್ಯೆ (UPI Ref No., UPI transaction ID ಅಥವಾ UTR). ನೀವು ಅದನ್ನು ನಮೂದಿಸುವವರೆಗೆ ನಿಮ್ಮ ಆರ್ಡರ್ ಕಾಯ್ದಿರಿಸಲಾಗುತ್ತದೆ.",
+  "It is the 12-digit number on the receipt in your UPI app (UPI Ref No., UPI transaction ID or UTR). Enter it before the time runs out.": "ಇದು ನಿಮ್ಮ UPI ಆ್ಯಪ್‌ನ ರಸೀದಿಯಲ್ಲಿರುವ 12 ಅಂಕಿಯ ಸಂಖ್ಯೆ (UPI Ref No., UPI transaction ID ಅಥವಾ UTR). ಸಮಯ ಮುಗಿಯುವ ಮೊದಲು ಅದನ್ನು ನಮೂದಿಸಿ.",
   "Paid? Enter the 12-digit UPI Ref No. (UTR) from your UPI app": "ಪಾವತಿಸಿದಿರಾ? ನಿಮ್ಮ UPI ಆ್ಯಪ್‌ನಿಂದ 12 ಅಂಕಿಯ UPI Ref No. (UTR) ನಮೂದಿಸಿ",
   // Each godown's Zoho deposit account (Admin > Payments & Matching, Branches).
   "Zoho bank account for each godown's payments": "ಪ್ರತಿ ಗೋದಾಮಿನ ಪಾವತಿಗಳಿಗೆ Zoho ಬ್ಯಾಂಕ್ ಖಾತೆ",

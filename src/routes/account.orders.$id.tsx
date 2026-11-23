@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { CheckCircle2, Circle, QrCode, RefreshCw } from "lucide-react";
 import { renderSVG } from "uqr";
@@ -9,7 +9,7 @@ import { accountNav } from "@/lib/account-nav";
 import { canCancelOrder, inr, inrPrecise, orderStages, type Order } from "@/lib/data";
 import { supabase } from "@/integrations/supabase/client";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
-import { godownLine, handoverWords, invoiceDelivery, issuedZohoNumber, type InvoiceDelivery, type ZohoInvoiceCopy } from "@/lib/invoice-lines";
+import { godownLine, handoverDetails, handoverWords, invoiceDelivery, issuedZohoNumber, type InvoiceDelivery, type ZohoInvoiceCopy } from "@/lib/invoice-lines";
 import { useLanguage } from "@/lib/i18n";
 import { customerInvoiceVisible, invoiceStage, invoiceStageTone } from "@/lib/invoice-visibility";
 import { orderToneClass, TONE_CLASSES } from "@/lib/order-status-tone";
@@ -420,12 +420,19 @@ type InvoiceDeliveryFacts = { zohoNumber: string | null; delivery: InvoiceDelive
 function HandoverFacts({ delivery, status }: { delivery: InvoiceDelivery; status: string }) {
   const { language } = useLanguage();
   const words = handoverWords(delivery, status);
+  const details = words.done ? handoverDetails(delivery) : [];
   const godown = godownLine(delivery.godown, language === "kn" ? "kn" : "en");
   const kn = language === "kn";
   return (
     <div className="mt-2 space-y-1 rounded-md border border-emerald-600/25 bg-white/70 p-2 text-xs text-charcoal" data-no-translate>
       <p className="font-bold text-navy">{kn ? "ಹಸ್ತಾಂತರ" : "Handed over"}</p>
-      {words.lines.map((line, index) => <p key={`handover-${index}`} className="break-words" lang={kn ? "kn" : "en"}>{kn ? line.kn : line.en}</p>)}
+      {details.length
+        ? details.map((block, blockIndex) => (
+          <dl key={`handover-${blockIndex}`} className={`grid grid-cols-[minmax(7.5rem,auto)_1fr] gap-x-3 gap-y-0.5 ${blockIndex ? "border-t border-emerald-600/20 pt-1.5" : ""}`}>
+            {block.map((field) => <Fragment key={field.en}><dt className="font-semibold text-slate">{kn ? field.kn : field.en}</dt><dd className="break-words">{field.value}</dd></Fragment>)}
+          </dl>
+        ))
+        : words.lines.map((line, index) => <p key={`handover-${index}`} className="break-words" lang={kn ? "kn" : "en"}>{kn ? line.kn : line.en}</p>)}
       {godown && <p className="break-words"><span className="font-semibold">{kn ? "ಗೋದಾಮು" : "Godown"}:</span> {godown}</p>}
     </div>
   );

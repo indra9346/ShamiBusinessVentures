@@ -219,6 +219,18 @@ export function getDisplayDiscountPercent(product: Pick<Product, "mrp" | "price"
   return mrp > price && mrp > 0 ? Math.max(0, Math.round(((mrp - price) / mrp) * 100)) : 0;
 }
 
+/**
+ * Whether the storefront shows this product's struck-through MRP, "% off" and "Save ₹N". A product the admin set to
+ * "Discounted with Strikethrough" always shows it (Sandesh, 19 Nov 2026: the product said strike-through but the shop
+ * showed only ₹45, because the store-wide switch in Settings › Storefront was off); "Direct MRP Only" never does; a
+ * product with no choice saved follows that store-wide switch.
+ */
+export function showsMrpSavings(product: Pick<Product, "pricingDisplayMode">, storeWide: boolean): boolean {
+  if (product.pricingDisplayMode === "strike_through") return true;
+  if (product.pricingDisplayMode === "mrp_only") return false;
+  return storeWide;
+}
+
 export const DEFAULT_MAX_PURCHASE_QUANTITY = 120;
 
 export function getMaxPurchaseQuantity(product: Pick<Product, "maxPurchaseQuantity">) {

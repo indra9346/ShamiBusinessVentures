@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { godownDetails, godownLine, handoverTime, handoverWords, invoiceDelivery } from "../src/lib/invoice-lines.ts";
+import { godownDetails, godownLine, handoverDetails, handoverTime, handoverWords, invoiceDelivery } from "../src/lib/invoice-lines.ts";
 import { handoverWho, personWords, scannerLabel } from "../src/lib/delivery-papers.ts";
 import { privacyPolicyText } from "../src/lib/privacy-policy.ts";
 import { kn } from "../src/lib/i18n-kn.ts";
@@ -65,6 +65,24 @@ test("one sentence per person and moment: who, role, mobile, godown, items, in E
   assert.deepEqual([part.done, part.all], [true, false]);
 });
 
+test("hand-over details: labelled rows, one block per person and moment (Sandesh, 21 Nov 2026)", () => {
+  const blocks = handoverDetails(invoiceDelivery(ANSWER));
+  assert.equal(blocks.length, 2);
+  assert.deepEqual(blocks[0]!.map((field) => [field.en, field.value]), [
+    ["Handed over", "1. Rice 25 kg x2, 2. Sugar 50 kg x1"],
+    ["Delivery time", "11 Nov 2026, 08:20:15 PM IST"],
+    ["Handed over by", "Vamshi (channel partner)"],
+    ["Mobile number", "9900000002"],
+    ["Location", "Grain Bazar Challakere Godown"],
+  ]);
+  assert.ok(blocks[0]!.every((field) => field.kn));
+  assert.deepEqual(handoverDetails(null), []);
+  // No mobile, no godown (an office hand-over): no empty mobile row, location "Office".
+  const office = handoverDetails({ handovers: [{ line: 1, item: "Rice", qty: 1, at: "2026-11-11T14:50:15Z", by: "Indra", role: "admin", phone: "", godown: "" }] });
+  assert.deepEqual(office[0]!.map((field) => field.en), ["Handed over", "Delivery time", "Handed over by", "Location"]);
+  assert.equal(office[0]!.at(-1)!.value, "Office");
+});
+
 test("before any hand-over the invoice says so; an office-marked delivery says that instead", () => {
   assert.deepEqual(handoverWords(null).lines, [{ en: "Not handed over yet.", kn: "ಇನ್ನೂ ಹಸ್ತಾಂತರಿಸಿಲ್ಲ." }]);
   assert.deepEqual(handoverWords({ handovers: [], items: 2 }, "Packed").lines[0]!.en, "Not handed over yet.");
@@ -109,15 +127,15 @@ test("the invoice prints the godown beside the QR and the hand-overs under it, m
   assert.match(invoice, /const godown = godownLine\(facts\?\.godown\);/);
   assert.match(invoice, /pdf\.splitTextToSize\(`Godown: \$\{godown\}`, textW\)/);
   assert.match(invoice, /band\.godownLines\.forEach\(\(line, index\) => pdf\.text\(line, tx, at \+ 2\.3 \+ index \* 2\.9\)\)/);
-  assert.match(invoice, /const words = handoverWords\(facts, order\.status\);\n\s+const rows: Row\[\] = \(words\.done \? words\.lines : \[\]\)/,
+  assert.match(invoice, /const words = handoverWords\(facts, order\.status\);\n\s+const details = words\.done \? handoverDetails\(facts\) : \[\];/,
     "before any hand-over nothing is printed under the QR");
   // A long list carries on onto the next page instead of running over the footer.
-  assert.match(invoice, /if \(at \+ rowHeight\(row\) > H - 17\) \{\n\s+newPage\(false\);\n\s+at = y \+ 0\.8;\n\s+label = "HANDED OVER \(contd\.\)";/);
+  assert.match(invoice, /if \(at \+ rowHeight\(row\) > H - 17\) \{\n\s+newPage\(false\);\n\s+at = y \+ 0\.8;\n\s+title\(true\);/);
   assert.match(invoice, /if \(qrCode\) \{\s*y \+= 27\.5;\s*(?:\/\/[^\n]*\s*)*const band = qrBandText\(delivery\);\s*const below = handoverBlock\(delivery\);\s*(?:\/\/[^\n]*\s*)*if \(y \+ band\.height \+ below\.height > H - 17\) newPage\(false\);\s*y = deliveryQrBlock\(qrCode, y, band\);\s*y = below\.draw\(y\);/);
   assert.ok(!invoice.includes("QR_BLOCK_H"), "the band's height is measured, not a fixed number");
-  // Kannada drawn as a picture under each English sentence, or beside a short one.
+  // Labelled rows with the Kannada label beside each English one; an office-marked delivery keeps its Kannada sentence.
+  assert.match(invoice, /label: field\.en, labelKn: labelImage\(field\.kn, field\.en\)/);
   assert.match(invoice, /canvasTextImage\(line\.kn, \{ sizePt: 7, maxWidthMm: textW, color: ink \}\)/);
-  assert.match(invoice, /const beside = Boolean\(kannada\) && lines\.length === 1 && pdf\.getTextWidth\(lines\[0\] \?\? ""\) \+ 3 \+ \(kannada\?\.width \?\? 0\) <= textW;/);
 });
 
 test("the database keeps the mobile and hands out the hand-overs and godown with its channel partner", () => {
