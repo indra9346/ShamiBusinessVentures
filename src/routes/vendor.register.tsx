@@ -20,7 +20,11 @@ export const Route = createFileRoute("/vendor/register")({
 type Application = { id: string; status: string; admin_notes: string | null; vendor_id: string | null; created_at: string };
 
 function VendorRegistration() {
-  const { user } = useApp();
+  const { user, logout } = useApp();
+  // The database accepts applications only from logins that hold the customer role and are not
+  // already a vendor or admin. Channel-partner and godown-staff logins have no customer role, but
+  // the site shows them as customers, so read the live roles instead of trusting user.role.
+  const [roles, setRoles] = useState<string[] | null>(null);
   const branchState = useBranches();
   const [application, setApplication] = useState<Application | null>(null);
   const [business, setBusiness] = useState("");
@@ -33,7 +37,20 @@ function VendorRegistration() {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    if (!user?.id || user.role !== "customer") return;
+    if (!user?.id) { setRoles(null); return; }
+    let active = true;
+    setRoles(null);
+    void supabase.from("user_roles").select("role").eq("user_id", user.id).then(({ data, error }) => {
+      if (!active) return;
+      setRoles(error ? [] : (data ?? []).map((row) => String(row.role)));
+    });
+    return () => { active = false; };
+  }, [user?.id]);
+
+  const canApply = Boolean(roles?.includes("customer") && !roles.includes("vendor") && !roles.includes("admin"));
+
+  useEffect(() => {
+    if (!user?.id || !canApply) return;
     const userId = user.id;
     let active = true;
     let loadRevision = 0;
@@ -71,11 +88,11 @@ function VendorRegistration() {
       if (refreshTimer) clearTimeout(refreshTimer);
       void supabase.removeChannel(channel);
     };
-  }, [user?.id, user?.role]);
+  }, [user?.id, canApply]);
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!user?.id || user.role !== "customer") { toast.error("Sign in with your customer account to apply"); return; }
+    if (!user?.id || !canApply) { toast.error("Sign in with the applicant's own customer account to apply"); return; }
     if (!user.email.includes("@")) { toast.error("A verified email account is required for vendor sign-in"); return; }
     if (gstin.trim() && !/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/.test(gstin.trim().toUpperCase())) {
       toast.error("Enter a valid 15-character GSTIN (for example 29ABCDE1234F1Z5), or leave it blank");
@@ -86,7 +103,14 @@ function VendorRegistration() {
       _business_name: business.trim(), _owner_name: owner.trim(), _phone: phone.trim(), _gstin: gstin.trim(), _city: city.trim(), _address: address.trim(),
     });
     setSaving(false);
-    if (error || !data) { toast.error("Could not submit vendor application", { description: error?.message ?? "Please try again." }); return; }
+    if (error || !data) {
+      const message = error?.message ?? "Please try again.";
+      const description = /customer account to request vendor access/i.test(message)
+        ? "This login is not a customer account (channel partner, staff or admin logins can't apply). Sign out, then sign in or register with the applicant's own customer account."
+        : message;
+      toast.error("Could not submit vendor application", { description });
+      return;
+    }
     const { data: row } = await supabase.from("vendor_applications").select("id,status,admin_notes,vendor_id,created_at").eq("id", data).single();
     if (row) setApplication(row);
     toast.success("Vendor application submitted for review");
@@ -96,7 +120,15 @@ function VendorRegistration() {
     return <AuthCard title="Vendor applications are not open yet" subtitle="Grain Bazar is currently selling its own products only."><p className="text-sm text-slate">Please check back later. You can still shop as a customer.</p><Link to="/" className="mt-3 inline-block font-semibold text-gold hover:underline">Go to the store</Link></AuthCard>;
   }
   if (!user) return <AuthCard title="Apply to become a vendor" subtitle="Create or sign in to your customer account first. Vendor access is granted after an administrator reviews your business details." footer={<><Link to="/register" className="font-semibold text-gold hover:underline">Create customer account</Link><span className="mx-2">·</span><Link to="/login" className="font-semibold text-gold hover:underline">Sign in</Link></>}><p className="text-sm text-slate">Applications are linked to your signed-in account. Public forms cannot create vendor roles or accounts directly.</p></AuthCard>;
-  if (user.role !== "customer") return <AuthCard title="Vendor application" subtitle="Sign in with a customer account to apply."><Link to="/vendor/login" className="font-semibold text-gold hover:underline">Go to vendor sign in</Link></AuthCard>;
+  if (roles === null) return <AuthCard title="Vendor application" subtitle="Checking your account…"><p className="text-sm text-slate">One moment.</p></AuthCard>;
+  if (roles.includes("vendor")) return <AuthCard title="You already have vendor access" subtitle="This account is already an approved vendor, so it does not need a new application."><Link to="/vendor/login" className="font-semibold text-gold hover:underline">Go to vendor sign in</Link></AuthCard>;
+  if (!canApply) {
+    const kind = roles.includes("admin") ? "an administrator" : "a channel partner or staff";
+    return <AuthCard title="Use the applicant's own customer account" subtitle={`You are signed in with ${kind} login. Vendor applications must come from the business owner's own customer account.`} footer={<><Link to="/register" className="font-semibold text-gold hover:underline">Create customer account</Link><span className="mx-2">·</span><Link to="/login" className="font-semibold text-gold hover:underline">Customer sign in</Link></>}>
+      <p className="text-sm text-slate">Sign out, then the person who wants to sell signs in (or registers) with their own email. After an administrator approves the application in Admin › Vendors, that same account gets vendor access.</p>
+      <Button type="button" variant="outline" className="mt-3 w-full" onClick={() => logout()}>Sign out</Button>
+    </AuthCard>;
+  }
 
   return <AuthCard title="Vendor application" subtitle="Submit your business details for administrator review. Approval enables vendor access on this same account." footer={<Link to="/vendor/login" className="font-semibold text-gold hover:underline">Already approved? Vendor sign in</Link>}>
     {loading ? <p className="text-sm text-slate">Loading application…</p> : application && <div className="mb-5 rounded-md border border-border p-4">
