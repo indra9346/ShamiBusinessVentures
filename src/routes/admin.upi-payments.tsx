@@ -323,6 +323,11 @@ function AdminUpiPayments() {
               <Label>Minutes to pay</Label>
               <Input type="number" min={5} max={60} value={form.payWindowMinutes} onChange={(e) => setForm({ ...form, payWindowMinutes: Number(e.target.value) })} />
             </div>
+            <div className="grid gap-1.5">
+              <Label>Extra minutes after the UPI app</Label>
+              <Input type="number" min={0} max={10} value={form.extraMinutesAfterApp ?? 0} onChange={(e) => setForm({ ...form, extraMinutesAfterApp: Number(e.target.value) })} />
+              <p className="text-[11px] text-slate">{`Given once when the customer comes back from their UPI app (or copies the UPI ID) to type the UTR. 0 = exactly ${form.payWindowMinutes || 0} minutes in all.`}</p>
+            </div>
             <label className="flex items-center gap-3 self-end text-sm">
               <Switch checked={form.enabled} onCheckedChange={(enabled) => setForm({ ...form, enabled })} />
               <span>

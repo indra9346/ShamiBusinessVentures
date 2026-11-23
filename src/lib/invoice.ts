@@ -13,7 +13,7 @@ import {
 import { DEMO_BRANCH, branchFromRow, defaultBranchOf, type Branch } from "@/lib/branches";
 import { sellerAddressLines } from "@/lib/invoice-seller";
 import {
-  DELIVERY_QR_NOTE, godownLine, handoverWords, invoiceBalance, invoiceDelivery, invoiceLines, invoicePayments, invoiceQrCode, issuedZohoNumber,
+  DELIVERY_QR_NOTE, godownLine, handoverDetails, handoverWords, invoiceBalance, invoiceDelivery, invoiceLines, invoicePayments, invoiceQrCode, issuedZohoNumber,
   type InvoiceDelivery, type InvoiceFacts, type InvoicePaymentRow, type Line, type ZohoInvoiceCopy,
 } from "@/lib/invoice-lines";
 import { GODOWN_SIGNATURE_BUCKET } from "@/lib/godown-signature";
@@ -421,65 +421,89 @@ export async function buildInvoicePdf(order: Order, options: InvoiceOptions = {}
   };
 
   /**
-   * Under the QR (owner, 11 Nov 2026: "below QR code it should mention who handed over goods and time"): who handed
-   * over which item, when, with their role and mobile, at which godown, in English and Kannada; nothing before any
-   * hand-over. Measured first, so the QR and these lines stay on one page together.
+   * Under the QR (owner, 11 Nov 2026: "below QR code it should mention who handed over goods and time"; Sandesh,
+   * 21 Nov 2026: "Handed Over, Delivery Time, Handed Over By name and Mobile Number, Location one below one neatly"):
+   * one block of labelled rows per person and moment, the label in English with its Kannada beside it; nothing before
+   * any hand-over. Measured first, so the QR and these rows stay on one page together.
    */
   const handoverBlock = (facts: InvoiceDelivery | null) => {
-    const LABEL_W = 23;
+    const LABEL_W = 48;
     const LINE = 3.05;
-    const GAP = 0.9;
+    const GAP = 0.5;
+    const BLOCK_GAP = 1.8;
     const textX = M + LABEL_W;
     const textW = R - textX;
-    type Row = { label: string; lines: string[]; kannada: ReturnType<typeof canvasTextImage>; beside: boolean };
+    type Row = { label: string; labelKn: ReturnType<typeof canvasTextImage>; lines: string[]; kannada: ReturnType<typeof canvasTextImage>; blockStart: boolean };
     pdf.setFont("helvetica", "normal");
     pdf.setFontSize(7.4);
     // Before any hand-over the invoice prints nothing here (the order page says "not handed over yet"), so an
-    // ordinary order stays on one page; the lines come once the godown hands the goods over.
+    // ordinary order stays on one page; the rows come once the godown hands the goods over.
     const words = handoverWords(facts, order.status);
-    const rows: Row[] = (words.done ? words.lines : []).map((line, index) => {
-      const lines = pdf.splitTextToSize(line.en, textW) as string[];
-      const kannada = canvasTextImage(line.kn, { sizePt: 7, maxWidthMm: textW, color: ink });
-      // A short sentence ("Not handed over yet.") keeps its Kannada beside it, on the same line.
-      const beside = Boolean(kannada) && lines.length === 1 && pdf.getTextWidth(lines[0] ?? "") + 3 + (kannada?.width ?? 0) <= textW;
-      return { label: index === 0 ? "HANDED OVER" : "", lines, kannada, beside };
-    });
-    const rowHeight = (row: Row) => (row.beside && row.kannada
-      ? Math.max(LINE, row.kannada.height)
-      : row.lines.length * LINE + (row.kannada ? 0.2 + row.kannada.height : 0));
-    // A small gap above the rows and between them; none after the last.
-    const height = rows.length ? 0.8 + rows.reduce((sum, row) => sum + rowHeight(row), 0) + GAP * (rows.length - 1) : 0;
+    const details = words.done ? handoverDetails(facts) : [];
+    const labelImage = (kn: string, en: string) => {
+      pdf.setFont("helvetica", "bold");
+      const room = LABEL_W - pdf.getTextWidth(en) - 3;
+      pdf.setFont("helvetica", "normal");
+      return room > 6 ? canvasTextImage(kn, { sizePt: 6.4, maxWidthMm: room, color: muted }) : null;
+    };
+    const rows: Row[] = details.length
+      ? details.flatMap((block) => block.map((field, index) => ({
+        label: field.en, labelKn: labelImage(field.kn, field.en), lines: pdf.splitTextToSize(field.value, textW) as string[], kannada: null, blockStart: index === 0,
+      })))
+      // An order the office marked delivered (no godown hand-over): its sentence, in English and Kannada.
+      : (words.done ? words.lines : []).map((line) => ({
+        label: "Handed over", labelKn: labelImage("ಹಸ್ತಾಂತರ", "Handed over"), lines: pdf.splitTextToSize(line.en, textW) as string[],
+        kannada: canvasTextImage(line.kn, { sizePt: 7, maxWidthMm: textW, color: ink }), blockStart: true,
+      }));
+    const rowHeight = (row: Row) => Math.max(row.lines.length * LINE + (row.kannada ? 0.2 + row.kannada.height : 0), row.labelKn?.height ?? 0, LINE);
+    const gapBefore = (index: number) => (index === 0 ? 0 : rows[index]!.blockStart ? BLOCK_GAP : GAP);
+    const TITLE = 4.2;
+    const height = rows.length ? 0.8 + TITLE + rows.reduce((sum, row, index) => sum + gapBefore(index) + rowHeight(row), 0) : 0;
     const draw = (top: number) => {
       let at = top + 0.8;
+      const title = (contd: boolean) => {
+        pdf.setFont("helvetica", "bold");
+        pdf.setFontSize(7.6);
+        pdf.setTextColor(...navy);
+        pdf.text(contd ? "HANDED OVER (contd.)" : "HANDED OVER", M, at + 2.6);
+        at += TITLE;
+      };
+      if (rows.length) title(false);
       rows.forEach((row, rowIndex) => {
+        at += gapBefore(rowIndex);
         // A long list (many items handed over one at a time) carries on onto the next page, never over the footer.
-        let label = row.label;
         if (at + rowHeight(row) > H - 17) {
           newPage(false);
           at = y + 0.8;
-          label = "HANDED OVER (contd.)";
+          title(true);
+        }
+        if (row.blockStart && rowIndex > 0) {
+          pdf.setDrawColor(...rule);
+          pdf.line(M, at - BLOCK_GAP / 2, R, at - BLOCK_GAP / 2);
         }
         const baseline = at + 2.3;
-        if (label) {
-          pdf.setFont("helvetica", "bold");
-          pdf.setFontSize(7.4);
-          pdf.setTextColor(...navy);
-          pdf.text(pdf.splitTextToSize(label, LABEL_W - 1) as string[], M, baseline);
+        pdf.setFont("helvetica", "bold");
+        pdf.setFontSize(7.4);
+        pdf.setTextColor(...ink);
+        pdf.text(row.label, M, baseline);
+        if (row.labelKn) {
+          try {
+            pdf.addImage(row.labelKn.dataUrl, "PNG", M + pdf.getTextWidth(row.label) + 1.5, at + 0.2, row.labelKn.width, row.labelKn.height, undefined, "FAST");
+          } catch {
+            /* the English label still says it */
+          }
         }
         pdf.setFont("helvetica", "normal");
-        pdf.setFontSize(7.4);
         pdf.setTextColor(...ink);
         row.lines.forEach((text, index) => pdf.text(text, textX, baseline + index * LINE));
         if (row.kannada) {
-          const x = row.beside ? textX + pdf.getTextWidth(row.lines[0] ?? "") + 3 : textX;
-          const imageTop = row.beside ? at : at + row.lines.length * LINE + 0.2;
           try {
-            pdf.addImage(row.kannada.dataUrl, "PNG", x, imageTop, row.kannada.width, row.kannada.height, undefined, "FAST");
+            pdf.addImage(row.kannada.dataUrl, "PNG", textX, at + row.lines.length * LINE + 0.2, row.kannada.width, row.kannada.height, undefined, "FAST");
           } catch {
             /* the English sentence still says it */
           }
         }
-        at += rowHeight(row) + (rowIndex < rows.length - 1 ? GAP : 0);
+        at += rowHeight(row);
       });
       return at;
     };

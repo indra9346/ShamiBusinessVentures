@@ -4,7 +4,7 @@ import { Minus, Plus, ShoppingBag, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { SiteLayout, Breadcrumbs } from "@/components/site/SiteLayout";
-import { getAvailablePurchaseQuantity, getMaxPurchaseQuantity, inr, inrPrecise, type Product } from "@/lib/data";
+import { getAvailablePurchaseQuantity, getMaxPurchaseQuantity, inr, inrPrecise, showsMrpSavings, type Product } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { resizedImage } from "@/lib/image-url";
 import { useStorefrontDisplay } from "@/lib/storefront-display";
@@ -131,7 +131,7 @@ function Cart() {
                   </Link>
                   <p className="mt-1 text-xs text-slate">
                     {product.weight}
-                    {display.showMrpSavings && product.mrp > product.price && (
+                    {showsMrpSavings(product, display.showMrpSavings) && product.mrp > product.price && (
                       <>
                         {" "}· MRP <span className="line-through">{inr(product.mrp)}</span> ·{" "}
                         <span className="font-semibold text-gold">Save {inr(product.mrp - product.price)}</span>

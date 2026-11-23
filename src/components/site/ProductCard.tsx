@@ -1,6 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { Heart, Package, Star } from "lucide-react";
-import { formatRateBasis, getDisplayDiscountPercent, getPricingDisplayMode, inr, inrPrecise, type Product } from "@/lib/data";
+import { formatRateBasis, getDisplayDiscountPercent, getPricingDisplayMode, inr, inrPrecise, showsMrpSavings, type Product } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { responsiveImage, showOriginalImage } from "@/lib/image-url";
@@ -95,7 +95,10 @@ export function ProductCard({
 }) {
   const { addToCart, toggleWishlist, wishlist } = useApp();
   const display = useStorefrontDisplay();
-  const off = display.showMrpSavings ? getDisplayDiscountPercent(product) : 0;
+  const savings = showsMrpSavings(product, display.showMrpSavings);
+  const off = savings ? getDisplayDiscountPercent(product) : 0;
+  // "Direct MRP Only" still says "MRP" beside the price when the store-wide switch is on, as before.
+  const priceExtras = savings || (display.showMrpSavings && getPricingDisplayMode(product) === "mrp_only");
   const wished = wishlist.includes(product.id);
   const readyStock = Math.max(0, Math.floor((Number(product.stock) || 0) - (Number(product.reserved) || 0)));
   const arriving = Math.max(0, Number(product.incoming) || 0);
@@ -235,7 +238,7 @@ export function ProductCard({
               {rateLabel}
             </div>
             <div className="py-1">
-              <PriceBlock product={product} size="lg" showSavings={display.showMrpSavings} beside={unitChip} />
+              <PriceBlock product={product} size="lg" showSavings={priceExtras} beside={unitChip} />
             </div>
             {stockIndicator}
           </div>
@@ -278,7 +281,7 @@ export function ProductCard({
           {rateLabel}
         </div>
         <div className="mt-1 mb-0.5">
-          <PriceBlock product={product} showSavings={display.showMrpSavings} beside={unitChip} />
+          <PriceBlock product={product} showSavings={priceExtras} beside={unitChip} />
         </div>
         {stockIndicator}
 

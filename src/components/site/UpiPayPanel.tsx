@@ -6,6 +6,7 @@ import { inrPrecise } from "@/lib/data";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { normaliseUtr, settingsProblem, upiPaymentUri, utrProblem, type UpiSettings } from "@/lib/upi-pay";
 import { UpiAppButtons } from "@/components/site/UpiAppButtons";
+import { GalleryQrLimitNote } from "@/components/site/GalleryQrLimitNote";
 import { UpiIdPay } from "@/components/site/UpiIdPay";
 import { payPanelId } from "@/lib/upi-return";
 import { BankTransferDetails, BankUtrForm } from "@/components/site/BankTransferPay";
@@ -144,6 +145,7 @@ export function UpiPayPanel({ settings, orderNo, amount, customer }: { settings:
               <li>Check the amount <span className="font-semibold">{inrPrecise(amount)}</span> and pay to <span className="font-semibold">{settings.payeeName}</span>.</li>
               <li>Copy the 12-digit <span className="font-semibold">UTR / UPI Ref. No.</span> from the payment receipt and enter it here.</li>
             </ol>
+            <GalleryQrLimitNote amount={amount} />
             <UpiAppButtons uri={uri} returnTo={payPanelId(orderNo)} />
             <UpiIdPay orderNo={orderNo} vpa={settings.vpa} payeeName={settings.payeeName} amount={amount} keepCheckout={false} />
           </div>

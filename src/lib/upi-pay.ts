@@ -13,10 +13,15 @@ export type UpiSettings = {
   payeeName: string;
   /** Minutes the customer has to pay before the QR is shown as expired (they can reopen it). */
   payWindowMinutes: number;
+  /**
+   * Extra minutes given once when the customer comes back from their UPI app or copies the UPI ID, to type the UTR
+   * (0 to 10). Sandesh, 19 Nov 2026: "kept 10 mins but it is giving 20 mins": this was a fixed 10, now the admin's.
+   */
+  extraMinutesAfterApp: number;
 };
 
 export const UPI_SETTINGS_KEY = "upi_direct";
-export const DEFAULT_UPI_SETTINGS: UpiSettings = { enabled: false, vpa: "", payeeName: "Shami Business Ventures", payWindowMinutes: 15 };
+export const DEFAULT_UPI_SETTINGS: UpiSettings = { enabled: false, vpa: "", payeeName: "Shami Business Ventures", payWindowMinutes: 15, extraMinutesAfterApp: 0 };
 
 export type UpiSubmissionStatus = "submitted" | "confirmed" | "rejected";
 export type UpiSubmission = {
@@ -81,6 +86,7 @@ export function settingsProblem(settings: UpiSettings): string | null {
   if (!isValidVpa(settings.vpa)) return "Enter the business UPI ID, like shamibusiness@icici";
   if (!settings.payeeName.trim()) return "Enter the business name customers see in their UPI app";
   if (!(settings.payWindowMinutes >= 5 && settings.payWindowMinutes <= 60)) return "Payment time must be 5 to 60 minutes";
+  if (!(settings.extraMinutesAfterApp >= 0 && settings.extraMinutesAfterApp <= 10)) return "Extra time after the UPI app must be 0 to 10 minutes";
   return null;
 }
 

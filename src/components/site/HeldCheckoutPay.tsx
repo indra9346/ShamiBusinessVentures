@@ -17,6 +17,7 @@ import { ReorderButton } from "@/components/site/ReorderButton";
 import { isBankMethod, lapsedTransfer, REFUNDED_UTR_NOTE, REUSED_UTR_NOTE, UNCHECKED_UTR_NOTE } from "@/lib/payment-rules";
 import { useBankDetails, useUpiPayments } from "@/lib/upi-store";
 import { SendUtrForm, UpiIdPay, UpiUtrForm } from "@/components/site/UpiIdPay";
+import { GalleryQrLimitNote } from "@/components/site/GalleryQrLimitNote";
 import { cn } from "@/lib/utils";
 
 /**
@@ -106,7 +107,7 @@ export function HeldCheckoutPay({ settings, orderNo, amount, holdUntil, customer
     if (STATIC_DATA_MODE && view === "closing") void cancelPaymentHold(orderNo);
   }, [view, orderNo, cancelPaymentHold]);
 
-  // Back from the UPI app: ask for the UTR at once, and keep the order 10 more minutes (once) while it is typed.
+  // Back from the UPI app: ask for the UTR at once, and keep the order the admin's extra minutes (once, 0-10) while it is typed.
   // Until the bank SMS reaches the site, the UTR is how we learn that this payment was made.
   const [backFromApp, setBackFromApp] = useState(false);
   useEffect(() => {
@@ -269,6 +270,7 @@ export function HeldCheckoutPay({ settings, orderNo, amount, holdUntil, customer
                 <li>Pay exactly <span className="font-semibold">{inrPrecise(amount)}</span> to <span className="font-semibold">{settings?.payeeName}</span>.</li>
                 <li>Come back here and enter the 12-digit UPI Ref No. (UTR) from the payment receipt. Our team confirms it with our bank and your order is placed.</li>
               </ol>
+              <GalleryQrLimitNote amount={amount} />
               <UpiAppButtons uri={uri} returnTo={payPanelId(orderNo)} />
               {settings?.vpa && (
                 <UpiIdPay orderNo={orderNo} vpa={settings.vpa} payeeName={settings.payeeName} amount={amount}
@@ -282,7 +284,7 @@ export function HeldCheckoutPay({ settings, orderNo, amount, holdUntil, customer
             {backFromApp && submission?.status !== "rejected" && (
               <div role="status" className="mb-3 rounded-md border-2 border-amber-400 bg-amber-50 p-3 text-sm text-amber-950">
                 <p className="font-bold">Payment done? Enter its UPI Ref No. now</p>
-                <p className="mt-0.5">It is the 12-digit number on the receipt in your UPI app (UPI Ref No., UPI transaction ID or UTR). Your order is kept for you while you enter it.</p>
+                <p className="mt-0.5">{`It is the 12-digit number on the receipt in your UPI app (UPI Ref No., UPI transaction ID or UTR). ${(settings?.extraMinutesAfterApp ?? 0) > 0 ? "Your order is kept for you while you enter it." : "Enter it before the time runs out."}`}</p>
               </div>
             )}
             <UpiUtrForm orderNo={orderNo} amount={amount} customer={customer} submission={submission} />

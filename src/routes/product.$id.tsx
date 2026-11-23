@@ -5,7 +5,7 @@ import { Heart, Minus, Plus, ShieldCheck, Star, Truck, Store, ShoppingCart } fro
 import { toast } from "sonner";
 import { SiteLayout, Breadcrumbs, SectionHeading } from "@/components/site/SiteLayout";
 import { ProductCard } from "@/components/site/ProductCard";
-import { getAvailablePurchaseQuantity, getDisplayDiscountPercent, getMaxPurchaseQuantity, getPricingDisplayMode, formatRateBasis, inr, inrPrecise, isStorefrontProduct } from "@/lib/data";
+import { getAvailablePurchaseQuantity, getDisplayDiscountPercent, getMaxPurchaseQuantity, getPricingDisplayMode, formatRateBasis, inr, inrPrecise, isStorefrontProduct, showsMrpSavings } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { useStorefrontDisplay } from "@/lib/storefront-display";
 import { usePickupSettings } from "@/lib/pickup-points";
@@ -237,7 +237,7 @@ function ProductDetail() {
             {formatRateBasis(product) && (
               <span className="text-sm font-semibold text-stone-600">({formatRateBasis(product)})</span>
             )}
-            {!display.showMrpSavings ? null : mrpOnly ? (
+            {!(showsMrpSavings(product, display.showMrpSavings) || (display.showMrpSavings && mrpOnly)) ? null : mrpOnly ? (
               <span className="text-sm font-medium text-stone-500">MRP</span>
             ) : (
               <>
