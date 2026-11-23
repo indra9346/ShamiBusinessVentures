@@ -365,8 +365,10 @@ export const scanDeliveryPaper = createServerFn({ method: "POST" })
       scan = result as unknown as PaperScan;
     }
     if (scan.order_delivered && orderNo) {
-      const { pushOrderToZohoFromServer } = await import("@/lib/zoho-commerce.functions");
+      const { pushOrderToZohoFromServer, tellCustomerHandedOver } = await import("@/lib/zoho-commerce.functions");
       await pushOrderToZohoFromServer(orderNo, "Website → Zoho: delivered on the godown's QR handover");
+      // The customer's hand-over SMS, once per order, when switched on (23 Nov 2026). Never stops the hand-over.
+      await tellCustomerHandedOver(orderNo);
     }
     return scan;
   });

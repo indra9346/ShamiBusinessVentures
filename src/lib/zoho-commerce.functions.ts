@@ -32,7 +32,7 @@ import {
 import { gstStateCodeOf } from "@/lib/gstin";
 import {
   CUSTOMER_MESSAGES_KEY, cleanCustomerMessageSettings, customerMessageSettingsProblem, firstIndianMobile, indianMobile, invoiceEmail, isEmail, orderInMessageWindow,
-  type ConfirmedOrder, type CustomerMessageSettings,
+  type ConfirmedOrder, type CustomerMessageSettings, type HandedOverOrder,
 } from "@/lib/customer-messages";
 import { verifyZohoSignature, webhookSecrets } from "@/lib/zoho-sync-core";
 import { drainWebhookInbox, type InboxResult, type WebhookRecord } from "@/lib/zoho-webhook-inbox";
@@ -3312,16 +3312,7 @@ async function tellCustomerOrderConfirmed(
       });
     }
     if (settings.sms) {
-      // The order's number first; a pickup order often has none, so then the customer's profile, then their saved addresses
-      // (default first, newest next).
-      let mobile = indianMobile(order.customer_phone);
-      if (!mobile && order.user_id) {
-        const [{ data: profile }, { data: addresses }] = await Promise.all([
-          db.from("profiles").select("phone").eq("id", order.user_id).maybeSingle(),
-          db.from("addresses").select("phone").eq("user_id", order.user_id).order("is_default", { ascending: false }).order("updated_at", { ascending: false }).limit(5),
-        ]);
-        mobile = firstIndianMobile(profile?.phone, ...(addresses ?? []).map((a) => a.phone));
-      }
+      const mobile = await customerMobile(db, order);
       await sendCustomerMessage(db, order, "confirm_sms", mobile, mobile ? "" : "No Indian mobile number on the order or the customer's account", () => sendOrderSms(mobile, settings, confirmed));
     }
   } catch (cause) {
@@ -3329,8 +3320,63 @@ async function tellCustomerOrderConfirmed(
   }
 }
 
+/**
+ * The customer's mobile for an SMS: the order's number first; a pickup order often has none, so then the customer's
+ * profile, then their saved addresses (default first, newest next).
+ */
+async function customerMobile(db: Awaited<ReturnType<typeof dbAdmin>>, order: Pick<Database["public"]["Tables"]["orders"]["Row"], "customer_phone" | "user_id">) {
+  let mobile = indianMobile(order.customer_phone);
+  if (!mobile && order.user_id) {
+    const [{ data: profile }, { data: addresses }] = await Promise.all([
+      db.from("profiles").select("phone").eq("id", order.user_id).maybeSingle(),
+      db.from("addresses").select("phone").eq("user_id", order.user_id).order("is_default", { ascending: false }).order("updated_at", { ascending: false }).limit(5),
+    ]);
+    mobile = firstIndianMobile(profile?.phone, ...(addresses ?? []).map((a) => a.phone));
+  }
+  return mobile;
+}
+
+/**
+ * The hand-over SMS (client and Sandesh, 23 Nov 2026: "once the channel partner marks the product handed over at the
+ * godown, the message should go to that customer"): once per order, when the godown's QR hand-over completes the order,
+ * only while the admin has it switched on, and only through an order-sms function that knows the "delivered" kind.
+ * Never throws: the hand-over itself is already saved.
+ */
+export async function tellCustomerHandedOver(orderNo: string) {
+  try {
+    const db = await dbAdmin();
+    const { data: cfg } = await db.from("settings").select("value").eq("key", CUSTOMER_MESSAGES_KEY).maybeSingle();
+    const settings = cleanCustomerMessageSettings(cfg?.value);
+    if (!settings.deliverySms || !settings.deliverySince) return;
+    const { data: order } = await db.from("orders").select("*").eq("order_no", orderNo).maybeSingle();
+    if (!order || order.order_status !== "Delivered") return;
+    if (Date.now() - Date.parse(settings.deliverySince) < 0) return;
+    const { data: branch } = order.branch_id ? await db.from("branches").select("name").eq("id", order.branch_id).maybeSingle() : { data: null };
+    const mobile = await customerMobile(db, order);
+    const handedOver: HandedOverOrder = { orderNo: order.order_no, godown: str(branch?.name), at: new Date().toISOString() };
+    await sendCustomerMessage(db, order, "delivered_sms", mobile, mobile ? "" : "No Indian mobile number on the order or the customer's account", async () => {
+      await orderSmsKnows("delivered");
+      return sendOrderSms(mobile, settings, { orderNo: handedOver.orderNo, customer: str(order.customer_name), total: Number(order.total) || 0, godown: handedOver.godown, invoiceNumber: "", pickup: true }, "delivered", handedOver.at);
+    });
+  } catch (cause) {
+    console.warn(zohoLogLine("customer_message_failed", { order: orderNo, message: errorText(cause).slice(0, 200) }));
+  }
+}
+
+/** Throws unless the deployed order-sms function knows this kind (an older copy would send the wrong text). */
+async function orderSmsKnows(kind: string) {
+  const url = process.env["SUPABASE_URL"];
+  const key = process.env["SUPABASE_SERVICE_ROLE_KEY"];
+  if (!url || !key) throw new Error("Server configuration is missing the Supabase service settings");
+  const response = await fetch(`${url.replace(/\/$/, "")}/functions/v1/order-sms`, { method: "GET", headers: { authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(10_000) });
+  const reply = (await response.json().catch(() => null)) as { kinds?: unknown } | null;
+  if (!response.ok || !Array.isArray(reply?.kinds) || !reply.kinds.includes(kind)) {
+    throw new Error("The order-sms function in Supabase is the older copy: deploy the new one, then hand-over SMS can go");
+  }
+}
+
 /** Claims the order's message (once), sends it, and records what happened. */
-async function sendCustomerMessage(db: Awaited<ReturnType<typeof dbAdmin>>, order: { id: string; order_no: string }, kind: "invoice_email" | "confirm_sms",
+async function sendCustomerMessage(db: Awaited<ReturnType<typeof dbAdmin>>, order: { id: string; order_no: string }, kind: "invoice_email" | "confirm_sms" | "delivered_sms",
   sentTo: string, skipReason: string, send: () => Promise<string>) {
   const { error: claimError } = await db.from("order_customer_messages").insert({ order_id: order.id, order_no: order.order_no, kind, sent_to: sentTo.slice(0, 200), status: skipReason ? "skipped" : "sending", detail: skipReason });
   if (claimError) return; // already sent (or being sent) for this order, or the table is not there yet
@@ -3347,13 +3393,13 @@ async function sendCustomerMessage(db: Awaited<ReturnType<typeof dbAdmin>>, orde
 }
 
 /** One SMS through the Supabase function order-sms (it holds the Fast2SMS key). */
-async function sendOrderSms(mobile: string, settings: CustomerMessageSettings, order: ConfirmedOrder) {
+async function sendOrderSms(mobile: string, settings: CustomerMessageSettings, order: ConfirmedOrder, kind: "confirmed" | "delivered" = "confirmed", at = "") {
   const url = process.env["SUPABASE_URL"];
   const key = process.env["SUPABASE_SERVICE_ROLE_KEY"];
   if (!url || !key) throw new Error("Server configuration is missing the Supabase service settings");
   const response = await fetch(`${url.replace(/\/$/, "")}/functions/v1/order-sms`, {
     method: "POST", headers: { authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ mobile, settings, order }), signal: AbortSignal.timeout(15_000),
+    body: JSON.stringify(kind === "delivered" ? { mobile, settings, kind, order: { ...order, at } } : { mobile, settings, order }), signal: AbortSignal.timeout(15_000),
   });
   const reply = (await response.json().catch(() => null)) as { ok?: boolean; requestId?: string; error?: string } | null;
   if (!response.ok || !reply?.ok) throw new Error(reply?.error || `The SMS service answered ${response.status}`);
@@ -3373,17 +3419,18 @@ export const getCustomerMessages = createServerFn({ method: "GET" })
 
 export const setCustomerMessages = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .validator(z.object({ email: z.boolean(), sms: z.boolean(), smsRoute: z.enum(["q", "dlt"]), senderId: z.string().max(10), dltMessageId: z.string().max(30) }))
+  .validator(z.object({ email: z.boolean(), sms: z.boolean(), smsRoute: z.enum(["q", "dlt"]), senderId: z.string().max(10), dltMessageId: z.string().max(30), deliverySms: z.boolean().optional(), deliveryDltMessageId: z.string().max(30).optional() }))
   .handler(async ({ data, context }) => {
     await ensureAdmin(context.supabase, context.userId);
     const db = await dbAdmin();
     const { data: cfg } = await db.from("settings").select("value").eq("key", CUSTOMER_MESSAGES_KEY).maybeSingle();
     const before = cleanCustomerMessageSettings(cfg?.value);
-    const next = cleanCustomerMessageSettings({ ...data, since: before.since });
+    const next = cleanCustomerMessageSettings({ ...before, ...data, since: before.since, deliverySince: before.deliverySince });
     const problem = customerMessageSettingsProblem(next);
     if (problem) throw new Error(problem);
     // Switched on now (it was off): only orders from now on get messages.
     if ((next.email && !before.email) || (next.sms && !before.sms)) next.since = new Date().toISOString();
+    if (next.deliverySms && !before.deliverySms) next.deliverySince = new Date().toISOString();
     const { error } = await db.from("settings").upsert({ key: CUSTOMER_MESSAGES_KEY, value: next as unknown as Json, is_public: false, updated_at: new Date().toISOString() });
     if (error) throw new Error("Could not save the customer message settings");
     return next;

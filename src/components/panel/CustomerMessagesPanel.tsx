@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils";
 
 type Recent = { order_no: string; kind: string; status: string; sent_to: string; detail: string; created_at: string };
 const when = (iso: string) => new Date(iso).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit", timeZone: "Asia/Kolkata" });
-const KIND: Record<string, string> = { invoice_email: "Invoice email", confirm_sms: "SMS" };
+const KIND: Record<string, string> = { invoice_email: "Invoice email", confirm_sms: "SMS", delivered_sms: "Hand-over SMS" };
 const TONE: Record<string, string> = { sent: "text-emerald-700", failed: "text-red-700", skipped: "text-slate", sending: "text-amber-800" };
 
 /*
@@ -46,7 +46,7 @@ export function CustomerMessagesPanel() {
     try {
       if (STATIC_DATA_MODE) { setSettings(next); toast.success("Preview: nothing is saved"); return; }
       const { setCustomerMessages } = await import("@/lib/zoho-commerce.functions");
-      setSettings(await setCustomerMessages({ data: { email: next.email, sms: next.sms, smsRoute: next.smsRoute, senderId: next.senderId, dltMessageId: next.dltMessageId } }));
+      setSettings(await setCustomerMessages({ data: { email: next.email, sms: next.sms, smsRoute: next.smsRoute, senderId: next.senderId, dltMessageId: next.dltMessageId, deliverySms: next.deliverySms, deliveryDltMessageId: next.deliveryDltMessageId } }));
       toast.success("Customer messages saved");
     } catch (cause) {
       setProblem(cause instanceof Error ? cause.message : "Could not save");
@@ -81,6 +81,11 @@ export function CustomerMessagesPanel() {
           <span><span className="flex items-center gap-1.5 font-semibold text-navy"><MessageSquare className="h-4 w-4" />Order confirmation SMS</span>
             <span className="block text-xs text-slate">"Grain Bazar: Payment received. Order … for Rs … is confirmed. Collect at … Invoice … Thank you." Sent by Fast2SMS (the same account as the sign-in codes), once per order.</span></span>
         </label>
+        <label className="flex items-start gap-3">
+          <Switch checked={settings.deliverySms} disabled={saving} onCheckedChange={(deliverySms) => void save({ ...settings, deliverySms })} />
+          <span><span className="flex items-center gap-1.5 font-semibold text-navy"><MessageSquare className="h-4 w-4" />Hand-over SMS when the godown hands the order over</span>
+            <span className="block text-xs text-slate">"Grain Bazar: Your order … was handed over at … on … Thank you for shopping with us." Sent once per order when the channel partner's QR hand-over completes it. Needs the new order-sms function deployed in Supabase; until then nothing is sent and the list below says why.</span></span>
+        </label>
         <div className="grid gap-2 rounded-md border border-border bg-slate-50 p-3">
           <p className="text-xs font-bold uppercase tracking-wide text-slate">SMS route</p>
           <label className="flex items-center gap-2"><input type="radio" name="sms-route" checked={settings.smsRoute === "q"} onChange={() => setSettings({ ...settings, smsRoute: "q" })} />Quick SMS: plain text, no DLT needed, costs more per SMS</label>
@@ -89,6 +94,7 @@ export function CustomerMessagesPanel() {
             <div className="flex flex-wrap gap-2 pl-6">
               <label className="grid gap-1 text-xs font-semibold text-slate">Sender ID<Input className="w-32" maxLength={6} value={settings.senderId} onChange={(e) => setSettings({ ...settings, senderId: e.target.value.toUpperCase() })} /></label>
               <label className="grid gap-1 text-xs font-semibold text-slate">Fast2SMS message ID<Input className="w-40" value={settings.dltMessageId} onChange={(e) => setSettings({ ...settings, dltMessageId: e.target.value })} /></label>
+              <label className="grid gap-1 text-xs font-semibold text-slate">Hand-over template message ID (order no, godown, time)<Input className="w-40" value={settings.deliveryDltMessageId} onChange={(e) => setSettings({ ...settings, deliveryDltMessageId: e.target.value })} /></label>
             </div>
           )}
           <Button size="sm" variant="outline" className="justify-self-start" disabled={saving} onClick={() => void save(settings)}>Save route</Button>

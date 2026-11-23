@@ -10,16 +10,20 @@ declare const Deno: {
   serve(handler: (request: Request) => Response | Promise<Response>): void;
 };
 
-import { cleanCustomerMessageSettings, fast2smsOrderRequest, indianMobile, type ConfirmedOrder } from "./customer-messages.ts";
+import { cleanCustomerMessageSettings, fast2smsDeliveredRequest, fast2smsOrderRequest, indianMobile, ORDER_SMS_KINDS, type ConfirmedOrder } from "./customer-messages.ts";
 
+// 23 Nov 2026: "kind" says which SMS: "confirmed" (payment confirmed, the default, as before) or "delivered" (the godown
+// handed the order over). GET answers which kinds this deployed copy knows, so the website never sends a hand-over SMS
+// through an older copy (which would send the "Payment received" text instead).
 Deno.serve(async (request) => {
-  if (request.method !== "POST") return new Response("Method not allowed", { status: 405 });
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
   const given = (request.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
   if (!serviceKey || given !== serviceKey) return Response.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  if (request.method === "GET") return Response.json({ ok: true, kinds: ORDER_SMS_KINDS });
+  if (request.method !== "POST") return new Response("Method not allowed", { status: 405 });
   const apiKey = Deno.env.get("FAST2SMS_API_KEY") ?? "";
   if (!apiKey) return Response.json({ ok: false, error: "FAST2SMS_API_KEY is not set" }, { status: 500 });
-  let payload: { mobile?: unknown; settings?: unknown; order?: Partial<ConfirmedOrder> };
+  let payload: { mobile?: unknown; settings?: unknown; kind?: unknown; order?: Partial<ConfirmedOrder> & { at?: unknown } };
   try {
     payload = await request.json();
   } catch {
@@ -33,7 +37,11 @@ Deno.serve(async (request) => {
     godown: String(o.godown ?? "").slice(0, 60), invoiceNumber: String(o.invoiceNumber ?? "").slice(0, 40), pickup: o.pickup === true,
   };
   if (!order.orderNo) return Response.json({ ok: false, error: "No order number" }, { status: 400 });
-  const { url, init } = fast2smsOrderRequest(apiKey, mobile, cleanCustomerMessageSettings(payload.settings), order);
+  const kind = payload.kind === "delivered" ? "delivered" : "confirmed";
+  const settings = cleanCustomerMessageSettings(payload.settings);
+  const { url, init } = kind === "delivered"
+    ? fast2smsDeliveredRequest(apiKey, mobile, settings, { orderNo: order.orderNo, godown: order.godown, at: String(o.at ?? "").slice(0, 40) || new Date().toISOString() })
+    : fast2smsOrderRequest(apiKey, mobile, settings, order);
   try {
     const response = await fetch(url, { ...init, signal: AbortSignal.timeout(10_000) });
     const reply = (await response.json().catch(() => null)) as { return?: unknown; request_id?: unknown; message?: unknown } | null;

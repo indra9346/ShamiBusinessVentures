@@ -19,10 +19,19 @@ export type CustomerMessageSettings = {
   dltMessageId: string;
   /** When messages were last switched on: only orders made from a day before then get them (never a backlog). */
   since: string;
+  /**
+   * An SMS when the godown hands the order over (client and Sandesh, 23 Nov 2026: "once the channel partner marks the
+   * product handed over at the godown, the message should go to that customer"). Off until switched on.
+   */
+  deliverySms: boolean;
+  /** DLT only: the Fast2SMS message ID of the approved hand-over template (variables: order no, godown, time). */
+  deliveryDltMessageId: string;
+  /** When the hand-over SMS was last switched on (only orders handed over from then on get it). */
+  deliverySince: string;
 };
 
 export const CUSTOMER_MESSAGES_KEY = "customer_messages";
-export const DEFAULT_CUSTOMER_MESSAGES: CustomerMessageSettings = { email: false, sms: false, smsRoute: "q", senderId: "", dltMessageId: "", since: "" };
+export const DEFAULT_CUSTOMER_MESSAGES: CustomerMessageSettings = { email: false, sms: false, smsRoute: "q", senderId: "", dltMessageId: "", since: "", deliverySms: false, deliveryDltMessageId: "", deliverySince: "" };
 
 export function cleanCustomerMessageSettings(value: unknown): CustomerMessageSettings {
   const v = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
@@ -34,6 +43,9 @@ export function cleanCustomerMessageSettings(value: unknown): CustomerMessageSet
     senderId: text(v["senderId"], 40).toUpperCase().replace(/[^A-Z]/g, "").slice(0, 6),
     dltMessageId: text(v["dltMessageId"], 20).replace(/\D/g, ""),
     since: typeof v["since"] === "string" && Number.isFinite(Date.parse(v["since"])) ? v["since"] : "",
+    deliverySms: v["deliverySms"] === true,
+    deliveryDltMessageId: text(v["deliveryDltMessageId"], 20).replace(/\D/g, ""),
+    deliverySince: typeof v["deliverySince"] === "string" && Number.isFinite(Date.parse(v["deliverySince"])) ? v["deliverySince"] : "",
   };
 }
 
@@ -50,6 +62,10 @@ export function customerMessageSettingsProblem(s: CustomerMessageSettings) {
   if (s.sms && s.smsRoute === "dlt") {
     if (!/^[A-Z]{6}$/.test(s.senderId)) return "Enter the 6-letter DLT sender ID";
     if (!/^\d{3,20}$/.test(s.dltMessageId)) return "Enter the Fast2SMS message ID of the approved DLT template";
+  }
+  if (s.deliverySms && s.smsRoute === "dlt") {
+    if (!/^[A-Z]{6}$/.test(s.senderId)) return "Enter the 6-letter DLT sender ID";
+    if (!/^\d{3,20}$/.test(s.deliveryDltMessageId)) return "Enter the Fast2SMS message ID of the approved hand-over (delivery) DLT template";
   }
   return "";
 }
@@ -118,3 +134,36 @@ export function fast2smsOrderRequest(apiKey: string, mobile: string, s: Pick<Cus
     init: { method: "POST", headers: { authorization: apiKey, "Content-Type": "application/json", accept: "application/json" }, body: JSON.stringify(body) },
   };
 }
+
+/** An order the godown has handed over: for the hand-over SMS. */
+export type HandedOverOrder = { orderNo: string; godown: string; at: string };
+
+/** "23 Nov 2026, 06:53 PM": the hand-over time in India, for the SMS. */
+export function handoverSmsTime(iso: string) {
+  const at = new Date(iso);
+  if (!Number.isFinite(at.getTime())) return "";
+  return at.toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: true });
+}
+
+/** The hand-over SMS (plain text, one SMS). */
+export function orderDeliveredSms(o: HandedOverOrder) {
+  const when = handoverSmsTime(o.at);
+  return `Grain Bazar: Your order ${o.orderNo} was handed over at ${o.godown || "our godown"}${when ? ` on ${when}` : ""}. Thank you for shopping with us.`;
+}
+
+/** The hand-over DLT template's variables, in order: order no, godown, time. */
+export const orderDeliveredDltValues = (o: HandedOverOrder) => [o.orderNo, o.godown || "our godown", handoverSmsTime(o.at) || "-"];
+
+/** The Fast2SMS request for a hand-over SMS, by route. */
+export function fast2smsDeliveredRequest(apiKey: string, mobile: string, s: Pick<CustomerMessageSettings, "smsRoute" | "senderId" | "deliveryDltMessageId">, o: HandedOverOrder) {
+  const body = s.smsRoute === "dlt"
+    ? { route: "dlt", sender_id: s.senderId, message: s.deliveryDltMessageId, variables_values: orderDeliveredDltValues(o).join("|"), numbers: mobile, flash: "0" }
+    : { route: "q", message: orderDeliveredSms(o), language: "english", numbers: mobile, flash: "0" };
+  return {
+    url: FAST2SMS_URL,
+    init: { method: "POST", headers: { authorization: apiKey, "Content-Type": "application/json", accept: "application/json" }, body: JSON.stringify(body) },
+  };
+}
+
+/** The kinds of SMS the order-sms function can send; the website asks before sending a hand-over SMS. */
+export const ORDER_SMS_KINDS = ["confirmed", "delivered"] as const;
