@@ -53,7 +53,7 @@ export function BankTransferDetails({ details, amount, method, orderNo, timed = 
 }
 
 /** The box where the customer enters a NEFT or RTGS UTR. The database checks it again and tells the admins. */
-export function BankUtrForm({ orderNo, amount, method, customer, submission }: { orderNo: string; amount: number; method: string; customer: string; submission?: UpiSubmission | undefined }) {
+export function BankUtrForm({ orderNo, amount, method, customer, submission, onSent }: { orderNo: string; amount: number; method: string; customer: string; submission?: UpiSubmission | undefined; onSent?: (utr: string) => void }) {
   const [utr, setUtr] = useState("");
   const [error, setError] = useState("");
   const [sending, setSending] = useState(false);
@@ -62,8 +62,10 @@ export function BankUtrForm({ orderNo, amount, method, customer, submission }: {
     if (problem) { setError(problem); return; }
     setSending(true);
     try {
-      await submitUpiPayment({ orderNo, amount, utr: normaliseBankUtr(utr), customer });
+      const sent = normaliseBankUtr(utr);
+      await submitUpiPayment({ orderNo, amount, utr: sent, customer });
       setError("");
+      onSent?.(sent);
       toast.success("Your order has been placed", { description: `UTR received for ${orderNo}. We are confirming the transfer in our bank account; you will get a notification.`, duration: 10000 });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not send the UTR");

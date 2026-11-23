@@ -257,3 +257,35 @@ export function cleanAverageMode(value: unknown, today: string): AverageMode {
   const exclude = Array.isArray(v["exclude"]) ? [...new Set(v["exclude"].map(day).filter((x) => x && x >= from))].sort().slice(0, 366) : [];
   return { kind: "custom", from, exclude };
 }
+
+/**
+ * "Enter a new purchase quantity and at what price, and show stock finishes in average days, break-even, profit or loss
+ * where I will end" (Sandesh, 23 Nov 2026): a product's lots with stock plus a purchase not made yet, all sold at the
+ * market price. A plan only: nothing is bought or saved.
+ */
+export function plannedPurchaseOutlook(
+  lots: { lot: Pick<Lot, "salesWithGstValue" | "totalCostWithGst" | "sales" | "totalCost">; out: ReturnType<typeof marketOutlook>; perDay: number }[],
+  plan: { bags: number; priceWithGst: number },
+  marketPriceWithGst: number,
+  gstRate: number,
+  today: string,
+) {
+  const r2v = (n: number) => Math.round(n * 100) / 100;
+  const bags = Math.max(0, plan.bags);
+  const before = (withGst: number) => (gstRate > 0 ? withGst / (1 + gstRate / 100) : withGst);
+  const units = lots.reduce((sum, row) => sum + row.out.units, 0) + bags;
+  const perDay = lots.reduce((sum, row) => sum + row.perDay, 0);
+  const daysToFinish = units <= 0 ? 0 : perDay > 0 ? Math.ceil(units / perDay) : null;
+  const newMargin = bags * (marketPriceWithGst - plan.priceWithGst);
+  const profitWithGst = lots.reduce((sum, row) => sum + row.out.profitWithGst, 0) + newMargin;
+  const profit = lots.reduce((sum, row) => sum + row.out.profit, 0) + bags * (before(marketPriceWithGst) - before(plan.priceWithGst));
+  // What every bag left (old and new) must fetch, with GST, for no profit and no loss on all of them together.
+  const stillToRecover = lots.reduce((sum, row) => sum + row.lot.totalCostWithGst - row.lot.salesWithGstValue, 0) + bags * plan.priceWithGst;
+  return {
+    units, bags, perDay: r2v(perDay), daysToFinish,
+    finishDate: daysToFinish === null ? null : addDays(today, daysToFinish),
+    purchaseValueWithGst: r2v(bags * plan.priceWithGst),
+    breakEvenWithGst: units > 0 ? r2v(stillToRecover / units) : 0,
+    profit: r2v(profit), profitWithGst: r2v(profitWithGst),
+  };
+}

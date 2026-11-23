@@ -93,8 +93,10 @@ export function UpiIdPay({ orderNo, vpa, payeeName, amount, keepCheckout = true,
 }
 
 /** The UTR box for a UPI payment: typed or pasted (the whole receipt text works); the order is placed once our team confirms it. */
-export function UpiUtrForm({ orderNo, amount, customer, submission, label = "Paid? Enter the 12-digit UPI Ref No. (UTR) from your UPI app" }: {
+export function UpiUtrForm({ orderNo, amount, customer, submission, label = "Paid? Enter the 12-digit UPI Ref No. (UTR) from your UPI app", onSent }: {
   orderNo: string; amount: number; customer: string; submission?: UpiSubmission | undefined; label?: string;
+  /** Told the UTR the moment it is accepted, so the page can say "Your order has been placed" at once (23 Nov 2026). */
+  onSent?: (utr: string) => void;
 }) {
   const [utr, setUtr] = useState("");
   const [error, setError] = useState("");
@@ -106,9 +108,11 @@ export function UpiUtrForm({ orderNo, amount, customer, submission, label = "Pai
     if (problem) { setError(problem); return; }
     setSending(true);
     try {
-      await submitUpiPayment({ orderNo, amount, utr: normaliseUtr(typed), customer });
+      const sent = normaliseUtr(typed);
+      await submitUpiPayment({ orderNo, amount, utr: sent, customer });
       setError("");
       setUtr("");
+      onSent?.(sent);
       toast.success("Your order has been placed", { description: `UTR received for ${orderNo}. We are confirming the payment with our bank; you will get a notification.`, duration: 10000 });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not send the UTR");

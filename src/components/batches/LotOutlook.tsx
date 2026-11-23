@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { CalendarX2, X } from "lucide-react";
 import { Panel } from "@/components/panel/widgets";
@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { inrPrecise } from "@/lib/data";
 import type { BatchSale } from "@/lib/batches";
 import type { BatchData } from "@/lib/batches.functions";
-import { averagePerDay, cleanAverageMode, lotDailySales, marketOutlook, type AverageMode, type Lot } from "@/lib/lots";
+import { averagePerDay, cleanAverageMode, lotDailySales, marketOutlook, plannedPurchaseOutlook, type AverageMode, type Lot } from "@/lib/lots";
 import { cn } from "@/lib/utils";
 
 /*
@@ -18,6 +18,8 @@ import { cn } from "@/lib/utils";
  */
 const MODE_KEY = "gb-lots-average-mode";
 const PRICE_KEY = "gb-lots-market-prices";
+const PLAN_KEY = "gb-lots-planned-purchases";
+type Plan = { bags: string; price: string };
 const money = (n: number) => inrPrecise(n);
 const units = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(2));
 const day = (iso: string | null) => (iso ? new Date(`${iso.slice(0, 10)}T00:00:00Z`).toLocaleDateString("en-IN", { timeZone: "UTC", day: "2-digit", month: "short", year: "numeric" }) : "—");
@@ -35,10 +37,17 @@ export function LotOutlook({ lots, sales, products, today, withGst }: {
   const [mode, setModeState] = useState<AverageMode>({ kind: "normal" });
   const [typed, setTyped] = useState<Record<string, string>>({});
   const [skipDay, setSkipDay] = useState("");
+  const [plans, setPlans] = useState<Record<string, Plan>>({});
   useEffect(() => {
     setModeState(cleanAverageMode(readJson(MODE_KEY, null), today));
     setTyped(readJson<Record<string, string>>(PRICE_KEY, {}));
+    setPlans(readJson<Record<string, Plan>>(PLAN_KEY, {}));
   }, [today]);
+  const setPlan = (productId: string, patch: Partial<Plan>) => {
+    const next = { ...plans, [productId]: { bags: "", price: "", ...plans[productId], ...patch } };
+    setPlans(next);
+    writeJson(PLAN_KEY, next);
+  };
   const setMode = (next: AverageMode) => { const clean = cleanAverageMode(next, today); setModeState(clean); writeJson(MODE_KEY, clean); };
   const setPrice = (productId: string, value: string) => { const next = { ...typed, [productId]: value }; setTyped(next); writeJson(PRICE_KEY, next); };
 
@@ -55,6 +64,19 @@ export function LotOutlook({ lots, sales, products, today, withGst }: {
   });
   const totalProfit = rows.reduce((sum, r) => sum + (withGst ? r.out.profitWithGst : r.out.profit), 0);
   const productIds = [...new Set(withStock.map((lot) => lot.productId))];
+  // A new purchase typed for a product: that product's lots plus the new bags, all at the market price (a plan only).
+  const planned = new Map(productIds.flatMap((id) => {
+    const plan = plans[id];
+    const bags = Number(plan?.bags);
+    const price = Number(plan?.price);
+    if (!(bags > 0) || !(price > 0)) return [];
+    const mine = rows.filter((r) => r.lot.productId === id);
+    if (!mine.length) return [];
+    return [[id, plannedPurchaseOutlook(mine.map((r) => ({ lot: r.lot, out: r.out, perDay: r.avg.perDay })), { bags, priceWithGst: price }, mine[0]!.price, mine[0]!.gstRate, today)] as const];
+  }));
+  const lastRowOf = new Map(rows.map((r, index) => [r.lot.productId, index]));
+  const plannedTotal = rows.reduce((sum, r) => sum + (planned.has(r.lot.productId) ? 0 : withGst ? r.out.profitWithGst : r.out.profit), 0)
+    + [...planned.values()].reduce((sum, p) => sum + (withGst ? p.profitWithGst : p.profit), 0);
 
   return (
     <Panel title="If the rest sells at today's market price">
@@ -102,14 +124,24 @@ export function LotOutlook({ lots, sales, products, today, withGst }: {
             {productIds.map((id) => {
               const product = productOf.get(id);
               return (
-                <label key={id} className="grid grid-cols-[1fr_8rem] items-center gap-2">
-                  <span className="min-w-0 truncate">{product?.name ?? id}</span>
-                  <Input type="number" inputMode="decimal" min={0} step="0.01" placeholder={String(product?.price ?? "")}
-                    value={typed[id] ?? ""} onChange={(e) => setPrice(id, e.target.value)} />
-                </label>
+                <div key={id} className="grid gap-1.5 rounded border border-border bg-white p-2">
+                  <span className="min-w-0 truncate font-semibold text-navy">{product?.name ?? id}</span>
+                  <div className="grid grid-cols-3 gap-2">
+                    <label className="grid gap-0.5 text-[11px] font-semibold text-slate">New purchase (bags)
+                      <Input type="number" inputMode="numeric" min={0} step="1" placeholder="0" value={plans[id]?.bags ?? ""} onChange={(e) => setPlan(id, { bags: e.target.value })} />
+                    </label>
+                    <label className="grid gap-0.5 text-[11px] font-semibold text-slate">Purchase price a bag (with GST)
+                      <Input type="number" inputMode="decimal" min={0} step="0.01" placeholder="0.00" value={plans[id]?.price ?? ""} onChange={(e) => setPlan(id, { price: e.target.value })} />
+                    </label>
+                    <label className="grid gap-0.5 text-[11px] font-semibold text-slate">Market price a bag (with GST)
+                      <Input type="number" inputMode="decimal" min={0} step="0.01" placeholder={String(product?.price ?? "")}
+                        value={typed[id] ?? ""} onChange={(e) => setPrice(id, e.target.value)} />
+                    </label>
+                  </div>
+                </div>
               );
             })}
-            <p className="text-xs text-slate">Empty = the website's price now. Type today's market price to see the lot at it.</p>
+            <p className="text-xs text-slate">Market price empty = the website's price now. A new purchase is only a calculation: nothing is bought or saved. It shows under that product's lots in yellow.</p>
           </div>
         </div>
 
@@ -125,10 +157,13 @@ export function LotOutlook({ lots, sales, products, today, withGst }: {
                 </tr>
               </thead>
               <tbody>
-                {rows.map(({ lot, price, gstRate, avg, out }) => {
+                {rows.map(({ lot, price, gstRate, avg, out }, index) => {
                   const profit = withGst ? out.profitWithGst : out.profit;
+                  const plan = lastRowOf.get(lot.productId) === index ? planned.get(lot.productId) : undefined;
+                  const planProfit = plan ? (withGst ? plan.profitWithGst : plan.profit) : 0;
                   return (
-                    <tr key={lot.key} className="border-t border-border align-top">
+                    <Fragment key={lot.key}>
+                    <tr className="border-t border-border align-top">
                       <td className="px-3 py-2">
                         <Link to="/admin/batches" search={{ batch: lot.rootBatchId }} className="font-mono font-semibold text-navy hover:text-gold hover:underline">
                           {lot.lotNo ? <span data-no-translate>{lot.lotNo}</span> : <span className="text-slate">{lot.rootCode}</span>}
@@ -154,6 +189,27 @@ export function LotOutlook({ lots, sales, products, today, withGst }: {
                         {profit < 0 ? `Loss ${money(-profit)}` : `Profit ${money(profit)}`}
                       </td>
                     </tr>
+                    {plan && (
+                      <tr className="border-t border-amber-300 bg-amber-50 align-top">
+                        <td className="px-3 py-2 text-xs font-bold uppercase text-amber-900" colSpan={2}>
+                          {`With new purchase: ${units(plan.bags)} bags at ${money(plans[lot.productId]?.price ? Number(plans[lot.productId]!.price) : 0)}`}
+                          <span className="block text-[11px] font-normal normal-case">{`${lot.productName}: all lots above + the new bags (${money(plan.purchaseValueWithGst)} with GST)`}</span>
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums">{units(plan.units)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums">{money(withGst ? price : out.priceBefore)}</td>
+                        <td className="px-3 py-2" />
+                        <td className="px-3 py-2 text-right tabular-nums">{units(plan.perDay)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums">
+                          {plan.daysToFinish === null ? "No sales yet" : `${plan.daysToFinish} days`}
+                          {plan.finishDate && <span className="block text-[11px] text-slate">{`by ${day(plan.finishDate)}`}</span>}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums">{money(plan.breakEvenWithGst)}<span className="block text-[11px] text-slate">with GST</span></td>
+                        <td className={cn("px-3 py-2 text-right font-bold tabular-nums", planProfit < 0 ? "text-red-700" : "text-emerald-700")}>
+                          {planProfit < 0 ? `Loss ${money(-planProfit)}` : `Profit ${money(planProfit)}`}
+                        </td>
+                      </tr>
+                    )}
+                    </Fragment>
                   );
                 })}
               </tbody>
@@ -161,6 +217,11 @@ export function LotOutlook({ lots, sales, products, today, withGst }: {
             <p className={cn("mt-2 text-sm font-semibold", totalProfit < 0 ? "text-red-700" : "text-emerald-700")}>
               {totalProfit < 0 ? `All lots with stock: loss ${money(-totalProfit)} at these prices` : `All lots with stock: profit ${money(totalProfit)} at these prices`}
             </p>
+            {planned.size > 0 && (
+              <p className={cn("mt-1 rounded bg-amber-50 px-2 py-1 text-sm font-semibold", plannedTotal < 0 ? "text-red-700" : "text-emerald-700")}>
+                {plannedTotal < 0 ? `With the new purchases: loss ${money(-plannedTotal)} at these prices` : `With the new purchases: profit ${money(plannedTotal)} at these prices`}
+              </p>
+            )}
             <p className="mt-1 text-xs text-slate">
               Lot profit / loss = sales so far + the stock left (and units awaiting payment) at the market price − the lot's purchase and all its expenses. Break-even price: what a bag must fetch for no profit and no loss. Stock finishes in: the bags left ÷ the average sales a day.
             </p>

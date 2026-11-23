@@ -508,3 +508,11 @@ export function useUpiPayments() {
   }, [refresh]);
   return { settings, submissions, credits, creditsWithoutUtr, refresh };
 }
+
+/** The customer takes back a UTR they sent by mistake while it is still being checked (Sandesh, 21 Nov 2026). */
+export async function withdrawMyUtr(orderNo: string) {
+  const { error } = await (supabase.rpc as unknown as (name: string, args: Record<string, unknown>) => Promise<{ error: { message: string } | null }>)
+    .call(supabase, "customer_withdraw_utr", { _order_no: orderNo });
+  if (error) throw new Error(error.message);
+  changed();
+}

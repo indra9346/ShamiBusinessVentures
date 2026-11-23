@@ -17,6 +17,7 @@ import { ReorderButton } from "@/components/site/ReorderButton";
 import { isBankMethod, lapsedTransfer, REFUNDED_UTR_NOTE, REUSED_UTR_NOTE, UNCHECKED_UTR_NOTE } from "@/lib/payment-rules";
 import { useBankDetails, useUpiPayments } from "@/lib/upi-store";
 import { SendUtrForm, UpiIdPay, UpiUtrForm } from "@/components/site/UpiIdPay";
+import { WithdrawUtrButton } from "@/components/site/WithdrawUtrButton";
 import { cn } from "@/lib/utils";
 
 /**
@@ -33,6 +34,12 @@ export function HeldCheckoutPay({ settings, orderNo, amount, holdUntil, customer
   const { paymentHolds, orders, simulateBankAlert, cancelPaymentHold } = useApp();
   const { submissions } = useUpiPayments();
   const submission = submissions.find((item) => item.orderNo === orderNo);
+  // The UTR just accepted on this page (Sandesh, 21 Nov 2026: "after update the UTR number customer get order has been
+  // placed"): the green box shows at once instead of waiting for the UTR list to be read again, which could be slow.
+  const [sentUtr, setSentUtr] = useState("");
+  const utrBeingChecked = submission?.status === "submitted"
+    || (Boolean(sentUtr) && !(submission && submission.utr === sentUtr && submission.status !== "submitted"));
+  const shownUtr = submission?.status === "submitted" ? submission.utr : sentUtr || submission?.utr || "";
   const storeHold = paymentHolds.find((hold) => hold.orderNo === orderNo);
   // Read straight from the database too, so the screen moves on even if the live feed is slow.
   const [liveStatus, setLiveStatus] = useState<{ status: string; outcome: string | null; holdUntil: string | null; moneySeenAt: string | null; gstBillTo: string | null; gstin: string | null } | null>(null);
@@ -53,7 +60,7 @@ export function HeldCheckoutPay({ settings, orderNo, amount, holdUntil, customer
         ? storeHold
         : { status: AWAITING_PAYMENT, holdUntil: endsAt };
   const moneySeenAt = liveStatus?.moneySeenAt ?? storeHold?.moneySeenAt ?? null;
-  const view = holdView({ ...hold, moneySeenAt: hold.status === AWAITING_PAYMENT ? moneySeenAt : null }, submission?.status === "submitted", now);
+  const view = holdView({ ...hold, moneySeenAt: hold.status === AWAITING_PAYMENT ? moneySeenAt : null }, utrBeingChecked, now);
   const left = holdSecondsLeft(hold.holdUntil ?? endsAt, now);
 
   const finished = view === "confirmed" || view === "expired" || view === "dropped";
@@ -230,8 +237,9 @@ export function HeldCheckoutPay({ settings, orderNo, amount, holdUntil, customer
         <div className="mt-4 rounded-md border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-950" role="status" aria-live="polite">
           <p className="flex items-center gap-2 text-base font-bold text-emerald-800"><CheckCircle2 className="h-5 w-5" /> Your order has been placed</p>
           <p className="mt-1 font-semibold">{`Order ${orderNo} · ${inrPrecise(amount)}`}</p>
-          <p className="mt-1 flex items-center gap-1.5 text-xs"><ShieldCheck className="h-3.5 w-3.5 shrink-0" />{`UTR ${submission?.utr ?? ""} received.`}</p>
+          <p className="mt-1 flex items-center gap-1.5 text-xs"><ShieldCheck className="h-3.5 w-3.5 shrink-0" />{`UTR ${shownUtr} received.`}</p>
           <p className="mt-1">Our team is confirming your payment with our bank; your goods are kept for you. You will get a notification once it is confirmed. Please do not pay again.</p>
+          {shownUtr && !STATIC_DATA_MODE && <WithdrawUtrButton orderNo={orderNo} utr={shownUtr} onDone={() => setSentUtr("")} />}
         </div>
       ) : byBank ? (
         <>
@@ -246,7 +254,7 @@ export function HeldCheckoutPay({ settings, orderNo, amount, holdUntil, customer
             ? <BankTransferDetails details={bankDetails} amount={amount} method={method} orderNo={orderNo} />
             : <p className="mt-4 flex items-center gap-2 text-sm text-slate"><Loader2 className="h-4 w-4 animate-spin" /> Loading our bank details…</p>}
           <div className="mt-4 border-t border-border pt-4">
-            <BankUtrForm orderNo={orderNo} amount={amount} method={method} customer={customer} submission={submission} />
+            <BankUtrForm orderNo={orderNo} amount={amount} method={method} customer={customer} submission={submission} onSent={setSentUtr} />
             <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
               {submission?.status !== "submitted" && <CancelCheckoutButton orderNo={orderNo} byBank={byBank} />}
               {STATIC_DATA_MODE && (
@@ -302,7 +310,7 @@ export function HeldCheckoutPay({ settings, orderNo, amount, holdUntil, customer
                 <p className="mt-0.5">It is the 12-digit number on the receipt in your UPI app (UPI Ref No., UPI transaction ID or UTR). Your order is kept for you while you enter it.</p>
               </div>
             )}
-            <UpiUtrForm orderNo={orderNo} amount={amount} customer={customer} submission={submission} />
+            <UpiUtrForm orderNo={orderNo} amount={amount} customer={customer} submission={submission} onSent={setSentUtr} />
             <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
               {submission?.status !== "submitted" && <CancelCheckoutButton orderNo={orderNo} byBank={byBank} />}
               {STATIC_DATA_MODE && (
