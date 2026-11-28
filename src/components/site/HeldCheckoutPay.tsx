@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { renderSVG } from "uqr";
 import { CheckCircle2, Clock, Loader2, ShieldCheck, XCircle } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
@@ -18,6 +18,7 @@ import { isBankMethod, lapsedTransfer, REFUNDED_UTR_NOTE, REUSED_UTR_NOTE, UNCHE
 import { useBankDetails, useUpiPayments } from "@/lib/upi-store";
 import { SendUtrForm, UpiIdPay, UpiUtrForm } from "@/components/site/UpiIdPay";
 import { WithdrawUtrButton } from "@/components/site/WithdrawUtrButton";
+import { CashfreePay, useCashfreeCheckout } from "@/components/site/CashfreePay";
 import { cn } from "@/lib/utils";
 
 /**
@@ -48,6 +49,26 @@ export function HeldCheckoutPay({ settings, orderNo, amount, holdUntil, customer
   const method = methodProp ?? storeHold?.method ?? "UPI";
   const byBank = isBankMethod(method);
   const { details: bankDetails, loaded: bankLoaded, failed: bankFailed } = useBankDetails(byBank);
+  // Cashfree (owner, 28 Nov 2026): when it is switched on for this customer, a UPI checkout opens Cashfree's own payment
+  // screen instead of our QR, which UPI apps refuse for bigger amounts. NEFT and RTGS stay as they are; if Cashfree cannot
+  // start, the QR and UTR screen comes back.
+  const [cashfreeOff, setCashfreeOff] = useState(false);
+  const cashfree = useCashfreeCheckout(!byBank && !STATIC_DATA_MODE);
+  const viaCashfree = !byBank && !cashfreeOff && cashfree?.available === true;
+  const viaCashfreeRef = useRef(viaCashfree);
+  viaCashfreeRef.current = viaCashfree;
+  const cashfreeClosedAt = useRef(0);
+  /** Time up or cancel: ask Cashfree once more and end its order when no payment came. True when the order got paid. */
+  const closeCashfree = async () => {
+    cashfreeClosedAt.current = Date.now();
+    try {
+      const { checkCashfreePayment } = await import("@/lib/cashfree.functions");
+      const state = await checkCashfreePayment({ data: { orderNo, closing: true } });
+      return state.paid || state.orderStatus !== AWAITING_PAYMENT;
+    } catch {
+      return false;
+    }
+  };
 
   // The time can change: a rejected NEFT or RTGS UTR gets 1 more hour.
   const endsAt = liveStatus?.holdUntil ?? storeHold?.holdUntil ?? holdUntil;
@@ -69,8 +90,12 @@ export function HeldCheckoutPay({ settings, orderNo, amount, holdUntil, customer
     if (STATIC_DATA_MODE || finished) return;
     let stopped = false;
     const check = async () => {
-      // Past the time: let the database end it (stock back) before reading the status.
-      if (holdSecondsLeft(endsAt, serverNow()) === 0) await supabase.rpc("expire_payment_holds");
+      // Past the time: let the database end it (stock back) before reading the status. With Cashfree, Cashfree is asked
+      // first (every 5 s): a payment made in the last moments places the order, and the database waits for that answer.
+      if (holdSecondsLeft(endsAt, serverNow()) === 0) {
+        if (viaCashfreeRef.current && Date.now() - cashfreeClosedAt.current > 5000) await closeCashfree();
+        await supabase.rpc("expire_payment_holds");
+      }
       const { data } = await supabase.from("orders").select("order_status,payment_hold_outcome,payment_hold_until,bank_credit_seen_at,is_b2b,customer_gstin,business_legal_name").eq("order_no", orderNo).maybeSingle();
       if (!stopped && data) setLiveStatus({
         status: data.order_status, outcome: data.payment_hold_outcome ?? null, holdUntil: data.payment_hold_until ?? null, moneySeenAt: data.bank_credit_seen_at ?? null,
@@ -200,7 +225,7 @@ export function HeldCheckoutPay({ settings, orderNo, amount, holdUntil, customer
   }
 
   // A UPI checkout's screen needs the UPI settings; they arrive a moment later.
-  if (!byBank && !settings) return <p className="flex items-center gap-2 text-sm text-slate"><Loader2 className="h-4 w-4 animate-spin" /> Loading the payment screen…</p>;
+  if (!byBank && (!settings || (!STATIC_DATA_MODE && cashfree === null))) return <p className="flex items-center gap-2 text-sm text-slate"><Loader2 className="h-4 w-4 animate-spin" /> Loading the payment screen…</p>;
 
   // They already paid for an earlier checkout that nobody checked in time: do not ask them to pay again.
   const earlier = lapsedTransfer(submissions, now);
@@ -263,6 +288,19 @@ export function HeldCheckoutPay({ settings, orderNo, amount, holdUntil, customer
                 </button>
               )}
             </div>
+          </div>
+        </>
+      ) : viaCashfree && cashfree?.available ? (
+        <>
+          {timeUp ? (
+            <p role="status" className="mt-4 flex items-center gap-2 rounded-md border border-sky-200 bg-sky-50 p-3 text-sm font-semibold text-sky-900">
+              <Loader2 className="h-4 w-4 animate-spin" /> Time is up. Checking with Cashfree whether a payment came. Please do not pay again.
+            </p>
+          ) : (
+            <CashfreePay orderNo={orderNo} amount={amount} mode={cashfree.mode} sdkUrl={cashfree.sdkUrl} onUnavailable={() => setCashfreeOff(true)} />
+          )}
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-border pt-4">
+            <CancelCheckoutButton orderNo={orderNo} byBank={false} beforeCancel={async () => !(await closeCashfree())} />
           </div>
         </>
       ) : (

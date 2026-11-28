@@ -10,3 +10,7 @@ verify_jwt = false
 
 [functions.order-sms]
 verify_jwt = false
+
+# Cashfree signs its payment webhooks; there is no user token.
+[functions.cashfree-webhook]
+verify_jwt = false
