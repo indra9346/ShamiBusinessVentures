@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { ArrowRight, CheckCircle2, ChevronRight, Layers, Package, Search, Tag, X } from "lucide-react";
 import { useApp } from "@/lib/store";
-import { getProductImageFallback, inr, showsStruckMrp } from "@/lib/data";
+import { getProductImageFallback, showsStruckMrp, inrShop } from "@/lib/data";
 import { cn } from "@/lib/utils";
 import { resizedImage } from "@/lib/image-url";
 import { useStorefrontDisplay } from "@/lib/storefront-display";
@@ -258,9 +258,9 @@ export function SearchAutosuggest({
                       <div className="mt-0.5 flex items-center gap-2 text-xs text-slate">
                         <span>{product.category}</span>
                         <span>•</span>
-                        <span className="font-semibold text-navy">{inr(product.price)}</span>
+                        <span className="font-semibold text-navy">{inrShop(product.price)}</span>
                         {showsStruckMrp(product, display.showMrpSavings) && (
-                          <span className="line-through text-slate/70 text-[11px]">{inr(product.mrp)}</span>
+                          <span className="line-through text-slate/70 text-[11px]">{inrShop(product.mrp)}</span>
                         )}
                         <span>•</span>
                         <span className={cn("text-[11px]", availableStock > 0 ? "text-emerald-700 font-semibold" : (product.incoming ?? 0) > 0 ? "text-amber-700 font-semibold" : "text-danger")}>
@@ -304,7 +304,7 @@ export function SearchAutosuggest({
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center justify-between gap-2">
                         <p className="truncate text-sm font-semibold text-navy">{product.name}</p>
-                        <span className="shrink-0 text-sm font-bold text-navy">{inr(product.price)}</span>
+                        <span className="shrink-0 text-sm font-bold text-navy">{inrShop(product.price)}</span>
                       </div>
                       <div className="mt-0.5 flex items-center gap-2 text-xs text-slate">
                         <span className="font-mono text-[11px] font-semibold text-navy/80 bg-slate/10 px-1 rounded">

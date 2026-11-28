@@ -81,7 +81,12 @@ export function UpiAppButtons({ uri, returnTo }: { uri: string; returnTo?: strin
       window.removeEventListener("pageshow", comeBack);
     };
   }, []);
+  // 23 Nov 2026 (owner): PhonePe and others can decline a website's payment link "for security reasons" at any amount
+  // (no money is taken). The buttons stay as a one-tap extra, folded away, with what to do if the app declines.
   return (
+    <details className="rounded-lg border border-border bg-white p-2">
+      <summary className="cursor-pointer select-none px-1 py-1 text-xs font-semibold text-navy">Or try one-tap: open your UPI app</summary>
+      <p className="mb-2 mt-1 px-1 text-[11px] text-slate">If your app says the payment is declined for security reasons, tap Dismiss (no money is taken) and pay by our UPI ID instead.</p>
     <div className="grid grid-cols-4 gap-2">
       {upiAppLinks(uri).map((link) => {
         const Mark = MARKS[link.app] ?? UpiMark;
@@ -100,5 +105,6 @@ export function UpiAppButtons({ uri, returnTo }: { uri: string; returnTo?: strin
         );
       })}
     </div>
+    </details>
   );
 }

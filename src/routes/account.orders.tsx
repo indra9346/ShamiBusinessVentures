@@ -12,7 +12,7 @@ import { orderToneClass, TONE_CLASSES } from "@/lib/order-status-tone";
 import { customerInvoiceVisible } from "@/lib/invoice-visibility";
 import { Pager } from "@/components/panel/pager";
 import { accountNav } from "@/lib/account-nav";
-import { canCancelOrder, inr, inrPrecise, orderStages, type OrderStatus } from "@/lib/data";
+import { canCancelOrder, orderStages, type OrderStatus, inrShop } from "@/lib/data";
 import { AWAITING_PAYMENT, clockText, holdSecondsLeft, PAYMENT_EXPIRED } from "@/lib/payment-hold";
 import { useServerNow } from "@/lib/server-clock";
 import { useApp } from "@/lib/store";
@@ -175,15 +175,15 @@ function AccountOrders() {
                 : left === 0
                   ? { tone: "bg-slate-100 text-charcoal", title: "Time to pay is over", text: "It will be cancelled on its own and you pay nothing. If money already left your account, call us with the UTR." }
                   : byBank
-                    ? { tone: "bg-amber-50 text-amber-950", title: "Waiting for your bank transfer", text: `Transfer ${inrPrecise(hold.amount)} by ${hold.method ?? "NEFT"}, then enter the UTR within ${clockText(left)}.` }
-                    : { tone: "bg-amber-50 text-amber-950", title: "Waiting for your payment", text: `Pay ${inrPrecise(hold.amount)} by UPI within ${clockText(left)}.` };
+                    ? { tone: "bg-amber-50 text-amber-950", title: "Waiting for your bank transfer", text: `Transfer ${inrShop(hold.amount)} by ${hold.method ?? "NEFT"}, then enter the UTR within ${clockText(left)}.` }
+                    : { tone: "bg-amber-50 text-amber-950", title: "Waiting for your payment", text: `Pay ${inrShop(hold.amount)} by UPI within ${clockText(left)}.` };
               return (
                 // Not paid yet: yellow, like every pending order (owner, 11 Nov 2026).
                 <li key={hold.orderNo} className={cn("rounded-lg border p-3 sm:p-4", TONE_CLASSES.pending.tile)}>
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <CheckoutItems lines={hold.lines} products={products} className="min-w-0 flex-1" />
                     <div className="text-right">
-                      <p className="text-base font-extrabold text-navy">{inrPrecise(hold.amount)}</p>
+                      <p className="text-base font-extrabold text-navy">{inrShop(hold.amount)}</p>
                       <p className="text-xs text-slate">{method}</p>
                     </div>
                   </div>
@@ -225,7 +225,7 @@ function AccountOrders() {
               <li key={hold.orderNo} className={cn("flex flex-wrap items-center justify-between gap-3 rounded-lg border px-3 py-2.5", TONE_CLASSES.closed.tile)}>
                 <div className="min-w-0">
                   <Link to="/account/orders/$id" params={{ id: hold.orderNo }} search={true} className="font-semibold text-navy hover:text-gold">{hold.orderNo}</Link>
-                  <p className="text-xs text-slate">{inrPrecise(hold.amount)}</p>
+                  <p className="text-xs text-slate">{inrShop(hold.amount)}</p>
                   <CheckoutItems lines={hold.lines} products={products} max={2} className="mt-1.5" />
                   {(() => {
                     // Added 12 Nov 2026 (owner): paid after the time ran out, or offline: send the UTR for an admin to check.
@@ -359,7 +359,7 @@ function AccountOrders() {
                     </td>
                     <td className="px-3 py-3.5 align-middle text-charcoal">{o.date}</td>
                     <td className="px-3 py-3.5 align-middle text-charcoal">{`${o.items.length} item${o.items.length > 1 ? "s" : ""}`}</td>
-                    <td className="px-3 py-3.5 align-middle text-charcoal">{inr(o.amount)}</td>
+                    <td className="px-3 py-3.5 align-middle text-charcoal">{inrShop(o.amount)}</td>
                     <td className="px-3 py-3.5 align-middle text-charcoal"><StatusBadge status={o.payment} /></td>
                     <td className="px-3 py-3.5 align-middle text-charcoal"><StatusBadge status={o.status} /></td>
                     <td className="px-3 py-3.5 align-middle text-charcoal">

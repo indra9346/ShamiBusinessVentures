@@ -5,7 +5,7 @@ import { Logo } from "@/components/brand/Logo";
 import { cn } from "@/lib/utils";
 import { useApp } from "@/lib/store";
 import { Input } from "@/components/ui/input";
-import { inr, isStorefrontProduct } from "@/lib/data";
+import { isStorefrontProduct, inrShop } from "@/lib/data";
 import { LanguageSwitcher } from "@/components/site/LanguageSwitcher";
 
 import { SearchAutosuggest } from "@/components/site/SearchAutosuggest";
@@ -209,7 +209,7 @@ function HeaderCartButton({ cartCount, subtotal }: { cartCount: number; subtotal
     <Link
       to="/cart"
       className="group relative flex h-9 w-9 items-center justify-center rounded-full border border-gold/50 bg-white/5 text-white transition-colors duration-200 hover:border-gold hover:bg-white/10 sm:h-10 sm:w-auto sm:gap-2 sm:px-3.5"
-      aria-label={`Shopping cart, ${itemsLabel}, total ${inr(subtotal)}`}
+      aria-label={`Shopping cart, ${itemsLabel}, total ${inrShop(subtotal)}`}
     >
       <span className="relative flex shrink-0 items-center justify-center">
         {animate && (
@@ -238,11 +238,11 @@ function HeaderCartButton({ cartCount, subtotal }: { cartCount: number; subtotal
         key={`d-${pulseKey}`}
         className={`hidden origin-left pl-1 text-sm font-bold tabular-nums text-gold-light sm:inline ${animate ? "animate-cart-pop" : ""}`}
       >
-        {inr(subtotal)}
+        {inrShop(subtotal)}
       </span>
 
       <span className="sr-only" aria-live="polite">
-        {animate ? `Cart updated: ${itemsLabel}, ${inr(subtotal)}` : ""}
+        {animate ? `Cart updated: ${itemsLabel}, ${inrShop(subtotal)}` : ""}
       </span>
     </Link>
   );

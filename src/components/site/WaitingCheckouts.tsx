@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { inrPrecise } from "@/lib/data";
+import { inrShop } from "@/lib/data";
 import { holdView, type PaymentHold } from "@/lib/payment-hold";
 import { isBankMethod, methodLabel } from "@/lib/payment-rules";
 import { cn } from "@/lib/utils";
@@ -19,7 +19,7 @@ export function WaitingCheckouts({ holds, sent, className }: { holds: PaymentHol
       <ul className="mt-2 space-y-1.5">
         {holds.map((hold) => (
           <li key={hold.orderNo} className="flex flex-wrap items-center justify-between gap-2">
-            <span>{hold.orderNo} · {inrPrecise(hold.amount)} · {methodLabel(hold.method ?? "UPI")}{view(hold) === "received" ? " · payment received, being confirmed" : ""}</span>
+            <span>{hold.orderNo} · {inrShop(hold.amount)} · {methodLabel(hold.method ?? "UPI")}{view(hold) === "received" ? " · payment received, being confirmed" : ""}</span>
             <Link to="/account/orders/$id" params={{ id: hold.orderNo }} className="font-semibold underline">{view(hold) === "pay" ? (isBankMethod(hold.method) ? "Enter UTR" : "Pay now") : "View"}</Link>
           </li>
         ))}

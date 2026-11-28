@@ -4,7 +4,7 @@ import { Minus, Plus, ShoppingBag, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { SiteLayout, Breadcrumbs } from "@/components/site/SiteLayout";
-import { getAvailablePurchaseQuantity, getMaxPurchaseQuantity, inr, inrPrecise, showsStruckMrp, type Product } from "@/lib/data";
+import { getAvailablePurchaseQuantity, getMaxPurchaseQuantity, showsStruckMrp, type Product, inrShop } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { resizedImage } from "@/lib/image-url";
 import { useStorefrontDisplay } from "@/lib/storefront-display";
@@ -53,7 +53,7 @@ function Cart() {
       return;
     }
     if (subtotal < found.min) {
-      toast.error(`Minimum order value of ${inr(found.min)} required for ${code}`);
+      toast.error(`Minimum order value of ${inrShop(found.min)} required for ${code}`);
       return;
     }
     setApplied(code);
@@ -133,8 +133,8 @@ function Cart() {
                     {product.weight}
                     {showsStruckMrp(product, display.showMrpSavings) && (
                       <>
-                        {" "}· MRP <span className="line-through">{inr(product.mrp)}</span> ·{" "}
-                        <span className="font-semibold text-gold">Save {inr(product.mrp - product.price)}</span>
+                        {" "}· MRP <span className="line-through">{inrShop(product.mrp)}</span> ·{" "}
+                        <span className="font-semibold text-gold">Save {inrShop(product.mrp - product.price)}</span>
                       </>
                     )}
                   </p>
@@ -155,7 +155,7 @@ function Cart() {
                     </button>
                   </div>
                 </div>
-                <p className="text-lg font-bold text-navy">{inr(product.price * qty)}</p>
+                <p className="text-lg font-bold text-navy">{inrShop(product.price * qty)}</p>
               </div>
             ))}
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -177,15 +177,15 @@ function Cart() {
           <aside className="h-max rounded-lg border border-border bg-card p-6 shadow-card lg:sticky lg:top-40">
             <h2 className="text-sm font-bold tracking-wide text-navy uppercase">Order Summary</h2>
             <div className="mt-5 space-y-3 text-sm">
-              <Row label="Subtotal (incl. GST)" value={inrPrecise(subtotal)} />
-              <Row label={pickup ? "Godown pickup" : "Delivery charges"} value={delivery === 0 ? "Free" : inrPrecise(delivery)} />
-              {discount > 0 && <Row label={`Coupon discount (${applied})`} value={`- ${inrPrecise(discount)}`} gold />}
+              <Row label="Subtotal (incl. GST)" value={inrShop(subtotal)} />
+              <Row label={pickup ? "Godown pickup" : "Delivery charges"} value={delivery === 0 ? "Free" : inrShop(delivery)} />
+              {discount > 0 && <Row label={`Coupon discount (${applied})`} value={`- ${inrShop(discount)}`} gold />}
               <div className="hairline-gold my-2" />
               <div className="flex justify-between text-base font-bold text-navy">
                 <span>Grand total</span>
-                <span>{inrPrecise(total)}</span>
+                <span>{inrShop(total)}</span>
               </div>
-              {tax > 0 && <p className="text-right text-xs text-slate">{`Includes GST of ${inrPrecise(tax)}`}</p>}
+              {tax > 0 && <p className="text-right text-xs text-slate">{`Includes GST of ${inrShop(tax)}`}</p>}
             </div>
 
             <div className="mt-5 flex gap-2">

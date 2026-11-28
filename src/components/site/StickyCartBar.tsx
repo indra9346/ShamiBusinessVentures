@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useRouterState } from "@tanstack/react-router";
 import { ArrowRight, ShoppingBag } from "lucide-react";
-import { inr } from "@/lib/data";
+import { inrShop } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { useCartPreview } from "@/lib/cart-preview";
 import { cn } from "@/lib/utils";
@@ -87,7 +87,7 @@ export function StickyCartBar() {
             <Link
               to="/cart"
               className="flex min-w-0 flex-1 items-center gap-2.5"
-              aria-label={`View cart: ${cartCount} items, ${inr(subtotal)}`}
+              aria-label={`View cart: ${cartCount} items, ${inrShop(subtotal)}`}
             >
               <span className="relative grid h-10 w-10 shrink-0 place-items-center rounded-full bg-navy text-gold">
                 <ShoppingBag className="h-5 w-5" />
@@ -109,7 +109,7 @@ export function StickyCartBar() {
                   key={`t-${pulseKey}`}
                   className={cn("block text-base font-extrabold text-navy sm:text-lg", pulseKey > 0 && "animate-cart-pop origin-left")}
                 >
-                  {inr(subtotal)}
+                  {inrShop(subtotal)}
                   <span className="ml-1.5 text-[11px] font-medium text-slate">
                     {previewing ? `incl. ${preview.qty} new` : "incl. GST"}
                   </span>

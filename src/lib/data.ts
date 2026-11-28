@@ -8,8 +8,8 @@ import premiumOilCategoryImg from "@/assets/category-oil-premium.jpg";
 import { priceBeforeGst, rateForPackPrice } from "@/lib/pricing";
 import { shownOnStorefront } from "@/lib/storefront-visibility";
 
-import { inr, inrPrecise } from "@/lib/money";
-export { inr, inrPrecise };
+import { inr, inrPrecise, inrShop } from "@/lib/money";
+export { inr, inrPrecise, inrShop };
 
 /** Short rupee labels for chart axes: ₹0, ₹850, ₹2.6k, ₹1.2L, ₹3.4Cr. */
 export function compactInr(value: number) {
@@ -185,13 +185,37 @@ export function deriveRatePricing(product: Pick<Product, "weight" | "price">): R
   return { packQty: qty, packUnit, basisQty: 1, basisUnit, basisRate };
 }
 
+/**
+ * The basis a shopper can read for a small pack: a 17 g sachet is shown per 100 g (not "₹5,76,677/QTL"),
+ * a 5 kg bag per kg, an 8 ml bottle per 100 ml (under 250 g/ml). Large packs keep the trade basis set in the panel (50 kg → QTL).
+ * Display only: the pack price never changes. Null keeps the panel's basis.
+ */
+export function shopperRateBasis(pricing: RatePricing): { qty: number; unit: MeasureUnit } | null {
+  const pack = toBaseQuantity(pricing.packQty, pricing.packUnit);
+  const basis = toBaseQuantity(pricing.basisQty, pricing.basisUnit);
+  const volume = isVolumeUnit(pricing.packUnit);
+  if (pack < 0.25) return basis === 0.1 ? null : { qty: 100, unit: volume ? "ml" : "g" };
+  if (pack < 25 && basis > 1) return { qty: 1, unit: volume ? "L" : "kg" };
+  return null;
+}
+
 export function formatRateBasis(product: Pick<Product, "ratePricing" | "weight" | "price">): string | null {
-  const pricing = product.ratePricing ?? deriveRatePricing(product);
-  if (!pricing || computeRatePrice(pricing) === null) return null;
+  const stored = product.ratePricing ?? deriveRatePricing(product);
+  if (!stored || computeRatePrice(stored) === null) return null;
+  const shown = shopperRateBasis(stored);
+  const pricing: RatePricing = shown
+    ? {
+        ...stored,
+        basisQty: shown.qty,
+        basisUnit: shown.unit,
+        // From the pack price itself, so ₹60 for 500 g reads ₹120/kg exactly.
+        basisRate: (computeRatePrice(stored)! * toBaseQuantity(shown.qty, shown.unit)) / toBaseQuantity(stored.packQty, stored.packUnit),
+      }
+    : stored;
   const per = pricing.basisQty === 1
     ? pricing.basisUnit
     : `${pricing.basisQty.toLocaleString("en-IN", { maximumFractionDigits: 3 })} ${pricing.basisUnit}`;
-  return `${inrPrecise(pricing.basisRate)}/${per}`;
+  return `${inrShop(pricing.basisRate)}/${per}`;
 }
 
 /** GST slabs offered by Zoho (intra-state GSTn, inter-state IGSTn). */

@@ -12,6 +12,8 @@ import { notificationBelongsToUser } from "@/lib/account-identity";
 import { LanguageSwitcher } from "@/components/site/LanguageSwitcher";
 import { supabase } from "@/integrations/supabase/client";
 import { adminActivityKey, clearAdminIdleClock } from "@/lib/admin-idle";
+import { leaveAdminScreen, useAdminScreenCheck } from "@/lib/admin-screens";
+import { AdminScreenLimitReached } from "@/components/panel/AdminScreens";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { AdminBranchSelect } from "@/components/panel/AdminBranchSelect";
 import { CustomerCareLine } from "@/components/panel/CustomerCareLine";
@@ -91,6 +93,8 @@ export function PanelLayout({
   const signOutHere = async () => {
     if (user?.id) clearAdminIdleClock(user.id);
     forgetPanelAccess();
+    // Frees this screen's place under the admin screen limit at once.
+    if (tone === "admin") await leaveAdminScreen();
     await supabase.auth.signOut({ scope: "local" });
     logout();
     navigate({ to: "/" });
@@ -507,6 +511,18 @@ export function PanelLayout({
     });
   };
 
+  // Admin screen limit (Settings > Security, 23 Nov 2026): this screen checks in every minute; the database holds a
+  // screen over the limit and refuses it admin rights, and sends a signed-out screen back to the admin login.
+  const adminScreen = useAdminScreenCheck(tone === "admin" && hydrated && verifiedRole && Boolean(user?.id), () => {
+    if (user?.id) clearAdminIdleClock(user.id);
+    forgetPanelAccess();
+    toast.error("This screen was signed out of the admin portal", { description: "An admin signed it out, or another screen took its place. Sign in again to continue." });
+    void supabase.auth.signOut({ scope: "local" }).finally(() => {
+      logout();
+      navigate({ to: "/admin/login", replace: true });
+    });
+  });
+
   // Keep hooks above this guard. React requires the same hooks on the initial
   // loading render and on the later authenticated render.
   if (!hydrated || !verifiedRole) {
@@ -540,6 +556,13 @@ export function PanelLayout({
           </div>
         )}
       </div>
+    );
+  }
+
+  if (tone === "admin" && adminScreen.held) {
+    return (
+      <AdminScreenLimitReached held={adminScreen.held} busy={adminScreen.busy}
+        onRetry={() => void adminScreen.retry()} onTakeOver={() => void adminScreen.takeOver()} onLogOut={() => void signOutHere()} />
     );
   }
 

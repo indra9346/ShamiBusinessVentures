@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Phone } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
-import { inrPrecise } from "@/lib/data";
+import { inrShop } from "@/lib/data";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { orderPaymentNotice } from "@/lib/delivery-notes";
 
@@ -48,8 +48,8 @@ export function PartPaymentNotice({ orderNo, total, paid, paymentStatus, orderSt
         <div className="mb-6 rounded-lg border border-amber-300 bg-amber-50 p-4 text-left text-sm text-amber-900">
           <p className="font-bold">This order is partly paid</p>
           <dl className="mt-2 grid max-w-md grid-cols-2 gap-2">
-            <div><dt className="text-xs">Amount paid</dt><dd className="text-lg font-extrabold">{inrPrecise(notice.paid)}</dd></div>
-            <div><dt className="text-xs">Balance due</dt><dd className="text-lg font-extrabold">{inrPrecise(notice.balance)}</dd></div>
+            <div><dt className="text-xs">Amount paid</dt><dd className="text-lg font-extrabold">{inrShop(notice.paid)}</dd></div>
+            <div><dt className="text-xs">Balance due</dt><dd className="text-lg font-extrabold">{inrShop(notice.balance)}</dd></div>
           </dl>
           <p className="mt-2">Please complete the payment. We can issue your delivery note and release your order only after the full invoice amount is paid.</p>
           <a href="tel:+919845966288" className="mt-2 inline-flex items-center gap-1 font-semibold underline"><Phone className="h-3.5 w-3.5" /> Need help? Call +91 98459 66288</a>

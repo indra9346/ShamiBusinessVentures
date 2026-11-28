@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { renderSVG } from "uqr";
 import { toast } from "sonner";
 import { CheckCircle2, Clock, ShieldCheck, XCircle } from "lucide-react";
-import { inrPrecise } from "@/lib/data";
+import { inrShop } from "@/lib/data";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { normaliseUtr, settingsProblem, upiPaymentUri, utrProblem, type UpiSettings } from "@/lib/upi-pay";
 import { UpiAppButtons } from "@/components/site/UpiAppButtons";
@@ -43,7 +43,7 @@ export function OrderUpiPay({ orderNo, status, payment, method, balance, custome
     return (
       <div className="mb-6 rounded-lg border border-border bg-card p-4 text-left shadow-card">
         <p className="text-xs font-bold uppercase tracking-wider text-slate">{`Pay by ${byWhat}`}</p>
-        <p className="mt-1 text-2xl font-extrabold text-navy">{inrPrecise(amount)}</p>
+        <p className="mt-1 text-2xl font-extrabold text-navy">{inrShop(amount)}</p>
         {sent?.status === "submitted" ? (
           <div className="mt-4 rounded-md border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">
             <p className="flex items-center gap-2 font-semibold"><ShieldCheck className="h-4 w-4" /> Payment being verified</p>
@@ -104,7 +104,7 @@ export function UpiPayPanel({ settings, orderNo, amount, customer }: { settings:
     return (
       <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-left text-sm text-emerald-900">
         <p className="flex items-center gap-2 font-bold"><CheckCircle2 className="h-5 w-5" /> Payment received for {orderNo}</p>
-        <p className="mt-1">{inrPrecise(amount)} · UTR {submission.utr}. Your order is now being processed.</p>
+        <p className="mt-1">{inrShop(amount)} · UTR {submission.utr}. Your order is now being processed.</p>
       </div>
     );
   }
@@ -114,7 +114,7 @@ export function UpiPayPanel({ settings, orderNo, amount, customer }: { settings:
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="text-xs font-bold uppercase tracking-wider text-slate">Pay by UPI · no extra charges</p>
-          <p className="mt-1 text-2xl font-extrabold text-navy">{inrPrecise(amount)}</p>
+          <p className="mt-1 text-2xl font-extrabold text-navy">{inrShop(amount)}</p>
           <p className="text-xs text-slate">Order {orderNo} · to {settings.payeeName}</p>
         </div>
         {submission?.status !== "submitted" && (
@@ -133,19 +133,20 @@ export function UpiPayPanel({ settings, orderNo, amount, customer }: { settings:
       ) : (
         <div className="mt-4 grid gap-4 sm:grid-cols-[180px_minmax(0,1fr)]">
           <div className="mx-auto w-[180px]">
-            <div className="rounded-lg border border-border bg-white p-2" role="img" aria-label={`UPI QR code for ${inrPrecise(amount)}`}
+            <div className="rounded-lg border border-border bg-white p-2" role="img" aria-label={`UPI QR code for ${inrShop(amount)}`}
               // uqr returns a self-contained <svg> of the QR code (no scripts).
               dangerouslySetInnerHTML={{ __html: qrSvg }} />
             <p className="mt-1 text-center text-[11px] text-slate">Scan with any UPI app</p>
           </div>
           <div className="min-w-0 space-y-3">
             <ol className="list-decimal space-y-1 pl-4 text-sm text-charcoal">
-              <li>Scan the QR, or on your phone tap your UPI app below.</li>
-              <li>Check the amount <span className="font-semibold">{inrPrecise(amount)}</span> and pay to <span className="font-semibold">{settings.payeeName}</span>.</li>
+              <li>Pay to our UPI ID below, or scan the QR with the camera of another phone.</li>
+              <li>Check the amount <span className="font-semibold">{inrShop(amount)}</span> and pay to <span className="font-semibold">{settings.payeeName}</span>.</li>
               <li>Copy the 12-digit <span className="font-semibold">UTR / UPI Ref. No.</span> from the payment receipt and enter it here.</li>
             </ol>
+            {/* 23 Nov 2026: Pay to UPI ID first (works at any amount); app buttons folded away (apps can decline them). */}
+            <UpiIdPay primary orderNo={orderNo} vpa={settings.vpa} payeeName={settings.payeeName} amount={amount} keepCheckout={false} />
             <UpiAppButtons uri={uri} returnTo={payPanelId(orderNo)} />
-            <UpiIdPay orderNo={orderNo} vpa={settings.vpa} payeeName={settings.payeeName} amount={amount} keepCheckout={false} />
           </div>
         </div>
       )}

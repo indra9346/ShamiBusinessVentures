@@ -6,7 +6,7 @@ import { renderSVG } from "uqr";
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { Panel, StatusBadge } from "@/components/panel/widgets";
 import { accountNav } from "@/lib/account-nav";
-import { canCancelOrder, inr, inrPrecise, orderStages, type Order } from "@/lib/data";
+import { canCancelOrder, orderStages, type Order, inrShop } from "@/lib/data";
 import { supabase } from "@/integrations/supabase/client";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { godownLine, handoverDetails, handoverWords, invoiceDelivery, issuedZohoNumber, type InvoiceDelivery, type ZohoInvoiceCopy } from "@/lib/invoice-lines";
@@ -315,12 +315,12 @@ function AccountOrderDetail() {
           <ZohoInvoiceStatus orderNo={order.id} audience="customer" className="mt-3" />
           {goods.waiting > 0 && (
             <p className="mt-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-950">
-              {order.payment === "Paid" ? preorderText.invoiceLater(inrPrecise(order.amount)) : preorderText.waiting(dayLabel(goods.by))}
+              {order.payment === "Paid" ? preorderText.invoiceLater(inrShop(order.amount)) : preorderText.waiting(dayLabel(goods.by))}
             </p>
           )}
           {returns.filter((item) => item.order === order.id).map((item) => (
             <p key={item.id} className="mt-3 rounded-md bg-ivory px-3 py-2 text-xs text-navy">
-              <span className="font-semibold">Return: {item.product}</span> · {item.status} · Refund {item.refund} · {inrPrecise(item.amount)}
+              <span className="font-semibold">Return: {item.product}</span> · {item.status} · Refund {item.refund} · {inrShop(item.amount)}
             </p>
           ))}
         </Panel>
@@ -360,9 +360,9 @@ function AccountOrderDetail() {
                     </td>
                     <td className="px-3 py-3 text-charcoal">{it.product.sku}</td>
                     <td className="px-3 py-3 text-charcoal">{it.qty}</td>
-                    <td className="px-3 py-3 text-charcoal">{inr(it.product.price)}</td>
+                    <td className="px-3 py-3 text-charcoal">{inrShop(it.product.price)}</td>
                     <td className="px-3 py-3 font-semibold text-navy">
-                      {inr(it.product.price * it.qty)}
+                      {inrShop(it.product.price * it.qty)}
                     </td>
                   </tr>
                 ))}
@@ -374,25 +374,25 @@ function AccountOrderDetail() {
           <dl className="space-y-2 text-sm">
             <div className="flex justify-between">
               <dt className="text-slate">Subtotal (before GST)</dt>
-              <dd className="text-charcoal">{inrPrecise(order.subtotal)}</dd>
+              <dd className="text-charcoal">{inrShop(order.subtotal)}</dd>
             </div>
             <div className="flex justify-between">
               <dt className="text-slate">Discount{order.coupon ? ` (${order.coupon})` : ""}</dt>
-              <dd className="text-danger">-{inrPrecise(order.discount)}</dd>
+              <dd className="text-danger">-{inrShop(order.discount)}</dd>
             </div>
             <div className="flex justify-between">
               <dt className="text-slate">GST</dt>
-              <dd className="text-charcoal">{inrPrecise(order.tax)}</dd>
+              <dd className="text-charcoal">{inrShop(order.tax)}</dd>
             </div>
             <div className="flex justify-between">
               <dt className="text-slate">Shipping</dt>
               <dd className="text-charcoal">
-                {order.shipping === 0 ? "Free" : inrPrecise(order.shipping)}
+                {order.shipping === 0 ? "Free" : inrShop(order.shipping)}
               </dd>
             </div>
             <div className="mt-2 flex justify-between border-t border-border pt-2 text-base font-bold">
               <dt className="text-navy">Total</dt>
-              <dd className="text-gold">{inrPrecise(order.amount)}</dd>
+              <dd className="text-gold">{inrShop(order.amount)}</dd>
             </div>
           </dl>
         </Panel>

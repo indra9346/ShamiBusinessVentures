@@ -15,7 +15,7 @@ import {
 import { PanelLayout } from "@/components/panel/PanelLayout";
 import { DataTable, Panel, StatCard, StatusBadge } from "@/components/panel/widgets";
 import { accountNav } from "@/lib/account-nav";
-import { inr, isStorefrontProduct, orderStages } from "@/lib/data";
+import { isStorefrontProduct, orderStages, inrShop } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { resizedImage } from "@/lib/image-url";
 import { orderBelongsToUser } from "@/lib/account-identity";
@@ -127,7 +127,7 @@ function Account() {
 
       <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
         <StatCard link={{ to: "/account/orders" }} label="Total Orders" value={String(ordersList.length)} icon={Package} compact />
-        <StatCard link={{ to: "/account/invoices" }} label="Total Spend" value={inr(totalSpend)} icon={Wallet} highlight compact />
+        <StatCard link={{ to: "/account/invoices" }} label="Total Spend" value={inrShop(totalSpend)} icon={Wallet} highlight compact />
         <StatCard link={{ to: "/account/orders", search: { status: OPEN_ORDERS } }} label="Active Deliveries" value={String(activeDeliveries)} icon={Truck} compact />
         <StatCard link={{ to: "/account/wishlist" }} label="Wishlist Items" value={String(wishlist.length)} icon={Heart} compact />
       </div>
@@ -153,7 +153,7 @@ function Account() {
                 <span className="font-semibold text-navy">{o.id}</span>,
                 o.date,
                 `${o.items.reduce((sum, item) => sum + item.qty, 0)} item${o.items.reduce((sum, item) => sum + item.qty, 0) === 1 ? "" : "s"}`,
-                inr(o.amount),
+                inrShop(o.amount),
                 <StatusBadge status={o.payment} />,
                 <StatusBadge status={o.status} />,
                 <span className="flex gap-2 text-xs font-semibold">
@@ -294,7 +294,7 @@ function Account() {
                   <img src={resizedImage(p.image, 96)} alt={p.name} className="h-10 w-10 rounded-md object-cover" />
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium text-navy">{p.name}</p>
-                    <p className="text-xs text-slate">{inr(p.price)}</p>
+                    <p className="text-xs text-slate">{inrShop(p.price)}</p>
                   </div>
                 </Link>
               ))}
@@ -330,7 +330,7 @@ function Account() {
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium text-navy">{product.name}</p>
                     <p className="text-xs text-slate">
-                      Qty {qty} · {inr(product.price * qty)}
+                      Qty {qty} · {inrShop(product.price * qty)}
                     </p>
                   </div>
                 </div>
@@ -350,7 +350,7 @@ function Account() {
                   <div className="min-w-0">
                     <p className="text-sm font-semibold text-navy">{c.code}</p>
                     <p className="text-xs text-slate">
-                      {c.value} off · min {inr(c.min)}
+                      {c.value} off · min {inrShop(c.min)}
                     </p>
                   </div>
                 </div>
@@ -383,7 +383,7 @@ function Account() {
                     className="mx-auto h-14 w-14 rounded-md object-cover"
                   />
                   <p className="mt-2 line-clamp-2 text-xs font-medium text-navy">{p.name}</p>
-                  <p className="text-xs font-semibold text-gold">{inr(p.price)}</p>
+                  <p className="text-xs font-semibold text-gold">{inrShop(p.price)}</p>
                 </Link>
               ))}
             </div>

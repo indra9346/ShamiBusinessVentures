@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { toast } from "sonner";
 import { Copy, Landmark, XCircle } from "lucide-react";
-import { inrPrecise } from "@/lib/data";
+import { inrShop } from "@/lib/data";
 import { bankUtrProblem, normaliseBankUtr, type BankDetails } from "@/lib/payment-rules";
 import { submitUpiPayment } from "@/lib/upi-store";
 import type { UpiSubmission } from "@/lib/upi-pay";
@@ -27,7 +27,7 @@ export function BankTransferDetails({ details, amount, method, orderNo, timed = 
   return (
     <div className="mt-4 space-y-3">
       <ol className="list-decimal space-y-1 pl-4 text-sm text-charcoal">
-        <li className="font-semibold">{`Transfer exactly ${inrPrecise(amount)} by ${method} from your bank's app, net banking or branch.`}</li>
+        <li className="font-semibold">{`Transfer exactly ${inrShop(amount)} by ${method} from your bank's app, net banking or branch.`}</li>
         <li>{`Write your order number ${orderNo} in the remarks.`}</li>
         <li>{timed ? "Enter the UTR from your bank below, within the time shown." : "Enter the UTR from your bank below."}</li>
       </ol>

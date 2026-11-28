@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Minus, Plus, Trash2, X } from "lucide-react";
-import { getAvailablePurchaseQuantity, inrPrecise, type Product } from "@/lib/data";
+import { getAvailablePurchaseQuantity, type Product, inrShop } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { resizedImage } from "@/lib/image-url";
@@ -109,8 +109,8 @@ export function CartReviewSheet({ open, onClose }: { open: boolean; onClose: () 
                     <img src={resizedImage(product.image, 96)} alt="" className="h-10 w-10 shrink-0 rounded object-contain bg-stone-50" loading="lazy" />
                     <p className="line-clamp-2 text-[11px] font-semibold leading-snug text-navy">{product.name}</p>
                   </div>
-                  <p className="text-[10px] text-stone-500">{product.weight} · {inrPrecise(product.price)} each</p>
-                  <p className="text-sm font-extrabold tabular-nums text-stone-900">{inrPrecise(product.price * qty)}</p>
+                  <p className="text-[10px] text-stone-500">{product.weight} · {inrShop(product.price)} each</p>
+                  <p className="text-sm font-extrabold tabular-nums text-stone-900">{inrShop(product.price * qty)}</p>
                   <div className="flex items-center justify-between gap-1" onClick={(event) => event.stopPropagation()}>
                     <button
                       type="button"

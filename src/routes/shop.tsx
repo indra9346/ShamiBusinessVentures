@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { LayoutGrid, List, RotateCcw, Search, SlidersHorizontal, X } from "lucide-react";
 import { SiteLayout } from "@/components/site/SiteLayout";
 import { ProductCard } from "@/components/site/ProductCard";
-import { inr, isStorefrontProduct } from "@/lib/data";
+import { isStorefrontProduct, inrShop } from "@/lib/data";
 import { useVisibleCategories } from "@/components/site/CategoryCards";
 import { useApp } from "@/lib/store";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -315,7 +315,7 @@ function Shop() {
             })}
           </FilterGroup>
 
-          <FilterGroup title={`Price up to ${inr(maxPrice)}`}>
+          <FilterGroup title={`Price up to ${inrShop(maxPrice)}`}>
             <Slider
               value={[maxPrice]}
               onValueChange={(v) => setMaxPrice(v[0]!)}
@@ -325,8 +325,8 @@ function Shop() {
             />
             <div className="mt-2 flex items-center justify-between text-xs text-slate">
               <span>₹50</span>
-              <span className="font-semibold text-navy">{inr(maxPrice)}</span>
-              <span>{inr(highestPrice)}</span>
+              <span className="font-semibold text-navy">{inrShop(maxPrice)}</span>
+              <span>{inrShop(highestPrice)}</span>
             </div>
             {/* Quick Price Buttons */}
             <div className="mt-3 flex flex-wrap gap-1.5">
@@ -529,7 +529,7 @@ function Shop() {
               ))}
               {maxPrice < highestPrice && (
                 <span className="inline-flex items-center gap-1.5 rounded-full bg-card px-3 py-1 text-xs font-semibold text-navy border border-border">
-                  Price: ≤ {inr(maxPrice)}
+                  Price: ≤ {inrShop(maxPrice)}
                   <button
                     type="button"
                     onClick={() => setMaxPrice(highestPrice)}

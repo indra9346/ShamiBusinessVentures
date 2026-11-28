@@ -25,6 +25,7 @@ import {
 } from "@/lib/storefront-display";
 import { setSiteDetails } from "@/lib/site-details";
 import { CustomerMessagesPanel } from "@/components/panel/CustomerMessagesPanel";
+import { AdminScreensSettings } from "@/components/panel/AdminScreens";
 import { OrderVoicePanel } from "@/components/panel/OrderVoicePanel";
 import {
   DEFAULT_SITE_DETAILS,
@@ -308,6 +309,7 @@ function AdminSettings() {
               <Button className="bg-navy text-white hover:bg-navy/90 sm:w-fit" onClick={() => void saveSetting("security_config", security, "Security settings")}><Save className="mr-1 h-4 w-4" /> Save Security Settings</Button>
             </div>
           </Panel>
+          <div className="mt-6"><AdminScreensSettings /></div>
         </TabsContent>
       </Tabs>
     </PanelLayout>

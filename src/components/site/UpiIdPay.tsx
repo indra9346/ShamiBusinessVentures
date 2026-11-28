@@ -2,7 +2,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { Check, Copy, XCircle } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
-import { inrPrecise } from "@/lib/data";
+import { inrShop } from "@/lib/data";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { normaliseUtr, pasteSafeAmount, rupeesAndPaise, utrFromText, utrProblem, type UpiSubmission } from "@/lib/upi-pay";
 import { sendUtrForOrder, submitUpiPayment } from "@/lib/upi-store";
@@ -35,9 +35,15 @@ export async function copyText(text: string) {
  * amount in any UPI app with "Pay to UPI ID", come back and enter the UTR. Copying keeps a waiting checkout 10 more
  * minutes, once, like coming back from a UPI app (extend_my_payment_hold).
  */
-export function UpiIdPay({ orderNo, vpa, payeeName, amount, keepCheckout = true, onKept, className }: {
+export function UpiIdPay({ orderNo, vpa, payeeName, amount, keepCheckout = true, onKept, className, primary = false }: {
   orderNo: string; vpa: string; payeeName: string; amount: number; keepCheckout?: boolean;
   onKept?: (holdUntil: string) => void; className?: string;
+  /**
+   * 23 Nov 2026 (owner, PhonePe "Your payment is declined for security reasons" on a ₹98.04 app-button payment): UPI
+   * apps can refuse a website's payment link at any amount, while Pay to UPI ID is never refused and has no ₹2,000
+   * gallery limit. So it is the main way to pay, for every amount; the QR and the app buttons are extras.
+   */
+  primary?: boolean;
 }) {
   const [copied, setCopied] = useState<"id" | "amount" | null>(null);
   // Only an amount that survives a UPI app keeping just the digits of a paste is copied (pasteSafeAmount): ₹98.04 is typed.
@@ -61,9 +67,9 @@ export function UpiIdPay({ orderNo, vpa, payeeName, amount, keepCheckout = true,
     </button>
   );
   return (
-    <div className={cn("rounded-lg border border-gold/40 bg-ivory p-3", className)}>
-      <p className="text-sm font-bold text-navy">Or pay from your UPI app by our UPI ID</p>
-      <p className="mt-0.5 text-xs text-slate">Use this if the QR or the app button does not work for you.</p>
+    <div className={cn("rounded-lg border bg-ivory p-3", primary ? "border-2 border-gold" : "border-gold/40", className)}>
+      <p className="text-sm font-bold text-navy">{primary ? "Pay by our UPI ID (works for any amount)" : "Or pay from your UPI app by our UPI ID"}</p>
+      <p className="mt-0.5 text-xs text-slate">{primary ? "The surest way to pay on this phone: no limit from us, and UPI apps do not decline it." : "Use this if the QR or the app button does not work for you."}</p>
       <ol className="mt-2 list-decimal space-y-2 pl-4 text-xs text-charcoal">
         <li>
           <span>Copy our UPI ID:</span>
@@ -76,12 +82,12 @@ export function UpiIdPay({ orderNo, vpa, payeeName, amount, keepCheckout = true,
         <li>
           <span>Pay exactly this amount:</span>
           <span className="mt-1 flex flex-wrap items-center gap-2">
-            <span className="rounded-md border border-border bg-white px-2 py-1.5 font-mono text-sm font-semibold text-navy" data-no-translate>{inrPrecise(amount)}</span>
+            <span className="rounded-md border border-border bg-white px-2 py-1.5 font-mono text-sm font-semibold text-navy" data-no-translate>{inrShop(amount)}</span>
             {amountText !== null && button("amount", "Copy amount")}
           </span>
           {amountText === null && (
             <span className="mt-1 block rounded-md bg-amber-50 p-2 text-[11px] font-semibold text-amber-900">
-              {`Type it yourself with the point: ${split.rupees} rupees ${split.paise} paise. Do not paste it: some UPI apps, such as PhonePe, drop the point and ask for ${inrPrecise(split.rupees * 100 + split.paise)}. Check your app shows ${inrPrecise(amount)} before you pay.`}
+              {`Type it yourself with the point: ${split.rupees} rupees ${split.paise} paise. Do not paste it: some UPI apps, such as PhonePe, drop the point and ask for ${inrShop(split.rupees * 100 + split.paise)}. Check your app shows ${inrShop(amount)} before you pay.`}
             </span>
           )}
         </li>

@@ -1,6 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { Heart, Package, Star } from "lucide-react";
-import { formatRateBasis, getDisplayDiscountPercent, getPricingDisplayMode, inr, inrPrecise, showsMrpSavings, type Product } from "@/lib/data";
+import { formatRateBasis, getDisplayDiscountPercent, getPricingDisplayMode, showsMrpSavings, type Product, inrShop } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { responsiveImage, showOriginalImage } from "@/lib/image-url";
@@ -40,7 +40,7 @@ function PriceBlock({ product, size = "sm", showSavings, beside }: { product: Pr
   const price = (
     <span className="inline-flex flex-wrap items-center gap-x-1.5 gap-y-1">
       <span className={cn(priceClass, "font-extrabold leading-none tracking-tight text-stone-900")}>
-        {inrPrecise(product.price)}
+        {inrShop(product.price)}
       </span>
       {beside}
     </span>
@@ -61,12 +61,12 @@ function PriceBlock({ product, size = "sm", showSavings, beside }: { product: Pr
     <div className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
       {price}
       {product.mrp > product.price && (
-        <span className="text-[11px] sm:text-xs text-stone-500 line-through">{inr(product.mrp)}</span>
+        <span className="text-[11px] sm:text-xs text-stone-500 line-through">{inrShop(product.mrp)}</span>
       )}
       {off > 0 && <span className="text-[11px] sm:text-xs font-bold text-emerald-600">{off}% off</span>}
       {off > 0 && (
         <span className="basis-full text-[10px] sm:text-[11px] font-medium text-emerald-700">
-          Save {inr(product.mrp - product.price)}
+          Save {inrShop(product.mrp - product.price)}
         </span>
       )}
     </div>

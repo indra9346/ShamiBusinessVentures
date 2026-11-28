@@ -5,7 +5,7 @@ import { Heart, Minus, Plus, ShieldCheck, Star, Truck, Store, ShoppingCart } fro
 import { toast } from "sonner";
 import { SiteLayout, Breadcrumbs, SectionHeading } from "@/components/site/SiteLayout";
 import { ProductCard } from "@/components/site/ProductCard";
-import { getAvailablePurchaseQuantity, getDisplayDiscountPercent, getMaxPurchaseQuantity, getPricingDisplayMode, formatRateBasis, inr, inrPrecise, isStorefrontProduct, showsMrpSavings } from "@/lib/data";
+import { getAvailablePurchaseQuantity, getDisplayDiscountPercent, getMaxPurchaseQuantity, getPricingDisplayMode, formatRateBasis, isStorefrontProduct, showsMrpSavings, inrShop } from "@/lib/data";
 import { useApp } from "@/lib/store";
 import { useStorefrontDisplay } from "@/lib/storefront-display";
 import { usePickupSettings } from "@/lib/pickup-points";
@@ -61,8 +61,8 @@ export const Route = createFileRoute("/product/$id")({
     const own = ownDescription(p);
     return {
       ...pageHead({
-        title: `${p.name} at ${inr(p.price)} | ${SITE_NAME}`,
-        description: `Buy ${p.name}${p.weight ? ` (${p.weight})` : ""} at ${inr(p.price)} (GST included) from Grain Bazar. ${own ? `${own} ` : ""}GST invoice, pickup or delivery from Challakere and Hubli.`,
+        title: `${p.name} at ${inrShop(p.price)} | ${SITE_NAME}`,
+        description: `Buy ${p.name}${p.weight ? ` (${p.weight})` : ""} at ${inrShop(p.price)} (GST included) from Grain Bazar. ${own ? `${own} ` : ""}GST invoice, pickup or delivery from Challakere and Hubli.`,
         path,
         type: "product",
         ...(p.image ? { image: p.image } : {}),
@@ -233,7 +233,7 @@ function ProductDetail() {
           </div>
 
           <div className="mt-6 flex flex-wrap items-baseline gap-3">
-            <span className="text-3xl font-extrabold text-stone-900 sm:text-4xl">{inrPrecise(product.price)}</span>
+            <span className="text-3xl font-extrabold text-stone-900 sm:text-4xl">{inrShop(product.price)}</span>
             {formatRateBasis(product) && (
               <span className="text-sm font-semibold text-stone-600">({formatRateBasis(product)})</span>
             )}
@@ -241,9 +241,9 @@ function ProductDetail() {
               <span className="text-sm font-medium text-stone-500">MRP</span>
             ) : (
               <>
-                {product.mrp > product.price && <span className="text-lg text-slate line-through">{inr(product.mrp)}</span>}
+                {product.mrp > product.price && <span className="text-lg text-slate line-through">{inrShop(product.mrp)}</span>}
                 {off > 0 && <span className="rounded-sm bg-emerald-600 px-2 py-0.5 text-xs font-bold text-white">{off}% OFF</span>}
-                {off > 0 && <span className="text-sm font-semibold text-emerald-700">Save {inr(product.mrp - product.price)}</span>}
+                {off > 0 && <span className="text-sm font-semibold text-emerald-700">Save {inrShop(product.mrp - product.price)}</span>}
               </>
             )}
           </div>

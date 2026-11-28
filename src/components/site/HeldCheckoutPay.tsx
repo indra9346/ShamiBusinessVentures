@@ -2,13 +2,13 @@ import { useEffect, useMemo, useState } from "react";
 import { renderSVG } from "uqr";
 import { CheckCircle2, Clock, Loader2, ShieldCheck, XCircle } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
-import { inrPrecise } from "@/lib/data";
+import { inrShop } from "@/lib/data";
 import { STATIC_DATA_MODE } from "@/lib/demo-mode";
 import { AWAITING_PAYMENT, clockText, holdSecondsLeft, holdView, type PaymentHold } from "@/lib/payment-hold";
 import { serverNow, useServerNow } from "@/lib/server-clock";
 import { useApp } from "@/lib/store";
 import { CancelCheckoutButton } from "@/components/site/CancelCheckoutButton";
-import { upiPaymentUri, type UpiSettings, overUpiLinkLimit } from "@/lib/upi-pay";
+import { upiPaymentUri, type UpiSettings } from "@/lib/upi-pay";
 import { GST_BILL_PAY_NOTE } from "@/lib/gstin";
 import { UpiAppButtons } from "@/components/site/UpiAppButtons";
 import { PAY_RETURNED_EVENT, payPanelId } from "@/lib/upi-return";
@@ -136,7 +136,7 @@ export function HeldCheckoutPay({ settings, orderNo, amount, holdUntil, customer
     return (
       <div id={payPanelId(orderNo)} className="scroll-mt-24 rounded-lg border border-emerald-200 bg-emerald-50 p-5 text-left text-emerald-900">
         <p className="flex items-center gap-2 text-base font-bold"><CheckCircle2 className="h-5 w-5" /> Payment received · order placed and confirmed</p>
-        <p className="mt-1 text-sm">Order <span className="font-semibold">{orderNo}</span> · {`${inrPrecise(amount)} paid by ${method}. We have started on your order.`}</p>
+        <p className="mt-1 text-sm">Order <span className="font-semibold">{orderNo}</span> · {`${inrShop(amount)} paid by ${method}. We have started on your order.`}</p>
       </div>
     );
   }
@@ -210,7 +210,7 @@ export function HeldCheckoutPay({ settings, orderNo, amount, holdUntil, customer
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="text-xs font-bold uppercase tracking-wider text-slate">{view === "received" ? "Your payment" : view === "verifying" ? "Your order" : byBank ? "Transfer now to place your order" : "Pay now to place your order · no extra charges"}</p>
-          <p className="mt-1 text-2xl font-extrabold text-navy">{inrPrecise(amount)}</p>
+          <p className="mt-1 text-2xl font-extrabold text-navy">{inrShop(amount)}</p>
           <p className="text-xs text-slate">{orderNo} · {method} · to {byBank ? bankDetails?.accountName : settings?.payeeName}</p>
         </div>
         <span className={cn("inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold", view === "received" ? "bg-emerald-50 text-emerald-800" : left > 60 ? "bg-amber-50 text-amber-800" : "bg-red-50 text-red-800")}>
@@ -227,7 +227,7 @@ export function HeldCheckoutPay({ settings, orderNo, amount, holdUntil, customer
       {view === "received" ? (
         <div className="mt-4 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
           <p className="flex items-center gap-2 font-semibold"><CheckCircle2 className="h-4 w-4" /> We have received your payment</p>
-          <p className="mt-1">{`Our bank shows ${inrPrecise(amount)} at ${new Date(moneySeenAt ?? Date.now()).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" })}.`}</p>
+          <p className="mt-1">{`Our bank shows ${inrShop(amount)} at ${new Date(moneySeenAt ?? Date.now()).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" })}.`}</p>
           <p className="mt-1">Our team is confirming it now. Your order is placed as soon as they do, and you will get a notification. Please do not pay again. You can close this page.</p>
         </div>
       ) : view === "verifying" ? (
@@ -236,7 +236,7 @@ export function HeldCheckoutPay({ settings, orderNo, amount, holdUntil, customer
         // customer is told the order is placed; a UTR that can't be matched is told to them as it is today.
         <div className="mt-4 rounded-md border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-950" role="status" aria-live="polite">
           <p className="flex items-center gap-2 text-base font-bold text-emerald-800"><CheckCircle2 className="h-5 w-5" /> Your order has been placed</p>
-          <p className="mt-1 font-semibold">{`Order ${orderNo} · ${inrPrecise(amount)}`}</p>
+          <p className="mt-1 font-semibold">{`Order ${orderNo} · ${inrShop(amount)}`}</p>
           <p className="mt-1 flex items-center gap-1.5 text-xs"><ShieldCheck className="h-3.5 w-3.5 shrink-0" />{`UTR ${shownUtr} received.`}</p>
           <p className="mt-1">Our team is confirming your payment with our bank; your goods are kept for you. You will get a notification once it is confirmed. Please do not pay again.</p>
           {shownUtr && !STATIC_DATA_MODE && <WithdrawUtrButton orderNo={orderNo} utr={shownUtr} onDone={() => setSentUtr("")} />}
@@ -247,7 +247,7 @@ export function HeldCheckoutPay({ settings, orderNo, amount, holdUntil, customer
             <p className="mt-4 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm font-semibold text-amber-950">
               {Math.abs(earlier.amount - amount) < 0.005
                 ? `Already transferred? Do not pay again: enter UTR ${earlier.utr} below.`
-                : `Your earlier transfer (UTR ${earlier.utr}) was for ${inrPrecise(earlier.amount)}. This order comes to ${inrPrecise(amount)}, so please call us before paying.`}
+                : `Your earlier transfer (UTR ${earlier.utr}) was for ${inrShop(earlier.amount)}. This order comes to ${inrShop(amount)}, so please call us before paying.`}
             </p>
           )}
           {bankLoaded || bankFailed
@@ -269,36 +269,25 @@ export function HeldCheckoutPay({ settings, orderNo, amount, holdUntil, customer
         <>
           <div className="mt-4 grid gap-4 sm:grid-cols-[180px_minmax(0,1fr)]">
             <div className="mx-auto w-[180px]">
-              <div className="rounded-lg border border-border bg-white p-2" role="img" aria-label={`UPI QR code for ${inrPrecise(amount)}`}
+              <div className="rounded-lg border border-border bg-white p-2" role="img" aria-label={`UPI QR code for ${inrShop(amount)}`}
                 // uqr returns a self-contained <svg> of the QR code (no scripts).
                 dangerouslySetInnerHTML={{ __html: qrSvg }} />
               <p className="mt-1 text-center text-[11px] text-slate">Scan with any UPI app</p>
             </div>
             <div className="min-w-0 space-y-3">
-              {overUpiLinkLimit(amount) ? (
-                // Client, 19 Nov 2026 (PhonePe: "You can pay up to ₹2,000 with QR codes via gallery"): above ₹2,000 a UPI
-                // app refuses a payment link or a gallery QR, so typing our UPI ID comes first.
-                <div className="rounded-md border-2 border-amber-400 bg-amber-50 p-3 text-sm text-amber-950">
-                  <p className="font-bold">{`Paying on this phone? UPI apps allow only ₹2,000 by link or gallery QR.`}</p>
-                  <p className="mt-0.5">{`For ${inrPrecise(amount)}: open your UPI app, choose Pay to UPI ID, and enter ${settings?.vpa ?? "our UPI ID"} and the amount (steps below). Or scan this QR with the camera of another phone.`}</p>
-                </div>
-              ) : (
-                <p className="rounded-md bg-slate-50 px-3 py-2 text-xs text-slate">{`If PhonePe says "You can pay up to ₹2,000 with QR codes via gallery", tap Dismiss, then Pay: ${inrPrecise(amount)} is within it.`}</p>
-              )}
-              {overUpiLinkLimit(amount) && settings?.vpa && (
-                <UpiIdPay orderNo={orderNo} vpa={settings.vpa} payeeName={settings.payeeName} amount={amount}
+              {/* 23 Nov 2026 (owner: "no constraints, payable at any amount"): PhonePe declined a ₹98.04 app-button
+                  payment "for security reasons". Pay to UPI ID works at every amount, so it comes first for everyone;
+                  the QR (camera of another phone or a computer screen) and the app buttons are extras. */}
+              {settings?.vpa && (
+                <UpiIdPay primary orderNo={orderNo} vpa={settings.vpa} payeeName={settings.payeeName} amount={amount}
                   onKept={(until) => setLiveStatus((current) => (current ? { ...current, holdUntil: until } : current))} />
               )}
               <ol className="list-decimal space-y-1 pl-4 text-sm text-charcoal">
-                <li>{overUpiLinkLimit(amount) ? "Pay to our UPI ID as above, or scan the QR from another phone." : "Scan the QR, or on your phone tap your UPI app below."}</li>
-                <li>Pay exactly <span className="font-semibold">{inrPrecise(amount)}</span> to <span className="font-semibold">{settings?.payeeName}</span>.</li>
+                <li>Pay to our UPI ID as above, or scan the QR with the camera of another phone.</li>
+                <li>Pay exactly <span className="font-semibold">{inrShop(amount)}</span> to <span className="font-semibold">{settings?.payeeName}</span>.</li>
                 <li>Come back here and enter the 12-digit UPI Ref No. (UTR) from the payment receipt. Our team confirms it with our bank and your order is placed.</li>
               </ol>
-              {!overUpiLinkLimit(amount) && <UpiAppButtons uri={uri} returnTo={payPanelId(orderNo)} />}
-              {!overUpiLinkLimit(amount) && settings?.vpa && (
-                <UpiIdPay orderNo={orderNo} vpa={settings.vpa} payeeName={settings.payeeName} amount={amount}
-                  onKept={(until) => setLiveStatus((current) => (current ? { ...current, holdUntil: until } : current))} />
-              )}
+              <UpiAppButtons uri={uri} returnTo={payPanelId(orderNo)} />
               {!backFromApp && <p className="flex items-center gap-2 text-xs font-semibold text-slate"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Waiting for your payment…</p>}
             </div>
           </div>

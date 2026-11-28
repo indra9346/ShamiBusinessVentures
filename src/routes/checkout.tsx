@@ -5,7 +5,7 @@ import { z } from "zod";
 import { Check, CreditCard, Loader2, Lock, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { SiteLayout, Breadcrumbs } from "@/components/site/SiteLayout";
-import { getAvailablePurchaseQuantity, inr, inrPrecise, readyStockOf } from "@/lib/data";
+import { getAvailablePurchaseQuantity, readyStockOf, inrShop } from "@/lib/data";
 import { couponDiscount, gstAfterCoupon, lineGstInside, toPaise } from "@/lib/pricing";
 import { useApp, type Address } from "@/lib/store";
 import { PickupPointCard } from "@/components/site/PickupPointCard";
@@ -679,11 +679,11 @@ function Checkout() {
   ) : (
     <div className="mt-4 space-y-2.5 text-sm">
       {[
-        ["Subtotal (incl. GST)", inrPrecise(summary.subtotal)],
+        ["Subtotal (incl. GST)", inrShop(summary.subtotal)],
         // 17 Nov 2026 (owner): the summary's Pickup line reads ₹0, not "Free" (home delivery and the option cards keep "Free").
-        [fulfil === "Delivery" ? "Delivery" : "Pickup", summary.shipCost === 0 ? (fulfil === "Delivery" ? "Free" : inrPrecise(0)) : inrPrecise(summary.shipCost)],
+        [fulfil === "Delivery" ? "Delivery" : "Pickup", summary.shipCost === 0 ? (fulfil === "Delivery" ? "Free" : inrShop(0)) : inrShop(summary.shipCost)],
         ...(summary.discount > 0
-          ? [["Coupon discount", `- ${inrPrecise(summary.discount)}`]]
+          ? [["Coupon discount", `- ${inrShop(summary.discount)}`]]
           : []),
       ].map(([k, v]) => (
         <div key={k} className="flex justify-between">
@@ -694,15 +694,15 @@ function Checkout() {
       <div className="hairline-gold my-2" />
       <div className="flex justify-between text-base font-bold text-navy">
         <span>Total</span>
-        <span>{inrPrecise(summary.total)}</span>
+        <span>{inrShop(summary.total)}</span>
       </div>
-      {summary.tax > 0 && <p className="text-right text-xs text-slate">{`Includes GST of ${inrPrecise(summary.tax)}`}</p>}
+      {summary.tax > 0 && <p className="text-right text-xs text-slate">{`Includes GST of ${inrShop(summary.tax)}`}</p>}
     </div>
   );
 
   const editingAddress = editingAddressId ? addresses.find((address) => address.id === editingAddressId) : undefined;
   // Only beside a real total: no address or cart problem may leave it quoting a figure the summary doesn't show.
-  const addressChangeNotice = addressChange && pricesKnown ? addressChangeText(addressChange, total, inrPrecise) : null;
+  const addressChangeNotice = addressChange && pricesKnown ? addressChangeText(addressChange, total, inrShop) : null;
   // Where the address shows after the first step: the way back to edit it.
   const addressStrip = selectedAddress ? (
     <div className="flex items-start justify-between gap-3 rounded-lg border border-border bg-ivory/50 p-3 text-sm">
@@ -1033,10 +1033,10 @@ function Checkout() {
                         <span className="block font-semibold text-navy">Home delivery</span>
                         <span className="text-sm text-slate">
                           Delivered to {selectedAddress?.line || "your address"}
-                          {fulfilBranch?.freeDeliveryAbove != null ? ` · free above ${inr(fulfilBranch.freeDeliveryAbove)}` : ""}
+                          {fulfilBranch?.freeDeliveryAbove != null ? ` · free above ${inrShop(fulfilBranch.freeDeliveryAbove)}` : ""}
                         </span>
                       </span>
-                      <span className="font-bold text-gold">{deliveryFee === 0 ? "Free" : inr(deliveryFee)}</span>
+                      <span className="font-bold text-gold">{deliveryFee === 0 ? "Free" : inrShop(deliveryFee)}</span>
                     </button>
                   )}
                   {fulfil === "Pickup" && <PickupPointCard pin={selectedAddress?.pin ?? null} />}
@@ -1137,13 +1137,13 @@ function Checkout() {
                         </p>
                         <PreorderSplit product={product} qty={qty} />
                       </div>
-                      <p className="font-semibold text-navy">{inr(product.price * qty)}</p>
+                      <p className="font-semibold text-navy">{inrShop(product.price * qty)}</p>
                     </div>
                   ))}
                 </div>
                 <div className="mt-5">{addressStrip}</div>
                 <dl className="mt-5 space-y-1.5 text-sm text-slate">
-                  <div>{fulfil === "Delivery" ? `Home delivery: ${shipCost === 0 ? "free" : inr(shipCost)}` : "Pickup: from our godown (free)"}</div>
+                  <div>{fulfil === "Delivery" ? `Home delivery: ${shipCost === 0 ? "free" : inrShop(shipCost)}` : "Pickup: from our godown (free)"}</div>
                   <div>{payMethod && isBankMethod(payMethod)
                     ? `Payment: ${methodLabel(payMethod)} (our bank details are on the next step; enter the UTR within 1 hour)`
                     : payMethod === "UPI" ? "Payment: UPI (pay on the next step; the order is placed when paid)" : "Payment: not available yet"}</div>
@@ -1184,10 +1184,10 @@ function Checkout() {
                 {!allEnded && (
                   <p className="mt-2 text-sm text-slate">
                     {allPaid
-                      ? `Total ${inrPrecise(summary.total)} paid by ${placedMethod}. `
+                      ? `Total ${inrShop(summary.total)} paid by ${placedMethod}. `
                       : isBankMethod(placedMethod)
-                        ? `Total ${inrPrecise(summary.total)}. Prices and stock are held for you: transfer the money and enter the UTR within the time shown. The order is placed once we check it. `
-                        : `Total ${inrPrecise(summary.total)}. Prices and stock are held for you while you pay; the order is placed as soon as we confirm the payment in our bank. `}
+                        ? `Total ${inrShop(summary.total)}. Prices and stock are held for you: transfer the money and enter the UTR within the time shown. The order is placed once we check it. `
+                        : `Total ${inrShop(summary.total)}. Prices and stock are held for you while you pay; the order is placed as soon as we confirm the payment in our bank. `}
                     {fulfil === "Pickup"
                       ? "We will let you know when it is ready to collect."
                       : placedPreorder?.delivery
@@ -1287,7 +1287,7 @@ function Checkout() {
                   className="flex h-12 min-w-0 flex-1 flex-wrap content-center items-center justify-center gap-x-1.5 rounded-md bg-gold px-4 text-sm leading-tight font-bold text-midnight shadow-sm transition-colors hover:bg-gold-light active:scale-[0.99] disabled:cursor-wait disabled:opacity-60 sm:h-auto sm:flex-none sm:py-2.5"
                 >
                   <span className="whitespace-nowrap">{placingOrder ? "Holding your order…" : step === 3 ? "Continue to pay" : "Continue"}</span>
-                  {!placingOrder && pricesKnown && <span className="whitespace-nowrap text-[13px] font-semibold opacity-80 sm:hidden">· {inrPrecise(summary.total)}</span>}
+                  {!placingOrder && pricesKnown && <span className="whitespace-nowrap text-[13px] font-semibold opacity-80 sm:hidden">· {inrShop(summary.total)}</span>}
                 </button>
               </div>
             )}
