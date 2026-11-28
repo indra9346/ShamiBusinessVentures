@@ -15,6 +15,16 @@ export const Route = createFileRoute("/api/zoho/sync")({
         const auth = request.headers.get("authorization") ?? "";
         if (!secret || !equalSecret(auth, `Bearer ${secret}`))
           return Response.json({ error: "Unauthorized" }, { status: 401 });
+        // Cashfree first (28 Nov 2026): webhook calls parked on Supabase, then every open Cashfree order is asked about,
+        // so a checkout paid through Cashfree is placed, not ended, even when the customer closed the page.
+        let cashfree: unknown = null;
+        try {
+          const { drainCashfreeInbox, reconcileCashfreeOrders } = await import("@/lib/cashfree.functions");
+          cashfree = { inbox: await drainCashfreeInbox(), orders: await reconcileCashfreeOrders() };
+        } catch (cause) {
+          console.error("Cashfree check failed", cause);
+          cashfree = { error: "Cashfree check failed" };
+        }
         // Unpaid checkouts whose time is up give their stock back, even if nobody has a page open.
         try {
           const url = process.env["SUPABASE_URL"];
@@ -42,7 +52,7 @@ export const Route = createFileRoute("/api/zoho/sync")({
         }
         try {
           const { processZohoSyncOutbox } = await import("@/lib/zoho-commerce.functions");
-          return Response.json({ ...(await processZohoSyncOutbox(20)), webhookInbox }, {
+          return Response.json({ ...(await processZohoSyncOutbox(20)), webhookInbox, cashfree }, {
             headers: { "cache-control": "no-store" },
           });
         } catch (cause) {

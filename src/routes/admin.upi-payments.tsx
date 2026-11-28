@@ -24,6 +24,7 @@ import { DeleteUtrDialog } from "@/components/panel/DeleteUtrDialog";
 import { BulkBar, BulkDeleteDialog, TickBox, useBulkSelection } from "@/components/panel/BulkSelect";
 import { BankStatementPanel } from "@/components/panel/BankStatementPanel";
 import { PartnerPaymentApprovalPanel } from "@/components/panel/PartnerPaymentApprovalPanel";
+import { CashfreeGatewayPanel } from "@/components/panel/CashfreeGatewayPanel";
 import { ResizableTable } from "@/hooks/use-column-resize";
 import { useZohoNumbers } from "@/hooks/use-zoho-numbers";
 import { zohoNumberParts } from "@/lib/zoho-numbers";
@@ -308,6 +309,9 @@ function AdminUpiPayments() {
       }} />
 
       <BankDetailsPanel />
+
+      {/* 28 Nov 2026: Cashfree Payment Gateway for UPI checkouts (keys on the server, switch, webhook, payments). */}
+      {!STATIC_DATA_MODE && <CashfreeGatewayPanel />}
 
       {/* 16 Nov 2026: whether godown channel partners may approve their own godown's payments. */}
       {!STATIC_DATA_MODE && <PartnerPaymentApprovalPanel />}

@@ -55,7 +55,6 @@ import { Route as AdminIndentsRouteImport } from './routes/admin.indents'
 import { Route as AdminInventoryRouteImport } from './routes/admin.inventory'
 import { Route as AdminLoginRouteImport } from './routes/admin.login'
 import { Route as AdminLotsRouteImport } from './routes/admin.lots'
-import { Route as AdminStockDashboardRouteImport } from './routes/admin.stock-dashboard'
 import { Route as AdminNotificationsRouteImport } from './routes/admin.notifications'
 import { Route as AdminOrdersRouteImport } from './routes/admin.orders'
 import { Route as AdminPartnerIncomeRouteImport } from './routes/admin.partner-income'
@@ -74,6 +73,7 @@ import { Route as AdminReviewsRouteImport } from './routes/admin.reviews'
 import { Route as AdminRiceSamplesRouteImport } from './routes/admin.rice-samples'
 import { Route as AdminSettingsRouteImport } from './routes/admin.settings'
 import { Route as AdminStockCountsRouteImport } from './routes/admin.stock-counts'
+import { Route as AdminStockDashboardRouteImport } from './routes/admin.stock-dashboard'
 import { Route as AdminUpiPaymentsRouteImport } from './routes/admin.upi-payments'
 import { Route as AdminVendorsRouteImport } from './routes/admin.vendors'
 import { Route as AdminZohoRouteImport } from './routes/admin.zoho'
@@ -126,6 +126,7 @@ import { Route as ApiZohoWebhookRouteImport } from './routes/api.zoho.webhook'
 import { Route as CategoriesSlugChildRouteImport } from './routes/categories.$slug.$child'
 import { Route as VendorOrdersIdRouteImport } from './routes/vendor.orders.$id'
 import { Route as VendorProductsAddRouteImport } from './routes/vendor.products.add'
+import { Route as ApiPaymentsCashfreeWebhookRouteImport } from './routes/api.payments.cashfree.webhook'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -357,11 +358,6 @@ const AdminLotsRoute = AdminLotsRouteImport.update({
   path: '/admin/lots',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AdminStockDashboardRoute = AdminStockDashboardRouteImport.update({
-  id: '/admin/stock-dashboard',
-  path: '/admin/stock-dashboard',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const AdminNotificationsRoute = AdminNotificationsRouteImport.update({
   id: '/admin/notifications',
   path: '/admin/notifications',
@@ -450,6 +446,11 @@ const AdminSettingsRoute = AdminSettingsRouteImport.update({
 const AdminStockCountsRoute = AdminStockCountsRouteImport.update({
   id: '/admin/stock-counts',
   path: '/admin/stock-counts',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminStockDashboardRoute = AdminStockDashboardRouteImport.update({
+  id: '/admin/stock-dashboard',
+  path: '/admin/stock-dashboard',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AdminUpiPaymentsRoute = AdminUpiPaymentsRouteImport.update({
@@ -713,6 +714,12 @@ const VendorProductsAddRoute = VendorProductsAddRouteImport.update({
   path: '/add',
   getParentRoute: () => VendorProductsRoute,
 } as any)
+const ApiPaymentsCashfreeWebhookRoute =
+  ApiPaymentsCashfreeWebhookRouteImport.update({
+    id: '/api/payments/cashfree/webhook',
+    path: '/api/payments/cashfree/webhook',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -760,7 +767,6 @@ export interface FileRoutesByFullPath {
   '/admin/inventory': typeof AdminInventoryRoute
   '/admin/login': typeof AdminLoginRoute
   '/admin/lots': typeof AdminLotsRoute
-  '/admin/stock-dashboard': typeof AdminStockDashboardRoute
   '/admin/notifications': typeof AdminNotificationsRoute
   '/admin/orders': typeof AdminOrdersRouteWithChildren
   '/admin/partner-income': typeof AdminPartnerIncomeRoute
@@ -779,6 +785,7 @@ export interface FileRoutesByFullPath {
   '/admin/rice-samples': typeof AdminRiceSamplesRoute
   '/admin/settings': typeof AdminSettingsRoute
   '/admin/stock-counts': typeof AdminStockCountsRoute
+  '/admin/stock-dashboard': typeof AdminStockDashboardRoute
   '/admin/upi-payments': typeof AdminUpiPaymentsRoute
   '/admin/vendors': typeof AdminVendorsRouteWithChildren
   '/admin/zoho': typeof AdminZohoRoute
@@ -832,6 +839,7 @@ export interface FileRoutesByFullPath {
   '/categories/$slug/$child': typeof CategoriesSlugChildRoute
   '/vendor/orders/$id': typeof VendorOrdersIdRoute
   '/vendor/products/add': typeof VendorProductsAddRoute
+  '/api/payments/cashfree/webhook': typeof ApiPaymentsCashfreeWebhookRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -877,7 +885,6 @@ export interface FileRoutesByTo {
   '/admin/inventory': typeof AdminInventoryRoute
   '/admin/login': typeof AdminLoginRoute
   '/admin/lots': typeof AdminLotsRoute
-  '/admin/stock-dashboard': typeof AdminStockDashboardRoute
   '/admin/notifications': typeof AdminNotificationsRoute
   '/admin/orders': typeof AdminOrdersRouteWithChildren
   '/admin/partner-income': typeof AdminPartnerIncomeRoute
@@ -896,6 +903,7 @@ export interface FileRoutesByTo {
   '/admin/rice-samples': typeof AdminRiceSamplesRoute
   '/admin/settings': typeof AdminSettingsRoute
   '/admin/stock-counts': typeof AdminStockCountsRoute
+  '/admin/stock-dashboard': typeof AdminStockDashboardRoute
   '/admin/upi-payments': typeof AdminUpiPaymentsRoute
   '/admin/vendors': typeof AdminVendorsRouteWithChildren
   '/admin/zoho': typeof AdminZohoRoute
@@ -949,6 +957,7 @@ export interface FileRoutesByTo {
   '/categories/$slug/$child': typeof CategoriesSlugChildRoute
   '/vendor/orders/$id': typeof VendorOrdersIdRoute
   '/vendor/products/add': typeof VendorProductsAddRoute
+  '/api/payments/cashfree/webhook': typeof ApiPaymentsCashfreeWebhookRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -997,7 +1006,6 @@ export interface FileRoutesById {
   '/admin/inventory': typeof AdminInventoryRoute
   '/admin/login': typeof AdminLoginRoute
   '/admin/lots': typeof AdminLotsRoute
-  '/admin/stock-dashboard': typeof AdminStockDashboardRoute
   '/admin/notifications': typeof AdminNotificationsRoute
   '/admin/orders': typeof AdminOrdersRouteWithChildren
   '/admin/partner-income': typeof AdminPartnerIncomeRoute
@@ -1016,6 +1024,7 @@ export interface FileRoutesById {
   '/admin/rice-samples': typeof AdminRiceSamplesRoute
   '/admin/settings': typeof AdminSettingsRoute
   '/admin/stock-counts': typeof AdminStockCountsRoute
+  '/admin/stock-dashboard': typeof AdminStockDashboardRoute
   '/admin/upi-payments': typeof AdminUpiPaymentsRoute
   '/admin/vendors': typeof AdminVendorsRouteWithChildren
   '/admin/zoho': typeof AdminZohoRoute
@@ -1069,6 +1078,7 @@ export interface FileRoutesById {
   '/categories/$slug/$child': typeof CategoriesSlugChildRoute
   '/vendor/orders/$id': typeof VendorOrdersIdRoute
   '/vendor/products/add': typeof VendorProductsAddRoute
+  '/api/payments/cashfree/webhook': typeof ApiPaymentsCashfreeWebhookRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -1118,7 +1128,6 @@ export interface FileRouteTypes {
     | '/admin/inventory'
     | '/admin/login'
     | '/admin/lots'
-    | '/admin/stock-dashboard'
     | '/admin/notifications'
     | '/admin/orders'
     | '/admin/partner-income'
@@ -1137,6 +1146,7 @@ export interface FileRouteTypes {
     | '/admin/rice-samples'
     | '/admin/settings'
     | '/admin/stock-counts'
+    | '/admin/stock-dashboard'
     | '/admin/upi-payments'
     | '/admin/vendors'
     | '/admin/zoho'
@@ -1190,6 +1200,7 @@ export interface FileRouteTypes {
     | '/categories/$slug/$child'
     | '/vendor/orders/$id'
     | '/vendor/products/add'
+    | '/api/payments/cashfree/webhook'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -1235,7 +1246,6 @@ export interface FileRouteTypes {
     | '/admin/inventory'
     | '/admin/login'
     | '/admin/lots'
-    | '/admin/stock-dashboard'
     | '/admin/notifications'
     | '/admin/orders'
     | '/admin/partner-income'
@@ -1254,6 +1264,7 @@ export interface FileRouteTypes {
     | '/admin/rice-samples'
     | '/admin/settings'
     | '/admin/stock-counts'
+    | '/admin/stock-dashboard'
     | '/admin/upi-payments'
     | '/admin/vendors'
     | '/admin/zoho'
@@ -1307,6 +1318,7 @@ export interface FileRouteTypes {
     | '/categories/$slug/$child'
     | '/vendor/orders/$id'
     | '/vendor/products/add'
+    | '/api/payments/cashfree/webhook'
   id:
     | '__root__'
     | '/'
@@ -1354,7 +1366,6 @@ export interface FileRouteTypes {
     | '/admin/inventory'
     | '/admin/login'
     | '/admin/lots'
-    | '/admin/stock-dashboard'
     | '/admin/notifications'
     | '/admin/orders'
     | '/admin/partner-income'
@@ -1373,6 +1384,7 @@ export interface FileRouteTypes {
     | '/admin/rice-samples'
     | '/admin/settings'
     | '/admin/stock-counts'
+    | '/admin/stock-dashboard'
     | '/admin/upi-payments'
     | '/admin/vendors'
     | '/admin/zoho'
@@ -1426,6 +1438,7 @@ export interface FileRouteTypes {
     | '/categories/$slug/$child'
     | '/vendor/orders/$id'
     | '/vendor/products/add'
+    | '/api/payments/cashfree/webhook'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -1464,7 +1477,6 @@ export interface RootRouteChildren {
   AdminInventoryRoute: typeof AdminInventoryRoute
   AdminLoginRoute: typeof AdminLoginRoute
   AdminLotsRoute: typeof AdminLotsRoute
-  AdminStockDashboardRoute: typeof AdminStockDashboardRoute
   AdminNotificationsRoute: typeof AdminNotificationsRoute
   AdminOrdersRoute: typeof AdminOrdersRouteWithChildren
   AdminPartnerIncomeRoute: typeof AdminPartnerIncomeRoute
@@ -1483,6 +1495,7 @@ export interface RootRouteChildren {
   AdminRiceSamplesRoute: typeof AdminRiceSamplesRoute
   AdminSettingsRoute: typeof AdminSettingsRoute
   AdminStockCountsRoute: typeof AdminStockCountsRoute
+  AdminStockDashboardRoute: typeof AdminStockDashboardRoute
   AdminUpiPaymentsRoute: typeof AdminUpiPaymentsRoute
   AdminVendorsRoute: typeof AdminVendorsRouteWithChildren
   AdminZohoRoute: typeof AdminZohoRoute
@@ -1512,6 +1525,7 @@ export interface RootRouteChildren {
   ApiZohoCallbackRoute: typeof ApiZohoCallbackRoute
   ApiZohoSyncRoute: typeof ApiZohoSyncRoute
   ApiZohoWebhookRoute: typeof ApiZohoWebhookRoute
+  ApiPaymentsCashfreeWebhookRoute: typeof ApiPaymentsCashfreeWebhookRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -1838,13 +1852,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminLotsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/admin/stock-dashboard': {
-      id: '/admin/stock-dashboard'
-      path: '/admin/stock-dashboard'
-      fullPath: '/admin/stock-dashboard'
-      preLoaderRoute: typeof AdminStockDashboardRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/admin/notifications': {
       id: '/admin/notifications'
       path: '/admin/notifications'
@@ -1969,6 +1976,13 @@ declare module '@tanstack/react-router' {
       path: '/admin/stock-counts'
       fullPath: '/admin/stock-counts'
       preLoaderRoute: typeof AdminStockCountsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/stock-dashboard': {
+      id: '/admin/stock-dashboard'
+      path: '/admin/stock-dashboard'
+      fullPath: '/admin/stock-dashboard'
+      preLoaderRoute: typeof AdminStockDashboardRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/admin/upi-payments': {
@@ -2335,6 +2349,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof VendorProductsAddRouteImport
       parentRoute: typeof VendorProductsRoute
     }
+    '/api/payments/cashfree/webhook': {
+      id: '/api/payments/cashfree/webhook'
+      path: '/api/payments/cashfree/webhook'
+      fullPath: '/api/payments/cashfree/webhook'
+      preLoaderRoute: typeof ApiPaymentsCashfreeWebhookRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -2560,7 +2581,6 @@ const rootRouteChildren: RootRouteChildren = {
   AdminInventoryRoute: AdminInventoryRoute,
   AdminLoginRoute: AdminLoginRoute,
   AdminLotsRoute: AdminLotsRoute,
-  AdminStockDashboardRoute: AdminStockDashboardRoute,
   AdminNotificationsRoute: AdminNotificationsRoute,
   AdminOrdersRoute: AdminOrdersRouteWithChildren,
   AdminPartnerIncomeRoute: AdminPartnerIncomeRoute,
@@ -2579,6 +2599,7 @@ const rootRouteChildren: RootRouteChildren = {
   AdminRiceSamplesRoute: AdminRiceSamplesRoute,
   AdminSettingsRoute: AdminSettingsRoute,
   AdminStockCountsRoute: AdminStockCountsRoute,
+  AdminStockDashboardRoute: AdminStockDashboardRoute,
   AdminUpiPaymentsRoute: AdminUpiPaymentsRoute,
   AdminVendorsRoute: AdminVendorsRouteWithChildren,
   AdminZohoRoute: AdminZohoRoute,
@@ -2608,6 +2629,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiZohoCallbackRoute: ApiZohoCallbackRoute,
   ApiZohoSyncRoute: ApiZohoSyncRoute,
   ApiZohoWebhookRoute: ApiZohoWebhookRoute,
+  ApiPaymentsCashfreeWebhookRoute: ApiPaymentsCashfreeWebhookRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

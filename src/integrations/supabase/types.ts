@@ -102,6 +102,24 @@ export type Database = {
         Update: { product_id?: string; zoho_item_id?: string; deleted_at?: string }
         Relationships: []
       }
+      cashfree_orders: {
+        Row: { id: string; order_id: string; order_no: string; cf_order_ref: string; cf_order_id: string | null; environment: string; amount: number; payment_session_id: string | null; expires_at: string | null; status: string; cashfree_status: string | null; created_by: string | null; created_at: string; checked_at: string | null; closed_at: string | null; closed_note: string | null }
+        Insert: { id?: string; order_id: string; order_no: string; cf_order_ref: string; cf_order_id?: string | null; environment: string; amount: number; payment_session_id?: string | null; expires_at?: string | null; status?: string; cashfree_status?: string | null; created_by?: string | null; created_at?: string; checked_at?: string | null; closed_at?: string | null; closed_note?: string | null }
+        Update: { id?: string; order_id?: string; order_no?: string; cf_order_ref?: string; cf_order_id?: string | null; environment?: string; amount?: number; payment_session_id?: string | null; expires_at?: string | null; status?: string; cashfree_status?: string | null; created_by?: string | null; created_at?: string; checked_at?: string | null; closed_at?: string | null; closed_note?: string | null }
+        Relationships: []
+      }
+      cashfree_payments: {
+        Row: { id: string; cf_payment_id: string; cf_order_ref: string; order_id: string | null; order_no: string; environment: string; amount: number; payment_status: string; payment_group: string | null; bank_reference: string | null; payment_time: string | null; reference: string; outcome: string; outcome_note: string | null; payment_row_id: string | null; source: string; first_seen_at: string; updated_at: string; settled_at: string | null; settled_by: string | null; settled_note: string | null }
+        Insert: { id?: string; cf_payment_id: string; cf_order_ref: string; order_id?: string | null; order_no: string; environment: string; amount: number; payment_status: string; payment_group?: string | null; bank_reference?: string | null; payment_time?: string | null; reference: string; outcome: string; outcome_note?: string | null; payment_row_id?: string | null; source: string; first_seen_at?: string; updated_at?: string; settled_at?: string | null; settled_by?: string | null; settled_note?: string | null }
+        Update: { id?: string; cf_payment_id?: string; cf_order_ref?: string; order_id?: string | null; order_no?: string; environment?: string; amount?: number; payment_status?: string; payment_group?: string | null; bank_reference?: string | null; payment_time?: string | null; reference?: string; outcome?: string; outcome_note?: string | null; payment_row_id?: string | null; source?: string; first_seen_at?: string; updated_at?: string; settled_at?: string | null; settled_by?: string | null; settled_note?: string | null }
+        Relationships: []
+      }
+      cashfree_webhook_inbox: {
+        Row: { id: number; received_at: string; body: string; signature: string; webhook_timestamp: string; attempts: number }
+        Insert: { id?: never; received_at?: string; body: string; signature: string; webhook_timestamp: string; attempts?: number }
+        Update: { id?: never; received_at?: string; body?: string; signature?: string; webhook_timestamp?: string; attempts?: number }
+        Relationships: []
+      }
       zoho_webhook_inbox: {
         Row: { id: number; received_at: string; body: string; signature: string; content_type: string | null; query: string; attempts: number }
         Insert: { id?: never; received_at?: string; body: string; signature: string; content_type?: string | null; query?: string; attempts?: number }
@@ -1574,6 +1592,9 @@ export type Database = {
       }
       godown_contact_phones: { Args: Record<PropertyKey, never>; Returns: { branch_id: string; phone: string | null }[] }
       expire_payment_holds: { Args: Record<PropertyKey, never>; Returns: number }
+      cashfree_open_order: { Args: { _order_no: string; _user_id: string; _environment: string }; Returns: Json }
+      cashfree_record_payment: { Args: { _cf_order_ref: string; _cf_payment_id: string; _payment_status: string; _amount: number; _bank_reference?: string | null; _payment_group?: string | null; _payment_time?: string | null; _source?: string }; Returns: Json }
+      admin_settle_cashfree_payment: { Args: { _cf_payment_id: string; _how: string; _note?: string | null }; Returns: Json }
       bank_transfer_details: { Args: Record<PropertyKey, never>; Returns: Json }
       cancel_payment_hold: { Args: { _order_no: string }; Returns: boolean }
       record_bank_credit: { Args: { _utr: string; _amount: number; _payer?: string; _raw?: string; _source?: string; _sender?: string }; Returns: Json }

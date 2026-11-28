@@ -7,15 +7,17 @@ import { cn } from "@/lib/utils";
 /**
  * The customer cancels a checkout they have not paid for: its stock goes back on sale and nothing is due. Two taps, so it
  * is never done by mistake. The database refuses once a UTR has been sent (cancel_payment_hold): the money may already be
- * on its way, so then the customer calls us instead.
+ * on its way, so then the customer calls us instead. With Cashfree, beforeCancel first asks Cashfree (and ends its order
+ * there): false when a payment came after all, and then nothing is cancelled.
  */
-export function CancelCheckoutButton({ orderNo, byBank, small = false, className }: { orderNo: string; byBank: boolean; small?: boolean; className?: string }) {
+export function CancelCheckoutButton({ orderNo, byBank, small = false, className, beforeCancel }: { orderNo: string; byBank: boolean; small?: boolean; className?: string; beforeCancel?: () => Promise<boolean> }) {
   const { cancelPaymentHold } = useApp();
   const [asking, setAsking] = useState(false);
   const [busy, setBusy] = useState(false);
   const cancel = async () => {
     setBusy(true);
     try {
+      if (beforeCancel && !(await beforeCancel())) return;
       if (await cancelPaymentHold(orderNo)) toast.success("Order cancelled", { description: "Nothing is due. You can order the same items again any time." });
     } finally {
       setBusy(false);
