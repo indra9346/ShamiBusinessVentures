@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, Loader2, Lock, ShieldCheck } from "lucide-react";
-import { inrPrecise } from "@/lib/data";
+import { inrShop } from "@/lib/data";
 import { cashfreeStatusWords } from "@/lib/cashfree";
 import { loadCashfreeSdk } from "@/lib/cashfree-sdk";
 
@@ -115,7 +115,7 @@ export function CashfreePay({ orderNo, amount, mode, sdkUrl, onUnavailable }: {
       <button type="button" disabled={busy} onClick={() => void pay()}
         className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-md bg-navy px-4 text-base font-bold text-white shadow-sm hover:bg-navy/90 disabled:opacity-70 sm:w-auto sm:min-w-[260px]">
         {busy ? <Loader2 className="h-5 w-5 animate-spin" /> : <Lock className="h-5 w-5" />}
-        {phase === "opening" ? "Opening the payment page…" : phase === "paying" ? "Complete the payment in the Cashfree window" : phase === "checking" ? "Checking your payment…" : phase === "notPaid" || phase === "error" ? `Try again · Pay ${inrPrecise(amount)}` : `Pay ${inrPrecise(amount)}`}
+        {phase === "opening" ? "Opening the payment page…" : phase === "paying" ? "Complete the payment in the Cashfree window" : phase === "checking" ? "Checking your payment…" : phase === "notPaid" || phase === "error" ? `Try again · Pay ${inrShop(amount)}` : `Pay ${inrShop(amount)}`}
       </button>
       <p className="flex items-start gap-1.5 text-xs text-slate"><ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0" />UPI, cards or net banking on Cashfree's secure payment page. Your order is placed as soon as the payment succeeds.</p>
       {phase === "checking" && <p className="flex items-center gap-2 text-sm font-semibold text-slate"><Loader2 className="h-4 w-4 animate-spin" /> Checking your payment with Cashfree. Please do not pay again.</p>}
